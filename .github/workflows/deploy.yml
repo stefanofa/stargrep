@@ -3,10 +3,13 @@ name: deploy
 on:
   pull_request:
     types: [opened, reopened, synchronize, closed]
+  # Temporary until this workflow is on main: GitHub runs pull_request_target only from the default branch's
+  # workflow, and it is the only close event that fires for a pull request with merge conflicts.
   pull_request_target:
     types: [closed]
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,80 +19,84 @@ env:
   CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
 
 jobs:
-  database:
-    if: vars.CLOUDFLARE_ACCOUNT_ID != '' && github.event.action != 'closed'
+  prod:
+    if: vars.CLOUDFLARE_ACCOUNT_ID != '' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     concurrency:
-      group: deploy-database
-      cancel-in-progress: false
+      group: deploy-prod
+      queue: max
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version-file: package.json
-      - run: bun install --frozen-lockfile
+      - uses: ./.github/actions/setup
       - run: bun run --cwd infra deploy --config database.run.ts --stage shared --yes
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      - run: bun run --cwd infra deploy --stage prod --yes
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
 
-  deploy:
-    needs: database
+  preview:
+    if: vars.CLOUDFLARE_ACCOUNT_ID != '' && github.event_name == 'pull_request' && github.event.action != 'closed'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Job-level, so a skipped job never holds the group's pending slot and drops a queued destroy.
     concurrency:
-      group: deploy-${{ github.event.pull_request.number || 'prod' }}
-      cancel-in-progress: false
+      group: deploy-pr-${{ github.event.pull_request.number }}
+      queue: max
     permissions:
       contents: read
       pull-requests: write
     env:
-      STAGE: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'prod' }}
+      STAGE: pr-${{ github.event.pull_request.number }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      # The pull request can close while this job waits for the database job, outside the stage's group.
-      - if: github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          state=$(gh pr view "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY" --json state --jq .state)
-          if [ "$state" != OPEN ]; then echo "Pull request is $state, so $STAGE is not deployed." >&2; exit 1; fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version-file: package.json
-      - run: bun install --frozen-lockfile
-      - run: bun run --cwd infra deploy --stage "$STAGE" --yes
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: ./.github/actions/setup
+      - id: deploy
+        run: |
+          state=$(gh pr view "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY" --json state --jq .state)
+          if [ "$state" != OPEN ]; then echo "Pull request is $state, so $STAGE is left to the destroy job."; exit 0; fi
+          bun run --cwd infra deploy --stage "$STAGE" --yes
+          echo deployed=true >> "$GITHUB_OUTPUT"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           PULL_REQUEST: ${{ github.event.pull_request.number }}
+      - if: steps.deploy.outputs.deployed == 'true'
+        working-directory: infra
+        run: |
+          output=$(bunx alchemy state read "Stargrep/$STAGE/output")
+          token=$(jq -r .debugToken.__redacted__ <<<"$output")
+          echo "::add-mask::$token"
+          DEBUG_TOKEN=$token bun ../scripts/stage-smoke.ts "$(jq -r .debugUrl <<<"$output")"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
   destroy:
     if: vars.CLOUDFLARE_ACCOUNT_ID != '' && github.event.action == 'closed'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:
-      group: deploy-${{ github.event.pull_request.number }}
-      cancel-in-progress: false
+      group: deploy-pr-${{ github.event.pull_request.number }}
+      queue: max
     env:
       STAGE: pr-${{ github.event.pull_request.number }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      # GitHub starts no pull_request run for a pull request with merge conflicts, and runs pull_request_target
-      # only from the default branch's workflow, so either event destroys.
       # The pull_request_target run checks out the default branch, so it runs no pull request code.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version-file: package.json
-      - run: bun install --frozen-lockfile
-      - run: bun run --cwd infra destroy --stage "$STAGE" --yes
+      - uses: ./.github/actions/setup
+      - run: |
+          state=$(gh pr view "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY" --json state --jq .state)
+          if [ "$state" = OPEN ]; then echo "Pull request was reopened, so $STAGE stays."; exit 0; fi
+          bun run --cwd infra destroy --stage "$STAGE" --yes
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
