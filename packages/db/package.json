@@ -6,6 +6,7 @@
     ".": "./src/db.ts"
   },
   "scripts": {
+    "bench": "bun scripts/bench.ts",
     "generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate",
     "typecheck": "effect-tsgo tsc -p ."
