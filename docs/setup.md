@@ -22,9 +22,10 @@ These are the one-time steps to work on Stargrep. Each later step that needs an 
    bun run check
    ```
 
-4. Run the tests.
+4. Run the tests. The `packages/db` tests need Postgres 17 with pgvector, so start the container from "Local stage" first. Each test file creates its own database in it, migrates it, and drops it at the end.
 
    ```sh
+   docker compose --file apps/worker/compose.yaml up --detach --wait
    bun test --parallel
    ```
 
@@ -77,6 +78,18 @@ For other editors, run `bunx effect-tsgo setup --help` to see the setup for Neov
    ```sh
    bun run --cwd apps/worker test
    ```
+
+## Database schema
+
+The Drizzle schema in `packages/db/src/schema.ts` is the source of truth. After changing it, generate a migration and apply it to the local Postgres.
+
+```sh
+cd packages/db
+bun run generate
+DATABASE_URL=postgres://stargrep:stargrep@127.0.0.1:54317/stargrep bun run migrate
+```
+
+Name the database in `DATABASE_URL`, because `migrate` has no default. The first migration creates the `vector` extension, which `drizzle-kit` does not emit.
 
 ## Cloudflare and Neon
 

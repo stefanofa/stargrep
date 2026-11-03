@@ -238,7 +238,7 @@ Deployed stages keep Alchemy state in the Cloudflare account through `Cloudflare
 ## Testing
 
 - `packages/core` tests use `bun test` with in-memory layers. They cover behavior, such as "an unstarred repo gets `unstarred_at`", not internal calls. Time runs on `TestClock`, so tests never sleep. `packages/testing` provides `it.effect`, `it.live`, and `it.layer` for `bun test` and is the only place that calls `Effect.runPromise` in tests. `docs/effect.md` section 7 shows how to use it.
-- `packages/db` and the pipeline run integration tests against a Neon branch made for each test run.
+- `packages/db` runs its query tests twice, against the in-memory `Db` layer and against Postgres with pgvector. The Postgres run creates and migrates a database for each test file in the local container, and CI starts the same container. The pipeline runs integration tests against a Neon branch made for each test run.
 - `apps/web` and `apps/worker` tests run on workerd through `@cloudflare/vitest-plugin`. The first test in each file waits about 9 seconds while the module graph loads, so the config sets `testTimeout` to 30 seconds. Workerd test files are named `*.workerd-test.ts`, which `bun test` never matches from any folder, and the vitest config includes only that pattern. `bunfig.toml` ignores `repos/`, so a root `bun test` runs every other `*.test.ts` in the repo.
 - `bun test` runs with `--parallel`, not `--concurrent`, so a test that times out still interrupts its fiber and runs its finalizers.
 
