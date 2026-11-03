@@ -16,7 +16,9 @@ export default Alchemy.Stack(
   Effect.gen(function* () {
     const { stage } = yield* Alchemy.Stack;
     const worker = yield* Worker;
-    const debug = stage === "prod" ? undefined : yield* DebugWorker;
+    if (stage === "prod") return { url: worker.url };
+
+    const debug = yield* DebugWorker;
     const github = yield* GitHub.GitHubEnv;
     if (github?.pr !== undefined) {
       yield* GitHub.Comment("StageComment", {
@@ -28,14 +30,10 @@ export default Alchemy.Stack(
 
           Worker: ${worker.url}
           Health: ${worker.url}/health
-          Debug worker: ${debug?.url ?? "none"}
+          Debug worker: ${debug.url}
         `,
       });
     }
-    return {
-      url: worker.url,
-      debugUrl: debug?.url,
-      debugToken: debug === undefined ? undefined : yield* DebugToken,
-    };
+    return { url: worker.url, debugUrl: debug.url, debugToken: yield* DebugToken };
   }),
 );
