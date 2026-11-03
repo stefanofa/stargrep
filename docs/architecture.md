@@ -72,8 +72,10 @@ packages/
   auth/             Better Auth config
   ui/               design tokens and components
   testing/          bun test helpers that stand in for it.effect and it.layer
-  config/           shared tsconfig and Biome config
+  config/           shared tsconfig and Biome plugins
 infra/              Alchemy program: Cloudflare resources, Neon branches, stages
+repos/              read-only source of effect, orpc, and alchemy at the pinned versions, for reference
+scripts/            repo scripts, such as sync-repos.ts for repos/
 ```
 
 Each feature folder in `core` holds its types, functions, and tests together. File names are kebab-case. A file is named after what it exports, such as `parse-query.ts` for `parseQuery`.
