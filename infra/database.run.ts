@@ -16,6 +16,7 @@ export default Alchemy.Stack(
       name: "stargrep",
       region: "aws-eu-central-1",
       pgVersion: 17,
+      historyRetentionSeconds: 21600,
     }).pipe(RemovalPolicy.retain());
     return { projectId: project.projectId };
   }),
