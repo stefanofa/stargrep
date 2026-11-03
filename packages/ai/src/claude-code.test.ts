@@ -3,9 +3,11 @@ import * as it from "@stargrep/testing";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 import * as ClaudeCode from "./claude-code.ts";
 import type { AiError } from "./errors.ts";
@@ -15,6 +17,7 @@ interface Process {
   readonly stdout?: string;
   readonly exitCode?: number;
   readonly hang?: boolean;
+  readonly stderr?: string;
 }
 
 interface Seen {
@@ -45,7 +48,7 @@ const fakeClaude = (process: Process) => {
         kill: () => Effect.void,
         stdin: Sink.drain,
         stdout: output,
-        stderr: Stream.empty,
+        stderr: Stream.encodeText(Stream.make(process.stderr ?? "")),
         all: output,
         getInputFd: () => Sink.drain,
         getOutputFd: () => Stream.empty,
@@ -130,4 +133,92 @@ describe("claude code text generation", () => {
       expect(seen.closed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+});
+
+const outputCanary = "PRIVATE_OUTPUT_CANARY";
+const promptCanary = "PRIVATE_PROMPT_CANARY";
+const huge = "x".repeat(8 * 1024 * 1024);
+
+const observe = <A, E>(effect: Effect.Effect<A, E>) => {
+  const spans: Array<Tracer.Span> = [];
+  const logs: Array<unknown> = [];
+  const tracer = Tracer.make({
+    span: (options) => {
+      const span = Tracer.nativeTracer.span(options);
+      spans.push(span);
+      return span;
+    },
+  });
+  const logger = Logger.make((options) => {
+    logs.push({ message: options.message, cause: options.cause });
+  });
+  return effect.pipe(
+    Effect.exit,
+    Effect.withTracer(tracer),
+    Effect.provide(Logger.layer([logger])),
+    Effect.map((exit) => ({ exit, spans, logs })),
+  );
+};
+
+const serialize = (value: unknown) =>
+  JSON.stringify(value, (_, inner) =>
+    typeof inner === "bigint" ? String(inner) : inner instanceof Map ? [...inner] : inner,
+  );
+
+describe("claude code telemetry and output size", () => {
+  const privateRepo = { ...repo, readme: promptCanary };
+  const cases: ReadonlyArray<[string, Process, "Success" | AiError["_tag"]]> = [
+    [
+      "metadata fields next to a valid result",
+      { stdout: result({ structured_output: summary, result: outputCanary }) },
+      "Success",
+    ],
+    [
+      "an invalid result",
+      { stdout: result({ structured_output: { ...summary, kind: outputCanary }, result: outputCanary }) },
+      "AiOutputInvalid",
+    ],
+    ["8 MiB of output that is not JSON", { stdout: outputCanary + huge }, "AiOutputInvalid"],
+    [
+      "an 8 MiB valid envelope",
+      { stdout: result({ structured_output: summary, result: outputCanary + huge }) },
+      "AiOutputInvalid",
+    ],
+    [
+      "an 8 MiB structured summary",
+      { stdout: result({ structured_output: { ...summary, summary: outputCanary + huge } }) },
+      "AiOutputInvalid",
+    ],
+    ["stderr noise with empty stdout", { stdout: "", stderr: outputCanary }, "AiOutputInvalid"],
+    [
+      "stderr noise next to a valid result",
+      { stdout: result({ structured_output: summary }), stderr: outputCanary },
+      "Success",
+    ],
+  ];
+
+  for (const [name, process, expected] of cases) {
+    it.effect(`keeps ${name} out of errors, logs, and every span`, () => {
+      const { seen, layer } = fakeClaude(process);
+      return Effect.gen(function* () {
+        const { exit, spans, logs } = yield* observe(Summarize.summarize(privateRepo).pipe(Effect.provide(layer)));
+        expect(
+          exit._tag === "Success"
+            ? "Success"
+            : exit.cause.reasons.map((reason) => (reason._tag === "Fail" ? reason.error._tag : reason._tag)).join(),
+        ).toBe(expected);
+        const recorded = serialize({
+          exit,
+          logs,
+          spans,
+        });
+        expect(recorded).not.toContain(outputCanary);
+        expect(recorded).not.toContain(promptCanary);
+        expect(recorded.length).toBeLessThan(10_000);
+        expect(seen.closed).toBe(true);
+        const generate = spans.find((span) => span.name === "TextGeneration.generate");
+        expect(generate?.attributes.get("provider")).toBe("claude-code");
+      });
+    });
+  }
 });

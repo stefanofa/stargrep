@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { type AiError, AiOutputInvalid, AiTimeout } from "./errors.ts";
 import type { EmbeddingModel } from "./models.ts";
-import { countTokens } from "./text-generation.ts";
+import { countTokens, portSpan } from "./text-generation.ts";
 
 export interface Embedding {
   readonly model: string;
@@ -32,7 +32,7 @@ export const make = (options: {
 }) => {
   const { provider, model, timeout, run } = options;
   const timedOut = new AiTimeout({ operation: "embed", model: model.id, timeoutMillis: Duration.toMillis(timeout) });
-  const embed = Effect.fn("Embeddings.embed")(
+  const embed = Effect.fnUntraced(
     function* (values: ReadonlyArray<string>) {
       const { vectors, tokens } = yield* run(values).pipe(
         Effect.timeoutOrElse({ duration: timeout, orElse: () => Effect.fail(timedOut) }),
@@ -48,7 +48,7 @@ export const make = (options: {
       }
       return vectors.map((vector): Embedding => ({ model: model.id, vector }));
     },
-    Effect.annotateSpans({ provider, model: model.id }),
+    portSpan("Embeddings.embed", { provider, model: model.id }),
   );
   return Embeddings.of({ model, embed });
 };

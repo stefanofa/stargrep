@@ -43,7 +43,12 @@ The script reports these columns for each model.
 
 Retrieval here is vector only. Production search also runs full-text search and merges both lists.
 
-Two runs of the same setup differ by up to 0.009 for one model, about one query. So the winner rule treats every model within 1/129 of the best recall as tied. Ties go to the lowest median query latency for embedding models, because query embedding is on the search path. Ties go to the lowest cost for summary models, because summaries run in the background. Transient gateway errors are retried up to three times.
+The winner rule differs by port, in `evals/rank.ts`.
+
+- **Embedding models must fit a latency budget, then win on recall.** Query embedding is on the search path. The plan's budget is a 250 ms median from a Worker, which the perf lane measures. The bakeoff runs on a laptop, which adds network distance to every model, so it screens with the plan's 600 ms p95 ceiling applied to the laptop median. Models over it are dropped before ranking, and the rest are ordered by recall.
+- **Summary models win on recall, with ties broken by cost.** Two runs of the same setup differ by up to 0.009 for one model, about one query, so models within 1/129 of the best recall are tied. Summaries run in the background, so the cheapest tied model wins.
+
+Transient gateway errors are retried up to three times.
 
 Every embedding candidate is asked for 1,024 dimensions. One size keeps the comparison fair and fixes the database column at `halfvec(1024)`.
 
@@ -55,7 +60,7 @@ Summary models: `anthropic/claude-haiku-5.5`, `openai/gpt-6-luna`, and `google/g
 
 ## Results
 
-The final run on 2026-11-03 used the gateway, 129 queries, and 736 repos.
+The final gateway run on 2026-11-03, run 3, used 129 queries and 736 repos. This is its output as printed, under the ranking rule it ran with, which "History" below explains.
 
 ```
 stage      model                            recall@10  median ms       cost failures
@@ -74,11 +79,19 @@ Summary ranking: openai/gpt-6-luna > anthropic/claude-haiku-5.5 > google/gemini-
 Chosen: summary openai/gpt-6-luna, embedding voyage/voyage-4 at 1024 dimensions
 ```
 
-**Embeddings: `voyage/voyage-4` at 1,024 dimensions.** It ties `google/gemini-embedding-001` on recall, 0.002 behind, which is less than one query. It embeds a query in a median 352 ms against 969 ms, and it costs $0.06 per million tokens against $0.15. The run before it ranked the same winner, with `voyage/voyage-4-lite` second at 0.983. `voyage-4-lite` fell to 0.979 here and left the tie, so second place is not stable. First place is.
+**Embeddings: `voyage/voyage-4` at 1,024 dimensions.** `google/gemini-embedding-001` has the highest recall in both full runs, 0.990, but its median query takes 954 ms and 969 ms. That fails the plan's embedding latency budget by any reading, so it cannot serve the search path. Among the models inside the budget, `voyage/voyage-4` has the highest recall in both runs, 0.986 and 0.988, with `voyage/voyage-4-lite` second both times. It costs $0.06 per million tokens. Its 352 ms median was measured from the laptop. Whether it meets the 250 ms budget from a Worker is still open, and the perf lane on the deployed stage answers it.
 
 **Summaries: `openai/gpt-6-luna`.** All three candidates are within 0.004, half a query, in both runs. `gpt-6-luna` is the cheapest at catalog prices, $0.39 for 736 repos or about $0.53 per 1,000, and no summary failed to decode. It is the slowest, at a median 3.7 s, which does not matter for background enrichment.
 
-Query latency here is measured from a laptop. The plan's perf lane measures it again from a Worker against a 250 ms median.
+### History
+
+The ranking rule changed during the work, and the record above shows it.
+
+1. Run 2 ranked by recall alone. Its winner for embeddings was `google/gemini-embedding-001` at 0.990, ahead of `voyage/voyage-4` at 0.986.
+2. After run 2, a tie rule was added: models within one query of the best were tied, and ties went to the lowest latency. Run 3 ran with it and printed `voyage/voyage-4` first. That rule had a bug. It also sorted models outside the tie by latency instead of recall, which is why the embedding ranking printed above puts `cohere/embed-v5.0-fast` third.
+3. The current rule replaces the latency tie-break for embeddings with the explicit latency budget. `evals/rank.test.ts` applies it to the recorded numbers of runs 2 and 3, and both rank `voyage/voyage-4` first and `voyage/voyage-4-lite` second.
+
+The choice of `voyage/voyage-4` does not depend on the tie rule. It follows from two facts that hold in both runs: Gemini is over the latency budget, and Voyage 4 has the best recall of the models under it.
 
 ## Recall bar
 

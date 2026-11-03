@@ -59,7 +59,7 @@ export const prompt = (repo: RepoFacts): string =>
     repo.readme === null ? "none" : trimReadme(repo.readme),
   ].join("\n");
 
-export const summarize = Effect.fn("Summarize.summarize")(function* (repo: RepoFacts) {
+export const summarize = Effect.fnUntraced(function* (repo: RepoFacts) {
   const textGeneration = yield* TextGeneration.TextGeneration;
   return yield* textGeneration.generate({ schema: repoSummarySchema, system, prompt: prompt(repo) });
 });

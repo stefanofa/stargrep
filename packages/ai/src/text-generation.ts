@@ -1,7 +1,9 @@
 import type { JSONSchema7 } from "ai";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Metric from "effect/Metric";
 import { type AiError, AiOutputInvalid, AiTimeout } from "./errors.ts";
 import type { AiSchema } from "./schema-bridge.ts";
@@ -38,6 +40,18 @@ export const tokensUsed = Metric.counter("stargrep_ai_tokens", {
 export const countTokens = (model: string, direction: "input" | "output", tokens: number | undefined) =>
   Metric.update(Metric.withAttributes(tokensUsed, { model, direction }), tokens ?? 0);
 
+export const portSpan =
+  (name: string, attributes: Record<string, string>) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    Effect.flatMap(Effect.makeSpan(name, { attributes }), (span) =>
+      effect.pipe(
+        Effect.withParentSpan(span),
+        Effect.onExit((exit) =>
+          Effect.map(Clock.currentTimeNanos, (now) => span.end(now, Exit.isSuccess(exit) ? Exit.void : exit)),
+        ),
+      ),
+    );
+
 export const make = (options: {
   readonly provider: string;
   readonly model: string;
@@ -60,7 +74,7 @@ export const make = (options: {
       Effect.flatMap(({ output }) =>
         request.schema.decode(output).pipe(Effect.catchTags({ SchemaError: () => Effect.fail(invalid) })),
       ),
-      Effect.withSpan("TextGeneration.generate", { attributes: { provider, model } }),
+      portSpan("TextGeneration.generate", { provider, model }),
     );
   return TextGeneration.of({ model, generate });
 };

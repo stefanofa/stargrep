@@ -18,6 +18,7 @@ import * as Metric from "effect/Metric";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Corpus from "./corpus.ts";
+import { embeddingLatencyBudgetMillis, type Row, rankEmbeddings, rankSummaries } from "./rank.ts";
 
 const embeddingCandidates: ReadonlyArray<Models.EmbeddingModel> = [
   "openai/text-embedding-3-small",
@@ -116,15 +117,6 @@ interface Providers {
   readonly embeddings: (model: Models.EmbeddingModel) => Layer.Layer<Embeddings.Embeddings, Config.ConfigError>;
 }
 
-interface Row {
-  readonly stage: "embedding" | "summary";
-  readonly model: string;
-  readonly recall: number;
-  readonly medianMillis: number;
-  readonly cost: number;
-  readonly failures: number;
-}
-
 const summarizeCorpus = Effect.fn("Bakeoff.summarizeCorpus")(function* (
   model: string,
   corpus: ReadonlyArray<Summarize.RepoFacts>,
@@ -176,15 +168,6 @@ const scoreRetrieval = Effect.fn("Bakeoff.scoreRetrieval")(function* (
   return { recall: recalls.reduce((sum, value) => sum + value, 0) / recalls.length, medianMillis: median(millis) };
 });
 
-const rank = (rows: ReadonlyArray<Row>, queryCount: number, tieBreak: (row: Row) => number) => {
-  const top = Math.max(...rows.map((row) => row.recall));
-  const tied = (row: Row) => top - row.recall <= 1 / queryCount;
-  return [...rows].sort(
-    (left, right) =>
-      Number(tied(right)) - Number(tied(left)) || tieBreak(left) - tieBreak(right) || right.recall - left.recall,
-  );
-};
-
 const formatRow = (row: Row) =>
   [
     row.stage.padEnd(10),
@@ -217,7 +200,7 @@ const runBakeoff = Effect.fn("Bakeoff.run")(function* (limit: number | undefined
     const { result, cost } = yield* withCost(pricing, model.id, scoreWith(model, baselineRun.result.texts));
     embeddingRows.push({ stage: "embedding", model: model.id, ...result, cost, failures: 0 });
   }
-  const embeddingRanking = rank(embeddingRows, queries.length, (row) => row.medianMillis);
+  const { ranked: embeddingRanking, overBudget } = rankEmbeddings(embeddingRows);
   const embeddingWinner = embeddingCandidates.find((model) => model.id === embeddingRanking[0]?.model);
   if (embeddingWinner === undefined) return yield* new NoEmbeddingScored();
 
@@ -235,7 +218,7 @@ const runBakeoff = Effect.fn("Bakeoff.run")(function* (limit: number | undefined
       failures: run.failures,
     });
   }
-  const summaryRanking = rank(summaryRows, queries.length, (row) => row.cost);
+  const summaryRanking = rankSummaries(summaryRows, queries.length);
 
   yield* Console.log(
     [
@@ -249,6 +232,9 @@ const runBakeoff = Effect.fn("Bakeoff.run")(function* (limit: number | undefined
   );
   for (const row of [...embeddingRows, ...summaryRows]) yield* Console.log(formatRow(row));
   yield* Console.log(`Embedding ranking: ${embeddingRanking.map((row) => row.model).join(" > ")}`);
+  yield* Console.log(
+    `Over the ${embeddingLatencyBudgetMillis} ms embedding latency budget: ${overBudget.map((row) => row.model).join(", ") || "none"}`,
+  );
   yield* Console.log(`Summary ranking: ${summaryRanking.map((row) => row.model).join(" > ")}`);
   yield* Console.log(
     `Chosen: summary ${summaryRanking[0]?.model ?? baseline}, embedding ${embeddingWinner.id} at ${embeddingWinner.dimensions} dimensions`,
