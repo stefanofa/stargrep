@@ -4,20 +4,20 @@ import * as Fake from "@stargrep/ai/fake";
 import * as Gateway from "@stargrep/ai/gateway";
 import * as Models from "@stargrep/ai/models";
 import * as Summarize from "@stargrep/ai/summarize";
-import type * as TextGeneration from "@stargrep/ai/text-generation";
-import * as Config from "effect/Config";
+import * as SummarizeFake from "@stargrep/ai/summarize.fake";
+import * as TextGeneration from "@stargrep/ai/text-generation";
+import type * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
-import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Corpus from "./corpus.ts";
 
 const embeddingCandidates: ReadonlyArray<Models.EmbeddingModel> = [
   "openai/text-embedding-3-small",
@@ -33,153 +33,50 @@ const summaryCandidates = ["anthropic/claude-haiku-5.5", "openai/gpt-6-luna", "g
 
 const topK = 10;
 const summaryConcurrency = 8;
+
 const retryTransient = <A, R>(effect: Effect.Effect<A, AiError, R>) =>
   Effect.retry(effect, {
     times: 3,
     schedule: Schedule.exponential("2 seconds"),
     while: (error) => error._tag === "AiRequestFailed" || error._tag === "AiTimeout",
   });
-const graphqlBatchSize = 25;
-const readmeNames = ["README.md", "readme.md", "Readme.md", "README.rst", "README.markdown", "README"];
 
-const queriesPath = new URL("./queries.json", import.meta.url);
-const distractorsPath = new URL("./distractors.json", import.meta.url);
-const corpusPath = new URL("./.cache/corpus.json", import.meta.url);
-const modelsPath = new URL("../packages/ai/src/models.ts", import.meta.url);
-
-const Query = Schema.Struct({
-  id: Schema.String,
-  category: Schema.String,
-  query: Schema.String,
-  expected: Schema.Array(Schema.String),
-});
-type Query = typeof Query.Type;
-
-const RepoFacts = Schema.Struct({
-  fullName: Schema.String,
-  description: Schema.NullOr(Schema.String),
-  topics: Schema.Array(Schema.String),
-  language: Schema.NullOr(Schema.String),
-  readme: Schema.NullOr(Schema.String),
-});
-
-const decodeQueries = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Query)));
-const decodeCorpus = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(RepoFacts)));
-const decodeDistractors = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
-const encodeCorpus = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(RepoFacts)));
-
-const Blob = Schema.NullOr(Schema.Struct({ text: Schema.optional(Schema.NullOr(Schema.String)) }));
-
-const RepoNode = Schema.Struct({
-  nameWithOwner: Schema.String,
-  description: Schema.NullOr(Schema.String),
-  repositoryTopics: Schema.Struct({
-    nodes: Schema.Array(Schema.Struct({ topic: Schema.Struct({ name: Schema.String }) })),
-  }),
-  primaryLanguage: Schema.NullOr(Schema.Struct({ name: Schema.String })),
-  ...Object.fromEntries(readmeNames.map((_, index) => [`readme${index}`, Schema.optional(Blob)])),
-});
-
-const GraphqlResponse = Schema.Struct({ data: Schema.Record(Schema.String, Schema.NullOr(RepoNode)) });
-
-const CatalogModel = Schema.Struct({
-  id: Schema.String,
-  pricing: Schema.optional(
-    Schema.Struct({ input: Schema.optional(Schema.String), output: Schema.optional(Schema.String) }),
+const Catalog = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      pricing: Schema.optional(
+        Schema.Struct({ input: Schema.optional(Schema.String), output: Schema.optional(Schema.String) }),
+      ),
+    }),
   ),
 });
-const Catalog = Schema.Struct({ data: Schema.Array(CatalogModel) });
 
-class BakeoffFailed extends Schema.TaggedError<BakeoffFailed>()("BakeoffFailed", { reason: Schema.String }) {
-  override get message(): string {
-    return this.reason;
-  }
-}
-
-const readText = (url: URL) =>
-  Effect.tryPromise({
-    try: () => Bun.file(url).text(),
-    catch: () => new BakeoffFailed({ reason: `cannot read ${url.pathname}` }),
-  });
-
-const writeText = (url: URL, text: string) =>
-  Effect.tryPromise({
-    try: () => Bun.write(url, text),
-    catch: () => new BakeoffFailed({ reason: `cannot write ${url.pathname}` }),
-  });
-
-const expectedRepos = (queries: ReadonlyArray<Query>) =>
-  [...new Set(queries.flatMap((query) => query.expected))].sort();
-
-const fetchCorpus = Effect.fn("Bakeoff.fetchCorpus")(function* (repos: ReadonlyArray<string>) {
-  const token = yield* Config.Redacted("GITHUB_TOKEN");
-  const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
-  const corpus: Array<typeof RepoFacts.Type> = [];
-  const problems: Array<string> = [];
-  for (let start = 0; start < repos.length; start += graphqlBatchSize) {
-    const batch = repos.slice(start, start + graphqlBatchSize);
-    const fields = batch.map((fullName, index) => {
-      const [owner, name] = fullName.split("/");
-      const readmes = readmeNames
-        .map((file, readme) => `readme${readme}: object(expression: "HEAD:${file}") { ... on Blob { text } }`)
-        .join(" ");
-      return `r${index}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { nameWithOwner description repositoryTopics(first: 20) { nodes { topic { name } } } primaryLanguage { name } ${readmes} }`;
-    });
-    const response = yield* HttpClientRequest.post("https://api.github.com/graphql").pipe(
-      HttpClientRequest.bearerToken(Redacted.value(token)),
-      HttpClientRequest.setHeader("user-agent", "stargrep-evals"),
-      HttpClientRequest.bodyJsonUnsafe({ query: `{ ${fields.join("\n")} }` }),
-      client.execute,
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(GraphqlResponse)),
-    );
-    for (const [index, fullName] of batch.entries()) {
-      const node = response.data[`r${index}`];
-      if (node === null || node === undefined) {
-        problems.push(`missing ${fullName}`);
-        continue;
-      }
-      if (node.nameWithOwner !== fullName) problems.push(`renamed ${fullName} -> ${node.nameWithOwner}`);
-      const readme = readmeNames
-        .map((_, readmeIndex) => (node as Record<string, typeof Blob.Type | undefined>)[`readme${readmeIndex}`]?.text)
-        .find((text) => typeof text === "string");
-      corpus.push({
-        fullName,
-        description: node.description,
-        topics: node.repositoryTopics.nodes.map((topicNode) => topicNode.topic.name),
-        language: node.primaryLanguage?.name ?? null,
-        readme: readme ?? null,
-      });
-    }
-  }
-  return { corpus, problems };
-});
+type Pricing = Map<string, { input: number; output: number }>;
 
 const loadPricing = Effect.gen(function* () {
   const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
   const catalog = yield* client
     .get("https://ai-gateway.vercel.sh/v1/models")
     .pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(Catalog)));
-  return new Map(
+  const pricing: Pricing = new Map(
     catalog.data.map((model) => [
       model.id,
       { input: Number(model.pricing?.input ?? Number.NaN), output: Number(model.pricing?.output ?? 0) },
     ]),
   );
+  return pricing;
 }).pipe(
-  Effect.catch(() =>
-    Console.log("Gateway catalog unavailable, cost shows n/a").pipe(
-      Effect.as(new Map<string, { input: number; output: number }>()),
-    ),
-  ),
+  Effect.catch(() => Console.log("Gateway catalog unavailable, cost shows n/a").pipe(Effect.as<Pricing>(new Map()))),
 );
 
 const tokens = (model: string, direction: "input" | "output") =>
-  Metric.value(Metric.withAttributes(Gateway.tokensUsed, { model, direction })).pipe(
+  Metric.value(Metric.withAttributes(TextGeneration.tokensUsed, { model, direction })).pipe(
     Effect.map((state) => state.count),
   );
 
 const withCost = Effect.fn("Bakeoff.withCost")(function* <A, E, R>(
-  pricing: Map<string, { input: number; output: number }>,
+  pricing: Pricing,
   model: string,
   run: Effect.Effect<A, E, R>,
 ) {
@@ -215,8 +112,8 @@ const recallAt = (ranked: ReadonlyArray<string>, expected: ReadonlyArray<string>
   expected.filter((repo) => ranked.slice(0, topK).includes(repo)).length / expected.length;
 
 interface Providers {
-  readonly text: (model: string) => Layer.Layer<TextGeneration.TextGeneration>;
-  readonly embeddings: (model: Models.EmbeddingModel) => Layer.Layer<Embeddings.Embeddings>;
+  readonly text: (model: string) => Layer.Layer<TextGeneration.TextGeneration, Config.ConfigError>;
+  readonly embeddings: (model: Models.EmbeddingModel) => Layer.Layer<Embeddings.Embeddings, Config.ConfigError>;
 }
 
 interface Row {
@@ -230,7 +127,7 @@ interface Row {
 
 const summarizeCorpus = Effect.fn("Bakeoff.summarizeCorpus")(function* (
   model: string,
-  corpus: ReadonlyArray<typeof RepoFacts.Type>,
+  corpus: ReadonlyArray<Summarize.RepoFacts>,
 ) {
   const results = yield* Effect.forEach(
     corpus,
@@ -256,9 +153,9 @@ const summarizeCorpus = Effect.fn("Bakeoff.summarizeCorpus")(function* (
 });
 
 const scoreRetrieval = Effect.fn("Bakeoff.scoreRetrieval")(function* (
-  corpus: ReadonlyArray<typeof RepoFacts.Type>,
+  corpus: ReadonlyArray<Summarize.RepoFacts>,
   texts: ReadonlyArray<string>,
-  queries: ReadonlyArray<Query>,
+  queries: ReadonlyArray<Corpus.Query>,
 ) {
   const embeddings = yield* Embeddings.Embeddings;
   const documents = yield* embeddings.embed(texts).pipe(retryTransient);
@@ -298,33 +195,16 @@ const formatRow = (row: Row) =>
     String(row.failures).padStart(8),
   ].join(" ");
 
-const modelsSource = (summary: string, embedding: Models.EmbeddingModel) => `export interface EmbeddingModel {
-  readonly id: string;
-  readonly dimensions: number;
-}
+class NoEmbeddingScored extends Schema.TaggedError<NoEmbeddingScored>()("NoEmbeddingScored", {}) {}
 
-export const summaryModel = ${JSON.stringify(summary)};
-
-export const embeddingModel: EmbeddingModel = { id: ${JSON.stringify(embedding.id)}, dimensions: ${embedding.dimensions} };
-`;
-
-const runBakeoff = Effect.fn("Bakeoff.run")(function* (fake: boolean, limit: number | undefined, providers: Providers) {
-  const allQueries = yield* readText(queriesPath).pipe(Effect.flatMap(decodeQueries));
+const runBakeoff = Effect.fn("Bakeoff.run")(function* (limit: number | undefined, providers: Providers) {
+  const allQueries = yield* Corpus.loadQueries;
   const queries = limit === undefined ? allQueries : allQueries.slice(0, limit);
-  const distractors =
-    limit === undefined ? yield* readText(distractorsPath).pipe(Effect.flatMap(decodeDistractors)) : [];
-  const repos = new Set([...expectedRepos(queries), ...distractors]);
-  const corpus = yield* readText(corpusPath).pipe(
-    Effect.flatMap(decodeCorpus),
-    Effect.map((all) => all.filter((repo) => repos.has(repo.fullName))),
-    Effect.catchTag("BakeoffFailed", () =>
-      Effect.fail(new BakeoffFailed({ reason: "no corpus, run `bun run evals/bakeoff.ts corpus` first" })),
-    ),
-  );
+  const distractors = limit === undefined ? yield* Corpus.loadDistractors : [];
+  const repos = new Set([...Corpus.expectedRepos(queries), ...distractors]);
+  const corpus = (yield* Corpus.loadCorpus).filter((repo) => repos.has(repo.fullName));
   const pricing = yield* loadPricing;
-  yield* Console.log(
-    `${fake ? "Fake" : "Gateway"} bakeoff: ${queries.length} queries over ${corpus.length} repos, recall at ${topK}`,
-  );
+  yield* Console.log(`Bakeoff: ${queries.length} queries over ${corpus.length} repos, recall at ${topK}`);
 
   const baseline = Models.summaryModel;
   const summarizeWith = (model: string) => summarizeCorpus(model, corpus).pipe(Effect.provide(providers.text(model)));
@@ -339,7 +219,7 @@ const runBakeoff = Effect.fn("Bakeoff.run")(function* (fake: boolean, limit: num
   }
   const embeddingRanking = rank(embeddingRows, queries.length, (row) => row.medianMillis);
   const embeddingWinner = embeddingCandidates.find((model) => model.id === embeddingRanking[0]?.model);
-  if (embeddingWinner === undefined) return yield* new BakeoffFailed({ reason: "no embedding model scored" });
+  if (embeddingWinner === undefined) return yield* new NoEmbeddingScored();
 
   const summaryRows: Array<Row> = [];
   for (const model of summaryCandidates) {
@@ -356,7 +236,6 @@ const runBakeoff = Effect.fn("Bakeoff.run")(function* (fake: boolean, limit: num
     });
   }
   const summaryRanking = rank(summaryRows, queries.length, (row) => row.cost);
-  const summaryWinner = summaryRanking[0]?.model ?? baseline;
 
   yield* Console.log(
     [
@@ -372,55 +251,31 @@ const runBakeoff = Effect.fn("Bakeoff.run")(function* (fake: boolean, limit: num
   yield* Console.log(`Embedding ranking: ${embeddingRanking.map((row) => row.model).join(" > ")}`);
   yield* Console.log(`Summary ranking: ${summaryRanking.map((row) => row.model).join(" > ")}`);
   yield* Console.log(
-    `Chosen: summary ${summaryWinner}, embedding ${embeddingWinner.id} at ${embeddingWinner.dimensions} dimensions`,
+    `Chosen: summary ${summaryRanking[0]?.model ?? baseline}, embedding ${embeddingWinner.id} at ${embeddingWinner.dimensions} dimensions`,
   );
-
   const totalCost = [baselineRun, ...embeddingRows, ...summaryRows.filter((row) => row.model !== baseline)].reduce(
     (sum, row) => sum + row.cost,
     0,
   );
   yield* Console.log(`Total model cost: $${totalCost.toFixed(4)}`);
-  if (fake || limit !== undefined) return yield* Console.log("Partial run, packages/ai/src/models.ts left unchanged");
-  yield* writeText(modelsPath, modelsSource(summaryWinner, embeddingWinner));
-  yield* Console.log("Wrote packages/ai/src/models.ts");
 });
 
-const runCorpus = Effect.gen(function* () {
-  const queries = yield* readText(queriesPath).pipe(Effect.flatMap(decodeQueries));
-  const repos = expectedRepos(queries);
-  const distractors = yield* readText(distractorsPath).pipe(Effect.flatMap(decodeDistractors));
-  const { corpus, problems } = yield* fetchCorpus(repos);
-  const extra = yield* fetchCorpus(distractors);
-  const all = [...corpus, ...extra.corpus];
-  yield* writeText(corpusPath, yield* encodeCorpus(all));
-  const withReadme = all.filter((repo) => repo.readme !== null).length;
-  yield* Console.log(
-    `Wrote ${corpus.length} of ${repos.length} expected repos and ${extra.corpus.length} of ${distractors.length} distractors to evals/.cache/corpus.json, ${withReadme} with a README`,
-  );
-  if (problems.length > 0) {
-    for (const problem of problems) yield* Console.log(problem);
-    return yield* new BakeoffFailed({ reason: `${problems.length} expected repos need fixing in evals/queries.json` });
-  }
-});
+const gatewayProviders: Providers = {
+  text: (model) => Gateway.layerTextGeneration(model).pipe(Layer.provide(Gateway.layerProviderConfig)),
+  embeddings: (model) => Gateway.layerEmbeddings(model).pipe(Layer.provide(Gateway.layerProviderConfig)),
+};
+
+const fakeProviders: Providers = {
+  text: (model) => Fake.layerTextGeneration(SummarizeFake.respond, model),
+  embeddings: Fake.layerEmbeddings,
+};
 
 const args = Bun.argv.slice(2);
-const fake = args.includes("--fake");
 const limitIndex = args.indexOf("--limit");
 const limit = limitIndex === -1 ? undefined : Number(args[limitIndex + 1]);
 
-const gatewayProviders = Effect.gen(function* () {
-  const provider = Gateway.layerProvider({ apiKey: yield* Config.Redacted("AI_GATEWAY_API_KEY") });
-  return {
-    text: (model) => Gateway.layerTextGeneration(model).pipe(Layer.provide(provider)),
-    embeddings: (model) => Gateway.layerEmbeddings(model).pipe(Layer.provide(provider)),
-  } satisfies Providers;
-});
-
-const fakeProviders: Providers = { text: Fake.layerTextGeneration, embeddings: Fake.layerEmbeddings };
-
-const main = Effect.gen(function* () {
-  if (args[0] === "corpus") return yield* runCorpus;
-  return yield* runBakeoff(fake, limit, fake ? fakeProviders : yield* gatewayProviders);
-});
-
-await Effect.runPromise(main.pipe(Effect.provide(FetchHttpClient.layer)));
+await Effect.runPromise(
+  runBakeoff(limit, args.includes("--fake") ? fakeProviders : gatewayProviders).pipe(
+    Effect.provide(FetchHttpClient.layer),
+  ),
+);

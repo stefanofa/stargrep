@@ -52,7 +52,7 @@ const fakeClaude = (process: Process) => {
       });
     }),
   );
-  const layer = ClaudeCode.layer({ model: "haiku" }).pipe(
+  const layer = ClaudeCode.layer("haiku").pipe(
     Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
   );
   return { seen, layer };
@@ -66,7 +66,11 @@ const repo: Summarize.RepoFacts = {
   readme: "PRIVATE README TEXT about terminal dashboards",
 };
 
-const summary = { summary: "A Rust library for terminal user interfaces.", keywords: ["tui"], kind: "library" };
+const summary: Summarize.RepoSummary = {
+  summary: "A Rust library for terminal user interfaces.",
+  keywords: ["tui"],
+  kind: "library",
+};
 
 const result = (fields: Record<string, unknown>) =>
   JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "", ...fields });
@@ -75,7 +79,7 @@ describe("claude code text generation", () => {
   it.effect("decodes structured_output through the summary schema", () => {
     const { seen, layer } = fakeClaude({ stdout: result({ structured_output: summary }) });
     return Effect.gen(function* () {
-      expect(yield* Summarize.summarize(repo)).toEqual(summary as Summarize.RepoSummary);
+      expect(yield* Summarize.summarize(repo)).toEqual(summary);
       expect(seen.args).toContain("--json-schema");
       expect(seen.args.slice(seen.args.indexOf("--model"), seen.args.indexOf("--model") + 2)).toEqual([
         "--model",

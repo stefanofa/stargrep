@@ -6,6 +6,7 @@ import * as ClaudeCode from "./claude-code.ts";
 import * as Fake from "./fake.ts";
 import * as Gateway from "./gateway.ts";
 import * as Models from "./models.ts";
+import * as SummarizeFake from "./prompts/summarize.fake.ts";
 
 const TextProvider = Schema.Literals(["gateway", "claude-code", "fake"]);
 type TextProvider = typeof TextProvider.Type;
@@ -41,24 +42,20 @@ const requireLocal = (provider: string, mode: typeof Mode.Type, ci: boolean) => 
   return Effect.void;
 };
 
-const gatewayProvider = Layer.unwrap(
-  Config.Redacted("AI_GATEWAY_API_KEY").pipe(Effect.map((apiKey) => Gateway.layerProvider({ apiKey }))),
-);
-
 const textLayer = (provider: TextProvider, claudeCodeModel: string) => {
   switch (provider) {
     case "gateway":
-      return Gateway.layerTextGeneration(Models.summaryModel).pipe(Layer.provide(gatewayProvider));
+      return Gateway.layerTextGeneration(Models.summaryModel).pipe(Layer.provide(Gateway.layerProviderConfig));
     case "claude-code":
-      return ClaudeCode.layer({ model: claudeCodeModel });
+      return ClaudeCode.layer(claudeCodeModel);
     case "fake":
-      return Fake.layerTextGeneration();
+      return Fake.layerTextGeneration(SummarizeFake.respond);
   }
 };
 
 const embeddingsLayer = (provider: EmbeddingsProvider) =>
   provider === "gateway"
-    ? Gateway.layerEmbeddings(Models.embeddingModel).pipe(Layer.provide(gatewayProvider))
+    ? Gateway.layerEmbeddings(Models.embeddingModel).pipe(Layer.provide(Gateway.layerProviderConfig))
     : Fake.layerEmbeddings();
 
 export const layer = Layer.unwrap(

@@ -26,13 +26,14 @@ export const RepoSummary = Schema.Struct({
 });
 export type RepoSummary = typeof RepoSummary.Type;
 
-export interface RepoFacts {
-  readonly fullName: string;
-  readonly description: string | null;
-  readonly topics: ReadonlyArray<string>;
-  readonly language: string | null;
-  readonly readme: string | null;
-}
+export const RepoFacts = Schema.Struct({
+  fullName: Schema.String,
+  description: Schema.NullOr(Schema.String),
+  topics: Schema.Array(Schema.String),
+  language: Schema.NullOr(Schema.String),
+  readme: Schema.NullOr(Schema.String),
+});
+export type RepoFacts = typeof RepoFacts.Type;
 
 export const readmeLimit = 24_000;
 

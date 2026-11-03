@@ -1,36 +1,29 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { AiOutputInvalid, AiRequestFailed, AiTimeout } from "./errors.ts";
-import * as SchemaBridge from "./schema-bridge.ts";
+import { AiOutputInvalid, AiRequestFailed } from "./errors.ts";
 import * as TextGeneration from "./text-generation.ts";
-
-export interface ClaudeCodeConfig {
-  readonly model: string;
-  readonly binary?: string;
-  readonly timeout?: Duration.Duration;
-}
-
-const defaultTimeout = Duration.minutes(3);
 
 const ResultEnvelope = Schema.Struct({
   type: Schema.Literal("result"),
   is_error: Schema.Boolean,
   structured_output: Schema.optional(Schema.Unknown),
+  usage: Schema.optional(
+    Schema.Struct({ input_tokens: Schema.optional(Schema.Finite), output_tokens: Schema.optional(Schema.Finite) }),
+  ),
 });
 const decodeEnvelope = Schema.decodeUnknownEffect(Schema.fromJsonString(ResultEnvelope));
 
-const args = (model: string, request: TextGeneration.GenerateRequest<unknown>): ReadonlyArray<string> => [
+const args = (model: string, request: TextGeneration.RunRequest): ReadonlyArray<string> => [
   "-p",
   "--output-format",
   "json",
   "--json-schema",
-  JSON.stringify(SchemaBridge.jsonSchema(request.schema)),
+  JSON.stringify(request.jsonSchema),
   "--model",
   model,
   "--system-prompt",
@@ -48,19 +41,15 @@ const args = (model: string, request: TextGeneration.GenerateRequest<unknown>): 
   "dontAsk",
 ];
 
-const make = Effect.fn("ClaudeCode.make")(function* (config: ClaudeCodeConfig) {
+const make = Effect.fn("ClaudeCode.make")(function* (model: string) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const model = config.model;
-  const timeout = config.timeout ?? defaultTimeout;
   const failed = (detail: string) => new AiRequestFailed({ operation: "generate", model, detail });
   const invalid = (detail: string) => new AiOutputInvalid({ operation: "generate", model, detail });
 
-  const run = Effect.fn("ClaudeCode.run")(
-    function* (request: TextGeneration.GenerateRequest<unknown>) {
+  const exec = Effect.fn("ClaudeCode.exec")(
+    function* (request: TextGeneration.RunRequest) {
       const handle = yield* spawner.spawn(
-        ChildProcess.make(config.binary ?? "claude", args(model, request), {
-          stdin: Stream.encodeText(Stream.make(request.prompt)),
-        }),
+        ChildProcess.make("claude", args(model, request), { stdin: Stream.encodeText(Stream.make(request.prompt)) }),
       );
       const [stdout, exitCode] = yield* Effect.all(
         [Stream.mkString(Stream.decodeText(handle.stdout)), handle.exitCode, Stream.runDrain(handle.stderr)],
@@ -72,29 +61,23 @@ const make = Effect.fn("ClaudeCode.make")(function* (config: ClaudeCodeConfig) {
     Effect.catchTags({ PlatformError: () => Effect.fail(failed("could not run the claude binary")) }),
   );
 
-  const generate = Effect.fn("TextGeneration.generate")(
-    function* <A>(request: TextGeneration.GenerateRequest<A>) {
-      const { stdout, exitCode } = yield* run(request);
-      if (exitCode !== 0) return yield* failed(`claude exited with code ${exitCode}`);
-      const envelope = yield* decodeEnvelope(stdout).pipe(
-        Effect.catchTags({
-          SchemaError: () => Effect.fail(invalid(`claude printed ${stdout.length} bytes that are not a JSON result`)),
-        }),
-      );
-      if (envelope.is_error) return yield* failed("claude reported an error result");
-      if (envelope.structured_output === undefined) return yield* invalid("claude returned no structured output");
-      const output = yield* SchemaBridge.validate(request.schema, envelope.structured_output);
-      if (Option.isNone(output)) return yield* invalid("structured output does not match the schema");
-      return output.value;
-    },
-    Effect.timeoutOrElse({
-      duration: timeout,
-      orElse: () =>
-        Effect.fail(new AiTimeout({ operation: "generate", model, timeoutMillis: Duration.toMillis(timeout) })),
-    }),
-  );
+  const run = Effect.fn("ClaudeCode.run")(function* (request: TextGeneration.RunRequest) {
+    const { stdout, exitCode } = yield* exec(request);
+    if (exitCode !== 0) return yield* failed(`claude exited with code ${exitCode}`);
+    const envelope = yield* decodeEnvelope(stdout).pipe(
+      Effect.catchTags({
+        SchemaError: () => Effect.fail(invalid(`claude printed ${stdout.length} bytes that are not a JSON result`)),
+      }),
+    );
+    if (envelope.is_error) return yield* failed("claude reported an error result");
+    if (envelope.structured_output === undefined) return yield* invalid("claude returned no structured output");
+    return {
+      output: envelope.structured_output,
+      usage: { inputTokens: envelope.usage?.input_tokens, outputTokens: envelope.usage?.output_tokens },
+    };
+  });
 
-  return TextGeneration.TextGeneration.of({ model, generate });
+  return TextGeneration.make({ provider: "claude-code", model, timeout: Duration.minutes(3), run });
 });
 
-export const layer = (config: ClaudeCodeConfig) => Layer.effect(TextGeneration.TextGeneration, make(config));
+export const layer = (model: string) => Layer.effect(TextGeneration.TextGeneration, make(model));

@@ -19,13 +19,13 @@ This doc explains how Stargrep picks its embedding and summary models, what the 
 
 Product queries name a product that has no repo of its own, so only a model that knows what the product does can match them. Non-English queries check that English summaries still match queries in other languages.
 
-Every expected repo was checked against the GitHub API on 2026-11-03. Names are the current `owner/name` that GitHub returns after renames. `bun run evals/bakeoff.ts corpus` repeats the check and fails with a list of any repo that is missing or renamed.
+Every expected repo was checked against the GitHub API on 2026-11-03. Names are the current `owner/name` that GitHub returns after renames. `bun run evals/corpus.ts` repeats the check and fails with a list of any repo that is missing or renamed.
 
 ## Corpus
 
 The corpus is the 238 expected repos plus the 498 repos in `evals/distractors.json`, 736 in all. The distractors are the most-starred repos on GitHub on 2026-11-03, minus the expected ones. They stand in for the rest of a developer's star list. Without them every model scored between 0.982 and 0.995, so the eval could not tell models apart.
 
-`bun run evals/bakeoff.ts corpus` fetches each repo's description, topics, language, and README through the GitHub GraphQL API, in 30 requests, and caches them in `evals/.cache/corpus.json`, which git ignores.
+`bun run evals/corpus.ts` fetches each repo's description, topics, language, and README through the GitHub GraphQL API, in 30 requests, and caches them in `evals/.cache/corpus.json`, which git ignores.
 
 ## Method
 
@@ -82,7 +82,7 @@ Query latency here is measured from a laptop. The plan's perf lane measures it a
 
 ## Recall bar
 
-Search must reach **recall@10 of 0.97** on this query set over this 736-repo corpus, loaded as one account's stars and enriched by the production pipeline. `evals/recall.ts` enforces it.
+Search must reach **recall@10 of 0.97** on this query set over this 736-repo corpus, loaded as one account's stars and enriched by the production pipeline. P8 adds `evals/recall.ts`, which enforces it in CI.
 
 The chosen pair measured 0.988 and 0.990 with vector search alone. Hybrid search should not score lower. Run-to-run noise is about one query, 0.008. The bar is the measured recall minus two queries of noise, rounded down to 0.97. A result below it means search lost at least two queries' worth of results, which is a real regression and not noise.
 
@@ -93,13 +93,13 @@ The AI Gateway ledger shows $1.10 for every run on 2026-11-03: a 10-query smoke 
 ## Run it
 
 ```sh
-GITHUB_TOKEN=... bun run evals/bakeoff.ts corpus
+GITHUB_TOKEN=... bun run evals/corpus.ts
 AI_GATEWAY_API_KEY=... bun run evals/bakeoff.ts --limit 10
 AI_GATEWAY_API_KEY=... bun run evals/bakeoff.ts
 bun run evals/bakeoff.ts --fake
 ```
 
-`--limit N` scores only the first N queries against their own expected repos, without distractors, as a cheap smoke test. `--fake` runs the whole pipeline on the fake layers from `@stargrep/ai/fake` and needs no key. A full gateway run writes the winners to `packages/ai/src/models.ts`. A `--limit` or `--fake` run never does.
+`--limit N` scores only the first N queries against their own expected repos, without distractors, as a cheap smoke test. `--fake` runs the whole pipeline on the fake layers from `@stargrep/ai/fake` and needs no key. No run edits code. To adopt a result, copy the models from the `Chosen:` line into `packages/ai/src/models.ts` by hand.
 
 To compare summary samples locally without the gateway, run `evals/summarize.ts` through the Claude Code CLI, as `docs/architecture.md` describes under "AI providers".
 

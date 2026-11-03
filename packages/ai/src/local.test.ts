@@ -4,9 +4,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import * as AiConfig from "./config.ts";
-import * as Embeddings from "./embeddings.ts";
-import * as Models from "./models.ts";
+import * as Local from "./local.ts";
 import * as TextGeneration from "./text-generation.ts";
 
 const unusedSpawner = Layer.succeed(
@@ -15,26 +13,15 @@ const unusedSpawner = Layer.succeed(
 );
 
 const build = (env: Record<string, string>) =>
-  Layer.build(AiConfig.layer.pipe(Layer.provide(unusedSpawner))).pipe(
+  Layer.build(Local.layer.pipe(Layer.provide(unusedSpawner))).pipe(
     Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
   );
 
-describe("ai provider config", () => {
-  it.effect("defaults to the gateway for both ports", () =>
-    Effect.gen(function* () {
-      const context = yield* build({ AI_GATEWAY_API_KEY: "test-key" });
-      const services = yield* Effect.all([TextGeneration.TextGeneration, Embeddings.Embeddings]).pipe(
-        Effect.provide(context),
-      );
-      expect(services[0].model).toBe(Models.summaryModel);
-      expect(services[1].model).toEqual(Models.embeddingModel);
-    }),
-  );
-
+describe("local provider selector", () => {
   it.effect("refuses the claude code harness outside local mode", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(build({ AI_TEXT_PROVIDER: "claude-code", AI_GATEWAY_API_KEY: "test-key" }));
-      expect(error).toBeInstanceOf(AiConfig.AiProviderNotAllowed);
+      expect(error).toBeInstanceOf(Local.AiProviderNotAllowed);
       expect(error.message).toBe("AI provider 'claude-code' runs only when STARGREP_MODE is local");
     }),
   );

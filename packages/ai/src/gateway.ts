@@ -3,28 +3,22 @@ import {
   APICallError,
   embedMany,
   generateText,
+  jsonSchema,
   NoObjectGeneratedError,
   Output,
   type EmbeddingModel as SdkEmbeddingModel,
   type LanguageModel as SdkLanguageModel,
 } from "ai";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Metric from "effect/Metric";
 import * as Redacted from "effect/Redacted";
 import * as Embeddings from "./embeddings.ts";
-import { AiModelNotFound, AiOutputInvalid, AiRequestFailed, AiTimeout, type Operation } from "./errors.ts";
-import type { EmbeddingModel } from "./models.ts";
+import { AiModelNotFound, AiOutputInvalid, AiRequestFailed, type Operation } from "./errors.ts";
+import * as Models from "./models.ts";
 import * as TextGeneration from "./text-generation.ts";
-
-const generateTimeout = Duration.seconds(60);
-const embedTimeout = Duration.seconds(30);
-
-export const tokensUsed = Metric.counter("stargrep_ai_tokens", {
-  description: "Model tokens used, by model and direction.",
-});
 
 export class AiProvider extends Context.Service<
   AiProvider,
@@ -42,81 +36,71 @@ const detailOf = (cause: unknown) => {
 const fromSdkError = (operation: Operation, model: string) => (cause: unknown) => {
   if (GatewayModelNotFoundError.isInstance(cause)) return new AiModelNotFound({ model });
   if (NoObjectGeneratedError.isInstance(cause))
-    return new AiOutputInvalid({ operation, model, detail: "structured output does not match the schema" });
+    return new AiOutputInvalid({ operation, model, detail: "the model did not return a JSON object" });
   return new AiRequestFailed({ operation, model, detail: detailOf(cause) });
 };
 
-const withTimeout =
-  (operation: Operation, model: string, timeout: Duration.Duration) =>
-  <A, E>(effect: Effect.Effect<A, E>) =>
-    Effect.timeoutOrElse(effect, {
-      duration: timeout,
-      orElse: () => Effect.fail(new AiTimeout({ operation, model, timeoutMillis: Duration.toMillis(timeout) })),
-    });
-
-const countTokens = (model: string, direction: "input" | "output", tokens: number | undefined) =>
-  Metric.update(Metric.withAttributes(tokensUsed, { model, direction }), tokens ?? 0);
-
-const makeTextGeneration = Effect.fn("Gateway.makeTextGeneration")(function* (model: string) {
-  const provider = yield* AiProvider;
-  const generate = <A>(request: TextGeneration.GenerateRequest<A>) =>
-    Effect.tryPromise({
-      try: (abortSignal) =>
-        generateText({
-          model: provider.languageModel(model),
-          output: Output.object({ schema: request.schema }),
-          system: request.system,
-          prompt: request.prompt,
-          maxRetries: 0,
-          abortSignal,
-        }),
-      catch: fromSdkError("generate", model),
-    }).pipe(
-      withTimeout("generate", model, generateTimeout),
-      Effect.tap((result) =>
-        Effect.all([
-          countTokens(model, "input", result.usage.inputTokens),
-          countTokens(model, "output", result.usage.outputTokens),
-        ]),
-      ),
-      Effect.map((result) => result.output),
-      Effect.withSpan("TextGeneration.generate", { attributes: { provider: "gateway", model } }),
-    );
-  return TextGeneration.TextGeneration.of({ model, generate });
-});
-
-const makeEmbeddings = Effect.fn("Gateway.makeEmbeddings")(function* (model: EmbeddingModel) {
-  const provider = yield* AiProvider;
-  const embed = Effect.fn("Embeddings.embed")(function* (values: ReadonlyArray<string>) {
-    const result = yield* Effect.tryPromise({
-      try: (abortSignal) =>
-        embedMany({
-          model: provider.embeddingModel(model.id),
-          values: [...values],
-          dimensions: model.dimensions,
-          maxRetries: 0,
-          abortSignal,
-        }),
-      catch: fromSdkError("embed", model.id),
-    }).pipe(withTimeout("embed", model.id, embedTimeout));
-    yield* countTokens(model.id, "input", result.usage.tokens);
-    const wrongSize = result.embeddings.find((embedding) => embedding.length !== model.dimensions);
-    if (result.embeddings.length !== values.length || wrongSize !== undefined) {
-      return yield* new AiOutputInvalid({
-        operation: "embed",
-        model: model.id,
-        detail: `expected ${values.length} vectors of ${model.dimensions} dimensions, got ${result.embeddings.length} with ${wrongSize?.length ?? model.dimensions}`,
-      });
-    }
-    return result.embeddings.map((vector): Embeddings.Embedding => ({ model: model.id, vector }));
-  });
-  return Embeddings.Embeddings.of({ model, embed });
-});
-
 export const layerTextGeneration = (model: string) =>
-  Layer.effect(TextGeneration.TextGeneration, makeTextGeneration(model));
+  Layer.effect(
+    TextGeneration.TextGeneration,
+    AiProvider.useSync((provider) =>
+      TextGeneration.make({
+        provider: "gateway",
+        model,
+        timeout: Duration.seconds(60),
+        run: (request) =>
+          Effect.tryPromise({
+            try: (abortSignal) =>
+              generateText({
+                model: provider.languageModel(model),
+                output: Output.object({ schema: jsonSchema(request.jsonSchema) }),
+                system: request.system,
+                prompt: request.prompt,
+                maxRetries: 0,
+                abortSignal,
+              }),
+            catch: fromSdkError("generate", model),
+          }).pipe(
+            Effect.map((result) => ({
+              output: result.output,
+              usage: { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens },
+            })),
+          ),
+      }),
+    ),
+  );
 
-export const layerEmbeddings = (model: EmbeddingModel) => Layer.effect(Embeddings.Embeddings, makeEmbeddings(model));
+export const layerEmbeddings = (model: Models.EmbeddingModel) =>
+  Layer.effect(
+    Embeddings.Embeddings,
+    AiProvider.useSync((provider) =>
+      Embeddings.make({
+        provider: "gateway",
+        model,
+        timeout: Duration.seconds(30),
+        run: (values) =>
+          Effect.tryPromise({
+            try: (abortSignal) =>
+              embedMany({
+                model: provider.embeddingModel(model.id),
+                values: [...values],
+                dimensions: model.dimensions,
+                maxRetries: 0,
+                abortSignal,
+              }),
+            catch: fromSdkError("embed", model.id),
+          }).pipe(Effect.map((result) => ({ vectors: result.embeddings, tokens: result.usage.tokens }))),
+      }),
+    ),
+  );
 
 export const layerProvider = (config: { readonly apiKey: Redacted.Redacted<string> }) =>
   Layer.sync(AiProvider, () => AiProvider.of(createGateway({ apiKey: Redacted.value(config.apiKey) })));
+
+export const layerProviderConfig = Layer.unwrap(
+  Config.Redacted("AI_GATEWAY_API_KEY").pipe(Effect.map((apiKey) => layerProvider({ apiKey }))),
+);
+
+export const layer = Layer.merge(layerTextGeneration(Models.summaryModel), layerEmbeddings(Models.embeddingModel)).pipe(
+  Layer.provide(layerProviderConfig),
+);

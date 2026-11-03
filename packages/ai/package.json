@@ -3,15 +3,15 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./claude-code": "./src/claude-code.ts",
-    "./config": "./src/config.ts",
     "./embeddings": "./src/embeddings.ts",
     "./errors": "./src/errors.ts",
     "./fake": "./src/fake.ts",
     "./gateway": "./src/gateway.ts",
+    "./local": "./src/local.ts",
     "./models": "./src/models.ts",
     "./schema-bridge": "./src/schema-bridge.ts",
     "./summarize": "./src/prompts/summarize.ts",
+    "./summarize.fake": "./src/prompts/summarize.fake.ts",
     "./text-generation": "./src/text-generation.ts"
   },
   "scripts": {
