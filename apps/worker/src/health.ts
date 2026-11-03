@@ -6,18 +6,17 @@ import { Client } from "pg";
 class DatabaseUnavailable extends Schema.TaggedError<DatabaseUnavailable, { readonly brand: unique symbol }>()(
   "DatabaseUnavailable",
   {
+    operation: Schema.Literals(["health check", "transaction"]),
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return "Postgres health check failed";
+    return `Postgres ${this.operation} failed`;
   }
 }
 
-interface DatabaseHealth {
-  readonly postgres: string;
-  readonly pgvector: string | null;
-}
+const DatabaseHealth = Schema.Struct({ postgres: Schema.String, pgvector: Schema.NullOr(Schema.String) });
+const TransactionResult = Schema.Struct({ pid: Schema.Int, sum: Schema.Int });
 
 const connect = (connectionString: string) =>
   Effect.acquireRelease(
@@ -32,28 +31,19 @@ const connect = (connectionString: string) =>
     (client) => Effect.promise(() => client.end()).pipe(Effect.ignore),
   );
 
-const checkDatabase = Effect.fn("Health.checkDatabase")(
-  function* (connectionString: string) {
-    const client = yield* connect(connectionString);
-    return yield* Effect.tryPromise(async (): Promise<DatabaseHealth> => {
-      await client.query("begin read only");
-      const version = await client.query<{ version: string }>("select version()");
-      const vector = await client.query<{ extversion: string }>(
-        "select extversion from pg_extension where extname = $1",
-        ["vector"],
-      );
-      await client.query("commit");
-      return { postgres: version.rows[0]?.version ?? "unknown", pgvector: vector.rows[0]?.extversion ?? null };
-    });
-  },
-  Effect.scoped,
-  Effect.timeout("10 seconds"),
-  Effect.mapError((cause) => new DatabaseUnavailable({ cause })),
-);
-
-export const healthResponse = (connectionString: string) =>
-  checkDatabase(connectionString).pipe(
-    Effect.flatMap((health) => HttpServerResponse.json(health)),
+const queryRow = <S extends Schema.Top>(
+  operation: DatabaseUnavailable["operation"],
+  connectionString: string,
+  row: S,
+  run: (client: Client) => Promise<unknown>,
+) =>
+  connect(connectionString).pipe(
+    Effect.flatMap((client) => Effect.tryPromise(() => run(client))),
+    Effect.flatMap(Schema.decodeUnknownEffect(row)),
+    Effect.scoped,
+    Effect.timeout("10 seconds"),
+    Effect.mapError((cause) => new DatabaseUnavailable({ operation, cause })),
+    Effect.flatMap((value) => HttpServerResponse.json(value)),
     Effect.catchTags({
       DatabaseUnavailable: (error) =>
         Effect.logError(error.message, error.cause).pipe(
@@ -61,3 +51,20 @@ export const healthResponse = (connectionString: string) =>
         ),
     }),
   );
+
+export const healthResponse = (connectionString: string) =>
+  queryRow("health check", connectionString, DatabaseHealth, async (client) => {
+    const { rows } = await client.query(
+      "select version() as postgres, (select extversion from pg_extension where extname = $1) as pgvector",
+      ["vector"],
+    );
+    return rows[0];
+  }).pipe(Effect.withSpan("Health.checkDatabase"));
+
+export const transactionResponse = (connectionString: string) =>
+  queryRow("transaction", connectionString, TransactionResult, async (client) => {
+    await client.query("begin");
+    const { rows } = await client.query("select pg_backend_pid() as pid, $1::int + $2::int as sum", [20, 22]);
+    await client.query("commit");
+    return rows[0];
+  }).pipe(Effect.withSpan("Health.runTransaction"));
