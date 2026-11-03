@@ -3,12 +3,13 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as HttpClientError from "effect/http/HttpClientError";
+import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
+import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -36,7 +37,6 @@ import * as StarList from "./star-list.ts";
 import * as TokenBudget from "./token-budget.ts";
 import * as TokenGate from "./token-gate.ts";
 
-const REQUEST_TIMEOUT = Duration.seconds(30);
 const MAX_RETRY_WAIT = Duration.minutes(1);
 const MAX_RETRIES = 3;
 
@@ -85,10 +85,15 @@ const rateLimitWait = (response: HttpClientResponse.HttpClientResponse, now: num
   return response.status === 429 ? 60_000 : undefined;
 };
 
+const endpoint = (request: HttpClientRequest.HttpClientRequest) => ({
+  method: request.method,
+  path: new URL(request.url).pathname,
+});
+
 const classify = Effect.fnUntraced(function* (operation: Operation, response: HttpClientResponse.HttpClientResponse) {
   if ((response.status >= 200 && response.status < 300) || response.status === 304) return response;
   if (response.status === 401) return yield* new Unauthorized({ operation });
-  if (response.status === 404) return yield* new NotFound({ operation, path: new URL(response.request.url).pathname });
+  if (response.status === 404) return yield* new NotFound({ operation, path: endpoint(response.request).path });
   if (response.status === 403 || response.status === 429) {
     const wait = rateLimitWait(response, yield* Clock.currentTimeMillis);
     if (wait !== undefined) {
@@ -101,10 +106,9 @@ const classify = Effect.fnUntraced(function* (operation: Operation, response: Ht
   }
   return yield* new GitHubRequestFailed({
     operation,
+    ...endpoint(response.request),
     status: response.status,
-    cause: new HttpClientError.HttpClientError({
-      reason: new HttpClientError.StatusCodeError({ request: response.request, response }),
-    }),
+    reason: "status",
   });
 });
 
@@ -115,39 +119,50 @@ const make = Effect.gen(function* () {
     ReadmeEntry,
   );
 
-  const send = (operation: Operation, request: HttpClientRequest.HttpClientRequest) =>
-    gate
-      .execute(
-        request.pipe(HttpClientRequest.setHeaders({ "x-github-api-version": "2022-11-28", "user-agent": "stargrep" })),
-      )
+  const exchange = <A>(
+    operation: Operation,
+    request: HttpClientRequest.HttpClientRequest,
+    read: (
+      response: HttpClientResponse.HttpClientResponse,
+    ) => Effect.Effect<A, GitHubError | HttpClientError.HttpClientError | Schema.SchemaError>,
+  ) => {
+    const sent = request.pipe(
+      HttpClientRequest.setHeaders({ "x-github-api-version": "2022-11-28", "user-agent": "stargrep" }),
+    );
+    return gate
+      .execute(sent, (response) => Effect.flatMap(classify(operation, response), read))
       .pipe(
         Effect.catchTags({
-          HttpClientError: (cause) => Effect.fail(new GitHubRequestFailed({ operation, status: null, cause })),
+          HttpClientError: (error) =>
+            Effect.fail(
+              error.reason._tag === "DecodeError" || error.reason._tag === "EmptyBodyError"
+                ? new GitHubResponseInvalid({ operation, ...endpoint(request), reason: "unreadable-body" })
+                : new GitHubRequestFailed({ operation, ...endpoint(request), status: null, reason: "transport" }),
+            ),
+          SchemaError: () =>
+            Effect.fail(new GitHubResponseInvalid({ operation, ...endpoint(request), reason: "schema-mismatch" })),
+          TimeoutError: () =>
+            Effect.fail(new GitHubRequestFailed({ operation, ...endpoint(request), status: null, reason: "timeout" })),
         }),
-        Effect.flatMap((response) => classify(operation, response)),
+        Effect.retry({ schedule: retrySchedule, while: isRetryable, times: MAX_RETRIES }),
       );
-
-  const withRetry = <A>(operation: Operation, attempt: Effect.Effect<A, GitHubError>) =>
-    attempt.pipe(
-      Effect.timeoutOrElse({
-        duration: REQUEST_TIMEOUT,
-        orElse: () => Effect.fail(new GitHubRequestFailed({ operation, status: null, cause: "timed out" })),
-      }),
-      Effect.retry({ schedule: retrySchedule, while: isRetryable, times: MAX_RETRIES }),
-    );
+  };
 
   const starPage = Effect.fn("GitHub.starPage")(function* (login: Login, page: number) {
-    return yield* withRetry(
-      "list-stars",
-      send("list-stars", StarList.request(login, page)).pipe(
-        Effect.flatMap((response) =>
-          response.json.pipe(
-            Effect.flatMap(StarList.decodeStarItems),
-            Effect.map((items) => StarList.toPage(items, response.headers.link)),
-            Effect.mapError((cause) => new GitHubResponseInvalid({ operation: "list-stars", cause })),
-          ),
-        ),
-      ),
+    const request = StarList.request(login, page);
+    return yield* exchange("list-stars", request, (response) =>
+      Effect.gen(function* () {
+        const items = yield* StarList.decodeStarItems(yield* response.json);
+        const next = StarList.nextPage(response.headers.link);
+        if (Result.isFailure(next)) {
+          return yield* new GitHubResponseInvalid({
+            operation: "list-stars",
+            ...endpoint(request),
+            reason: "invalid-link",
+          });
+        }
+        return StarList.toPage(items, next.success);
+      }),
     );
   });
 
@@ -157,14 +172,10 @@ const make = Effect.gen(function* () {
     );
 
   const factsBatch = Effect.fn("GitHub.factsBatch")(function* (ids: ReadonlyArray<RepoNodeId>) {
-    return yield* withRetry(
-      "repo-facts",
+    const request = Facts.request(ids);
+    return yield* exchange("repo-facts", request, (response) =>
       Effect.gen(function* () {
-        const response = yield* send("repo-facts", Facts.request(ids));
-        const body = yield* response.json.pipe(
-          Effect.flatMap(Facts.decodeResponse),
-          Effect.mapError((cause) => new GitHubResponseInvalid({ operation: "repo-facts", cause })),
-        );
+        const body = yield* Facts.decodeResponse(yield* response.json);
         const errors = (body.errors ?? []).filter((error) => error.type !== "NOT_FOUND");
         if (errors.some((error) => error.type === "RATE_LIMITED")) {
           return yield* new RateLimited({
@@ -174,10 +185,12 @@ const make = Effect.gen(function* () {
           });
         }
         if (errors.length > 0 || !body.data) {
+          yield* Effect.logWarning("GitHub GraphQL errors", { types: errors.map((error) => error.type ?? "UNKNOWN") });
           return yield* new GitHubRequestFailed({
             operation: "repo-facts",
+            ...endpoint(request),
             status: response.status,
-            cause: errors.map((error) => error.type ?? "UNKNOWN"),
+            reason: "graphql-errors",
           });
         }
         return body.data.nodes.flatMap((node) => (node === null ? [] : [Facts.toFacts(node)]));
@@ -203,28 +216,20 @@ const make = Effect.gen(function* () {
           Effect.logWarning("GitHub ETag cache read failed", { error: error.message }).pipe(Effect.as(Option.none())),
         ),
       );
-    return yield* withRetry(
+    const fetched = yield* exchange(
       "readme",
-      Effect.gen(function* () {
-        const response = yield* send(
-          "readme",
-          Option.isSome(cached) ? HttpClientRequest.setHeader(request, "if-none-match", cached.value.etag) : request,
-        );
-        if (response.status === 304 && Option.isSome(cached)) return cached.value.value;
-        const text = yield* response.text.pipe(
-          Effect.mapError((cause) => new GitHubResponseInvalid({ operation: "readme", cause })),
-        );
-        const etag = response.headers.etag;
-        if (etag !== undefined) {
-          yield* readmes
-            .set(request.url, { etag, value: text })
-            .pipe(
-              Effect.catch((error) => Effect.logWarning("GitHub ETag cache write failed", { error: error.message })),
-            );
-        }
-        return text;
-      }),
+      Option.isSome(cached) ? HttpClientRequest.setHeader(request, "if-none-match", cached.value.etag) : request,
+      (response) =>
+        response.status === 304 && Option.isSome(cached)
+          ? Effect.succeed({ text: cached.value.value, etag: undefined })
+          : Effect.map(response.text, (text) => ({ text, etag: response.headers.etag })),
     );
+    if (fetched.etag !== undefined) {
+      yield* readmes
+        .set(request.url, { etag: fetched.etag, value: fetched.text })
+        .pipe(Effect.catch((error) => Effect.logWarning("GitHub ETag cache write failed", { error: error.message })));
+    }
+    return fetched.text;
   });
 
   return GitHub.of({ stars, repoFacts, readme });

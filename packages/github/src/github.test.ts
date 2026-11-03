@@ -1,10 +1,10 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { effect } from "@stargrep/testing";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as Inspectable from "effect/Inspectable";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Fake from "./github.fixture.ts";
@@ -40,6 +40,29 @@ const collectStars = Effect.gen(function* () {
   const github = yield* GitHub.GitHub;
   return yield* Stream.runCollect(github.stars(login));
 });
+
+const reachableStrings = (root: unknown): Array<string> => {
+  const seen = new Set<unknown>();
+  const strings: Array<string> = [];
+  const visit = (value: unknown): void => {
+    if (typeof value === "string") {
+      strings.push(value);
+      return;
+    }
+    if (value === null || (typeof value !== "object" && typeof value !== "function") || seen.has(value)) return;
+    seen.add(value);
+    for (let owner: object | null = value; owner !== null; owner = Object.getPrototypeOf(owner)) {
+      if (owner === Object.prototype || owner === Function.prototype) break;
+      for (const key of Reflect.ownKeys(owner)) {
+        try {
+          visit(Reflect.get(owner, key, value));
+        } catch {}
+      }
+    }
+  };
+  visit(root);
+  return strings;
+};
 
 describe("stars", () => {
   effect("pages newest first until the last page", () => {
@@ -96,16 +119,43 @@ describe("stars", () => {
     }).pipe(Effect.provide(fake.layer));
   });
 
-  effect("keeps the token out of a failed request's cause", () => {
-    const fake = Fake.layer(() => ({ status: 422, body: { message: "Unprocessable" } }));
+  const marker = "BODY_MARKER_SECRET_PAYLOAD";
+  const leaks: ReadonlyArray<readonly [string, Fake.Handler, string]> = [
+    ["an unexpected status", () => ({ status: 422, body: { message: marker } }), "GitHubRequestFailed"],
+    [
+      "a body that does not decode",
+      () => ({ body: [{ ...starItem(1), repo: { ...starItem(1).repo, id: marker } }] }),
+      "GitHubResponseInvalid",
+    ],
+    ["a rejected token", () => ({ status: 401, body: { message: marker } }), "Unauthorized"],
+  ];
+  for (const [name, handler, tag] of leaks) {
+    effect(`keeps the token and the body out of every property of the failure on ${name}`, () => {
+      const fake = Fake.layer(handler);
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(collectStars);
+        expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toMatchObject({ _tag: tag });
+        const strings = reachableStrings(exit);
+        expect(strings.filter((value) => value.includes(Fake.token))).toEqual([]);
+        expect(strings.filter((value) => value.includes(marker))).toEqual([]);
+      }).pipe(Effect.provide(fake.layer));
+    });
+  }
+
+  test("reachableStrings finds a bearer token held in request headers", () => {
+    const request = HttpClientRequest.get("https://api.github.com/").pipe(HttpClientRequest.bearerToken(Fake.token));
+    expect(reachableStrings({ cause: { request } }).some((value) => value.includes(Fake.token))).toBe(true);
+  });
+
+  effect("fails with GitHubResponseInvalid on a next link that is not a URL", () => {
+    const fake = Fake.layer(() => ({
+      body: [starItem(1)],
+      headers: { ...Fake.rateLimitHeaders(4000), link: `<not a url>; rel="next"` },
+    }));
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(collectStars);
-      expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = Exit.isFailure(exit)
-        ? `${Cause.pretty(exit.cause)} ${Inspectable.toStringUnknown(exit.cause)}`
-        : "";
-      expect(rendered).toContain("GitHubRequestFailed");
-      expect(rendered).not.toContain(Fake.token);
+      const error = yield* Effect.flip(collectStars);
+      expect(error).toMatchObject({ _tag: "GitHubResponseInvalid", operation: "list-stars", reason: "invalid-link" });
+      expect(fake.sent).toHaveLength(1);
     }).pipe(Effect.provide(fake.layer));
   });
 

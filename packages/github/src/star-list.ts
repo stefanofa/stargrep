@@ -1,4 +1,5 @@
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { Login, RepoId, RepoName, RepoNodeId, type Star } from "./schemas.ts";
 
@@ -26,18 +27,20 @@ export const request = (login: Login, page: number) =>
     HttpClientRequest.accept("application/vnd.github.star+json"),
   );
 
-const nextLink = /<([^>]+)>;\s*rel="next"/;
+const nextLink = /<([^>]*)>;\s*rel="next"/;
+const pageNumber = /^[1-9]\d*$/;
 
-export const nextPage = (link: string | undefined): number | null => {
-  const url = link?.match(nextLink)?.[1];
-  const page = url === undefined ? null : new URL(url).searchParams.get("page");
-  return page === null ? null : Number(page);
+export const nextPage = (link: string | undefined): Result.Result<number | null, "invalid-link"> => {
+  const target = link?.match(nextLink)?.[1];
+  if (target === undefined) return Result.succeed(null);
+  const page = URL.parse(target)?.searchParams.get("page");
+  return page != null && pageNumber.test(page) ? Result.succeed(Number(page)) : Result.fail("invalid-link");
 };
 
-export const toPage = (items: ReadonlyArray<StarItem>, link: string | undefined): StarPage => ({
+export const toPage = (items: ReadonlyArray<StarItem>, next: number | null): StarPage => ({
   stars: items.map((item) => ({
     starredAt: item.starred_at,
     repo: { id: item.repo.id, nodeId: item.repo.node_id, owner: item.repo.owner.login, name: item.repo.name },
   })),
-  next: nextPage(link),
+  next,
 });

@@ -21,6 +21,7 @@ export interface Sent {
   readonly headers: Readonly<Record<string, string>>;
   readonly body: string | undefined;
   readonly startedAt: number;
+  readonly signal: AbortSignal;
 }
 
 export type Handler = (sent: Sent, index: number) => Effect.Effect<Reply> | Reply;
@@ -45,13 +46,14 @@ const toResponse = (request: HttpClientRequest.HttpClientRequest, reply: Reply) 
 
 export const make = (handler: Handler) => {
   const sent: Array<Sent> = [];
-  const client = HttpClient.make((request, url) =>
+  const client = HttpClient.make((request, url, signal) =>
     Effect.gen(function* () {
       const entry: Sent = {
         url,
         headers: request.headers,
         body: request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : undefined,
         startedAt: yield* Clock.currentTimeMillis,
+        signal,
       };
       sent.push(entry);
       const reply = handler(entry, sent.length - 1);
