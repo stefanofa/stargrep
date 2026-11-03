@@ -14,3 +14,12 @@ live(
     ).pipe(Effect.andThen(Effect.never)),
   50,
 );
+
+live(
+  "hangs past its timeout, then its finalizer fails",
+  () =>
+    Effect.acquireRelease(Effect.void, () => Effect.die(new Error("finalizer broke after timeout"))).pipe(
+      Effect.andThen(Effect.never),
+    ),
+  50,
+);

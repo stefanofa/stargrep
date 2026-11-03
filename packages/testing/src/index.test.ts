@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -68,15 +68,31 @@ describe("finalizers", () => {
   });
 });
 
-test("a test past its timeout interrupts its fiber and runs its finalizers", async () => {
-  const run = Bun.spawn([process.execPath, "test", `${import.meta.dir}/timeout.fixture.ts`], {
-    stdout: "pipe",
-    stderr: "pipe",
+describe("timeout", () => {
+  let stdout = "";
+  let stderr = "";
+  let code = 0;
+  beforeAll(async () => {
+    const run = Bun.spawn([process.execPath, "test", `${import.meta.dir}/timeout.fixture.ts`], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    [stdout, stderr, code] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
   });
-  const [stdout, stderr, code] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
-  expect(code).toBe(1);
-  expect(stderr).toContain("timed out after 50ms");
-  expect(stdout).toContain("released:interrupted");
+
+  test("fails the test past its timeout", () => {
+    expect(code).toBe(1);
+    expect(stderr).toContain("(fail) hangs past its timeout [");
+    expect(stderr).toContain("timed out after 50ms");
+  });
+
+  test("interrupts the fiber and runs its finalizers", () => {
+    expect(stdout).toContain("released:interrupted");
+  });
+
+  test("reports a finalizer that fails after the timeout", () => {
+    expect(stderr).toContain("error: finalizer broke after timeout");
+  });
 });
 
 class Counter extends Context.Service<Counter, { readonly build: number; readonly ticks: Ref.Ref<number> }>()(

@@ -43,7 +43,7 @@ export class T3ChatAccounts extends Context.Service<
 >()("t3code-relay/t3chat/T3ChatAccounts") {}
 ```
 
-**For Stargrep.** Adopt as is. The tag key follows `<app>/<folder>/<Service>`, so Stargrep uses `stargrep/<package>/<Service>`, such as `stargrep/core/StarSync`.
+**For Stargrep.** Adopt, with the key form that the `deterministicKeys` rule enforces: `<package name>/<file path without src/ and the extension>/<Service>`. `StarSync` in `packages/core/src/stars/star-sync.ts` has the key `@stargrep/core/stars/star-sync/StarSync`. When the class name matches the file name, ignoring case, the rule drops the last segment, so `Ai` in `packages/ai/src/ai.ts` is `@stargrep/ai/ai`. Typecheck fails on any other key and prints the expected one.
 
 ### Rule: `make` reads dependencies from the environment, and `layer` wraps it
 
@@ -162,7 +162,7 @@ infra/relay/src/
 
 File names follow the export. Service modules are PascalCase (`ManagedTunnelLimits.ts`). Pure helper modules are camelCase (`fcmPayloads.ts`, `apnsJwt.ts`). Tests sit next to the file as `Foo.test.ts`. Moving a service deletes the old file and updates every consumer, with no re-export shims.
 
-**For Stargrep.** Adapt. `docs/architecture.md` sets kebab-case files named after their export, so `StarSync` lives in `star-sync.ts` and is imported as `import * as StarSync from "./star-sync.ts"`. Keep T3 Code's module order, one service per module, tests beside the file, and no re-export shims.
+**For Stargrep.** Adapt. `docs/architecture.md` sets kebab-case files named after their export, so `StarSync` lives in `star-sync.ts` and is imported as `import * as StarSync from "./star-sync.ts"`. Keep T3 Code's module order, one service per module, tests beside the file, and no re-export shims. The service key follows the file path, as section 1 says, so moving or renaming a service file changes its key.
 
 ### Rule: name things by role
 
@@ -601,16 +601,24 @@ const toError = (cause: Cause.Cause<unknown>): unknown => {
 const run = <A, E>(effect: Effect.Effect<A, E>): Promise<void> => {
   const controller = new AbortController();
   let exit: Promise<Exit.Exit<A, E>> | undefined;
+  let reported = false;
   try {
     onTestFinished(() => {
       controller.abort();
-      return exit?.then(() => undefined);
+      return exit?.then((result) => {
+        if (reported || Exit.isSuccess(result)) return;
+        // Bun already reported the timeout, so only a finalizer failure is left.
+        const failures = result.cause.reasons.filter((reason) => !Cause.isInterruptReason(reason));
+        if (failures.length > 0) throw toError(Cause.fromReasons(failures));
+      });
     });
   } catch {}
   exit = Effect.runPromiseExit(effect, { signal: controller.signal });
   return exit.then((result) => {
     // After an abort Bun has already failed the test and stopped awaiting this.
-    if (Exit.isFailure(result) && !controller.signal.aborted) throw toError(result.cause);
+    if (controller.signal.aborted) return;
+    reported = true;
+    if (Exit.isFailure(result)) throw toError(result.cause);
   });
 };
 
@@ -638,7 +646,10 @@ export const live = makeTester<Scope.Scope>(Effect.scoped);
 
 export const layer =
   <ROut, E>(self: Layer.Layer<ROut, E>) =>
-  (name: string, f: (it: { readonly effect: ReturnType<typeof makeTester<ROut | Scope.Scope | TestServices>> }) => void) =>
+  (
+    name: string,
+    f: (it: { readonly effect: ReturnType<typeof makeTester<ROut | Scope.Scope | TestServices>> }) => void,
+  ) =>
     describe(name, () => {
       const scope = Scope.makeUnsafe();
       let context: Context.Context<ROut | TestServices> | undefined;

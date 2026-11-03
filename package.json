@@ -5,10 +5,11 @@
   "packageManager": "bun@1.4.3",
   "workspaces": [
     "apps/*",
-    "packages/*"
+    "packages/*",
+    "{infra,scripts}"
   ],
   "scripts": {
-    "postinstall": "effect-tsgo patch --typescript --no-oxlint",
+    "postinstall": "if [ -x node_modules/.bin/effect-tsgo ]; then effect-tsgo patch --typescript --no-oxlint; fi",
     "check": "turbo run check",
     "lint": "biome check .",
     "test": "bun test --parallel"
