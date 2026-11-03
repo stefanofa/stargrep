@@ -19,37 +19,36 @@ interface DatabaseHealth {
   readonly pgvector: string | null;
 }
 
-const connect = (connectionString: string) =>
-  Effect.acquireRelease(
-    Effect.tryPromise(async () => {
-      const client = new Client({ connectionString });
-      // On workerd, end() closes the socket under pg's read loop, which pg reports as a client error event.
-      // A real failure still rejects the pending query, so the event needs a listener, not a handler.
-      client.on("error", () => {});
-      await client.connect();
-      return client;
-    }),
-    (client) => Effect.promise(() => client.end()).pipe(Effect.ignore),
-  );
-
-const checkDatabase = Effect.fn("Health.checkDatabase")(
-  function* (connectionString: string) {
-    const client = yield* connect(connectionString);
-    return yield* Effect.tryPromise(async (): Promise<DatabaseHealth> => {
-      await client.query("begin read only");
-      const version = await client.query<{ version: string }>("select version()");
-      const vector = await client.query<{ extversion: string }>(
-        "select extversion from pg_extension where extname = $1",
-        ["vector"],
-      );
-      await client.query("commit");
-      return { postgres: version.rows[0]?.version ?? "unknown", pgvector: vector.rows[0]?.extversion ?? null };
-    });
-  },
-  Effect.scoped,
-  Effect.timeout("10 seconds"),
-  Effect.mapError((cause) => new DatabaseUnavailable({ cause })),
-);
+const checkDatabase = (connectionString: string) =>
+  Effect.tryPromise(async () => {
+    const t: Record<string, number> = {};
+    let last = Date.now();
+    const mark = (name: string) => {
+      const now = Date.now();
+      t[name] = now - last;
+      last = now;
+    };
+    const client = new Client({ connectionString });
+    client.on("error", () => {});
+    await client.connect();
+    mark("connect");
+    await client.query("begin read only");
+    mark("begin");
+    const version = await client.query<{ version: string }>("select version()");
+    mark("version");
+    const vector = await client.query<{ extversion: string }>(
+      "select extversion from pg_extension where extname = $1",
+      ["vector"],
+    );
+    mark("vector");
+    await client.query("commit");
+    mark("commit");
+    const single = await client.query("select version() as postgres, (select extversion from pg_extension where extname = $1) as pgvector", ["vector"]);
+    mark("single");
+    await client.end();
+    mark("end");
+    return { postgres: version.rows[0]?.version ?? "unknown", pgvector: vector.rows[0]?.extversion ?? null, single: single.rows.length, timings: t };
+  }).pipe(Effect.mapError((cause) => new DatabaseUnavailable({ cause })));
 
 export const healthResponse = (connectionString: string) =>
   checkDatabase(connectionString).pipe(
