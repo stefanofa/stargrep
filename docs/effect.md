@@ -209,6 +209,14 @@ Three more rules from `docs/internals/effect-services.md`:
 
 **For Stargrep.** Adopt as is. GitHub tokens, model prompts, and README text must never land in an error field.
 
+### Rule: an error from a credentialed request keeps a bounded `reason` and no `cause`
+
+This rule is Stargrep's own. An `HttpClientError` holds the request, with its `Authorization` header, and the response, with its body. Printing redacts the header, but plain property access returns the token, and a tracer exports a failure's stack as `exception.stacktrace`. So T3 Code's "the exact value lives only in `cause`" leaks a token when the request carried one.
+
+An error raised by a request that sends a token or another credential keeps only bounded fields: the operation, the method, the URL path without the query, the status, and a `reason` literal such as `transport`, `timeout`, or `status`. It has no `cause`. Map the failure to that error inside the span that sent the request, so the span records only the bounded error, and turn off `HttpClient`'s own client span with `HttpClient.TracerDisabledWhen`. `packages/github` does this in `TokenGate`.
+
+**For Stargrep.** Adopt. A test walks every reachable property of such an error, and the traces it exports, and finds no token and no body text.
+
 ### Rule: catch known tags with `Effect.catchTags`, even for one tag
 
 ```ts
