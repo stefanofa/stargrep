@@ -61,13 +61,13 @@ For other editors, run `bunx effect-tsgo setup --help` to see the setup for Neov
 4. Call the debug Worker. Its routes need the stage's token, which the stack generates and keeps in its outputs.
 
    ```sh
-   TOKEN=$(cd infra && bunx alchemy state read "Stargrep/dev_$USER/output" --backend local | jq -r .debugToken.__redacted__)
+   TOKEN=$(bun scripts/stage-output.ts "dev_$USER" debugToken --backend local)
    curl -X POST -H "authorization: Bearer $TOKEN" "http://localhost:1338/queue?count=10"
    curl -X POST -H "authorization: Bearer $TOKEN" http://localhost:1338/counter/demo
    curl -X POST -H "authorization: Bearer $TOKEN" http://localhost:1338/transaction
    curl -H "authorization: Bearer $TOKEN" http://localhost:1338/budget
    curl "http://localhost:1338/cdn-cgi/handler/scheduled?cron=0+*+*+*+*"
-   DEBUG_TOKEN=$TOKEN bun scripts/stage-smoke.ts http://localhost:1338
+   bun scripts/stage-smoke.ts "dev_$USER" --backend local
    ```
 
    The routes spend from a budget of 300 units a minute: one per counter read, counter increment, or transaction, and one per queued job. `/budget` is free. `scripts/stage-smoke.ts` checks the token, the budget, the queue, the counter, and pooled transactions. It waits for the next minute and then spends that minute's budget.
@@ -80,7 +80,7 @@ For other editors, run `bunx effect-tsgo setup --help` to see the setup for Neov
 
 ## Cloudflare and Neon
 
-The `deploy` workflow deploys stage `pr-<number>` for each pull request, runs `scripts/stage-smoke.ts` against it, and destroys it when the pull request closes. Each push to `main` deploys the database stack's stage `shared` and then stage `prod`, and running the workflow by hand on `main` does the same. Its jobs skip until the steps below are done.
+Four workflows run the stages, and their jobs skip until the steps below are done. `preview` deploys stage `pr-<number>` for each pull request and runs `scripts/stage-smoke.ts` against it. `preview-destroy` destroys the stage when the pull request closes. `preview-reconcile` runs daily, or by hand with a dry-run option, and destroys any `pr-<number>` stage whose pull request is closed or gone. `deploy` runs on each push to `main`, or by hand on `main`. It deploys the database stack's stage `shared` and then stage `prod`. Each deploy first checks that its commit is still the head of `main` or of the pull request, so an older run never replaces a newer deploy.
 
 1. Create a Cloudflare API token for the account with these permissions: Workers Scripts Write, Workers KV Storage Write, Workers R2 Storage Write, Queues Write, Hyperdrive Write, Secrets Store Write, Account Settings Write, and Workers Tail Read. The Secrets Store permission is for Alchemy's state store, which keeps its keys there.
 
@@ -114,6 +114,5 @@ An upgrade changes the store for every project that uses it, so check with the a
 To read a deployed stage's debug token, run this with the same credentials:
 
 ```sh
-cd infra
-CLOUDFLARE_ACCOUNT_ID=<account id> CLOUDFLARE_API_TOKEN=<token> bunx alchemy state read Stargrep/pr-<number>/output | jq -r .debugToken.__redacted__
+CLOUDFLARE_ACCOUNT_ID=<account id> CLOUDFLARE_API_TOKEN=<token> bun scripts/stage-output.ts pr-<number> debugToken > debug-token
 ```
