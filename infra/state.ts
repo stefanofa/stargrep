@@ -5,7 +5,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 // The CLI's --yes also lets a deploy create or upgrade the account's state store, which other projects share.
-// Deploys never maintain the store, so CI fails on a missing or outdated one (docs/setup.md has the manual command).
 const withoutStoreMaintenance = Layer.effect(
   AlchemyContext,
   Effect.gen(function* () {

@@ -2,9 +2,10 @@ name: deploy
 
 on:
   pull_request:
+    # closed is temporary: once this workflow is on main, pull_request_target destroys on every close.
     types: [opened, reopened, synchronize, closed]
-  # Temporary until this workflow is on main: GitHub runs pull_request_target only from the default branch's
-  # workflow, and it is the only close event that fires for a pull request with merge conflicts.
+  # GitHub runs pull_request_target only from the default branch's workflow, and it is the only close event
+  # that fires for a pull request with merge conflicts.
   pull_request_target:
     types: [closed]
   push:
