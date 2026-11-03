@@ -16,6 +16,7 @@ export interface Reply {
   readonly body?: unknown;
   readonly headers?: Record<string, string>;
   readonly transportError?: string;
+  readonly stream?: "broken" | "hang";
 }
 
 export interface Sent {
@@ -23,7 +24,6 @@ export interface Sent {
   readonly headers: Readonly<Record<string, string>>;
   readonly body: string | undefined;
   readonly startedAt: number;
-  readonly signal: AbortSignal;
 }
 
 export type Handler = (sent: Sent, index: number) => Reply;
@@ -37,25 +37,43 @@ export const rateLimitHeaders = (remaining: number, resetSeconds = 3600, resourc
   "x-ratelimit-reset": String(resetSeconds),
 });
 
-const toResponse = (request: HttpClientRequest.HttpClientRequest, reply: Reply) =>
+const streamed = (kind: "broken" | "hang", onRead: () => void) =>
+  new ReadableStream<Uint8Array>(
+    {
+      pull: (controller) => {
+        onRead();
+        if (kind === "broken") controller.error(new Error("broken body"));
+        else return new Promise<void>(() => {});
+      },
+    },
+    { highWaterMark: 0 },
+  );
+
+const toResponse = (request: HttpClientRequest.HttpClientRequest, reply: Reply, onRead: () => void) =>
   HttpClientResponse.fromWeb(
     request,
     new Response(
-      reply.body === undefined ? null : typeof reply.body === "string" ? reply.body : JSON.stringify(reply.body),
+      reply.stream !== undefined
+        ? streamed(reply.stream, onRead)
+        : reply.body === undefined
+          ? null
+          : typeof reply.body === "string"
+            ? reply.body
+            : JSON.stringify(reply.body),
       { status: reply.status ?? 200, headers: reply.headers ?? {} },
     ),
   );
 
 export const make = (handler: Handler) => {
   const sent: Array<Sent> = [];
-  const client = HttpClient.make((request, url, signal) =>
+  const reads = { count: 0 };
+  const client = HttpClient.make((request, url) =>
     Effect.gen(function* () {
       const entry: Sent = {
         url,
         headers: request.headers,
         body: request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : undefined,
         startedAt: yield* Clock.currentTimeMillis,
-        signal,
       };
       sent.push(entry);
       const reply = handler(entry, sent.length - 1);
@@ -64,10 +82,12 @@ export const make = (handler: Handler) => {
           reason: new HttpClientError.TransportError({ request, cause: new Error(reply.transportError) }),
         });
       }
-      return toResponse(request, reply);
+      return toResponse(request, reply, () => {
+        reads.count++;
+      });
     }),
   );
-  return { sent, client: Layer.succeed(HttpClient.HttpClient, client) };
+  return { sent, reads, client: Layer.succeed(HttpClient.HttpClient, client) };
 };
 
 export const layer = (handler: Handler, share = 1 as BudgetShare) => {
@@ -77,5 +97,5 @@ export const layer = (handler: Handler, share = 1 as BudgetShare) => {
     Layer.provideMerge(KeyValueStore.layerMemory),
     Layer.provide(fake.client),
   );
-  return { sent: fake.sent, layer };
+  return { sent: fake.sent, reads: fake.reads, layer };
 };

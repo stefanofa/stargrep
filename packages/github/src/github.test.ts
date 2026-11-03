@@ -405,3 +405,74 @@ describe("telemetry", () => {
     }).pipe(Effect.provide(Layer.merge(fake.layer, otlp)));
   });
 });
+
+describe("reply boundaries", () => {
+  const terminal: ReadonlyArray<readonly [number, Record<string, unknown>]> = [
+    [401, { _tag: "Unauthorized" }],
+    [404, { _tag: "NotFound" }],
+    [422, { _tag: "GitHubRequestFailed", reason: "status", status: 422 }],
+  ];
+  for (const [status, expected] of terminal) {
+    effect(`keeps a ${status} when its body cannot be read, without reading it or retrying`, () => {
+      const fake = Fake.layer(() => ({ status, stream: "broken" }));
+      return Effect.gen(function* () {
+        const fiber = yield* Effect.forkChild(Effect.flip(collectStars));
+        yield* TestClock.adjust("1 minute");
+        expect(yield* Fiber.join(fiber)).toMatchObject(expected);
+        expect(fake.sent).toHaveLength(1);
+        expect(fake.reads.count).toBe(0);
+      }).pipe(Effect.provide(fake.layer));
+    });
+  }
+
+  effect("fails a 200 whose body breaks with unreadable-body, without retrying", () => {
+    const fake = Fake.layer(() => ({ stream: "broken" }));
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(Effect.flip(collectStars));
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Fiber.join(fiber)).toMatchObject({ _tag: "GitHubResponseInvalid", reason: "unreadable-body" });
+      expect(fake.sent).toHaveLength(1);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("counts an exhausted budget from headers that arrived before the body timed out", () => {
+    const fake = Fake.layer(() => ({ stream: "hang", headers: Fake.rateLimitHeaders(0) }));
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(Effect.flip(collectStars));
+      yield* TestClock.adjust("3 minutes");
+      expect(yield* Fiber.join(fiber)).toMatchObject({ _tag: "TokenBudgetExhausted", resource: "core" });
+      expect(fake.sent).toHaveLength(1);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  const partial = (resource: string) => ({
+    "x-ratelimit-resource": resource,
+    "x-ratelimit-remaining": "0",
+    "x-ratelimit-reset": "5",
+  });
+
+  effect("honors a reset on a REST 403 without x-ratelimit-limit", () => {
+    const fake = Fake.layer((_, index) => (index === 0 ? { status: 403, headers: partial("core") } : { body: [] }));
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(collectStars);
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Fiber.join(fiber)).toEqual([]);
+      expect(fake.sent.map((sent) => sent.startedAt)).toEqual([0, 5_000]);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("honors a reset on a GraphQL RATE_LIMITED without x-ratelimit-limit", () => {
+    const fake = Fake.layer((_, index) =>
+      index === 0
+        ? { headers: partial("graphql"), body: { data: null, errors: [{ type: "RATE_LIMITED", message: "slow" }] } }
+        : { body: { data: { nodes: [] } } },
+    );
+    return Effect.gen(function* () {
+      const github = yield* GitHub.GitHub;
+      const fiber = yield* Effect.forkChild(github.repoFacts(["R_1" as RepoNodeId]));
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Fiber.join(fiber)).toEqual([]);
+      expect(fake.sent.map((sent) => sent.startedAt)).toEqual([0, 5_000]);
+    }).pipe(Effect.provide(fake.layer));
+  });
+});

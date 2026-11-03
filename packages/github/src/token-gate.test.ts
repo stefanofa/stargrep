@@ -5,6 +5,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Fake from "./github.fixture.ts";
 import type { BudgetShare } from "./schemas.ts";
@@ -43,7 +44,7 @@ describe("TokenGate.layerMemory", () => {
         ),
         { concurrency: "unbounded" },
       );
-      expect(replies.map((reply) => reply.body)).toEqual(Array.from({ length: 20 }, () => "ok"));
+      expect(replies.map((reply) => reply.body)).toEqual(Array.from({ length: 20 }, () => Option.some("ok")));
       expect(sent).toBe(20);
       expect(maxInFlight).toBe(1);
     }).pipe(Effect.provide(layer));
