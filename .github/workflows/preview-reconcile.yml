@@ -1,6 +1,8 @@
 name: preview-reconcile
 
 on:
+  pull_request:
+    types: [opened, synchronize]
   schedule:
     - cron: "23 4 * * *"
   workflow_dispatch:
@@ -17,7 +19,7 @@ permissions:
 env:
   ALCHEMY_TELEMETRY_DISABLED: "1"
   CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-  DRY_RUN: ${{ inputs.dry-run && 'true' || 'false' }}
+  DRY_RUN: "true"
   GH_TOKEN: ${{ github.token }}
 
 jobs:
