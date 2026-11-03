@@ -1,0 +1,63 @@
+{
+  "effect": {
+    "kind": "subset",
+    "url": "https://github.com/Effect-TS/effect.git",
+    "tag": "effect@4.1.2",
+    "paths": [
+      "LICENSE",
+      "LLMS.md",
+      "README.md",
+      "MIGRATION.md",
+      "ai-docs",
+      "packages/effect/LICENSE",
+      "packages/effect/README.md",
+      "packages/effect/THIRD_PARTY_NOTICES.md",
+      "packages/effect/ARBITRARY.md",
+      "packages/effect/CONFIG.md",
+      "packages/effect/HTTPAPI.md",
+      "packages/effect/MCP.md",
+      "packages/effect/OPTIC.md",
+      "packages/effect/SCHEMA.md",
+      "packages/effect/src",
+      "packages/effect/test",
+      "packages/vitest/src",
+      "packages/vitest/test"
+    ],
+    "exclude": [],
+    "commit": "506eef143bcc1750ce58920aac1e45da7265d103"
+  },
+  "alchemy": {
+    "kind": "subset",
+    "url": "https://github.com/alchemy-run/alchemy-effect.git",
+    "tag": "v2.0.0-beta.85",
+    "paths": [
+      "LICENSE",
+      "NOTICE",
+      "THIRD_PARTY_LICENSES.md",
+      "README.md",
+      "website/src/content/docs",
+      "packages/alchemy/src",
+      "packages/alchemy/test",
+      "packages/cloudflare/README.md",
+      "packages/cloudflare/src",
+      "packages/neon/README.md",
+      "packages/neon/src",
+      "packages/github/README.md",
+      "packages/github/src",
+      "packages/integration-tests/test/Cloudflare",
+      "packages/integration-tests/test/Neon",
+      "packages/integration-tests/test/GitHub"
+    ],
+    "exclude": [
+      "**/.env",
+      "**/.env.*"
+    ],
+    "commit": "d0b4a3326718309793459160e94b35abee517b23"
+  },
+  "orpc": {
+    "kind": "subtree",
+    "url": "https://github.com/middleapi/orpc.git",
+    "tag": "v2.0.0-beta.48",
+    "commit": "221882c571aac2c1752f939c5cfd3aca303e1317"
+  }
+}

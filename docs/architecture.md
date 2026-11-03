@@ -207,7 +207,7 @@ Some things stay outside the repo. Secret values live in Cloudflare secrets and 
 
 - `packages/core` tests use `bun test` with in-memory layers. They cover behavior, such as "an unstarred repo gets `unstarred_at`", not internal calls. Time runs on `TestClock`, so tests never sleep. `packages/testing` is the only place that calls `Effect.runPromise` in tests.
 - `packages/db` and the pipeline run integration tests against a Neon branch made for each test run.
-- `apps/web` and `apps/worker` tests run on workerd through `@cloudflare/vitest-plugin`. The first test in each file waits about 9 seconds while the module graph loads, so the config sets `testTimeout` to 30 seconds. `bunfig.toml` scopes `bun test` so it never picks up workerd tests.
+- `apps/web` and `apps/worker` tests run on workerd through `@cloudflare/vitest-plugin`. The first test in each file waits about 9 seconds while the module graph loads, so the config sets `testTimeout` to 30 seconds. Workerd test files are named `*.workerd-test.ts`, which `bun test` never matches from any folder, and the vitest config includes only that pattern. `bunfig.toml` also keeps a root `bun test` inside `packages/`.
 - `bun test` runs with `--parallel`, not `--concurrent`, so a test that times out still interrupts its fiber and runs its finalizers.
 
 ## Settled by prototypes

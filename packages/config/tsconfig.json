@@ -76,7 +76,7 @@
         },
         "overrides": [
           {
-            "include": ["**/*.test.ts", "**/*.test.tsx"],
+            "include": ["../../**/*.test.ts", "../../**/*.test.tsx"],
             "options": {
               "diagnosticSeverity": {
                 "globalJsonInEffect": "off",
@@ -85,8 +85,12 @@
             }
           },
           {
-            "include": ["packages/testing/**"],
+            "include": ["../testing/**/*"],
             "options": { "diagnosticSeverity": { "effectFnOpportunity": "off" } }
+          },
+          {
+            "include": ["../../scripts/**/*"],
+            "options": { "diagnosticSeverity": { "globalConsole": "off", "nodeBuiltinImport": "off" } }
           }
         ]
       }

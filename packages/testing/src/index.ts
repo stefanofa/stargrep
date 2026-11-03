@@ -31,16 +31,24 @@ const toError = (cause: Cause.Cause<unknown>): unknown => {
 const run = <A, E>(effect: Effect.Effect<A, E>): Promise<void> => {
   const controller = new AbortController();
   let exit: Promise<Exit.Exit<A, E>> | undefined;
+  let reported = false;
   try {
     onTestFinished(() => {
       controller.abort();
-      return exit?.then(() => undefined);
+      return exit?.then((result) => {
+        if (reported || Exit.isSuccess(result)) return;
+        // Bun already reported the timeout, so only a finalizer failure is left.
+        const failures = result.cause.reasons.filter((reason) => !Cause.isInterruptReason(reason));
+        if (failures.length > 0) throw toError(Cause.fromReasons(failures));
+      });
     });
   } catch {}
   exit = Effect.runPromiseExit(effect, { signal: controller.signal });
   return exit.then((result) => {
     // After an abort Bun has already failed the test and stopped awaiting this.
-    if (Exit.isFailure(result) && !controller.signal.aborted) throw toError(result.cause);
+    if (controller.signal.aborted) return;
+    reported = true;
+    if (Exit.isFailure(result)) throw toError(result.cause);
   });
 };
 
