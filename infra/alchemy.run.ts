@@ -3,6 +3,7 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as GitHub from "@alchemy.run/github";
 import * as Neon from "@alchemy.run/neon";
 import Worker from "@stargrep/worker";
+import DebugWorker, { DebugToken } from "@stargrep/worker/debug";
 import * as Alchemy from "alchemy";
 import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
@@ -15,6 +16,7 @@ export default Alchemy.Stack(
   Effect.gen(function* () {
     const { stage } = yield* Alchemy.Stack;
     const worker = yield* Worker;
+    const debug = stage === "prod" ? undefined : yield* DebugWorker;
     const github = yield* GitHub.GitHubEnv;
     if (github?.pr !== undefined) {
       yield* GitHub.Comment("StageComment", {
@@ -26,9 +28,14 @@ export default Alchemy.Stack(
 
           Worker: ${worker.url}
           Health: ${worker.url}/health
+          Debug worker: ${debug?.url ?? "none"}
         `,
       });
     }
-    return { url: worker.url };
+    return {
+      url: worker.url,
+      debugUrl: debug?.url,
+      debugToken: debug === undefined ? undefined : yield* DebugToken,
+    };
   }),
 );
