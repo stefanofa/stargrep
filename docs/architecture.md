@@ -227,6 +227,12 @@ The repo is the source of truth. Each concern has one file or folder that define
 
 Some things stay outside the repo. Secret values live in Cloudflare secrets and GitHub Actions secrets, and the repo holds only their names. Account creation, billing plans, and domain registration are one-time manual steps, listed in `docs/setup.md`.
 
+### Stages
+
+The Alchemy program has two stacks. `infra/alchemy.run.ts` is the app stack, deployed once per stage: `pr-<number>` for each pull request and `prod` for `main`. `infra/database.run.ts` holds only the Neon project and has one stage, `shared`. Each app stage references that project and owns one branch of it. Alchemy fails a reference until the stage it points at exists, so a project owned by `prod` would block every pull request stage until the first deploy of `main`. CI deploys the database stack before each app stage instead, and that deploy changes nothing after the first one.
+
+Deployed stages keep Alchemy state in the Cloudflare account through `Cloudflare.state()`. Under `alchemy dev`, state stays in `infra/.alchemy/` and the stage declares no Neon resources, so a local stage needs no credentials.
+
 ## Testing
 
 - `packages/core` tests use `bun test` with in-memory layers. They cover behavior, such as "an unstarred repo gets `unstarred_at`", not internal calls. Time runs on `TestClock`, so tests never sleep. `packages/testing` provides `it.effect`, `it.live`, and `it.layer` for `bun test` and is the only place that calls `Effect.runPromise` in tests. `docs/effect.md` section 7 shows how to use it.
