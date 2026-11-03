@@ -4,7 +4,7 @@ export interface Window {
   readonly limit: number;
   readonly remaining: number;
   readonly resetAt: number;
-  readonly floor: number;
+  readonly reserve: number;
 }
 
 export interface Budget {
@@ -22,18 +22,15 @@ export const resourceOf = (url: string): string => (new URL(url).pathname === "/
 
 export const check = (budget: Budget, resource: string, now: number): Decision => {
   const window = budget.windows[resource];
-  if (window === undefined || now >= window.resetAt || window.remaining > window.floor) return allowed;
+  if (window === undefined || now >= window.resetAt || window.remaining > window.reserve) return allowed;
   return { _tag: "Exhausted", resetAt: window.resetAt };
 };
 
-// A window starts on the first response that carries a new reset time. Its
-// floor is the part of that response's remaining budget that stays unspent.
+const reserveFor = (remaining: number, share: BudgetShare) => remaining - Math.floor(remaining * share);
+
 export const observe = (budget: Budget, rateLimit: RateLimit): Budget => {
   const current = budget.windows[rateLimit.resource];
-  const floor =
-    current !== undefined && current.resetAt === rateLimit.resetAt
-      ? current.floor
-      : rateLimit.remaining - Math.floor(rateLimit.remaining * budget.share);
+  const opensWindow = current === undefined || current.resetAt !== rateLimit.resetAt;
   return {
     ...budget,
     windows: {
@@ -42,7 +39,7 @@ export const observe = (budget: Budget, rateLimit: RateLimit): Budget => {
         limit: rateLimit.limit,
         remaining: rateLimit.remaining,
         resetAt: rateLimit.resetAt,
-        floor,
+        reserve: opensWindow ? reserveFor(rateLimit.remaining, budget.share) : current.reserve,
       },
     },
   };

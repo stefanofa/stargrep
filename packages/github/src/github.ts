@@ -77,7 +77,7 @@ export class GitHub extends Context.Service<
   }
 >()("@stargrep/github/github") {}
 
-// GitHub asks for a one minute wait on a secondary rate limit without retry-after.
+// GitHub asks for a one minute wait on a 429 that has no retry-after.
 const rateLimitWait = (response: HttpClientResponse.HttpClientResponse, now: number): number | undefined => {
   const headers = Option.getOrUndefined(decodeRetryHeaders(response.headers));
   if (headers?.["retry-after"] !== undefined) return headers["retry-after"] * 1000;
