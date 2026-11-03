@@ -17,6 +17,6 @@ describe("cn", () => {
   });
 
   test("a side padding refines the tile padding instead of replacing it", () => {
-    expect(cn("p-tile", "pt-tile-sm")).toBe("p-tile pt-tile-sm");
+    expect(cn("p-tile", "pt-tile-top")).toBe("p-tile pt-tile-top");
   });
 });

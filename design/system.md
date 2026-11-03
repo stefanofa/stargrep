@@ -59,7 +59,7 @@ Avatar fills for initials avatars rotate through #FBD9C4, #DCD0FF, #F9D4E6, #CDE
 | `--text-lg` | 17px / `--leading-lg` 26px | Reason line in the hero tile, collection notes |
 | `--text-xl` | 24px / `--leading-xl` 32px | The query in the search tile |
 | `--text-name` | 26px / 30px | Repo names in small tiles |
-| `--text-2xl` | 30px | Tile numbers |
+| `--text-2xl` | 30px / 34px | Tile numbers |
 | `--text-3xl` | 36px | Wordmark, page headings, the repo name in the hero tile |
 | `--text-4xl` | 40px / 44px | The star count in the hero tile |
 | `--text-display` | 52px | Hero tile headline ("found 5!") |
@@ -76,8 +76,9 @@ Load Fredoka (600 only) and Inter (variable) from the app, with `font-display: s
 | `--spacing-1` to `--spacing-4` | 4, 8, 12, 16px | Inside components |
 | `--spacing-gap` | 20px | Gap between tiles, and between sections |
 | `--spacing-tile-sm` | 22px | Right and bottom padding of small tiles |
-| `--spacing-6` | 24px | Top and left padding of small tiles, bottom padding of the hero tile |
-| `--spacing-tile` | 28px | Padding of the search tile and list rows |
+| `--spacing-tile-top` | 26px | Top padding of the search tile and the hero tile |
+| `--spacing-6` | 24px | Top and left padding of small tiles, bottom padding of the search tile and the hero tile |
+| `--spacing-tile` | 28px | Side padding of the search tile and list rows |
 | `--spacing-tile-lg` | 30px | Side padding of the hero and summary tiles |
 | `--spacing-12`, `-16`, `-24` | 48, 64, 96px | Page top and bottom |
 | `--radius-sm` | 12px | Repo monogram squares |
@@ -90,7 +91,7 @@ Load Fredoka (600 only) and Inter (variable) from the app, with `font-display: s
 
 The grid is 4 columns at 1024px and up, 2 columns from 640px, and 1 column below. On phones the search input moves to the bottom of the screen, under the thumb, with chips just above it (artboard 18).
 
-Small tiles take 24px padding at the top and left and 22px at the right and bottom. The hero tile takes 26px at the top, 30px at the sides, and 24px at the bottom.
+Small tiles take 24px padding at the top and left and 22px at the right and bottom. The hero tile takes 26px at the top, 30px at the sides, and 24px at the bottom. The search tile takes 26px at the top, 28px at the sides, and 24px at the bottom. A list row takes 20px (`--spacing-gap`) at the top and bottom and 28px at the sides.
 
 Tiles have no borders and no shadows. Separation comes from the lilac ground showing between white tiles. The only shadow in the system is on the repo detail panel, over a lilac scrim.
 

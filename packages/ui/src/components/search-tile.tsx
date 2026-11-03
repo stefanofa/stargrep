@@ -80,7 +80,7 @@ export function SearchTile({
   };
 
   return (
-    <Tile className={cn("flex flex-col gap-[18px] pt-[26px] pb-6", className)}>
+    <Tile className={cn("flex flex-col gap-[18px] pt-tile-top pb-6", className)}>
       <search>
         <form onSubmit={submit} className="flex items-center gap-4">
           <SearchIcon className="size-[26px] shrink-0" />

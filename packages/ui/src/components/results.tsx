@@ -58,7 +58,7 @@ const footerCell = "border-t-[1.5px] border-foreground/12 pt-[14px]";
 const layouts = {
   hero: {
     article:
-      "butter sm:grid-cols-[auto_auto_1fr] sm:px-tile-lg sm:pt-[26px] sm:pb-6 sm:[grid-template-areas:'head_head_stars'_'reason_reason_reason'_'alive_starred_network']",
+      "butter sm:grid-cols-[auto_auto_1fr] sm:px-tile-lg sm:pt-tile-top sm:pb-6 sm:[grid-template-areas:'head_head_stars'_'reason_reason_reason'_'alive_starred_network']",
     name: "sm:text-3xl sm:leading-[40px]",
     owner: "text-base leading-gap text-secondary-foreground",
     reason: "text-foreground sm:text-lg",
@@ -182,7 +182,7 @@ export function ResultItem({
             />
             <span
               className={cn(
-                "font-display text-2xl leading-[34px] font-semibold tracking-tight",
+                "font-display text-2xl font-semibold tracking-tight",
                 layout.starCount,
                 "list:text-lg list:leading-gap list:tracking-normal",
               )}

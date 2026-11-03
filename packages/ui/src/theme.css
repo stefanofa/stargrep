@@ -52,6 +52,7 @@
   --text-name: 26px;
   --text-name--line-height: 30px;
   --text-2xl: 30px;
+  --text-2xl--line-height: 34px;
   --text-3xl: 36px;
   --text-4xl: 40px;
   --text-4xl--line-height: 44px;
@@ -74,6 +75,7 @@
   --spacing-gap: 20px;
   --spacing-6: 24px;
   --spacing-tile-sm: 22px;
+  --spacing-tile-top: 26px;
   --spacing-tile: 28px;
   --spacing-tile-lg: 30px;
   --spacing-12: 48px;
