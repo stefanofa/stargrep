@@ -1,0 +1,143 @@
+---
+title: "Better Auth Integration"
+description: "Protect oRPC procedures with typed Better Auth sessions, using your framework's Better Auth integration or the request and response headers plugins."
+sidebar:
+  label: "Better Auth"
+---
+
+Use [Better Auth](https://better-auth.com/) with oRPC [middleware](/docs/middleware). No extra package is needed.
+
+:::tip
+In a full-stack framework, such as [Next.js](https://better-auth.com/docs/integrations/next), [TanStack Start](https://better-auth.com/docs/integrations/tanstack), or [SvelteKit](https://better-auth.com/docs/integrations/svelte-kit), prefer Better Auth's official integration. It reads request headers and sets cookies through the framework, so the plugins below are not needed.
+:::
+
+## Session Middleware
+
+Use the [Request Headers Plugin](/docs/plugins/request-headers) to read the session and the [Response Headers Plugin](/docs/plugins/response-headers) to forward Better Auth's cookies.
+
+```ts
+import type { RequestHeadersHandlerPluginContext, ResponseHeadersHandlerPluginContext } from '@orpc/server/plugins'
+import { ORPCError, os } from '@orpc/server'
+import { RPCHandler } from '@orpc/server/fetch'
+import { RequestHeadersHandlerPlugin, ResponseHeadersHandlerPlugin } from '@orpc/server/plugins'
+
+interface ServerContext extends RequestHeadersHandlerPluginContext, ResponseHeadersHandlerPluginContext {}
+
+const base = os.$context<ServerContext>()
+
+const requireSession = base.middleware(async ({ context, next }) => {
+  const { headers, response: session } = await auth.api.getSession({
+    headers: context.reqHeaders ?? new Headers(),
+    returnHeaders: true,
+  })
+
+  for (const cookie of headers.getSetCookie()) {
+    context.resHeaders?.append('set-cookie', cookie)
+  }
+
+  if (!session) {
+    throw new ORPCError('UNAUTHORIZED')
+  }
+
+  return next({ context: { session } })
+})
+
+const router = {
+  me: base.use(requireSession).handler(({ context }) => context.session.user),
+}
+
+const handler = new RPCHandler(router, {
+  plugins: [
+    new RequestHeadersHandlerPlugin(),
+    new ResponseHeadersHandlerPlugin(),
+  ],
+})
+```
+
+:::info
+The `handler` can be any supported oRPC handler, such as [RPCHandler](/docs/rpc/handler), [OpenAPIHandler](/docs/openapi/handler), or a custom one.
+:::
+
+### Server-Side Calls
+
+In [server-side calls](/docs/client/server-side), pass `reqHeaders`, and optionally `resHeaders`, yourself:
+
+```ts
+import { call } from '@orpc/server'
+
+const resHeaders = new Headers()
+
+const user = await call(router.me, undefined, {
+  context: { reqHeaders: request.headers, resHeaders },
+})
+```
+
+## Deduplication
+
+To avoid repeated lookups when the middleware runs more than once in a call, see the [Dedupe Middleware](/docs/recipes/dedupe-middleware) recipe.
+
+To look up the session once per request, including [batch](/docs/plugins/batch) sub-requests, pass a lazy getter in the initial context:
+
+```ts
+import { ORPCError, os } from '@orpc/server'
+import { RPCHandler } from '@orpc/server/fetch'
+
+type Session = typeof auth.$Infer.Session
+
+function once<T>(fn: () => Promise<T>): () => Promise<T> {
+  let promise: Promise<T> | undefined
+
+  return () => {
+    promise ??= fn()
+    return promise
+  }
+}
+
+const base = os.$context<{ getSession: () => Promise<Session | null> }>()
+
+const requireSession = base.middleware(async ({ context, next }) => {
+  const session = await context.getSession()
+
+  if (!session) {
+    throw new ORPCError('UNAUTHORIZED')
+  }
+
+  return next({ context: { session } })
+})
+
+const router = {
+  me: base.use(requireSession).handler(({ context }) => context.session.user),
+}
+
+const handler = new RPCHandler(router)
+
+export async function fetch(request: Request): Promise<Response> {
+  const setCookies: string[] = []
+
+  const getSession = once(async () => {
+    const { headers, response } = await auth.api.getSession({
+      headers: request.headers,
+      returnHeaders: true,
+    })
+
+    setCookies.push(...headers.getSetCookie())
+
+    return response
+  })
+
+  const { matched, response } = await handler.handle(request, {
+    prefix: '/rpc',
+    context: { getSession },
+  })
+
+  if (!matched) {
+    return new Response('Not Found', { status: 404 })
+  }
+
+  for (const cookie of setCookies) {
+    response.headers.append('set-cookie', cookie)
+  }
+
+  return response
+}
+```

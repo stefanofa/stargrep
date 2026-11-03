@@ -43,7 +43,7 @@ export class T3ChatAccounts extends Context.Service<
 >()("t3code-relay/t3chat/T3ChatAccounts") {}
 ```
 
-**For Stargrep.** Adopt as is. The tag key follows `<app>/<folder>/<Service>`, so Stargrep uses `stargrep/<package>/<Service>`, such as `stargrep/core/StarSync`.
+**For Stargrep.** Adopt, with the key form that the `deterministicKeys` rule enforces: `<package name>/<file path without src/ and the extension>/<Service>`. `StarSync` in `packages/core/src/stars/star-sync.ts` has the key `@stargrep/core/stars/star-sync/StarSync`. When the class name matches the file name, ignoring case, the rule drops the last segment, so `Ai` in `packages/ai/src/ai.ts` is `@stargrep/ai/ai`. Typecheck fails on any other key and prints the expected one.
 
 ### Rule: `make` reads dependencies from the environment, and `layer` wraps it
 
@@ -162,7 +162,7 @@ infra/relay/src/
 
 File names follow the export. Service modules are PascalCase (`ManagedTunnelLimits.ts`). Pure helper modules are camelCase (`fcmPayloads.ts`, `apnsJwt.ts`). Tests sit next to the file as `Foo.test.ts`. Moving a service deletes the old file and updates every consumer, with no re-export shims.
 
-**For Stargrep.** Adapt. `docs/architecture.md` sets kebab-case files named after their export, so `StarSync` lives in `star-sync.ts` and is imported as `import * as StarSync from "./star-sync.ts"`. Keep T3 Code's module order, one service per module, tests beside the file, and no re-export shims.
+**For Stargrep.** Adapt. `docs/architecture.md` sets kebab-case files named after their export, so `StarSync` lives in `star-sync.ts` and is imported as `import * as StarSync from "./star-sync.ts"`. Keep T3 Code's module order, one service per module, tests beside the file, and no re-export shims. The service key follows the file path, as section 1 says, so moving or renaming a service file changes its key.
 
 ### Rule: name things by role
 
@@ -565,99 +565,36 @@ Lint rules `t3code/no-wall-clock-in-tests`, `no-real-time-wait-in-tests`, `no-po
 
 T3 Code runs every test with `@effect/vitest` 4.1.2 through Vite+. Its lint rule `t3code/no-manual-effect-runtime-in-tests` bans `Effect.runPromise` in tests and says "Use @effect/vitest with it.effect(...) and test layers instead." Stargrep has to invert that. The upstream source shows what `it.effect` does (`.repos/effect-smol/packages/vitest/src/internal/internal.ts`). It wraps the test in `Effect.scoped`, provides `Layer.mergeAll(TestConsole.layer, TestClock.layer())`, and calls `Effect.runPromise` with the test's abort signal. `it.live` does the same without the test services. `it.layer(L)` builds `L` once in `beforeAll` and closes its scope in `afterAll`.
 
-`packages/testing` gives Stargrep the same behavior on `bun test`. A prototype ran this version on Bun 1.4.3 with Effect 4.1.2 and checked virtual time, finalizers on success and failure, one layer build per block, readable typed failures, `Layer.mock`, interruption on timeout, and clock isolation across parallel files.
+[`packages/testing`](../packages/testing/src/index.ts) gives Stargrep the same behavior on `bun test`. It exports `effect` and `live`, each with `only`, `skip`, and `failing`, and `layer`, which builds a layer once for a block of tests. Its tests check virtual time, finalizers on success, failure, and timeout, one layer build per block, and `Layer.mock`.
 
 ```ts
-import { afterAll, beforeAll, describe, onTestFinished, test } from "bun:test";
-import * as Cause from "effect/Cause";
-import type * as Context from "effect/Context";
+import { expect } from "bun:test";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
-import * as TestConsole from "effect/testing/TestConsole";
+import * as it from "@stargrep/testing";
 
-export type TestServices = TestClock.TestClock | TestConsole.TestConsole;
-
-const TestEnv = Layer.mergeAll(TestConsole.layer, TestClock.layer());
-
-type Body<A, E, R> = () => Effect.Effect<A, E, R>;
-type Register = (name: string, fn: () => Promise<void>, timeout?: number) => void;
-
-const toError = (cause: Cause.Cause<unknown>): unknown => {
-  // A thrown expect() is a defect. Rethrow it untouched: reading its stack
-  // first, as prettyErrors does, makes Bun lose the code frame.
-  const [reason, ...rest] = cause.reasons;
-  if (rest.length === 0 && reason && Cause.isDieReason(reason) && reason.defect instanceof Error) return reason.defect;
-  const errors = Cause.prettyErrors(cause);
-  return errors.length === 1 ? errors[0] : new Error(Cause.pretty(cause));
-};
-
-// Bun passes no AbortSignal to a test. On timeout it still runs onTestFinished
-// and awaits its promise, so aborting there interrupts the fiber and holds the
-// next test until the finalizers finish. Bun refuses onTestFinished inside a
-// concurrent test, so there a timed-out fiber keeps running.
-const run = <A, E>(effect: Effect.Effect<A, E>): Promise<void> => {
-  const controller = new AbortController();
-  let exit: Promise<Exit.Exit<A, E>> | undefined;
-  try {
-    onTestFinished(() => {
-      controller.abort();
-      return exit?.then(() => undefined);
-    });
-  } catch {}
-  exit = Effect.runPromiseExit(effect, { signal: controller.signal });
-  return exit.then((result) => {
-    // After an abort Bun has already failed the test and stopped awaiting this.
-    if (Exit.isFailure(result) && !controller.signal.aborted) throw toError(result.cause);
-  });
-};
-
-const makeTester = <R>(provide: <A, E>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E>) => {
-  const register =
-    (t: Register) =>
-    <A, E>(name: string, body: Body<A, E, R>, timeout?: number) =>
-      t(name, () => run(provide(Effect.suspend(body))), timeout);
-  return Object.assign(register(test), {
-    only: register(test.only),
-    skip: register(test.skip),
-    failing: register(test.failing),
-  });
-};
-
-export const effect = makeTester<Scope.Scope | TestServices>((self) =>
-  self.pipe(Effect.scoped, Effect.provide(TestEnv)),
+it.effect("wakes after an hour of virtual time", () =>
+  Effect.gen(function* () {
+    const fiber = yield* Effect.forkChild(Effect.sleep("1 hour"));
+    yield* TestClock.adjust("1 hour");
+    expect(fiber.pollUnsafe()).toBeDefined();
+  }),
 );
 
-export const live = makeTester<Scope.Scope>(Effect.scoped);
-
-export const layer =
-  <ROut, E>(self: Layer.Layer<ROut, E>) =>
-  (name: string, f: (it: { readonly effect: ReturnType<typeof makeTester<ROut | Scope.Scope | TestServices>> }) => void) =>
-    describe(name, () => {
-      const scope = Scope.makeUnsafe();
-      let context: Context.Context<ROut | TestServices> | undefined;
-      beforeAll(async () => {
-        const exit = await Effect.runPromiseExit(Layer.buildWithScope(Layer.provideMerge(self, TestEnv), scope));
-        if (Exit.isFailure(exit)) throw toError(exit.cause);
-        context = exit.value;
-      });
-      afterAll(() => Effect.runPromise(Scope.close(scope, Exit.void)));
-      f({
-        effect: makeTester<ROut | Scope.Scope | TestServices>((self) =>
-          Effect.suspend(() => {
-            if (context === undefined) return Effect.die(new Error(`layer for "${name}" was not built`));
-            return self.pipe(Effect.scoped, Effect.provide(context));
-          }),
-        ),
-      });
-    });
+it.layer(Layer.mock(GitHub, { getRepo: () => Effect.succeed({ stars: 42 }) }))("GitHub", (it) => {
+  it.effect("reads the stubbed repo", () =>
+    Effect.gen(function* () {
+      expect((yield* (yield* GitHub).getRepo("effect")).stars).toBe(42);
+    }),
+  );
+});
 ```
 
 Limits of `bun test` that the helper cannot remove:
 
-- Bun passes no abort signal to a test. The helper makes one from `onTestFinished`, which Bun refuses inside concurrent tests. Run tests with `--parallel`, not `--concurrent`, so a timed-out test still interrupts its fiber.
+- Bun passes no abort signal to a test. The helper makes one from `onTestFinished`, which Bun refuses inside concurrent tests, so every helper test fails under `--concurrent`. Run tests with `--parallel`.
+- The helper takes no per-test timeout. Set one for the run with `bun test --timeout <ms>`.
 - Ctrl-C ends the run without running finalizers.
 - Tests in one `layer` block share one `TestClock` on purpose.
 - Stock `tsc` does not load the `@effect/language-service` plugin. With TypeScript 7, run `effect-tsgo tsc` from `@effect/tsgo`. With TypeScript 6, run `effect-language-service patch` once, then `tsc`.

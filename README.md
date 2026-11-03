@@ -8,3 +8,4 @@ Search GitHub stars in plain language, yours, your network's, or anyone's.
 - [Architecture](docs/architecture.md)
 - [Effect conventions](docs/effect.md)
 - [Design system](design/system.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)

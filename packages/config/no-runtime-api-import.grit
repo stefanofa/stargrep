@@ -1,0 +1,13 @@
+language js
+
+or {
+  `import $_ from $source` as $statement where { not $statement <: r"import\s+type\s[\s\S]*" },
+  `export { $_ } from $source` as $statement where { not $statement <: r"export\s+type\s[\s\S]*" },
+  `export * from $source`,
+  `export * as $_ from $source`,
+  `import $source`,
+  `import($source)`
+} where {
+  $source <: r"[\"']@stargrep/api(?:/.*)?[\"']",
+  register_diagnostic(span=$source, message="Client code imports packages/api for types only. Use import type so the router stays out of the browser bundle.")
+}
