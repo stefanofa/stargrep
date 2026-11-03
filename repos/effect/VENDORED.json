@@ -1,0 +1,17 @@
+{
+  "url": "https://github.com/Effect-TS/effect.git",
+  "tag": "effect@4.1.2",
+  "commit": "506eef143bcc1750ce58920aac1e45da7265d103",
+  "paths": [
+    "LICENSE",
+    "LLMS.md",
+    "README.md",
+    "MIGRATION.md",
+    "ai-docs",
+    "packages/effect/README.md",
+    "packages/effect/src",
+    "packages/effect/test",
+    "packages/vitest/src",
+    "packages/vitest/test"
+  ]
+}

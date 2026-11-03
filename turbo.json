@@ -1,8 +1,14 @@
 {
   "$schema": "./node_modules/turbo/schema.json",
   "tasks": {
-    "//#lint": {},
-    "typecheck": { "dependsOn": ["^typecheck"] },
-    "check": { "dependsOn": ["//#lint", "typecheck"] }
+    "//#lint": {
+      "inputs": ["$TURBO_DEFAULT$", "!repos/**"]
+    },
+    "typecheck": {
+      "dependsOn": ["^typecheck"]
+    },
+    "check": {
+      "dependsOn": ["//#lint", "typecheck"]
+    }
   }
 }
