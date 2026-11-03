@@ -27,6 +27,16 @@ These rules apply to every screen and every feature decision.
 - Results load from the user's local library first, then the server merges semantic results.
 - "Deep search" reranks the top results with an LLM. It is opt-in because it adds about a second.
 
+### Ask with real criteria
+
+Search understands more than topics. It filters and ranks by what repos and their owners do.
+
+- "Open source apps like Wispr Flow with the most contributors."
+- "TypeScript ORMs where commits grew in the last 90 days."
+- "CLI tools from orgs with more than 10k followers, still maintained."
+
+Criteria include license, kind of project (app, library, CLI, and so on), stars, forks, commits, active and new contributors, merged pull requests, releases, and the owner's followers and total stars. Each criterion works as a current value or as a change over 30 or 90 days. Results show the numbers that ranked them.
+
 ### Profiles for any username
 
 - `/{username}` shows that account's stars, searchable, plus their taste profile.
