@@ -1,5 +1,6 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Neon from "@alchemy.run/neon";
+import { migrationsFolder } from "@stargrep/db/migrations";
 import * as Alchemy from "alchemy";
 import * as RemovalPolicy from "alchemy/RemovalPolicy";
 import * as DateTime from "effect/DateTime";
@@ -29,9 +30,12 @@ const StageBranch = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;
   const project = yield* Neon.Project.ref("Project", { stack: "StargrepDatabase", stage: "shared" });
   const expiry = stage === "prod" ? {} : { expiresAt: yield* twoWeeksFromToday };
-  return yield* Neon.Branch("Branch", { project, importFiles: [extensions], ...expiry }).pipe(
-    RemovalPolicy.retain(stage === "prod"),
-  );
+  return yield* Neon.Branch("Branch", {
+    project,
+    migrations: migrationsFolder,
+    importFiles: [extensions],
+    ...expiry,
+  }).pipe(RemovalPolicy.retain(stage === "prod"));
 });
 
 export const Database = Effect.gen(function* () {
