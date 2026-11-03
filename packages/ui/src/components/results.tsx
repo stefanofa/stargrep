@@ -1,4 +1,4 @@
-import { type ReactNode, useId } from "react";
+import { type MouseEvent, type ReactNode, useId } from "react";
 import { cn } from "../lib/cn.ts";
 import { Mascot, type MascotMotion, type Mood } from "../mascot.tsx";
 import { NetworkAvatars, type Person } from "./avatar.tsx";
@@ -58,15 +58,15 @@ const footerCell = "border-t-[1.5px] border-foreground/12 pt-[14px]";
 const layouts = {
   hero: {
     article:
-      "butter sm:grid-cols-[auto_auto_1fr] sm:px-[30px] sm:pt-[26px] sm:pb-6 sm:[grid-template-areas:'head_head_stars'_'reason_reason_reason'_'alive_starred_network']",
+      "butter sm:grid-cols-[auto_auto_1fr] sm:px-tile-lg sm:pt-[26px] sm:pb-6 sm:[grid-template-areas:'head_head_stars'_'reason_reason_reason'_'alive_starred_network']",
     name: "sm:text-3xl sm:leading-[40px]",
     owner: "text-base leading-gap text-secondary-foreground",
     reason: "text-foreground sm:text-lg",
     stars: "sm:gap-1.5",
     starIcon: "sm:size-[26px]",
-    starCount: "sm:text-[40px] sm:leading-[44px]",
+    starCount: "sm:text-4xl",
     starred: cn(footerCell, "sm:flex sm:items-center sm:gap-1 sm:pr-gap"),
-    starredText: "text-[14px] leading-sm font-medium text-secondary-foreground",
+    starredText: "text-meta font-medium text-secondary-foreground",
     starredLabel: "",
     alive: "",
     dot: "sm:size-[9px]",
@@ -74,7 +74,7 @@ const layouts = {
   },
   tile: {
     article:
-      "sm:grid-cols-[1fr_auto] sm:grid-rows-[auto_auto_auto_1fr_auto] sm:gap-y-3 sm:pt-6 sm:pr-[22px] sm:pb-[22px] sm:pl-6 sm:[grid-template-areas:'head_head'_'reason_reason'_'network_network'_'stars_starred'_'alive_alive']",
+      "sm:grid-cols-[1fr_auto] sm:grid-rows-[auto_auto_auto_1fr_auto] sm:gap-y-3 sm:pt-6 sm:pr-tile-sm sm:pb-tile-sm sm:pl-6 sm:[grid-template-areas:'head_head'_'reason_reason'_'network_network'_'stars_starred'_'alive_alive']",
     name: "",
     owner: "",
     reason: "",
@@ -82,20 +82,38 @@ const layouts = {
     starIcon: "",
     starCount: "",
     starred: "sm:mt-2.5 sm:flex sm:flex-col sm:items-end sm:gap-0.5 sm:self-end sm:pb-0.5",
-    starredText: "text-sm leading-4 font-medium text-foreground",
+    starredText: "text-sm font-medium text-foreground",
     starredLabel: "text-label leading-[13px] font-semibold tracking-caps text-muted-foreground uppercase",
-    alive: "sm:gap-1.5 sm:border-muted sm:pt-3 sm:pr-0 sm:text-sm sm:leading-4 sm:text-muted-foreground",
+    alive: "sm:gap-1.5 sm:border-muted sm:pt-3 sm:pr-0 sm:text-sm sm:text-muted-foreground",
     dot: "",
-    network: "sm:self-start sm:justify-start sm:border-0 sm:pt-0 sm:text-sm sm:leading-4",
+    network: "sm:self-start sm:justify-start sm:border-0 sm:pt-0 sm:text-sm",
   },
 };
 
-const listText = "list:text-sm list:leading-4 list:text-muted-foreground";
+const listText = "list:text-sm list:text-muted-foreground";
 const listCell = "list:self-center list:border-0 list:pt-0 list:pr-0 list:mt-0";
 
-export function ResultItem({ result, hero = false }: { result: Result; hero?: boolean }) {
+export type OpenResult = (result: Result, opener: HTMLAnchorElement) => void;
+
+const plainClick = (event: MouseEvent) =>
+  event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+
+export function ResultItem({
+  result,
+  hero = false,
+  onOpen,
+}: {
+  result: Result;
+  hero?: boolean;
+  onOpen?: OpenResult | undefined;
+}) {
   const layout = hero ? layouts.hero : layouts.tile;
   const dim = retired(result.activity);
+  const open = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (!onOpen || !plainClick(event)) return;
+    event.preventDefault();
+    onOpen(result, event.currentTarget);
+  };
   const networkCell = cn(
     "[grid-area:network] flex items-center justify-end",
     footerCell,
@@ -106,8 +124,7 @@ export function ResultItem({ result, hero = false }: { result: Result; hero?: bo
   return (
     <article
       className={cn(
-        "relative grid h-full grid-cols-[1fr_auto] grid-rows-[auto_1fr_auto] gap-y-[14px] rounded-tile bg-card px-[22px] pt-[22px] pb-gap text-foreground [grid-template-areas:'head_stars'_'reason_reason'_'alive_network']",
-        dim && "border-[1.5px] border-border",
+        "relative grid h-full grid-cols-[1fr_auto] grid-rows-[auto_1fr_auto] gap-y-[14px] rounded-tile bg-card px-tile-sm pt-tile-sm pb-gap text-foreground [grid-template-areas:'head_stars'_'reason_reason'_'alive_network']",
         layout.article,
         "list:gap-y-2 list:rounded-md list:px-tile list:py-gap list:sm:grid-cols-[180px_100px_190px_1fr] list:sm:grid-rows-none list:sm:[grid-template-areas:'head_head_head_head'_'reason_reason_reason_reason'_'alive_stars_starred_network']",
       )}
@@ -115,19 +132,23 @@ export function ResultItem({ result, hero = false }: { result: Result; hero?: bo
       <header className="[grid-area:head] grid grid-cols-[1fr_auto] items-start gap-x-2 gap-y-0.5 list:flex list:items-baseline list:gap-x-1.5">
         <h3
           className={cn(
-            "col-start-1 row-start-1 font-display text-[26px] leading-[30px] font-semibold tracking-snug",
+            "col-start-1 row-start-1 font-display text-name font-semibold tracking-snug",
             dim && "text-muted-foreground",
             layout.name,
             "list:text-[22px] list:leading-tile",
           )}
         >
-          <a href={result.href} className="rounded-sm after:absolute after:inset-0 after:rounded-[inherit]">
+          <a
+            href={result.href}
+            onClick={open}
+            className="rounded-sm after:absolute after:inset-0 after:rounded-[inherit]"
+          >
             {result.name}
           </a>
         </h3>
         <p
           className={cn(
-            "col-start-1 row-start-2 font-sans text-[14px] leading-sm font-medium text-muted-foreground",
+            "col-start-1 row-start-2 font-sans text-meta font-medium text-muted-foreground",
             layout.owner,
             "list:order-first list:text-[16px] list:leading-tile list:after:content-['_/']",
           )}
@@ -156,7 +177,9 @@ export function ResultItem({ result, hero = false }: { result: Result; hero?: bo
         >
           <dt className="sr-only">stars</dt>
           <dd className="flex items-center gap-[inherit]">
-            <StarIcon className={cn("size-5", dim && "opacity-45", layout.starIcon, "list:size-[15px]")} />
+            <StarIcon
+              className={cn("size-5", dim && "opacity-(--opacity-archived)", layout.starIcon, "list:size-[15px]")}
+            />
             <span
               className={cn(
                 "font-display text-2xl leading-[34px] font-semibold tracking-tight",
@@ -185,7 +208,7 @@ export function ResultItem({ result, hero = false }: { result: Result; hero?: bo
         </div>
         <div
           className={cn(
-            "[grid-area:alive] flex items-center gap-[7px] pr-gap text-[14px] leading-sm font-medium text-secondary-foreground",
+            "[grid-area:alive] flex items-center gap-[7px] pr-gap text-meta font-medium text-secondary-foreground",
             footerCell,
             layout.alive,
             listText,
@@ -199,7 +222,7 @@ export function ResultItem({ result, hero = false }: { result: Result; hero?: bo
               className={cn(
                 "size-2 shrink-0 rounded-full",
                 result.activity.state === "alive" ? "bg-success" : "bg-muted-foreground",
-                dim && "opacity-45",
+                dim && "opacity-(--opacity-archived)",
                 layout.dot,
                 "list:size-2",
               )}
@@ -213,7 +236,7 @@ export function ResultItem({ result, hero = false }: { result: Result; hero?: bo
             <dd className="relative z-10">
               <NetworkAvatars
                 people={result.network}
-                className={cn("text-[14px] leading-sm text-secondary-foreground", layout.network, listText)}
+                className={cn("text-meta text-secondary-foreground", layout.network, listText)}
               />
             </dd>
           </div>
@@ -230,7 +253,7 @@ export function ResultSkeleton({ hero = false }: { hero?: boolean }) {
       data-slot="result-skeleton"
       className={cn(
         "flex h-full min-h-[240px] flex-col gap-3 rounded-tile bg-card p-6 list:min-h-0 list:rounded-md list:px-tile list:py-gap",
-        hero && "sm:px-[30px] sm:pt-[30px]",
+        hero && "sm:px-tile-lg sm:pt-tile-lg",
       )}
     >
       <div className="flex justify-between">
@@ -263,18 +286,21 @@ export function ResultsSummary({
   controls,
   mood,
   motion,
+  reranking = false,
 }: {
   heading: ReactNode;
   detail: ReactNode;
   controls?: ReactNode;
   mood?: Mood;
   motion?: MascotMotion | undefined;
+  reranking?: boolean;
 }) {
   const headingId = useId();
+  const face = reranking ? "searching" : mood;
   return (
     <section
       aria-labelledby={headingId}
-      className="relative flex flex-col justify-between gap-6 rounded-tile sm:min-h-[240px] bg-card px-[30px] pt-tile pb-6 sm:col-span-2 list:min-h-0 list:flex-row list:items-center list:bg-transparent list:p-0 list:pt-2 list:pl-tile"
+      className="relative flex flex-col justify-between gap-6 rounded-tile sm:min-h-[240px] bg-card px-tile-lg pt-tile pb-6 sm:col-span-2 list:min-h-0 list:flex-row list:items-center list:bg-transparent list:p-0 list:pt-2 list:pl-tile"
     >
       <div className="relative z-10 flex flex-col gap-1.5 list:flex-row list:items-baseline list:gap-3">
         <h2
@@ -286,10 +312,10 @@ export function ResultsSummary({
         <div className="font-sans text-[16px] leading-base text-muted-foreground list:text-base">{detail}</div>
       </div>
       {controls && <div className="relative z-10 flex flex-wrap items-center gap-gap list:gap-[10px]">{controls}</div>}
-      {mood && (
+      {face && (
         <>
           <Mascot
-            mood={mood}
+            mood={face}
             motion={motion}
             size={200}
             className="absolute top-2.5 right-[26px] rotate-[10deg] max-sm:size-[112px] list:hidden"
@@ -307,11 +333,13 @@ export function Results({
   results,
   summary,
   pending = 0,
+  onOpen,
 }: {
   view: View;
   results: ReadonlyArray<Result>;
   summary?: ReactNode;
   pending?: number;
+  onOpen?: OpenResult | undefined;
 }) {
   return (
     <div
@@ -328,7 +356,7 @@ export function Results({
             className={cn("animate-tile-in", index === 0 && "sm:col-span-2")}
             style={{ animationDelay: `${index * 30}ms` }}
           >
-            <ResultItem result={result} hero={index === 0} />
+            <ResultItem result={result} hero={index === 0} onOpen={onOpen} />
           </li>
         ))}
         {Array.from({ length: pending }, (_, index) => {

@@ -1,5 +1,5 @@
 import "./gallery.css";
-import { type ReactNode, StrictMode, useState } from "react";
+import { type ReactNode, StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Badge,
@@ -9,20 +9,22 @@ import {
   LanguageBar,
   Mascot,
   moods,
+  type RepoDetail,
   RepoPanel,
   Results,
   ResultsSummary,
   ScopeSwitch,
   SearchTile,
   Skeleton,
+  type Sort,
+  SortMenu,
   StarredWeeks,
   SyncProgress,
   Tile,
   useStoredView,
-  type View,
   ViewToggle,
 } from "../src/index.ts";
-import { ratatui, results, weeks } from "./data.ts";
+import { detailFor, results, weeks } from "./data.ts";
 
 const themes = ["system", "light", "dark"] as const;
 type Theme = (typeof themes)[number];
@@ -87,27 +89,38 @@ const typeScale = [
   ["text-hero leading-none font-display font-semibold tracking-tight", "412"],
 ] as const;
 
-function Controls({ view, onView }: { view: View; onView: (view: View) => void }) {
+const rerankMs = 1000;
+
+function useRerank() {
   const [deep, setDeep] = useState(false);
-  return (
-    <>
-      <DeepSearch checked={deep} onCheckedChange={setDeep} />
-      <ViewToggle value={view} onValueChange={onView} />
-    </>
-  );
+  const [reranking, setReranking] = useState(false);
+  useEffect(() => {
+    if (!reranking) return;
+    const settled = new AbortController();
+    AbortSignal.timeout(rerankMs).addEventListener("abort", () => setReranking(false), { signal: settled.signal });
+    return () => settled.abort();
+  }, [reranking]);
+  const toggle = (next: boolean) => {
+    setDeep(next);
+    setReranking(next);
+  };
+  return { deep, reranking, toggle };
 }
 
 function Gallery() {
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [view, setView] = useStoredView();
   const [scope, setScope] = useState("mine");
-  const [query, setQuery] = useState("rust library for terminal dashboards I starred last year");
   const [filters, setFilters] = useState<Filter[]>([
     { id: "lang", label: "Rust" },
     { id: "starred", label: "Starred in 2025" },
     { id: "topic", label: "Topic: TUI" },
   ]);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [panelRepo, setPanelRepo] = useState<RepoDetail>();
+  const [opener, setOpener] = useState<HTMLElement | null>(null);
+  const [sort, setSort] = useState<Sort>("starred");
+  const deepSearch = useRerank();
 
   return (
     <main className="mx-auto flex w-full max-w-page flex-col gap-16 px-4 pt-12 pb-24 min-[1232px]:px-0">
@@ -140,28 +153,44 @@ function Gallery() {
           </span>
         </div>
         <SearchTile
-          query={query}
-          onQueryChange={setQuery}
+          defaultQuery="rust library for terminal dashboards I starred last year"
           filters={filters}
           onRemoveFilter={(removed) => setFilters((current) => current.filter((filter) => filter.id !== removed.id))}
         />
+        <div className="flex justify-end">
+          <SortMenu value={sort} onValueChange={setSort} />
+        </div>
         <Results
           view={view}
           results={results}
+          onOpen={(result, link) => {
+            setOpener(link);
+            setPanelRepo(detailFor(result));
+            setPanelOpen(true);
+          }}
           summary={
             <ResultsSummary
               heading="found 5!"
               detail="of your 2,431 stars"
               mood="happy"
               motion="blink"
-              controls={<Controls view={view} onView={setView} />}
+              reranking={deepSearch.reranking}
+              controls={
+                <>
+                  <DeepSearch checked={deepSearch.deep} onCheckedChange={deepSearch.toggle} />
+                  <ViewToggle value={view} onValueChange={setView} />
+                </>
+              }
             />
           }
         />
-        <Button className="self-start" onClick={() => setPanelOpen(true)}>
-          Open repo panel
-        </Button>
-        <RepoPanel repo={ratatui} open={panelOpen} onOpenChange={setPanelOpen} onAddToCollection={() => {}} />
+        <RepoPanel
+          repo={panelRepo}
+          open={panelOpen}
+          onOpenChange={setPanelOpen}
+          onAddToCollection={() => {}}
+          returnFocus={opener}
+        />
       </Section>
 
       <Section id="states" title="states">

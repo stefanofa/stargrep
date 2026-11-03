@@ -22,7 +22,7 @@ export function Tooltip({
         <TooltipPrimitive.Positioner side="top" sideOffset={6} className="isolate z-50">
           <TooltipPrimitive.Popup
             data-slot="tooltip-content"
-            className="rounded-sm bg-foreground px-3 py-1.5 font-sans text-sm font-medium text-background transition-opacity duration-120 data-ending-style:opacity-0 data-starting-style:opacity-0"
+            className="rounded-md bg-foreground px-3 py-1.5 font-sans text-sm font-medium text-background transition-opacity duration-120 data-ending-style:opacity-0 data-starting-style:opacity-0"
           >
             {content}
           </TooltipPrimitive.Popup>

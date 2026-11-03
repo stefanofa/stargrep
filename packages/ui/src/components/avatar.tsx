@@ -34,7 +34,7 @@ export function NetworkAvatars({ people, className }: { people: ReadonlyArray<Pe
     <Tooltip
       content={handles}
       aria-label={`${label}: ${handles}`}
-      className={cn("flex items-center gap-2 font-sans text-sm leading-4 font-medium", className)}
+      className={cn("flex items-center gap-2 font-sans text-sm font-medium", className)}
     >
       <span className="flex -space-x-1.5" aria-hidden>
         {people.slice(0, 4).map((person, index) => (

@@ -15,7 +15,7 @@ const buttonVariants = cva(
         bare: "text-accent-strong hover:bg-accent/25",
       },
       size: {
-        default: "h-9 px-4 text-[14px]",
+        default: "h-9 px-4 text-meta",
         lg: "h-11 px-5 text-base",
         icon: "size-10",
         xs: "size-5 [&_svg:not([class*='size-'])]:size-3.5",

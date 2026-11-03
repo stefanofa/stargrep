@@ -6,8 +6,8 @@ import { cn } from "../lib/cn.ts";
 const badgeVariants = cva("inline-flex w-fit shrink-0 items-center rounded-full font-sans whitespace-nowrap", {
   variants: {
     variant: {
-      label: "h-6 bg-muted px-[9px] text-label font-bold text-secondary-foreground uppercase",
-      chip: "h-9 gap-1.5 bg-accent-soft pr-2 pl-3.5 text-[14px] leading-sm font-medium text-foreground",
+      label: "h-6 bg-muted px-[9px] text-label font-semibold text-secondary-foreground uppercase",
+      chip: "h-9 gap-1.5 bg-accent-soft pr-2 pl-3.5 text-meta font-medium text-foreground",
     },
   },
   defaultVariants: {

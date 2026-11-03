@@ -75,3 +75,19 @@ export function PlusIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function ChevronIcon(props: IconProps) {
+  return (
+    <svg aria-hidden viewBox="0 0 14 14" {...base} {...props}>
+      <path d="m3.5 5.5 3.5 3.5 3.5-3.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function CheckIcon(props: IconProps) {
+  return (
+    <svg aria-hidden viewBox="0 0 14 14" {...base} {...props}>
+      <path d="m3 7.5 2.5 2.5L11 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}

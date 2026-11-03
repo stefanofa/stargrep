@@ -53,12 +53,15 @@ Avatar fills for initials avatars rotate through #FBD9C4, #DCD0FF, #F9D4E6, #CDE
 | `--font-sans` | Inter 400, 500, 600 | Everything else |
 | `--font-mono` | JetBrains Mono | Code, CLI snippets, API keys. Not used in the main screens |
 | `--text-label` | 11px, uppercase, `--tracking-caps` 0.08em | Small labels (STARRED, ARCHIVED, SPONSORED) |
-| `--text-sm` | 13px / `--leading-sm` 18px | Meta lines |
+| `--text-sm` | 13px / 16px | Meta lines in small tiles and list rows |
+| `--text-meta` | 14px / `--leading-sm` 18px | Owner lines in small tiles, meta lines in the hero tile, chips, tabs, buttons |
 | `--text-base` | 15px / `--leading-base` 22px | Reason lines in small tiles, body |
 | `--text-lg` | 17px / `--leading-lg` 26px | Reason line in the hero tile, collection notes |
 | `--text-xl` | 24px / `--leading-xl` 32px | The query in the search tile |
-| `--text-2xl` | 30px | Tile numbers, repo names in tiles |
-| `--text-3xl` | 36px | Wordmark, page headings |
+| `--text-name` | 26px / 30px | Repo names in small tiles |
+| `--text-2xl` | 30px | Tile numbers |
+| `--text-3xl` | 36px | Wordmark, page headings, the repo name in the hero tile |
+| `--text-4xl` | 40px / 44px | The star count in the hero tile |
 | `--text-display` | 52px | Hero tile headline ("found 5!") |
 | `--text-hero` | 120px | The one big number per page ("412") |
 
@@ -72,18 +75,22 @@ Load Fredoka (600 only) and Inter (variable) from the app, with `font-display: s
 |---|---|---|
 | `--spacing-1` to `--spacing-4` | 4, 8, 12, 16px | Inside components |
 | `--spacing-gap` | 20px | Gap between tiles, and between sections |
-| `--spacing-6` | 24px | Small tile padding |
-| `--spacing-tile` | 28px | Large tile padding |
+| `--spacing-tile-sm` | 22px | Right and bottom padding of small tiles |
+| `--spacing-6` | 24px | Top and left padding of small tiles, bottom padding of the hero tile |
+| `--spacing-tile` | 28px | Padding of the search tile and list rows |
+| `--spacing-tile-lg` | 30px | Side padding of the hero and summary tiles |
 | `--spacing-12`, `-16`, `-24` | 48, 64, 96px | Page top and bottom |
 | `--radius-sm` | 12px | Repo monogram squares |
-| `--radius-md` | 20px | List rows, menus, popovers |
+| `--radius-md` | 20px | List rows, menus, popovers, tooltips |
 | `--radius-tile` | 28px | Tiles, the search tile, the detail panel |
 | `--radius-full` | 999px | Chips, buttons, toggles, avatars |
 | `--container-page` | 1200px | Page width |
 | `--container-narrow` | 720px | Reserved for long text, such as docs and the privacy page |
-| `--opacity-archived` | 60% | Archived and deprecated tiles |
+| `--opacity-archived` | 60% | The star and the alive dot on archived and deprecated tiles |
 
 The grid is 4 columns at 1024px and up, 2 columns from 640px, and 1 column below. On phones the search input moves to the bottom of the screen, under the thumb, with chips just above it (artboard 18).
+
+Small tiles take 24px padding at the top and left and 22px at the right and bottom. The hero tile takes 26px at the top, 30px at the sides, and 24px at the bottom.
 
 Tiles have no borders and no shadows. Separation comes from the lilac ground showing between white tiles. The only shadow in the system is on the repo detail panel, over a lilac scrim.
 
@@ -93,7 +100,7 @@ Every component is a stock shadcn component on Base UI, restyled with the tokens
 
 | Stargrep piece | Built from | Notes |
 |---|---|---|
-| Tile | shadcn `Card` | Variants: `default` (card), `highlight` (butter, one per page), `quiet` (border, transparent, for sponsored), `archived` (border, `--opacity-archived`). Radius `--radius-tile`, padding `--spacing-tile`. No shadow. |
+| Tile | shadcn `Card` | Variants: `default` (card), `highlight` (butter, one per page), `quiet` (border, transparent, for sponsored), `archived` (no border, muted text, `--opacity-archived` on the star and the alive dot, so text keeps its contrast). Radius `--radius-tile`. No shadow. |
 | Search tile | `Card` + `Input` | The input is borderless, `--text-xl`, inside a white tile. `/` focuses it from anywhere. The query lives in the URL. |
 | Filter chip | `Badge` + `Button` (icon, size xs) | `accent-soft` fill. The x button removes the filter. Backspace in an empty input removes the last chip. |
 | Scope switch | Base UI `Tabs` | Your stars, Network, Everyone. A white pill track, the active tab on `accent`. Each tab is a link, so the scope is in the URL. |

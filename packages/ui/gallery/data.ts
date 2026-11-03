@@ -111,3 +111,20 @@ export const weeks: StarredWeek[] = Array.from({ length: 52 }, (_, index) => ({
     stars: ((index * 7 + day) * 37) % 11 === 0 ? 9 : (index + day * 3) % 5,
   })),
 }));
+
+export const detailFor = (result: Result): RepoDetail =>
+  result.name === ratatui.name
+    ? ratatui
+    : {
+        owner: result.owner,
+        name: result.name,
+        language: "Rust",
+        description: result.reason,
+        summary: result.reason,
+        stars: result.stars,
+        starred: result.starred,
+        activity: result.activity,
+        network: result.network,
+        alsoStarred: ratatui.alsoStarred.filter((related) => related.name !== result.name),
+        githubUrl: `https://github.com/${result.owner}/${result.name}`,
+      };

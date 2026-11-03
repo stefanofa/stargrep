@@ -57,6 +57,25 @@ describe("filter chips", () => {
     expect(chips()).toEqual(["Rust", "Topic: TUI"]);
   });
 
+  test("without a query prop the tile keeps its own text and still removes chips", async () => {
+    const user = userEvent.setup();
+    const typed: string[] = [];
+    const removed: string[] = [];
+    render(
+      <SearchTile
+        defaultQuery="ru"
+        onQueryChange={(query) => typed.push(query)}
+        filters={initial}
+        onRemoveFilter={(filter) => removed.push(filter.id)}
+      />,
+    );
+    await user.click(page().getByRole("searchbox"));
+    await user.keyboard("{Backspace}{Backspace}{Backspace}");
+    expect(page().getByRole<HTMLInputElement>("searchbox").value).toBe("");
+    expect(typed).toEqual(["r", ""]);
+    expect(removed).toEqual(["topic"]);
+  });
+
   test("slash focuses the search input from anywhere on the page", async () => {
     const user = userEvent.setup();
     render(<Harness />);

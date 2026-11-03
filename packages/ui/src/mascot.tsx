@@ -37,9 +37,21 @@ const faces: Record<Mood, { eyes: ReactNode; mouth: ReactNode; prop?: ReactNode 
     mouth: smile(47.5),
     prop: (
       <>
-        <path d="M89.5 39.5 L95 33.5" stroke={ink} strokeWidth="3.6" strokeLinecap="round" />
-        <circle cx="102" cy="25.5" r="10" fill="#e9e2ff" stroke={ink} strokeWidth="3" />
-        <path d="M97.5 22.5 Q99.5 19.8 102.8 19.6" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
+        <path d="M89.5 39.5 L95 33.5" stroke="var(--color-foreground)" strokeWidth="3.6" strokeLinecap="round" />
+        <circle
+          cx="102"
+          cy="25.5"
+          r="10"
+          fill="var(--color-accent-soft)"
+          stroke="var(--color-foreground)"
+          strokeWidth="3"
+        />
+        <path
+          d="M97.5 22.5 Q99.5 19.8 102.8 19.6"
+          className="stroke-[light-dark(var(--color-card),var(--color-accent))]"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
       </>
     ),
   },

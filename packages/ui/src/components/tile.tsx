@@ -8,7 +8,7 @@ const tileVariants = cva("relative rounded-tile p-tile text-foreground", {
       default: "bg-card",
       highlight: "butter",
       quiet: "border-[1.5px] border-border bg-transparent",
-      archived: "border-[1.5px] border-border bg-card",
+      archived: "bg-card text-muted-foreground",
     },
   },
   defaultVariants: {

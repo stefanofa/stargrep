@@ -37,17 +37,22 @@ export function RepoPanel({
   open,
   onOpenChange,
   onAddToCollection,
+  returnFocus,
 }: {
   repo: RepoDetail | undefined;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onAddToCollection?: (repo: RepoDetail) => void;
+  returnFocus?: HTMLElement | null;
 }) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-40 bg-scrim transition-opacity duration-160 data-ending-style:opacity-0 data-starting-style:opacity-0" />
-        <Dialog.Popup className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[520px] flex-col gap-[34px] overflow-y-auto rounded-l-tile bg-card px-9 py-8 text-foreground shadow-panel transition-[translate,opacity] duration-220 ease-out data-ending-style:translate-x-full data-starting-style:translate-x-full max-sm:px-gap motion-reduce:transition-opacity motion-reduce:data-ending-style:translate-x-0 motion-reduce:data-ending-style:opacity-0 motion-reduce:data-starting-style:translate-x-0 motion-reduce:data-starting-style:opacity-0">
+        <Dialog.Popup
+          finalFocus={returnFocus ? () => returnFocus : true}
+          className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[520px] flex-col gap-[34px] overflow-y-auto rounded-l-tile bg-card px-9 py-8 text-foreground shadow-panel transition-[translate,opacity] duration-220 ease-out data-ending-style:translate-x-full data-starting-style:translate-x-full max-sm:px-gap motion-reduce:transition-opacity motion-reduce:data-ending-style:translate-x-0 motion-reduce:data-ending-style:opacity-0 motion-reduce:data-starting-style:translate-x-0 motion-reduce:data-starting-style:opacity-0"
+        >
           {repo && (
             <>
               <div className="flex flex-col gap-[14px]">
@@ -86,7 +91,7 @@ export function RepoPanel({
                     <span className="sr-only">stars</span>
                   </p>
                   {repo.starred && (
-                    <p className="mb-2 flex h-8 items-center gap-[7px] rounded-full bg-accent-soft pr-[13px] pl-[11px] font-sans text-sm leading-4 font-semibold text-accent-strong">
+                    <p className="mb-2 flex h-8 items-center gap-[7px] rounded-full bg-accent-soft pr-[13px] pl-[11px] font-sans text-sm font-semibold text-accent-strong">
                       <StarIcon className="size-[13px]" />
                       you starred it {repo.starred}
                     </p>
@@ -137,7 +142,7 @@ export function RepoPanel({
                   </div>
                   <div className="flex flex-col gap-px">
                     <h3 className={heading}>starred by {repo.network.length} you follow</h3>
-                    <p className="font-sans text-sm leading-4 font-medium text-muted-foreground">
+                    <p className="font-sans text-sm font-medium text-muted-foreground">
                       {repo.network.map((person) => `@${person.login}`).join(", ")}
                     </p>
                   </div>
@@ -160,9 +165,7 @@ export function RepoPanel({
                           >
                             {related.name}
                           </a>
-                          <span className="font-sans text-sm leading-4 font-medium text-muted-foreground">
-                            {related.owner}
-                          </span>
+                          <span className="font-sans text-sm font-medium text-muted-foreground">{related.owner}</span>
                         </div>
                         <span className="flex items-center gap-1 font-display text-lg leading-gap font-semibold">
                           <StarIcon className="size-3.5" />

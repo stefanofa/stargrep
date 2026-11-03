@@ -27,7 +27,7 @@ export function DeepSearch({
       >
         <Switch.Thumb className="size-5 rounded-full bg-[light-dark(var(--color-card),var(--color-muted-foreground))] shadow-[0_1px_2px_#1e1b2e33] transition-transform duration-120 data-checked:translate-x-[18px] motion-reduce:transition-none" />
       </Switch.Root>
-      <label htmlFor={id} className="font-sans text-[14px] leading-sm font-medium text-foreground">
+      <label htmlFor={id} className="font-sans text-meta font-medium text-foreground">
         Deep search
       </label>
     </div>

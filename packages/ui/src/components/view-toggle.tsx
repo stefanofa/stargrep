@@ -1,6 +1,6 @@
 import { Toggle } from "@base-ui/react/toggle";
 import { ToggleGroup } from "@base-ui/react/toggle-group";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { cn } from "../lib/cn.ts";
 import { ListIcon, TilesIcon } from "./icons.tsx";
 
@@ -20,7 +20,11 @@ const readStoredView = (): View | undefined => {
 };
 
 export function useStoredView(fallback: View = "tiles") {
-  const [view, setView] = useState<View>(() => readStoredView() ?? fallback);
+  const [view, setView] = useState<View>(fallback);
+  useEffect(() => {
+    const stored = readStoredView();
+    if (stored) setView(stored);
+  }, []);
   const update = useCallback((next: View) => {
     setView(next);
     try {
@@ -37,20 +41,26 @@ const views = [
 
 export function ViewToggle({
   value,
+  defaultValue = "tiles",
   onValueChange,
   className,
 }: {
-  value: View;
-  onValueChange: (view: View) => void;
+  value?: View | undefined;
+  defaultValue?: View;
+  onValueChange?: (view: View) => void;
   className?: string;
 }) {
+  const [own, setOwn] = useState(defaultValue);
+  const current = value ?? own;
   return (
     <ToggleGroup
       aria-label="View"
-      value={[value]}
+      value={[current]}
       onValueChange={(next) => {
         const [picked] = next;
-        if (isView(picked)) onValueChange(picked);
+        if (!isView(picked)) return;
+        setOwn(picked);
+        onValueChange?.(picked);
       }}
       className={cn(
         "flex w-fit items-center gap-0.5 rounded-full border-[1.5px] border-border bg-card p-[3px] list:h-[42px] list:border-0 list:px-1.5",

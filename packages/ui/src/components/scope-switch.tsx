@@ -31,7 +31,7 @@ export function ScopeSwitch({
             value={scope.value}
             nativeButton={false}
             render={<a href={scope.href} />}
-            className="flex h-9 items-center rounded-full px-[18px] font-sans text-[14px] leading-sm font-medium text-muted-foreground transition-[color,background-color] duration-120 hover:text-foreground data-active:bg-accent data-active:font-semibold data-active:text-ink"
+            className="flex h-9 items-center rounded-full px-[18px] font-sans text-meta font-medium text-muted-foreground transition-[color,background-color] duration-120 hover:text-foreground data-active:bg-accent data-active:font-semibold data-active:text-ink"
           >
             {scope.label}
           </Tabs.Tab>

@@ -1,5 +1,5 @@
 import { Input } from "@base-ui/react/input";
-import { type FormEvent, type KeyboardEvent, useEffect, useRef } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { cn } from "../lib/cn.ts";
 import { Badge } from "./badge.tsx";
 import { Button } from "./button.tsx";
@@ -31,6 +31,7 @@ const typing = (target: EventTarget | null) =>
 
 export function SearchTile({
   query,
+  defaultQuery = "",
   onQueryChange,
   onSubmit,
   filters = [],
@@ -38,8 +39,9 @@ export function SearchTile({
   label = "Search your stars",
   className,
 }: {
-  query: string;
-  onQueryChange: (query: string) => void;
+  query?: string | undefined;
+  defaultQuery?: string;
+  onQueryChange?: (query: string) => void;
   onSubmit?: (query: string) => void;
   filters?: ReadonlyArray<Filter>;
   onRemoveFilter?: (filter: Filter) => void;
@@ -47,6 +49,12 @@ export function SearchTile({
   className?: string;
 }) {
   const input = useRef<HTMLInputElement>(null);
+  const [own, setOwn] = useState(defaultQuery);
+  const current = query ?? own;
+  const change = (next: string) => {
+    setOwn(next);
+    onQueryChange?.(next);
+  };
 
   useEffect(() => {
     const focusOnSlash = (event: globalThis.KeyboardEvent) => {
@@ -60,7 +68,7 @@ export function SearchTile({
 
   const removeLastOnBackspace = (event: KeyboardEvent<HTMLInputElement>) => {
     const last = filters.at(-1);
-    if (event.key === "Backspace" && query === "" && last && onRemoveFilter) {
+    if (event.key === "Backspace" && current === "" && last && onRemoveFilter) {
       event.preventDefault();
       onRemoveFilter(last);
     }
@@ -68,7 +76,7 @@ export function SearchTile({
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    onSubmit?.(query);
+    onSubmit?.(current);
   };
 
   return (
@@ -80,8 +88,8 @@ export function SearchTile({
             ref={input}
             type="search"
             aria-label={label}
-            value={query}
-            onValueChange={onQueryChange}
+            value={current}
+            onValueChange={change}
             onKeyDown={removeLastOnBackspace}
             className="min-w-0 flex-1 bg-transparent font-sans text-xl font-medium tracking-snug text-foreground placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:appearance-none"
           />
