@@ -45,24 +45,25 @@ const decodeNearest = rowsDecoder(NearestStar);
 const decodeHybrid = rowsDecoder(HybridHit);
 
 const fused = (search: HybridSearch, vector: EmbeddingVector) => sql`
-  with candidates as (
-    select repo_id as id from stars where account_id = ${search.accountId} and unstarred_at is null
+  with scored as materialized (
+    select
+      r.id,
+      case when r.search @@ query then ts_rank_cd(r.search, query) end as text_score,
+      case when r.embedding_model = ${search.embedding.model} then r.embedding <=> ${`[${vector.join(",")}]`}::halfvec end as distance
+    from stars s join repos r on r.id = s.repo_id, websearch_to_tsquery('english', ${search.text}) query
+    where s.account_id = ${search.accountId} and s.unstarred_at is null
   ),
   text_hits as (
     select id, row_number() over (order by text_score desc, id) as rank from (
-      select r.id, ts_rank_cd(r.search, query) as text_score
-      from candidates c join repos r on r.id = c.id, websearch_to_tsquery('english', ${search.text}) query
-      where r.search @@ query
-      order by text_score desc, r.id
+      select id, text_score from scored where text_score is not null
+      order by text_score desc, id
       limit ${sql.raw(String(rankDepth))}
     ) top
   ),
   vector_hits as (
     select id, row_number() over (order by distance, id) as rank from (
-      select r.id, r.embedding <=> ${`[${vector.join(",")}]`}::halfvec as distance
-      from candidates c join repos r on r.id = c.id
-      where r.embedding_model = ${search.embedding.model}
-      order by distance, r.id
+      select id, distance from scored where distance is not null
+      order by distance, id
       limit ${sql.raw(String(rankDepth))}
     ) top
   )
