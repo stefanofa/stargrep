@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as Ai from "../ai.ts";
 import { toAiSchema } from "../schema-bridge.ts";
+import * as TextGeneration from "../text-generation.ts";
 
 export const RepoKind = Schema.Literals([
   "app",
@@ -58,9 +58,9 @@ export const prompt = (repo: RepoFacts): string =>
     repo.readme === null ? "none" : trimReadme(repo.readme),
   ].join("\n");
 
-export const summarize = Effect.fn("Ai.summarize")(function* (model: string, repo: RepoFacts) {
-  const ai = yield* Ai.Ai;
-  return yield* ai.generate({ model, schema: repoSummarySchema, system, prompt: prompt(repo) });
+export const summarize = Effect.fn("Summarize.summarize")(function* (repo: RepoFacts) {
+  const textGeneration = yield* TextGeneration.TextGeneration;
+  return yield* textGeneration.generate({ schema: repoSummarySchema, system, prompt: prompt(repo) });
 });
 
 export const embeddingText = (repo: RepoFacts, summary: RepoSummary): string =>

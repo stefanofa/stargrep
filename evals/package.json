@@ -6,6 +6,7 @@
     "typecheck": "effect-tsgo tsc -p ."
   },
   "dependencies": {
+    "@effect/platform-bun": "4.1.2",
     "@stargrep/ai": "workspace:*",
     "effect": "4.1.2"
   },

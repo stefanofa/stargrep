@@ -1,6 +1,7 @@
 import { describe, expect } from "bun:test";
 import { GatewayModelNotFoundError } from "@ai-sdk/gateway";
 import { effect } from "@stargrep/testing";
+import { APICallError } from "ai";
 import { MockEmbeddingModelV4, MockLanguageModelV4 } from "ai/test";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -8,8 +9,9 @@ import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import * as Ai from "./ai.ts";
-import * as AiFake from "./fake.ts";
+import * as Embeddings from "./embeddings.ts";
+import * as Fake from "./fake.ts";
+import * as Gateway from "./gateway.ts";
 import * as Summarize from "./prompts/summarize.ts";
 import { toAiSchema } from "./schema-bridge.ts";
 
@@ -26,13 +28,16 @@ const textResult = (text: string): GenerateResult => ({
   warnings: [],
 });
 
-const withLanguageModel = (doGenerate: (options: CallOptions) => PromiseLike<GenerateResult>) => {
-  const model = new MockLanguageModelV4({ doGenerate });
-  const provider = Ai.AiProvider.of({
-    languageModel: () => model,
-    embeddingModel: (modelId) => AiFake.provider().embeddingModel(modelId),
+const withLanguageModel = (doGenerate: (options: CallOptions) => PromiseLike<GenerateResult>, model = "test/model") => {
+  const languageModel = new MockLanguageModelV4({ doGenerate });
+  const provider = Gateway.AiProvider.of({
+    languageModel: () => languageModel,
+    embeddingModel: (modelId) => Fake.provider().embeddingModel(modelId),
   });
-  return { model, layer: Ai.layer.pipe(Layer.provide(Layer.succeed(Ai.AiProvider, provider))) };
+  return {
+    languageModel,
+    layer: Gateway.layerTextGeneration(model).pipe(Layer.provide(Layer.succeed(Gateway.AiProvider, provider))),
+  };
 };
 
 const repo: Summarize.RepoFacts = {
@@ -73,10 +78,10 @@ describe("schema bridge", () => {
   );
 });
 
-describe("generate", () => {
+describe("gateway text generation", () => {
   effect("decodes the model's JSON into the summary schema", () => {
     const { layer } = withLanguageModel(async () => textResult(JSON.stringify(validSummary)));
-    return Summarize.summarize("test/model", repo).pipe(
+    return Summarize.summarize(repo).pipe(
       Effect.tap((summary) => Effect.sync(() => expect(summary).toEqual(validSummary))),
       Effect.provide(layer),
     );
@@ -85,10 +90,10 @@ describe("generate", () => {
   effect("fails with AiOutputInvalid when the model returns text that is not JSON", () => {
     const { layer } = withLanguageModel(async () => textResult("Sure! Here is the summary you asked for."));
     return Effect.gen(function* () {
-      const error = yield* Effect.flip(Summarize.summarize("test/model", repo));
+      const error = yield* Effect.flip(Summarize.summarize(repo));
       expect(error._tag).toBe("AiOutputInvalid");
       expect(error.message).toBe(
-        "Model 'test/model' returned output that does not match the expected shape in 'generate'",
+        "Model 'test/model' returned output that does not match the expected shape in 'generate': structured output does not match the schema",
       );
     }).pipe(Effect.provide(layer));
   });
@@ -96,8 +101,9 @@ describe("generate", () => {
   effect("fails with AiOutputInvalid when the JSON does not match the schema", () => {
     const { layer } = withLanguageModel(async () => textResult(JSON.stringify({ ...validSummary, kind: "spaceship" })));
     return Effect.gen(function* () {
-      const error = yield* Effect.flip(Summarize.summarize("test/model", repo));
+      const error = yield* Effect.flip(Summarize.summarize(repo));
       expect(error._tag).toBe("AiOutputInvalid");
+      expect(JSON.stringify(error)).not.toContain("spaceship");
     }).pipe(Effect.provide(layer));
   });
 
@@ -113,12 +119,12 @@ describe("generate", () => {
         ),
     );
     return Effect.gen(function* () {
-      const fiber = yield* Effect.forkChild(Effect.flip(Summarize.summarize("test/model", repo)));
+      const fiber = yield* Effect.forkChild(Effect.flip(Summarize.summarize(repo)));
       yield* TestClock.adjust("59 seconds");
       expect(fiber.pollUnsafe()).toBeUndefined();
       yield* TestClock.adjust("1 second");
       const error = yield* Fiber.join(fiber);
-      expect(error).toBeInstanceOf(Ai.AiTimeout);
+      expect(error._tag).toBe("AiTimeout");
       expect(error.message).toBe("Model 'test/model' did not answer 'generate' within 60000 ms");
       expect(aborted).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -127,31 +133,37 @@ describe("generate", () => {
   effect("fails with AiModelNotFound naming the model the gateway does not know", () => {
     const { layer } = withLanguageModel(async () => {
       throw new GatewayModelNotFoundError({ message: "Model not found", modelId: "acme/nope" });
-    });
+    }, "acme/nope");
     return Effect.gen(function* () {
-      const error = yield* Effect.flip(Summarize.summarize("acme/nope", repo));
+      const error = yield* Effect.flip(Summarize.summarize(repo));
       expect(error._tag).toBe("AiModelNotFound");
-      expect(error.message).toBe("Model 'acme/nope' is not available through the AI Gateway");
+      expect(error.message).toBe("Model 'acme/nope' is not available from this provider");
     }).pipe(Effect.provide(layer));
   });
 
-  effect("fails with AiRequestFailed on any other provider error", () => {
+  effect("fails with AiRequestFailed that keeps the status and drops the request body", () => {
     const { layer } = withLanguageModel(async () => {
-      throw new Error("socket hang up");
+      throw new APICallError({
+        message: "upstream failed",
+        url: "https://ai-gateway.vercel.sh/v1",
+        requestBodyValues: { prompt: "SECRET README TEXT" },
+        statusCode: 502,
+      });
     });
     return Effect.gen(function* () {
-      const error = yield* Effect.flip(Summarize.summarize("test/model", repo));
+      const error = yield* Effect.flip(Summarize.summarize(repo));
       expect(error._tag).toBe("AiRequestFailed");
+      expect(error.message).toBe("Model 'test/model' request failed in 'generate': AI_APICallError with status 502");
+      expect(JSON.stringify(error)).not.toContain("SECRET");
     }).pipe(Effect.provide(layer));
   });
 
   effect("trims a long README before the call", () => {
-    const { model, layer } = withLanguageModel(async () => textResult(JSON.stringify(validSummary)));
-    const longRepo = { ...repo, readme: "x".repeat(300_000) };
-    return Summarize.summarize("test/model", longRepo).pipe(
+    const { languageModel, layer } = withLanguageModel(async () => textResult(JSON.stringify(validSummary)));
+    return Summarize.summarize({ ...repo, readme: "x".repeat(300_000) }).pipe(
       Effect.tap(() =>
         Effect.sync(() => {
-          const sent = (model.doGenerateCalls[0]?.prompt ?? [])
+          const sent = (languageModel.doGenerateCalls[0]?.prompt ?? [])
             .flatMap((message) => (message.role === "user" ? message.content : []))
             .map((part) => (part.type === "text" ? part.text : ""))
             .join("");
@@ -164,65 +176,95 @@ describe("generate", () => {
   });
 
   effect("counts input and output tokens per model", () => {
-    const { layer } = withLanguageModel(async () => textResult(JSON.stringify(validSummary)));
+    const { layer } = withLanguageModel(async () => textResult(JSON.stringify(validSummary)), "metered/model");
     const tokens = (direction: string) =>
-      Metric.value(Metric.withAttributes(Ai.tokensUsed, { model: "metered/model", direction }));
+      Metric.value(Metric.withAttributes(Gateway.tokensUsed, { model: "metered/model", direction }));
     return Effect.gen(function* () {
       const before = yield* tokens("output");
-      yield* Summarize.summarize("metered/model", repo);
+      yield* Summarize.summarize(repo);
       expect((yield* tokens("output")).count - before.count).toBe(20);
     }).pipe(Effect.provide(layer));
   });
 });
 
-describe("embed", () => {
-  const embeddingModel = { id: "test/embed", dimensions: 64 };
+describe("gateway embeddings", () => {
+  const model = { id: "test/embed", dimensions: 64 };
 
-  effect("returns one vector of the configured size per value", () =>
+  effect("returns one vector of the configured size per value, tagged with the model", () =>
     Effect.gen(function* () {
-      const ai = yield* Ai.Ai;
+      const embeddings = yield* Embeddings.Embeddings;
       const values = Array.from({ length: 100 }, (_, index) => `text number ${index}`);
-      const vectors = yield* ai.embed({ model: embeddingModel, values });
+      const vectors = yield* embeddings.embed(values);
       expect(vectors).toHaveLength(100);
-      expect(vectors.every((vector) => vector.length === 64)).toBe(true);
-    }).pipe(Effect.provide(AiFake.layer())),
+      expect(vectors.every((embedding) => embedding.vector.length === 64 && embedding.model === "test/embed")).toBe(
+        true,
+      );
+    }).pipe(Effect.provide(Fake.layerEmbeddings(model))),
   );
 
   effect("fails with AiOutputInvalid when the model ignores the requested size", () => {
-    const provider = Ai.AiProvider.of({
-      languageModel: (modelId) => AiFake.provider().languageModel(modelId),
+    const provider = Gateway.AiProvider.of({
+      languageModel: (modelId) => Fake.provider().languageModel(modelId),
       embeddingModel: () =>
         new MockEmbeddingModelV4({
           doEmbed: async ({ values }) => ({ embeddings: values.map(() => [0.1, 0.2]), warnings: [] }),
         }),
     });
     return Effect.gen(function* () {
-      const ai = yield* Ai.Ai;
-      const error = yield* Effect.flip(ai.embed({ model: embeddingModel, values: ["one"] }));
+      const embeddings = yield* Embeddings.Embeddings;
+      const error = yield* Effect.flip(embeddings.embed(["one"]));
       expect(error._tag).toBe("AiOutputInvalid");
-    }).pipe(Effect.provide(Ai.layer.pipe(Layer.provide(Layer.succeed(Ai.AiProvider, provider)))));
+    }).pipe(
+      Effect.provide(Gateway.layerEmbeddings(model).pipe(Layer.provide(Layer.succeed(Gateway.AiProvider, provider)))),
+    );
   });
 });
 
-describe("fake layer", () => {
-  effect("summarizes any repo into a valid RepoSummary", () =>
+describe("embedding model guard", () => {
+  const database = { id: "alibaba/qwen3-embedding-8b", dimensions: 1024 };
+
+  effect("accepts a vector from the database's model", () =>
     Effect.gen(function* () {
-      const summary = yield* Summarize.summarize("any/model", repo);
-      expect(Schema.is(Summarize.RepoSummary)(summary)).toBe(true);
-      expect(summary.summary).toContain("terminal user interfaces");
-    }).pipe(Effect.provide(AiFake.layer())),
+      const embedding = { model: database.id, vector: new Array(1024).fill(0) };
+      expect(yield* Embeddings.requireModel(database)(embedding)).toBe(embedding);
+    }),
   );
 
-  effect("embeds related texts closer than unrelated ones", () =>
+  effect("refuses a fake vector even when its size matches", () =>
     Effect.gen(function* () {
-      const ai = yield* Ai.Ai;
-      const [query, related, unrelated] = yield* ai.embed({
-        model: { id: "fake/embed", dimensions: 256 },
-        values: ["terminal dashboard library", "library for terminal dashboards and charts", "photo editing app"],
-      });
+      const embeddings = yield* Embeddings.Embeddings;
+      const [embedding] = yield* embeddings.embed(["terminal dashboards"]);
+      const error = yield* Effect.flip(Embeddings.requireModel(database)(embedding ?? { model: "", vector: [] }));
+      expect(error._tag).toBe("EmbeddingModelMismatch");
+      expect(error.message).toBe(
+        "Embedding from 'fake/hash-embedding' with 1024 dimensions cannot be stored where the database uses 'alibaba/qwen3-embedding-8b'",
+      );
+    }).pipe(Effect.provide(Fake.layerEmbeddings())),
+  );
+});
+
+describe("fake layers", () => {
+  effect("summarize any repo into a valid RepoSummary", () =>
+    Effect.gen(function* () {
+      const summary = yield* Summarize.summarize(repo);
+      expect(Schema.is(Summarize.RepoSummary)(summary)).toBe(true);
+      expect(summary.summary).toContain("terminal user interfaces");
+    }).pipe(Effect.provide(Fake.layerTextGeneration())),
+  );
+
+  effect("embed related texts closer than unrelated ones", () =>
+    Effect.gen(function* () {
+      const embeddings = yield* Embeddings.Embeddings;
+      const [query, related, unrelated] = yield* embeddings.embed([
+        "terminal dashboard library",
+        "library for terminal dashboards and charts",
+        "photo editing app",
+      ]);
       const dot = (left: ReadonlyArray<number>, right: ReadonlyArray<number>) =>
         left.reduce((sum, value, index) => sum + value * (right[index] ?? 0), 0);
-      expect(dot(query ?? [], related ?? [])).toBeGreaterThan(dot(query ?? [], unrelated ?? []));
-    }).pipe(Effect.provide(AiFake.layer())),
+      expect(dot(query?.vector ?? [], related?.vector ?? [])).toBeGreaterThan(
+        dot(query?.vector ?? [], unrelated?.vector ?? []),
+      );
+    }).pipe(Effect.provide(Fake.layerEmbeddings())),
   );
 });

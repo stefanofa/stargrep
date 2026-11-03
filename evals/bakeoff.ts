@@ -1,7 +1,10 @@
-import * as Ai from "@stargrep/ai";
-import * as AiFake from "@stargrep/ai/fake";
+import * as Embeddings from "@stargrep/ai/embeddings";
+import type { AiError } from "@stargrep/ai/errors";
+import * as Fake from "@stargrep/ai/fake";
+import * as Gateway from "@stargrep/ai/gateway";
 import * as Models from "@stargrep/ai/models";
 import * as Summarize from "@stargrep/ai/summarize";
+import type * as TextGeneration from "@stargrep/ai/text-generation";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
@@ -13,6 +16,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 const embeddingCandidates: ReadonlyArray<Models.EmbeddingModel> = [
@@ -29,10 +33,17 @@ const summaryCandidates = ["anthropic/claude-haiku-5.5", "openai/gpt-6-luna", "g
 
 const topK = 10;
 const summaryConcurrency = 8;
+const retryTransient = <A, R>(effect: Effect.Effect<A, AiError, R>) =>
+  Effect.retry(effect, {
+    times: 3,
+    schedule: Schedule.exponential("2 seconds"),
+    while: (error) => error._tag === "AiRequestFailed" || error._tag === "AiTimeout",
+  });
 const graphqlBatchSize = 25;
 const readmeNames = ["README.md", "readme.md", "Readme.md", "README.rst", "README.markdown", "README"];
 
 const queriesPath = new URL("./queries.json", import.meta.url);
+const distractorsPath = new URL("./distractors.json", import.meta.url);
 const corpusPath = new URL("./.cache/corpus.json", import.meta.url);
 const modelsPath = new URL("../packages/ai/src/models.ts", import.meta.url);
 
@@ -54,6 +65,7 @@ const RepoFacts = Schema.Struct({
 
 const decodeQueries = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Query)));
 const decodeCorpus = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(RepoFacts)));
+const decodeDistractors = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
 const encodeCorpus = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(RepoFacts)));
 
 const Blob = Schema.NullOr(Schema.Struct({ text: Schema.optional(Schema.NullOr(Schema.String)) }));
@@ -162,7 +174,9 @@ const loadPricing = Effect.gen(function* () {
 );
 
 const tokens = (model: string, direction: "input" | "output") =>
-  Metric.value(Metric.withAttributes(Ai.tokensUsed, { model, direction })).pipe(Effect.map((state) => state.count));
+  Metric.value(Metric.withAttributes(Gateway.tokensUsed, { model, direction })).pipe(
+    Effect.map((state) => state.count),
+  );
 
 const withCost = Effect.fn("Bakeoff.withCost")(function* <A, E, R>(
   pricing: Map<string, { input: number; output: number }>,
@@ -200,6 +214,11 @@ const median = (values: ReadonlyArray<number>) => {
 const recallAt = (ranked: ReadonlyArray<string>, expected: ReadonlyArray<string>) =>
   expected.filter((repo) => ranked.slice(0, topK).includes(repo)).length / expected.length;
 
+interface Providers {
+  readonly text: (model: string) => Layer.Layer<TextGeneration.TextGeneration>;
+  readonly embeddings: (model: Models.EmbeddingModel) => Layer.Layer<Embeddings.Embeddings>;
+}
+
 interface Row {
   readonly stage: "embedding" | "summary";
   readonly model: string;
@@ -216,7 +235,8 @@ const summarizeCorpus = Effect.fn("Bakeoff.summarizeCorpus")(function* (
   const results = yield* Effect.forEach(
     corpus,
     (repo) =>
-      Summarize.summarize(model, repo).pipe(
+      Summarize.summarize(repo).pipe(
+        retryTransient,
         Effect.timed,
         Effect.map(([duration, summary]) => ({ millis: Duration.toMillis(duration), summary })),
         Effect.catch((error) =>
@@ -236,20 +256,22 @@ const summarizeCorpus = Effect.fn("Bakeoff.summarizeCorpus")(function* (
 });
 
 const scoreRetrieval = Effect.fn("Bakeoff.scoreRetrieval")(function* (
-  model: Models.EmbeddingModel,
   corpus: ReadonlyArray<typeof RepoFacts.Type>,
   texts: ReadonlyArray<string>,
   queries: ReadonlyArray<Query>,
 ) {
-  const ai = yield* Ai.Ai;
-  const documents = yield* ai.embed({ model, values: texts });
+  const embeddings = yield* Embeddings.Embeddings;
+  const documents = yield* embeddings.embed(texts).pipe(retryTransient);
   const millis: Array<number> = [];
   const recalls: Array<number> = [];
   for (const query of queries) {
-    const [duration, [vector]] = yield* Effect.timed(ai.embed({ model, values: [query.query] }));
+    const [duration, [vector]] = yield* Effect.timed(embeddings.embed([query.query]).pipe(retryTransient));
     millis.push(Duration.toMillis(duration));
     const ranked = corpus
-      .map((repo, index) => ({ repo: repo.fullName, score: cosine(vector ?? [], documents[index] ?? []) }))
+      .map((repo, index) => ({
+        repo: repo.fullName,
+        score: cosine(vector?.vector ?? [], documents[index]?.vector ?? []),
+      }))
       .sort((left, right) => right.score - left.score)
       .map((entry) => entry.repo);
     recalls.push(recallAt(ranked, query.expected));
@@ -257,8 +279,14 @@ const scoreRetrieval = Effect.fn("Bakeoff.scoreRetrieval")(function* (
   return { recall: recalls.reduce((sum, value) => sum + value, 0) / recalls.length, medianMillis: median(millis) };
 });
 
-const best = (rows: ReadonlyArray<Row>) =>
-  [...rows].sort((left, right) => right.recall - left.recall || left.medianMillis - right.medianMillis)[0];
+const rank = (rows: ReadonlyArray<Row>, queryCount: number, tieBreak: (row: Row) => number) => {
+  const top = Math.max(...rows.map((row) => row.recall));
+  const tied = (row: Row) => top - row.recall <= 1 / queryCount;
+  return [...rows].sort(
+    (left, right) =>
+      Number(tied(right)) - Number(tied(left)) || tieBreak(left) - tieBreak(right) || right.recall - left.recall,
+  );
+};
 
 const formatRow = (row: Row) =>
   [
@@ -280,10 +308,15 @@ export const summaryModel = ${JSON.stringify(summary)};
 export const embeddingModel: EmbeddingModel = { id: ${JSON.stringify(embedding.id)}, dimensions: ${embedding.dimensions} };
 `;
 
-const runBakeoff = Effect.fn("Bakeoff.run")(function* (fake: boolean) {
-  const queries = yield* readText(queriesPath).pipe(Effect.flatMap(decodeQueries));
+const runBakeoff = Effect.fn("Bakeoff.run")(function* (fake: boolean, limit: number | undefined, providers: Providers) {
+  const allQueries = yield* readText(queriesPath).pipe(Effect.flatMap(decodeQueries));
+  const queries = limit === undefined ? allQueries : allQueries.slice(0, limit);
+  const distractors =
+    limit === undefined ? yield* readText(distractorsPath).pipe(Effect.flatMap(decodeDistractors)) : [];
+  const repos = new Set([...expectedRepos(queries), ...distractors]);
   const corpus = yield* readText(corpusPath).pipe(
     Effect.flatMap(decodeCorpus),
+    Effect.map((all) => all.filter((repo) => repos.has(repo.fullName))),
     Effect.catchTag("BakeoffFailed", () =>
       Effect.fail(new BakeoffFailed({ reason: "no corpus, run `bun run evals/bakeoff.ts corpus` first" })),
     ),
@@ -294,25 +327,25 @@ const runBakeoff = Effect.fn("Bakeoff.run")(function* (fake: boolean) {
   );
 
   const baseline = Models.summaryModel;
-  const baselineRun = yield* withCost(pricing, baseline, summarizeCorpus(baseline, corpus));
+  const summarizeWith = (model: string) => summarizeCorpus(model, corpus).pipe(Effect.provide(providers.text(model)));
+  const scoreWith = (model: Models.EmbeddingModel, texts: ReadonlyArray<string>) =>
+    scoreRetrieval(corpus, texts, queries).pipe(Effect.provide(providers.embeddings(model)));
+  const baselineRun = yield* withCost(pricing, baseline, summarizeWith(baseline));
 
   const embeddingRows: Array<Row> = [];
   for (const model of embeddingCandidates) {
-    const { result, cost } = yield* withCost(
-      pricing,
-      model.id,
-      scoreRetrieval(model, corpus, baselineRun.result.texts, queries),
-    );
+    const { result, cost } = yield* withCost(pricing, model.id, scoreWith(model, baselineRun.result.texts));
     embeddingRows.push({ stage: "embedding", model: model.id, ...result, cost, failures: 0 });
   }
-  const embeddingWinner = embeddingCandidates.find((model) => model.id === best(embeddingRows)?.model);
+  const embeddingRanking = rank(embeddingRows, queries.length, (row) => row.medianMillis);
+  const embeddingWinner = embeddingCandidates.find((model) => model.id === embeddingRanking[0]?.model);
   if (embeddingWinner === undefined) return yield* new BakeoffFailed({ reason: "no embedding model scored" });
 
   const summaryRows: Array<Row> = [];
   for (const model of summaryCandidates) {
     const { result: run, cost } =
-      model === baseline ? baselineRun : yield* withCost(pricing, model, summarizeCorpus(model, corpus));
-    const score = yield* scoreRetrieval(embeddingWinner, corpus, run.texts, queries);
+      model === baseline ? baselineRun : yield* withCost(pricing, model, summarizeWith(model));
+    const score = yield* scoreWith(embeddingWinner, run.texts);
     summaryRows.push({
       stage: "summary",
       model,
@@ -322,7 +355,8 @@ const runBakeoff = Effect.fn("Bakeoff.run")(function* (fake: boolean) {
       failures: run.failures,
     });
   }
-  const summaryWinner = best(summaryRows)?.model ?? baseline;
+  const summaryRanking = rank(summaryRows, queries.length, (row) => row.cost);
+  const summaryWinner = summaryRanking[0]?.model ?? baseline;
 
   yield* Console.log(
     [
@@ -335,11 +369,18 @@ const runBakeoff = Effect.fn("Bakeoff.run")(function* (fake: boolean) {
     ].join(" "),
   );
   for (const row of [...embeddingRows, ...summaryRows]) yield* Console.log(formatRow(row));
+  yield* Console.log(`Embedding ranking: ${embeddingRanking.map((row) => row.model).join(" > ")}`);
+  yield* Console.log(`Summary ranking: ${summaryRanking.map((row) => row.model).join(" > ")}`);
   yield* Console.log(
     `Chosen: summary ${summaryWinner}, embedding ${embeddingWinner.id} at ${embeddingWinner.dimensions} dimensions`,
   );
 
-  if (fake) return yield* Console.log("Fake run, packages/ai/src/models.ts left unchanged");
+  const totalCost = [baselineRun, ...embeddingRows, ...summaryRows.filter((row) => row.model !== baseline)].reduce(
+    (sum, row) => sum + row.cost,
+    0,
+  );
+  yield* Console.log(`Total model cost: $${totalCost.toFixed(4)}`);
+  if (fake || limit !== undefined) return yield* Console.log("Partial run, packages/ai/src/models.ts left unchanged");
   yield* writeText(modelsPath, modelsSource(summaryWinner, embeddingWinner));
   yield* Console.log("Wrote packages/ai/src/models.ts");
 });
@@ -347,11 +388,14 @@ const runBakeoff = Effect.fn("Bakeoff.run")(function* (fake: boolean) {
 const runCorpus = Effect.gen(function* () {
   const queries = yield* readText(queriesPath).pipe(Effect.flatMap(decodeQueries));
   const repos = expectedRepos(queries);
+  const distractors = yield* readText(distractorsPath).pipe(Effect.flatMap(decodeDistractors));
   const { corpus, problems } = yield* fetchCorpus(repos);
-  yield* writeText(corpusPath, yield* encodeCorpus(corpus));
-  const withReadme = corpus.filter((repo) => repo.readme !== null).length;
+  const extra = yield* fetchCorpus(distractors);
+  const all = [...corpus, ...extra.corpus];
+  yield* writeText(corpusPath, yield* encodeCorpus(all));
+  const withReadme = all.filter((repo) => repo.readme !== null).length;
   yield* Console.log(
-    `Wrote ${corpus.length} of ${repos.length} repos to evals/.cache/corpus.json, ${withReadme} with a README`,
+    `Wrote ${corpus.length} of ${repos.length} expected repos and ${extra.corpus.length} of ${distractors.length} distractors to evals/.cache/corpus.json, ${withReadme} with a README`,
   );
   if (problems.length > 0) {
     for (const problem of problems) yield* Console.log(problem);
@@ -361,14 +405,22 @@ const runCorpus = Effect.gen(function* () {
 
 const args = Bun.argv.slice(2);
 const fake = args.includes("--fake");
+const limitIndex = args.indexOf("--limit");
+const limit = limitIndex === -1 ? undefined : Number(args[limitIndex + 1]);
 
-const aiLayer = fake
-  ? AiFake.layer()
-  : Layer.unwrap(Config.Redacted("AI_GATEWAY_API_KEY").pipe(Effect.map((apiKey) => Ai.layerGateway({ apiKey }))));
+const gatewayProviders = Effect.gen(function* () {
+  const provider = Gateway.layerProvider({ apiKey: yield* Config.Redacted("AI_GATEWAY_API_KEY") });
+  return {
+    text: (model) => Gateway.layerTextGeneration(model).pipe(Layer.provide(provider)),
+    embeddings: (model) => Gateway.layerEmbeddings(model).pipe(Layer.provide(provider)),
+  } satisfies Providers;
+});
+
+const fakeProviders: Providers = { text: Fake.layerTextGeneration, embeddings: Fake.layerEmbeddings };
 
 const main = Effect.gen(function* () {
   if (args[0] === "corpus") return yield* runCorpus;
-  return yield* runBakeoff(fake).pipe(Effect.provide(aiLayer));
+  return yield* runBakeoff(fake, limit, fake ? fakeProviders : yield* gatewayProviders);
 });
 
 await Effect.runPromise(main.pipe(Effect.provide(FetchHttpClient.layer)));

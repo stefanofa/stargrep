@@ -43,7 +43,7 @@ export class T3ChatAccounts extends Context.Service<
 >()("t3code-relay/t3chat/T3ChatAccounts") {}
 ```
 
-**For Stargrep.** Adopt, with the key form that the `deterministicKeys` rule enforces: `<package name>/<file path without src/ and the extension>/<Service>`. `StarSync` in `packages/core/src/stars/star-sync.ts` has the key `@stargrep/core/stars/star-sync/StarSync`. When the class name matches the file name, ignoring case, the rule drops the last segment, so `Ai` in `packages/ai/src/ai.ts` is `@stargrep/ai/ai`. Typecheck fails on any other key and prints the expected one.
+**For Stargrep.** Adopt, with the key form that the `deterministicKeys` rule enforces: `<package name>/<file path without src/ and the extension>/<Service>`. `StarSync` in `packages/core/src/stars/star-sync.ts` has the key `@stargrep/core/stars/star-sync/StarSync`. When the class name matches the file name, ignoring case, the rule drops the last segment, so `Embeddings` in `packages/ai/src/embeddings.ts` is `@stargrep/ai/embeddings`, while `TextGeneration` in `text-generation.ts` keeps it as `@stargrep/ai/text-generation/TextGeneration`. Typecheck fails on any other key and prints the expected one.
 
 ### Rule: `make` reads dependencies from the environment, and `layer` wraps it
 
@@ -721,7 +721,7 @@ return yield* Effect.tryPromise({
 );
 ```
 
-**For Stargrep.** Adopt. Vercel AI SDK goes behind `Ai` and Better Auth behind its own service this way. Pass an `AbortSignal` from `Effect.tryPromise`'s `try: (signal) => ...` where the SDK accepts one, so interrupts cancel the request.
+**For Stargrep.** Adopt. Vercel AI SDK goes behind the `TextGeneration` and `Embeddings` ports and Better Auth behind its own service this way. Pass an `AbortSignal` from `Effect.tryPromise`'s `try: (signal) => ...` where the SDK accepts one, so interrupts cancel the request.
 
 ### Rule: Drizzle runs as Effects through `drizzle-orm/effect-postgres`, behind a `Db` service
 

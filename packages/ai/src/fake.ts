@@ -1,6 +1,7 @@
 import { MockEmbeddingModelV4, MockLanguageModelV4 } from "ai/test";
 import * as Layer from "effect/Layer";
-import * as Ai from "./ai.ts";
+import * as Gateway from "./gateway.ts";
+import type { EmbeddingModel } from "./models.ts";
 
 type CallOptions = Parameters<MockLanguageModelV4["doGenerate"]>[0];
 
@@ -62,9 +63,9 @@ export interface FakeOptions {
   readonly respond?: (prompt: string) => unknown;
 }
 
-export const provider = (options: FakeOptions = {}): Ai.AiProvider["Service"] => {
+export const provider = (options: FakeOptions = {}): Gateway.AiProvider["Service"] => {
   const respond = options.respond ?? fakeSummary;
-  return Ai.AiProvider.of({
+  return Gateway.AiProvider.of({
     languageModel: (modelId) =>
       new MockLanguageModelV4({
         provider: "fake",
@@ -96,5 +97,14 @@ export const provider = (options: FakeOptions = {}): Ai.AiProvider["Service"] =>
   });
 };
 
-export const layer = (options: FakeOptions = {}) =>
-  Ai.layer.pipe(Layer.provide(Layer.succeed(Ai.AiProvider, provider(options))));
+const textModel = "fake/text";
+
+const embeddingModel: EmbeddingModel = { id: "fake/hash-embedding", dimensions: 1024 };
+
+const layerProvider = (options: FakeOptions = {}) => Layer.succeed(Gateway.AiProvider, provider(options));
+
+export const layerTextGeneration = (model: string = textModel, options: FakeOptions = {}) =>
+  Gateway.layerTextGeneration(model).pipe(Layer.provide(layerProvider(options)));
+
+export const layerEmbeddings = (model: EmbeddingModel = embeddingModel) =>
+  Gateway.layerEmbeddings(model).pipe(Layer.provide(layerProvider()));

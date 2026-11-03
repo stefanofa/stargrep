@@ -3,11 +3,16 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/ai.ts",
+    "./claude-code": "./src/claude-code.ts",
+    "./config": "./src/config.ts",
+    "./embeddings": "./src/embeddings.ts",
+    "./errors": "./src/errors.ts",
     "./fake": "./src/fake.ts",
+    "./gateway": "./src/gateway.ts",
     "./models": "./src/models.ts",
     "./schema-bridge": "./src/schema-bridge.ts",
-    "./summarize": "./src/prompts/summarize.ts"
+    "./summarize": "./src/prompts/summarize.ts",
+    "./text-generation": "./src/text-generation.ts"
   },
   "scripts": {
     "typecheck": "effect-tsgo tsc -p ."
