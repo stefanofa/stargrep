@@ -18,8 +18,11 @@ const localPostgres = {
 
 const extensions = new URL("../sql/extensions.sql", import.meta.url).pathname;
 
+// Neon returns expires_at to the second and Alchemy compares it as a string, so drop the ".000".
 const twoWeeksFromToday = DateTime.now.pipe(
-  Effect.map((now) => DateTime.formatIso(DateTime.add(DateTime.startOf(now, "day"), { days: 14 }))),
+  Effect.map((now) =>
+    DateTime.formatIso(DateTime.add(DateTime.startOf(now, "day"), { days: 14 })).replace(".000Z", "Z"),
+  ),
 );
 
 const StageBranch = Effect.gen(function* () {
