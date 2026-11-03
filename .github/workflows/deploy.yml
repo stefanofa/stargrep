@@ -70,7 +70,7 @@ jobs:
       - if: steps.deploy.outputs.deployed == 'true'
         working-directory: infra
         run: |
-          output=$(bunx alchemy state read "Stargrep/$STAGE/output")
+          output=$(bunx alchemy state read "Stargrep/$STAGE/output" | sed -n '/^{/,$p')
           token=$(jq -r .debugToken.__redacted__ <<<"$output")
           echo "::add-mask::$token"
           DEBUG_TOKEN=$token bun ../scripts/stage-smoke.ts "$(jq -r .debugUrl <<<"$output")"
