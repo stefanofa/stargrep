@@ -1,0 +1,77 @@
+import type { ComponentProps } from "react";
+
+type IconProps = ComponentProps<"svg">;
+
+const base = { focusable: false, fill: "none" } as const;
+
+export function SearchIcon(props: IconProps) {
+  return (
+    <svg aria-hidden viewBox="0 0 20 20" {...base} {...props}>
+      <circle cx="8.5" cy="8.5" r="6" stroke="currentColor" strokeWidth="2" />
+      <path d="m13 13 4.5 4.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function CloseIcon(props: IconProps) {
+  return (
+    <svg aria-hidden viewBox="0 0 14 14" {...base} {...props}>
+      <path d="m4 4 6 6M10 4l-6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function StarIcon(props: IconProps) {
+  return (
+    <svg aria-hidden viewBox="0 0 24 24" {...base} {...props}>
+      <path
+        d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function TilesIcon(props: IconProps) {
+  return (
+    <svg aria-hidden viewBox="0 0 16 16" {...base} {...props}>
+      <rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1.6" fill="currentColor" />
+      <rect x="9" y="1.5" width="5.5" height="5.5" rx="1.6" fill="currentColor" />
+      <rect x="1.5" y="9" width="5.5" height="5.5" rx="1.6" fill="currentColor" />
+      <rect x="9" y="9" width="5.5" height="5.5" rx="1.6" fill="currentColor" />
+    </svg>
+  );
+}
+
+export function ListIcon(props: IconProps) {
+  return (
+    <svg aria-hidden viewBox="0 0 16 16" {...base} {...props}>
+      <path d="M2 3.5h12M2 8h12M2 12.5h12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function ExternalIcon(props: IconProps) {
+  return (
+    <svg aria-hidden viewBox="0 0 14 14" {...base} {...props}>
+      <path
+        d="M4.5 9.5 10 4M5.5 3.5H10.5V8.5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function PlusIcon(props: IconProps) {
+  return (
+    <svg aria-hidden viewBox="0 0 14 14" {...base} {...props}>
+      <path d="M7 2.5v9M2.5 7h9" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+    </svg>
+  );
+}

@@ -1,0 +1,45 @@
+{
+  "name": "@stargrep/ui",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./theme.css": "./src/theme.css"
+  },
+  "scripts": {
+    "typecheck": "effect-tsgo tsc -p .",
+    "gallery": "vite",
+    "gallery:build": "vite build"
+  },
+  "dependencies": {
+    "@base-ui/react": "1.9.0",
+    "@fontsource-variable/inter": "5.3.0",
+    "@fontsource/fredoka": "5.3.0",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "tailwind-merge": "3.7.0"
+  },
+  "peerDependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "tailwindcss": "4.3.4"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "0.64.1",
+    "@happy-dom/global-registrator": "21.0.4",
+    "@stargrep/config": "workspace:*",
+    "@tailwindcss/vite": "4.3.4",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.8",
+    "@types/bun": "1.4.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.2.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "tailwindcss": "4.3.4",
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
+  }
+}
