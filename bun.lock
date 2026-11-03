@@ -11,6 +11,19 @@
         "typescript": "catalog:",
       },
     },
+    "evals": {
+      "name": "@stargrep/evals",
+      "dependencies": {
+        "@stargrep/ai": "workspace:*",
+        "effect": "4.1.2",
+      },
+      "devDependencies": {
+        "@effect/tsgo": "0.64.1",
+        "@stargrep/config": "workspace:*",
+        "@types/bun": "1.4.4",
+        "typescript": "7.0.2",
+      },
+    },
     "packages/ai": {
       "name": "@stargrep/ai",
       "dependencies": {
@@ -221,6 +234,8 @@
     "@stargrep/ai": ["@stargrep/ai@workspace:packages/ai"],
 
     "@stargrep/config": ["@stargrep/config@workspace:packages/config"],
+
+    "@stargrep/evals": ["@stargrep/evals@workspace:evals"],
 
     "@stargrep/github": ["@stargrep/github@workspace:packages/github"],
 
