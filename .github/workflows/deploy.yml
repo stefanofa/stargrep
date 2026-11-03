@@ -1,13 +1,6 @@
 name: deploy
 
 on:
-  pull_request:
-    # closed is temporary: once this workflow is on main, pull_request_target destroys on every close.
-    types: [opened, reopened, synchronize, closed]
-  # GitHub runs pull_request_target only from the default branch's workflow, and it is the only close event
-  # that fires for a pull request with merge conflicts.
-  pull_request_target:
-    types: [closed]
   push:
     branches: [main]
   workflow_dispatch:
@@ -21,86 +14,22 @@ env:
 
 jobs:
   prod:
-    if: vars.CLOUDFLARE_ACCOUNT_ID != '' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target'
+    if: vars.CLOUDFLARE_ACCOUNT_ID != '' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     concurrency:
       group: deploy-prod
       queue: max
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup
-      - run: bun run --cwd infra deploy --config database.run.ts --stage shared --yes
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-      - run: bun run --cwd infra deploy --stage prod --yes
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-
-  preview:
-    if: vars.CLOUDFLARE_ACCOUNT_ID != '' && github.event_name == 'pull_request' && github.event.action != 'closed'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    concurrency:
-      group: deploy-pr-${{ github.event.pull_request.number }}
-      queue: max
-    permissions:
-      contents: read
-      pull-requests: write
     env:
-      STAGE: pr-${{ github.event.pull_request.number }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-      - uses: ./.github/actions/setup
-      - id: deploy
-        run: |
-          state=$(gh pr view "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY" --json state --jq .state)
-          if [ "$state" != OPEN ]; then echo "Pull request is $state, so $STAGE is left to the destroy job."; exit 0; fi
-          bun run --cwd infra deploy --stage "$STAGE" --yes
-          echo deployed=true >> "$GITHUB_OUTPUT"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-          GITHUB_TOKEN: ${{ github.token }}
-          PULL_REQUEST: ${{ github.event.pull_request.number }}
-      - if: steps.deploy.outputs.deployed == 'true'
-        working-directory: infra
-        run: |
-          output=$(bunx alchemy state read "Stargrep/$STAGE/output" | sed -n '/^{/,$p')
-          token=$(jq -r .debugToken.__redacted__ <<<"$output")
-          echo "::add-mask::$token"
-          DEBUG_TOKEN=$token bun ../scripts/stage-smoke.ts "$(jq -r .debugUrl <<<"$output")"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-
-  destroy:
-    if: vars.CLOUDFLARE_ACCOUNT_ID != '' && github.event.action == 'closed'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    concurrency:
-      group: deploy-pr-${{ github.event.pull_request.number }}
-      queue: max
-    permissions:
-      contents: read
-      pull-requests: read
-    env:
-      STAGE: pr-${{ github.event.pull_request.number }}
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      # The pull_request_target run checks out the default branch, so it runs no pull request code.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
       - uses: ./.github/actions/setup
       - run: |
-          state=$(gh pr view "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY" --json state --jq .state)
-          if [ "$state" = OPEN ]; then echo "Pull request was reopened, so $STAGE stays."; exit 0; fi
-          bun run --cwd infra destroy --stage "$STAGE" --yes
+          head=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if [ "$head" != "$GITHUB_SHA" ]; then echo "main moved to $head, so the run for that commit deploys prod."; exit 0; fi
+          bun run --cwd infra deploy --config database.run.ts --stage shared --yes
+          bun run --cwd infra deploy --stage prod --yes
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}

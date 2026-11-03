@@ -1,0 +1,45 @@
+name: preview-destroy
+
+on:
+  # GitHub runs pull_request_target only from the default branch's workflow, and it is the only close event
+  # that fires for a pull request with merge conflicts.
+  pull_request_target:
+    types: [closed]
+  # Temporary: once this workflow is on main, pull_request_target destroys on every close.
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+env:
+  ALCHEMY_TELEMETRY_DISABLED: "1"
+  CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
+jobs:
+  destroy:
+    if: vars.CLOUDFLARE_ACCOUNT_ID != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: deploy-pr-${{ github.event.pull_request.number }}
+      queue: max
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      STAGE: pr-${{ github.event.pull_request.number }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # The pull_request_target run checks out the default branch, so it runs no pull request code.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
+      - uses: ./.github/actions/setup
+      - run: |
+          state=$(gh pr view "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY" --json state --jq .state)
+          if [ "$state" = OPEN ]; then echo "Pull request was reopened, so $STAGE stays."; exit 0; fi
+          bun run --cwd infra destroy --stage "$STAGE" --yes
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
