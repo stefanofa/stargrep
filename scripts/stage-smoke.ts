@@ -4,21 +4,25 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schema from "effect/Schema";
+import { readStageOutput } from "./stage-output.ts";
 
-const [debugUrl] = process.argv.slice(2);
-const token = process.env.DEBUG_TOKEN;
-if (!debugUrl || !token) throw new Error("usage: DEBUG_TOKEN=<token> bun scripts/stage-smoke.ts <debug worker url>");
+const [stage, ...alchemyArgs] = process.argv.slice(2);
+if (!stage) throw new Error("usage: bun scripts/stage-smoke.ts <stage> [alchemy state read flags]");
+const { debugUrl, debugToken } = await readStageOutput(stage, alchemyArgs);
 
-const Budget = Schema.Struct({ allowed: Schema.Boolean, minute: Schema.Int, used: Schema.Int, cap: Schema.Int });
+const Budget = Schema.Struct({ minute: Schema.Int, used: Schema.Int, cap: Schema.Int });
 const Count = Schema.Struct({ count: Schema.Int });
 const Sent = Schema.Struct({ sent: Schema.Array(Schema.String) });
 const Refused = Schema.Struct({ budget: Budget });
 const Transaction = Schema.Struct({ pid: Schema.Int, sum: Schema.Int });
 
+type Check = { readonly check: string; readonly ok: boolean; readonly detail: unknown };
+const check = (name: string, ok: boolean, detail: unknown): Check => ({ check: name, ok, detail });
+
 const call = Effect.fn("StageSmoke.call")(function* (
   method: "GET" | "POST",
   path: string,
-  authorization: string | null = `Bearer ${token}`,
+  authorization: string | null = `Bearer ${debugToken}`,
 ) {
   const request = HttpClientRequest.make(method)(new URL(path, debugUrl));
   const response = yield* HttpClient.execute(
@@ -41,12 +45,6 @@ const read = Effect.fn("StageSmoke.read")(function* <S extends Schema.Top>(
   return yield* decode(schema, body);
 });
 
-let failed = false;
-const check = (name: string, ok: boolean, detail: unknown) => {
-  console.log(JSON.stringify({ check: name, ok, detail }));
-  if (!ok) failed = true;
-};
-
 const unauthenticated = Effect.gen(function* () {
   const probe = `smoke-${yield* Clock.currentTimeMillis}`;
   const counterBefore = yield* read(Count, "GET", `/counter/${probe}`);
@@ -68,34 +66,34 @@ const unauthenticated = Effect.gen(function* () {
   const budgetAfter = yield* read(Budget, "GET", "/budget");
   const counterAfter = yield* read(Count, "GET", `/counter/${probe}`);
   const statuses = Object.groupBy(results, ({ status }) => status);
-  check(
-    "1000 unauthenticated calls answer 401",
-    results.every(({ status }) => status === 401),
-    {
-      statuses: Object.fromEntries(Object.entries(statuses).map(([status, calls]) => [status, calls?.length])),
-    },
-  );
-  check("unauthenticated calls change no counter", counterAfter.count === counterBefore.count, {
-    before: counterBefore.count,
-    after: counterAfter.count,
-  });
-  check(
-    "unauthenticated calls spend no budget",
-    budgetAfter.minute !== budgetBefore.minute || budgetAfter.used === budgetBefore.used,
-    { before: budgetBefore, after: budgetAfter },
-  );
+  return [
+    check(
+      "1000 unauthenticated calls answer 401",
+      results.every(({ status }) => status === 401),
+      {
+        statuses: Object.fromEntries(Object.entries(statuses).map(([status, calls]) => [status, calls?.length])),
+      },
+    ),
+    check("unauthenticated calls change no counter", counterAfter.count === counterBefore.count, {
+      before: counterBefore.count,
+      after: counterAfter.count,
+    }),
+    check(
+      "unauthenticated calls spend no budget",
+      budgetAfter.minute !== budgetBefore.minute || budgetAfter.used === budgetBefore.used,
+      { before: budgetBefore, after: budgetAfter },
+    ),
+  ];
 });
 
-const lanes = Effect.gen(function* () {
+const traffic = Effect.gen(function* () {
   const queued = yield* read(Sent, "POST", "/queue?count=10");
-  check("lane 3 queues 10 jobs", queued.sent.length === 10, { sent: queued.sent });
 
-  const counter = `lane5-${yield* Clock.currentTimeMillis}`;
+  const counter = `parallel-${yield* Clock.currentTimeMillis}`;
   yield* Effect.forEach(Array.from({ length: 5 }), () => read(Count, "POST", `/counter/${counter}`), {
     concurrency: 5,
   });
   const counted = yield* read(Count, "GET", `/counter/${counter}`);
-  check("lane 5 counter ends at 5 after 5 parallel increments", counted.count === 5, counted);
 
   const transactions = yield* Effect.forEach(Array.from({ length: 30 }), () => call("POST", "/transaction"), {
     concurrency: 30,
@@ -104,11 +102,15 @@ const lanes = Effect.gen(function* () {
     transactions.filter(({ status }) => status === 200),
     ({ body }) => decode(Transaction, body),
   );
-  check("lane 7 runs 30 parallel transactions", committed.length === 30, {
-    failures: transactions.filter(({ status }) => status !== 200).map(({ status, body }) => `${status} ${body}`),
-    preparedStatementErrors: transactions.filter(({ body }) => /prepared statement/i.test(body)).length,
-    distinctBackendPids: new Set(committed.map(({ pid }) => pid)).size,
-  });
+  return [
+    check("queue accepts 10 jobs", queued.sent.length === 10, { sent: queued.sent }),
+    check("counter ends at 5 after 5 parallel increments", counted.count === 5, counted),
+    check("30 parallel transactions commit", committed.length === 30, {
+      failures: transactions.filter(({ status }) => status !== 200).map(({ status, body }) => `${status} ${body}`),
+      preparedStatementErrors: transactions.filter(({ body }) => /prepared statement/i.test(body)).length,
+      distinctBackendPids: new Set(committed.map(({ pid }) => pid)).size,
+    }),
+  ];
 });
 
 const flood = Effect.gen(function* () {
@@ -123,14 +125,17 @@ const flood = Effect.gen(function* () {
     else return yield* Effect.die(new Error(`flood got ${status}: ${body.slice(0, 200)}`));
   }
   const budget = yield* read(Budget, "GET", "/budget");
-  check("authenticated flood stops at the per-minute cap", refused !== undefined && accepted === budget.cap, {
-    accepted,
-    refused,
-    budget,
-  });
+  return [
+    check("authenticated flood stops at the per-minute cap", refused !== undefined && accepted === budget.cap, {
+      accepted,
+      refused,
+      budget,
+    }),
+  ];
 });
 
-await Effect.runPromise(
-  Effect.all([unauthenticated, lanes, flood], { discard: true }).pipe(Effect.provide(FetchHttpClient.layer)),
-);
-if (failed) process.exit(1);
+const checks = (
+  await Effect.runPromise(Effect.all([unauthenticated, traffic, flood]).pipe(Effect.provide(FetchHttpClient.layer)))
+).flat();
+for (const result of checks) console.log(JSON.stringify(result));
+if (checks.some(({ ok }) => !ok)) process.exit(1);
