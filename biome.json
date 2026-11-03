@@ -27,6 +27,26 @@
   },
   "overrides": [
     {
+      "includes": ["packages/core/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["drizzle-orm", "drizzle-orm/**"],
+                    "message": "Core reaches Postgres through the Db service in @stargrep/db, never through Drizzle."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "includes": [
         "apps/web/src/**",
         "!apps/web/src/server.ts",

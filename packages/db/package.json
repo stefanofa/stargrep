@@ -3,7 +3,11 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/db.ts"
+    ".": "./src/db.ts",
+    "./embedding": "./src/embedding.ts",
+    "./errors": "./src/errors.ts",
+    "./ids": "./src/ids.ts",
+    "./queries/*": "./src/queries/*.ts"
   },
   "scripts": {
     "bench": "bun scripts/bench.ts",
