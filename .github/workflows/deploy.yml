@@ -80,7 +80,7 @@ jobs:
       STAGE: pr-${{ github.event.pull_request.number }}
     steps:
       # GitHub starts no pull_request run for a pull request with merge conflicts, and runs pull_request_target
-      # only from the default branch's workflow, so either event destroys. A second destroy finds no state.
+      # only from the default branch's workflow, so either event destroys.
       # The pull_request_target run checks out the default branch, so it runs no pull request code.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
