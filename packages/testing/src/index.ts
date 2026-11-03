@@ -45,15 +45,19 @@ const run = <A, E>(effect: Effect.Effect<A, E>): Promise<void> => {
 };
 
 const makeTester = <R>(provide: <A, E>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E>) => {
+  // Bun throws when CI reads test.only, so read each modifier only when a test uses it.
   const register =
-    (t: Register) =>
+    (t: () => Register) =>
     <A, E>(name: string, body: Body<A, E, R>, timeout?: number) =>
-      t(name, () => run(provide(Effect.suspend(body))), timeout);
-  return Object.assign(register(test), {
-    only: register(test.only),
-    skip: register(test.skip),
-    failing: register(test.failing),
-  });
+      t()(name, () => run(provide(Effect.suspend(body))), timeout);
+  return Object.assign(
+    register(() => test),
+    {
+      only: register(() => test.only),
+      skip: register(() => test.skip),
+      failing: register(() => test.failing),
+    },
+  );
 };
 
 export const effect = makeTester<Scope.Scope | TestServices>((self) =>
