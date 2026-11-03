@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test";
 import { GatewayModelNotFoundError } from "@ai-sdk/gateway";
-import { effect } from "@stargrep/testing";
+import * as it from "@stargrep/testing";
 import { APICallError } from "ai";
 import { MockEmbeddingModelV4, MockLanguageModelV4 } from "ai/test";
 import * as Effect from "effect/Effect";
@@ -57,7 +57,7 @@ const validSummary: Summarize.RepoSummary = {
 describe("schema bridge", () => {
   const aiSchema = toAiSchema(Summarize.RepoSummary);
 
-  effect("hands the AI SDK a draft-07 JSON schema with the kind enum", () =>
+  it.effect("hands the AI SDK a draft-07 JSON schema with the kind enum", () =>
     Effect.sync(() => {
       const jsonSchema = aiSchema["~standard"].jsonSchema.input({ target: "draft-07" });
       expect(jsonSchema.$schema).toBe("http://json-schema.org/draft-07/schema#");
@@ -69,7 +69,7 @@ describe("schema bridge", () => {
     }),
   );
 
-  effect("validates with the Effect schema", () =>
+  it.effect("validates with the Effect schema", () =>
     Effect.promise(async () => {
       expect(await aiSchema["~standard"].validate(validSummary)).toEqual({ value: validSummary });
       const invalid = await aiSchema["~standard"].validate({ ...validSummary, kind: "spaceship" });
@@ -79,7 +79,7 @@ describe("schema bridge", () => {
 });
 
 describe("gateway text generation", () => {
-  effect("decodes the model's JSON into the summary schema", () => {
+  it.effect("decodes the model's JSON into the summary schema", () => {
     const { layer } = withLanguageModel(async () => textResult(JSON.stringify(validSummary)));
     return Summarize.summarize(repo).pipe(
       Effect.tap((summary) => Effect.sync(() => expect(summary).toEqual(validSummary))),
@@ -87,7 +87,7 @@ describe("gateway text generation", () => {
     );
   });
 
-  effect("fails with AiOutputInvalid when the model returns text that is not JSON", () => {
+  it.effect("fails with AiOutputInvalid when the model returns text that is not JSON", () => {
     const { layer } = withLanguageModel(async () => textResult("Sure! Here is the summary you asked for."));
     return Effect.gen(function* () {
       const error = yield* Effect.flip(Summarize.summarize(repo));
@@ -98,7 +98,7 @@ describe("gateway text generation", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  effect("fails with AiOutputInvalid when the JSON does not match the schema", () => {
+  it.effect("fails with AiOutputInvalid when the JSON does not match the schema", () => {
     const { layer } = withLanguageModel(async () => textResult(JSON.stringify({ ...validSummary, kind: "spaceship" })));
     return Effect.gen(function* () {
       const error = yield* Effect.flip(Summarize.summarize(repo));
@@ -107,7 +107,7 @@ describe("gateway text generation", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  effect("fails with AiTimeout and aborts the request once the clock passes the timeout", () => {
+  it.effect("fails with AiTimeout and aborts the request once the clock passes the timeout", () => {
     let aborted = false;
     const { layer } = withLanguageModel(
       (options) =>
@@ -130,7 +130,7 @@ describe("gateway text generation", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  effect("fails with AiModelNotFound naming the model the gateway does not know", () => {
+  it.effect("fails with AiModelNotFound naming the model the gateway does not know", () => {
     const { layer } = withLanguageModel(async () => {
       throw new GatewayModelNotFoundError({ message: "Model not found", modelId: "acme/nope" });
     }, "acme/nope");
@@ -141,7 +141,7 @@ describe("gateway text generation", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  effect("fails with AiRequestFailed that keeps the status and drops the request body", () => {
+  it.effect("fails with AiRequestFailed that keeps the status and drops the request body", () => {
     const { layer } = withLanguageModel(async () => {
       throw new APICallError({
         message: "upstream failed",
@@ -158,7 +158,7 @@ describe("gateway text generation", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  effect("trims a long README before the call", () => {
+  it.effect("trims a long README before the call", () => {
     const { languageModel, layer } = withLanguageModel(async () => textResult(JSON.stringify(validSummary)));
     return Summarize.summarize({ ...repo, readme: "x".repeat(300_000) }).pipe(
       Effect.tap(() =>
@@ -175,7 +175,7 @@ describe("gateway text generation", () => {
     );
   });
 
-  effect("counts input and output tokens per model", () => {
+  it.effect("counts input and output tokens per model", () => {
     const { layer } = withLanguageModel(async () => textResult(JSON.stringify(validSummary)), "metered/model");
     const tokens = (direction: string) =>
       Metric.value(Metric.withAttributes(Gateway.tokensUsed, { model: "metered/model", direction }));
@@ -190,7 +190,7 @@ describe("gateway text generation", () => {
 describe("gateway embeddings", () => {
   const model = { id: "test/embed", dimensions: 64 };
 
-  effect("returns one vector of the configured size per value, tagged with the model", () =>
+  it.effect("returns one vector of the configured size per value, tagged with the model", () =>
     Effect.gen(function* () {
       const embeddings = yield* Embeddings.Embeddings;
       const values = Array.from({ length: 100 }, (_, index) => `text number ${index}`);
@@ -202,7 +202,7 @@ describe("gateway embeddings", () => {
     }).pipe(Effect.provide(Fake.layerEmbeddings(model))),
   );
 
-  effect("fails with AiOutputInvalid when the model ignores the requested size", () => {
+  it.effect("fails with AiOutputInvalid when the model ignores the requested size", () => {
     const provider = Gateway.AiProvider.of({
       languageModel: (modelId) => Fake.provider().languageModel(modelId),
       embeddingModel: () =>
@@ -223,14 +223,14 @@ describe("gateway embeddings", () => {
 describe("embedding model guard", () => {
   const database = { id: "alibaba/qwen3-embedding-8b", dimensions: 1024 };
 
-  effect("accepts a vector from the database's model", () =>
+  it.effect("accepts a vector from the database's model", () =>
     Effect.gen(function* () {
       const embedding = { model: database.id, vector: new Array(1024).fill(0) };
       expect(yield* Embeddings.requireModel(database)(embedding)).toBe(embedding);
     }),
   );
 
-  effect("refuses a fake vector even when its size matches", () =>
+  it.effect("refuses a fake vector even when its size matches", () =>
     Effect.gen(function* () {
       const embeddings = yield* Embeddings.Embeddings;
       const [embedding] = yield* embeddings.embed(["terminal dashboards"]);
@@ -244,7 +244,7 @@ describe("embedding model guard", () => {
 });
 
 describe("fake layers", () => {
-  effect("summarize any repo into a valid RepoSummary", () =>
+  it.effect("summarize any repo into a valid RepoSummary", () =>
     Effect.gen(function* () {
       const summary = yield* Summarize.summarize(repo);
       expect(Schema.is(Summarize.RepoSummary)(summary)).toBe(true);
@@ -252,7 +252,7 @@ describe("fake layers", () => {
     }).pipe(Effect.provide(Fake.layerTextGeneration())),
   );
 
-  effect("embed related texts closer than unrelated ones", () =>
+  it.effect("embed related texts closer than unrelated ones", () =>
     Effect.gen(function* () {
       const embeddings = yield* Embeddings.Embeddings;
       const [query, related, unrelated] = yield* embeddings.embed([

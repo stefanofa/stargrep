@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test";
-import { effect } from "@stargrep/testing";
+import * as it from "@stargrep/testing";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -72,7 +72,7 @@ const result = (fields: Record<string, unknown>) =>
   JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "", ...fields });
 
 describe("claude code text generation", () => {
-  effect("decodes structured_output through the summary schema", () => {
+  it.effect("decodes structured_output through the summary schema", () => {
     const { seen, layer } = fakeClaude({ stdout: result({ structured_output: summary }) });
     return Effect.gen(function* () {
       expect(yield* Summarize.summarize(repo)).toEqual(summary as Summarize.RepoSummary);
@@ -100,7 +100,7 @@ describe("claude code text generation", () => {
   ];
 
   for (const [name, process, tag] of failures) {
-    effect(`maps ${name} to ${tag} without the prompt or output`, () => {
+    it.effect(`maps ${name} to ${tag} without the prompt or output`, () => {
       const { layer } = fakeClaude(process);
       return Effect.gen(function* () {
         const error = yield* Effect.flip(Summarize.summarize(repo));
@@ -113,7 +113,7 @@ describe("claude code text generation", () => {
     });
   }
 
-  effect("fails with AiTimeout and closes the process when claude hangs", () => {
+  it.effect("fails with AiTimeout and closes the process when claude hangs", () => {
     const { seen, layer } = fakeClaude({ hang: true });
     return Effect.gen(function* () {
       const fiber = yield* Effect.forkChild(Effect.flip(Summarize.summarize(repo)));

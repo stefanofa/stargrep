@@ -8,12 +8,12 @@
   "dependencies": {
     "@effect/platform-bun": "4.1.2",
     "@stargrep/ai": "workspace:*",
-    "effect": "4.1.2"
+    "effect": "catalog:"
   },
   "devDependencies": {
-    "@effect/tsgo": "0.64.1",
+    "@effect/tsgo": "catalog:",
     "@stargrep/config": "workspace:*",
-    "@types/bun": "1.4.4",
-    "typescript": "7.0.2"
+    "@types/bun": "catalog:",
+    "typescript": "catalog:"
   }
 }
