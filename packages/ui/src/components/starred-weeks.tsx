@@ -8,16 +8,26 @@ const step = (count: number, max: number) => {
   return Math.min(steps.length - 2, Math.ceil((count / max) * (steps.length - 2)));
 };
 
+export type StarredDay = {
+  readonly date: string;
+  readonly stars: number;
+};
+
+export type StarredWeek = {
+  readonly start: string;
+  readonly days: ReadonlyArray<StarredDay>;
+};
+
 export function StarredWeeks({
   weeks,
   summary,
   className,
 }: {
-  weeks: ReadonlyArray<ReadonlyArray<number>>;
+  weeks: ReadonlyArray<StarredWeek>;
   summary: string;
   className?: string;
 }) {
-  const max = Math.max(0, ...weeks.flat());
+  const max = Math.max(0, ...weeks.flatMap((week) => week.days.map((day) => day.stars)));
   return (
     <figure className={cn("flex flex-col gap-2", className)}>
       <div
@@ -26,10 +36,9 @@ export function StarredWeeks({
         className="grid grid-flow-col grid-rows-7 gap-[3px]"
         style={{ gridTemplateColumns: `repeat(${weeks.length}, minmax(0, 1fr))` }}
       >
-        {weeks.flatMap((days, week) =>
-          days.map((stars, day) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: the grid position is the identity
-            <span key={`${week}-${day}`} className={cn("aspect-square rounded-[3px]", steps[step(stars, max)])} />
+        {weeks.flatMap((week) =>
+          week.days.map((day) => (
+            <span key={day.date} className={cn("aspect-square rounded-[3px]", steps[step(day.stars, max)])} />
           )),
         )}
       </div>
@@ -37,16 +46,15 @@ export function StarredWeeks({
         <caption>Stars per week</caption>
         <thead>
           <tr>
-            <th scope="col">Week</th>
+            <th scope="col">Week of</th>
             <th scope="col">Stars</th>
           </tr>
         </thead>
         <tbody>
-          {weeks.map((days, week) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: weeks are positional
-            <tr key={week}>
-              <td>{week + 1}</td>
-              <td>{days.reduce((sum, stars) => sum + stars, 0)}</td>
+          {weeks.map((week) => (
+            <tr key={week.start}>
+              <td>{week.start}</td>
+              <td>{week.days.reduce((sum, day) => sum + day.stars, 0)}</td>
             </tr>
           ))}
         </tbody>

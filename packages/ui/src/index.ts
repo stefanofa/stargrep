@@ -18,7 +18,7 @@ export {
 export { type Scope, ScopeSwitch } from "./components/scope-switch.tsx";
 export { type Filter, FilterChip, SearchTile } from "./components/search-tile.tsx";
 export { Skeleton } from "./components/skeleton.tsx";
-export { StarredWeeks } from "./components/starred-weeks.tsx";
+export { type StarredDay, type StarredWeek, StarredWeeks } from "./components/starred-weeks.tsx";
 export { SyncProgress } from "./components/sync-progress.tsx";
 export { Tile, type TileVariant } from "./components/tile.tsx";
 export { Tooltip } from "./components/tooltip.tsx";

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useId } from "react";
 import { cn } from "../lib/cn.ts";
 import { Mascot, type MascotMotion, type Mood } from "../mascot.tsx";
 import { NetworkAvatars, type Person } from "./avatar.tsx";
@@ -270,13 +270,17 @@ export function ResultsSummary({
   mood?: Mood;
   motion?: MascotMotion | undefined;
 }) {
+  const headingId = useId();
   return (
     <section
-      aria-label="Results summary"
+      aria-labelledby={headingId}
       className="relative flex flex-col justify-between gap-6 rounded-tile sm:min-h-[240px] bg-card px-[30px] pt-tile pb-6 sm:col-span-2 list:min-h-0 list:flex-row list:items-center list:bg-transparent list:p-0 list:pt-2 list:pl-tile"
     >
       <div className="relative z-10 flex flex-col gap-1.5 list:flex-row list:items-baseline list:gap-3">
-        <h2 className="font-display text-3xl leading-[40px] font-semibold tracking-tight sm:text-display sm:leading-[56px] list:text-2xl list:leading-[36px] list:tracking-snug">
+        <h2
+          id={headingId}
+          className="font-display text-3xl leading-[40px] font-semibold tracking-tight sm:text-display sm:leading-[56px] list:text-2xl list:leading-[36px] list:tracking-snug"
+        >
           {heading}
         </h2>
         <div className="font-sans text-[16px] leading-base text-muted-foreground list:text-base">{detail}</div>

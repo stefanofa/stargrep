@@ -1,4 +1,4 @@
-import type { Match, Person, RepoDetail, Result } from "../src/index.ts";
+import type { Match, Person, RepoDetail, Result, StarredWeek } from "../src/index.ts";
 
 const marks = (text: string, ...words: string[]): Match[] =>
   words.map((word) => {
@@ -102,6 +102,12 @@ export const ratatui: RepoDetail = {
   githubUrl: "https://github.com/ratatui/ratatui",
 };
 
-export const weeks = Array.from({ length: 52 }, (_, week) =>
-  Array.from({ length: 7 }, (_, day) => (((week * 7 + day) * 37) % 11 === 0 ? 9 : (week + day * 3) % 5)),
-);
+const week = (index: number) => `2025-W${String(index + 1).padStart(2, "0")}`;
+
+export const weeks: StarredWeek[] = Array.from({ length: 52 }, (_, index) => ({
+  start: week(index),
+  days: Array.from({ length: 7 }, (_, day) => ({
+    date: `${week(index)}-${day + 1}`,
+    stars: ((index * 7 + day) * 37) % 11 === 0 ? 9 : (index + day * 3) % 5,
+  })),
+}));
