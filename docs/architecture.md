@@ -4,11 +4,11 @@ This doc explains how Stargrep is built and why. `docs/product.md` explains what
 
 ## Principles
 
-- **Headless core.** All domain logic lives in `packages/core` as Effect programs. Each program declares the services it needs, such as `Db`, `GitHub`, `Ai`, `Queue`, and `BlobStore`. Core has no imports from TanStack Start, Cloudflare, or oRPC. `bun test` runs it with in-memory layers and no network.
+- **Headless core.** All domain logic lives in `packages/core` as Effect programs. Each program declares the services it needs, such as `Db`, `GitHub`, `TextGeneration`, `Embeddings`, `Queue`, and `BlobStore`. Core has no imports from TanStack Start, Cloudflare, or oRPC. `bun test` runs it with in-memory layers and no network.
 - **Effect conventions.** `docs/effect.md` sets how services, layers, errors, schemas, config, tracing, and tests are written. It follows T3 Code's conventions, adapted to Workers and `bun test`.
 - **Platforms are layers.** Each service has one production layer, such as `Queue` on Cloudflare Queues, and one in-memory layer for tests. Moving a service to another platform means writing one new layer. Core does not change.
 - **Parse at the boundary.** Effect Schema parses GitHub responses, environment config, model output, and API input into domain types. Code inside trusts those types and does not validate again.
-- **One schema library.** Every schema in our code is an Effect Schema. Our code never imports zod, even though some dependencies install it. Schemas leave our code in two places, each with one bridge. oRPC takes Effect schemas directly through `@orpc/effect`. The `Ai` service wraps a schema with `Schema.toStandardSchemaV1` and `Schema.toStandardJSONSchemaV1` before passing it to the AI SDK.
+- **One schema library.** Every schema in our code is an Effect Schema. Our code never imports zod, even though some dependencies install it. Schemas leave our code in two places, each with one bridge. oRPC takes Effect schemas directly through `@orpc/effect`. `packages/ai` wraps a schema with `Schema.toStandardSchemaV1` and `Schema.toStandardJSONSchemaV1` before passing it to the AI SDK or to a coding-agent CLI.
 - **Shared repos, per-user stars.** Each repo is fetched, summarized, and embedded once, however many accounts starred it. An account's stars are rows that point at shared repos.
 - **GitHub numeric IDs as keys.** Accounts and repos are keyed by GitHub's numeric IDs. Logins and repo names change on rename.
 - **Idempotent pipeline steps.** Every ingestion step converges to the same state when it runs twice. Queues retry, so steps must survive retries.
@@ -26,7 +26,7 @@ Versions were checked on 2026-11-03. Pin exact versions in `package.json`.
 | App framework | TanStack Start 1.169 |
 | Client data | TanStack DB 1.0 RC |
 | API, REST, MCP | oRPC 2.0 beta, with `@orpc/openapi`, `@orpc/mcp`, and `@orpc/effect`. Every `@orpc/*` package pins the same beta |
-| AI | Vercel AI SDK 7 with `@ai-sdk/gateway`, behind an `Ai` service. Structured output uses `generateText` with `Output`, embeddings use `embedMany`, and bulk summaries use the Gateway batch API. `effect/ai` was considered, but its model modules are marked unstable and it has no Gateway batch API |
+| AI | Two ports, `TextGeneration` and `Embeddings`, in `packages/ai`. Production uses the Vercel AI SDK 7 with `@ai-sdk/gateway`: structured output through `generateText` with `Output`, embeddings through `embedMany`, and bulk summaries through the Gateway batch API. Local development can generate text through the Claude Code CLI. See "AI providers". `effect/ai` was considered, but its model modules are marked unstable and it has no Gateway batch API |
 | Activity analytics | Public GitHub events stored in R2 as Parquet, partitioned by day, and rolled up daily into Postgres. See "Event sources" for where events come from |
 | Type checking | TypeScript 7 with `@effect/tsgo`, which runs the Effect language service rules from the command line. TypeScript 6 with `effect-language-service patch` is the fallback |
 | Worker tests | `@cloudflare/vitest-plugin` with vitest for code that must run on workerd. `bun test` for everything else, scoped by `bunfig.toml` |
@@ -68,7 +68,7 @@ packages/
   api/              oRPC contracts and router
   db/               Drizzle schema, migrations, query functions
   github/           GitHub client, token budget, GH Archive reader
-  ai/               model registry, prompts, embedding helper
+  ai/               TextGeneration and Embeddings ports, provider adapters, models, prompts
   auth/             Better Auth config
   ui/               design tokens and components
   testing/          bun test helpers that stand in for it.effect and it.layer
@@ -161,6 +161,30 @@ Each result shows the values that ranked it, such as "+38% contributors in 90 da
 
 Plain keyword queries skip the planner. KV caches plans and query embeddings by normalized query text.
 
+## AI providers
+
+`packages/ai` has two ports, because they have different providers. Production summarizes with `openai/gpt-6-luna` and embeds with `voyage/voyage-4` at 1,024 dimensions. `docs/evals.md` records the bakeoff that chose them. `TextGeneration` turns a prompt into a value of an Effect Schema, for summaries, query plans, and later reranking. `Embeddings` turns texts into vectors. Core code imports only the ports.
+
+| Port | Adapters | Where it runs |
+|---|---|---|
+| `TextGeneration` | AI Gateway, Claude Code CLI, fake | Gateway everywhere. Claude Code and the fake only on a developer's machine |
+| `Embeddings` | AI Gateway, fake | Gateway everywhere. The fake only on a developer's machine |
+
+An adapter only sends the request and returns the raw output and token counts. The port's `make` does the rest for every adapter: it applies the adapter's timeout, decodes the output with the request's Effect Schema, counts tokens in `stargrep_ai_tokens`, and opens the span. So every adapter fails with the same typed errors: `AiOutputInvalid`, `AiRequestFailed`, `AiTimeout`, and `AiModelNotFound`. Error fields hold short facts such as an exit code or an HTTP status, never a prompt, README text, model output, or key.
+
+Deployed code uses `layer` from `@stargrep/ai/gateway`. It serves both ports with the models in `models.ts` and reads `AI_GATEWAY_API_KEY` through `layerProviderConfig`. Local tools use `layer` from `@stargrep/ai/local` instead. It reads `AI_TEXT_PROVIDER` (`gateway`, `claude-code`, or `fake`) and `AI_EMBEDDINGS_PROVIDER` (`gateway` or `fake`), both `gateway` by default, and needs Bun to spawn the CLI.
+
+**The Claude Code CLI is for local development only.** It runs `claude -p` with the developer's own subscription, for experiments, small eval runs, and summary samples. Anthropic's terms let a person use the unmodified Claude Code binary with their own subscription, but products and pipelines must use API keys. So deployed stages, CI, and bulk backfills always use the AI Gateway. Four checks enforce this.
+
+| Check | What it stops |
+|---|---|
+| The `@stargrep/ai` exports map has no `./claude-code` entry | Code outside the package cannot build the harness without `@stargrep/ai/local` |
+| `@stargrep/ai/local` fails with `AiProviderNotAllowed` at startup unless `STARGREP_MODE=local` and `CI` is unset | A local tool run in CI, or with the wrong environment, cannot reach the harness or the fakes |
+| The Biome rule `packages/config/no-local-ai-import.grit` | Code in `apps/`, except tests, cannot import `@stargrep/ai/local`, `@stargrep/ai/fake`, `@stargrep/ai/summarize.fake`, or `@stargrep/ai/claude-code` |
+| The gateway layer's type does not require `ChildProcessSpawner` | A Worker that uses it never needs a process spawner, so typecheck catches a Worker wired to the local layer |
+
+**Embeddings from different models cannot be compared.** Each database has one embedding model and size, the one in `packages/ai/src/models.ts` when the database was created. Every embedding carries the ID of the model that made it, and every `repos` row stores it in `embedding_model`. Writes go through `requireModel`, which refuses a vector from any other model or size with `EmbeddingModelMismatch`. The database's model must live in the database, for example in a one-row settings table and a check on `embedding_model`, not in local config, so a local run with fake or foreign embeddings can never write into a database that production reads. Switching models means re-embedding every repo into a new column or a new database.
+
 ## Client
 
 The web app loads the signed-in user's whole library into a TanStack DB collection. For 3,000 stars that is about 200 KB compressed. Filtering, sorting, and keyword search then run in the browser on each keystroke. Semantic results come from the server and merge into the same list.
@@ -226,5 +250,3 @@ These ran locally on 2026-11-03, with no cloud account.
 - Whether the OpenDigger mirror's license and uptime allow Stargrep to rely on it, and whether it is worth running an own collector instead.
 - Whether the hourly import writes Parquet inside the Worker with a JavaScript writer or hands off to a container.
 - Whether `@orpc/mcp` covers OAuth for MCP clients, or Better Auth's OAuth provider plugin has to wrap it.
-- Which embedding model to use. A bakeoff over the AI Gateway catalog scores a shortlist on a generated set of realistic queries with known answers, by recall at 10 and query latency. Switching later means re-embedding.
-- Which model writes the summaries. The same query set compares candidates.

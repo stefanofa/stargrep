@@ -1,0 +1,32 @@
+{
+  "name": "@stargrep/ai",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./embeddings": "./src/embeddings.ts",
+    "./errors": "./src/errors.ts",
+    "./fake": "./src/fake.ts",
+    "./gateway": "./src/gateway.ts",
+    "./local": "./src/local.ts",
+    "./models": "./src/models.ts",
+    "./schema-bridge": "./src/schema-bridge.ts",
+    "./summarize": "./src/prompts/summarize.ts",
+    "./summarize.fake": "./src/prompts/summarize.fake.ts",
+    "./text-generation": "./src/text-generation.ts"
+  },
+  "scripts": {
+    "typecheck": "effect-tsgo tsc -p ."
+  },
+  "dependencies": {
+    "@ai-sdk/gateway": "4.0.135",
+    "ai": "7.0.162",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "catalog:",
+    "@stargrep/config": "workspace:*",
+    "@stargrep/testing": "workspace:*",
+    "@types/bun": "catalog:",
+    "typescript": "catalog:"
+  }
+}

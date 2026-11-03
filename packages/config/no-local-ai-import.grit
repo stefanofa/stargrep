@@ -1,0 +1,13 @@
+language js
+
+or {
+  `import $_ from $source`,
+  `export { $_ } from $source`,
+  `export * from $source`,
+  `export * as $_ from $source`,
+  `import $source`,
+  `import($source)`
+} where {
+  $source <: r"[\"']@stargrep/ai/(?:local|fake|claude-code|summarize\.fake)(?:/.*)?[\"']",
+  register_diagnostic(span=$source, message="App code uses only the gateway layer from @stargrep/ai/gateway. The local selector, the Claude Code harness, and the fakes are for local tools and tests.")
+}

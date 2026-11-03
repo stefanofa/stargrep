@@ -7,7 +7,7 @@
     "packages": [
       "apps/*",
       "packages/*",
-      "{infra,scripts}"
+      "{infra,scripts,evals}"
     ],
     "catalog": {
       "@effect/tsgo": "0.64.1",

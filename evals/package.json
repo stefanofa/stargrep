@@ -1,0 +1,19 @@
+{
+  "name": "@stargrep/evals",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "effect-tsgo tsc -p ."
+  },
+  "dependencies": {
+    "@effect/platform-bun": "4.1.2",
+    "@stargrep/ai": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "catalog:",
+    "@stargrep/config": "workspace:*",
+    "@types/bun": "catalog:",
+    "typescript": "catalog:"
+  }
+}

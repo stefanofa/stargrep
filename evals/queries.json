@@ -1,0 +1,776 @@
+[
+  {
+    "id": "q001",
+    "category": "product",
+    "query": "open source apps like Wispr Flow",
+    "expected": ["cjpais/Handy", "EpicenterHQ/epicenter", "savbell/whisper-writer"]
+  },
+  {
+    "id": "q002",
+    "category": "product",
+    "query": "open source alternative to Notion",
+    "expected": ["AppFlowy-IO/AppFlowy", "toeverything/AFFiNE", "anyproto/anytype-ts"]
+  },
+  {
+    "id": "q003",
+    "category": "product",
+    "query": "self-hosted alternative to Google Photos",
+    "expected": ["immich-app/immich", "photoprism/photoprism"]
+  },
+  {
+    "id": "q004",
+    "category": "product",
+    "query": "open source Firebase alternative",
+    "expected": ["supabase/supabase", "appwrite/appwrite", "pocketbase/pocketbase"]
+  },
+  {
+    "id": "q005",
+    "category": "product",
+    "query": "open source alternative to Zapier for workflow automation",
+    "expected": ["n8n-io/n8n", "activepieces/activepieces"]
+  },
+  {
+    "id": "q006",
+    "category": "product",
+    "query": "self-hosted Dropbox replacement",
+    "expected": ["nextcloud/server", "haiwen/seafile"]
+  },
+  {
+    "id": "q007",
+    "category": "product",
+    "query": "open source Figma alternative",
+    "expected": ["penpot/penpot"]
+  },
+  {
+    "id": "q008",
+    "category": "product",
+    "query": "open source Postman alternative",
+    "expected": ["usebruno/bruno", "hoppscotch/hoppscotch", "Kong/insomnia"]
+  },
+  {
+    "id": "q009",
+    "category": "product",
+    "query": "open source password manager like 1Password",
+    "expected": ["bitwarden/clients", "keepassxreboot/keepassxc", "dani-garcia/vaultwarden"]
+  },
+  {
+    "id": "q010",
+    "category": "product",
+    "query": "note taking app like Obsidian but open source",
+    "expected": ["logseq/logseq", "siyuan-note/siyuan", "laurent22/joplin"]
+  },
+  {
+    "id": "q011",
+    "category": "product",
+    "query": "self-hosted Vercel or Heroku alternative",
+    "expected": ["coollabsio/coolify", "caprover/caprover", "Dokploy/dokploy"]
+  },
+  {
+    "id": "q012",
+    "category": "product",
+    "query": "open source Slack alternative",
+    "expected": ["mattermost/mattermost", "RocketChat/Rocket.Chat", "zulip/zulip"]
+  },
+  {
+    "id": "q013",
+    "category": "product",
+    "query": "privacy friendly Google Analytics alternative",
+    "expected": ["plausible/analytics", "umami-software/umami", "matomo-org/matomo"]
+  },
+  {
+    "id": "q014",
+    "category": "product",
+    "query": "ChatGPT style web UI for local models",
+    "expected": ["open-webui/open-webui", "janhq/jan"]
+  },
+  {
+    "id": "q015",
+    "category": "product",
+    "query": "open source AI coding assistant like Cursor",
+    "expected": ["continuedev/continue", "cline/cline"]
+  },
+  {
+    "id": "q016",
+    "category": "product",
+    "query": "open source Calendly alternative",
+    "expected": ["calcom/cal.diy"]
+  },
+  {
+    "id": "q017",
+    "category": "product",
+    "query": "open source Typeform alternative",
+    "expected": ["formbricks/formbricks", "OpnForm/OpnForm"]
+  },
+  {
+    "id": "q018",
+    "category": "product",
+    "query": "self-hosted Plex alternative media server",
+    "expected": ["jellyfin/jellyfin"]
+  },
+  {
+    "id": "q019",
+    "category": "product",
+    "query": "self-hosted music streaming server like Spotify",
+    "expected": ["navidrome/navidrome"]
+  },
+  {
+    "id": "q020",
+    "category": "product",
+    "query": "open source Loom alternative for screen recording",
+    "expected": ["CapSoftware/Cap", "obsproject/obs-studio"]
+  },
+  {
+    "id": "q021",
+    "category": "product",
+    "query": "whiteboard app with a hand drawn look",
+    "expected": ["excalidraw/excalidraw", "tldraw/tldraw"]
+  },
+  {
+    "id": "q022",
+    "category": "product",
+    "query": "open source Linear or Jira alternative",
+    "expected": ["makeplane/plane"]
+  },
+  {
+    "id": "q023",
+    "category": "product",
+    "query": "Docker Desktop alternative for macOS",
+    "expected": ["abiosoft/colima", "rancher-sandbox/rancher-desktop", "podman-desktop/podman-desktop"]
+  },
+  {
+    "id": "q024",
+    "category": "product",
+    "query": "open source Airtable alternative",
+    "expected": ["nocodb/nocodb"]
+  },
+  {
+    "id": "q025",
+    "category": "product",
+    "query": "open source Intercom alternative for customer support chat",
+    "expected": ["chatwoot/chatwoot"]
+  },
+  {
+    "id": "q026",
+    "category": "product",
+    "query": "self-hosted newsletter and mailing list manager like Mailchimp",
+    "expected": ["knadh/listmonk"]
+  },
+  {
+    "id": "q027",
+    "category": "product",
+    "query": "open source Datadog alternative",
+    "expected": ["SigNoz/signoz", "grafana/grafana"]
+  },
+  {
+    "id": "q028",
+    "category": "product",
+    "query": "open source Kanban board like Trello",
+    "expected": ["wekan/wekan", "plankanban/planka"]
+  },
+  {
+    "id": "q029",
+    "category": "library",
+    "query": "rust library for terminal dashboards",
+    "expected": ["ratatui/ratatui"]
+  },
+  {
+    "id": "q030",
+    "category": "library",
+    "query": "go library for building terminal user interfaces",
+    "expected": ["charmbracelet/bubbletea", "rivo/tview"]
+  },
+  {
+    "id": "q031",
+    "category": "library",
+    "query": "python framework for text user interfaces",
+    "expected": ["Textualize/textual", "Textualize/rich"]
+  },
+  {
+    "id": "q032",
+    "category": "library",
+    "query": "typescript orm",
+    "expected": ["drizzle-team/drizzle-orm", "prisma/orm", "typeorm/typeorm"]
+  },
+  {
+    "id": "q033",
+    "category": "library",
+    "query": "fast dataframes for python",
+    "expected": ["pola-rs/polars", "pandas-dev/pandas"]
+  },
+  {
+    "id": "q034",
+    "category": "framework",
+    "query": "rust web framework",
+    "expected": ["tokio-rs/axum", "actix/actix-web"]
+  },
+  {
+    "id": "q035",
+    "category": "framework",
+    "query": "go http web framework",
+    "expected": ["gin-gonic/gin", "labstack/echo", "gofiber/fiber"]
+  },
+  {
+    "id": "q036",
+    "category": "framework",
+    "query": "async python framework for building APIs",
+    "expected": ["fastapi/fastapi", "Kludex/starlette"]
+  },
+  {
+    "id": "q037",
+    "category": "library",
+    "query": "javascript date library",
+    "expected": ["date-fns/date-fns", "moment/luxon", "iamkun/dayjs"]
+  },
+  {
+    "id": "q038",
+    "category": "library",
+    "query": "schema validation for typescript",
+    "expected": ["colinhacks/zod", "open-circle/valibot", "arktypeio/arktype"]
+  },
+  {
+    "id": "q039",
+    "category": "library",
+    "query": "react state management",
+    "expected": ["pmndrs/zustand", "reduxjs/redux-toolkit", "pmndrs/jotai"]
+  },
+  {
+    "id": "q040",
+    "category": "library",
+    "query": "data fetching and caching for react",
+    "expected": ["TanStack/query", "vercel/swr"]
+  },
+  {
+    "id": "q041",
+    "category": "library",
+    "query": "accessible headless react components",
+    "expected": ["radix-ui/primitives", "adobe/react-spectrum"]
+  },
+  {
+    "id": "q042",
+    "category": "framework",
+    "query": "utility first css framework",
+    "expected": ["tailwindlabs/tailwindcss", "unocss/unocss"]
+  },
+  {
+    "id": "q043",
+    "category": "cli",
+    "query": "fast javascript bundler",
+    "expected": ["evanw/esbuild", "vitejs/vite"]
+  },
+  {
+    "id": "q044",
+    "category": "app",
+    "query": "javascript runtime",
+    "expected": ["oven-sh/bun", "denoland/deno", "nodejs/node"]
+  },
+  {
+    "id": "q045",
+    "category": "cli",
+    "query": "fast python package manager",
+    "expected": ["astral-sh/uv", "python-poetry/poetry"]
+  },
+  {
+    "id": "q046",
+    "category": "cli",
+    "query": "python linter written in rust",
+    "expected": ["astral-sh/ruff"]
+  },
+  {
+    "id": "q047",
+    "category": "cli",
+    "query": "fast formatter and linter for javascript",
+    "expected": ["biomejs/biome", "oxc-project/oxc"]
+  },
+  {
+    "id": "q048",
+    "category": "library",
+    "query": "async runtime for rust",
+    "expected": ["tokio-rs/tokio", "smol-rs/smol"]
+  },
+  {
+    "id": "q049",
+    "category": "library",
+    "query": "rust serialization framework",
+    "expected": ["serde-rs/serde"]
+  },
+  {
+    "id": "q050",
+    "category": "library",
+    "query": "command line argument parser for rust",
+    "expected": ["clap-rs/clap"]
+  },
+  {
+    "id": "q051",
+    "category": "library",
+    "query": "go library for building CLI apps",
+    "expected": ["spf13/cobra", "urfave/cli"]
+  },
+  {
+    "id": "q052",
+    "category": "library",
+    "query": "json for modern c++",
+    "expected": ["nlohmann/json"]
+  },
+  {
+    "id": "q053",
+    "category": "library",
+    "query": "single file public domain c libraries",
+    "expected": ["nothings/stb"]
+  },
+  {
+    "id": "q054",
+    "category": "library",
+    "query": "http client for android and java",
+    "expected": ["lysine-dev/okhttp", "lysine-dev/retrofit"]
+  },
+  {
+    "id": "q055",
+    "category": "framework",
+    "query": "kotlin multiplatform declarative ui",
+    "expected": ["JetBrains/compose-multiplatform"]
+  },
+  {
+    "id": "q056",
+    "category": "library",
+    "query": "swift http networking library",
+    "expected": ["Alamofire/Alamofire"]
+  },
+  {
+    "id": "q057",
+    "category": "library",
+    "query": "architecture library for SwiftUI apps",
+    "expected": ["pointfreeco/swift-composable-architecture"]
+  },
+  {
+    "id": "q058",
+    "category": "library",
+    "query": "flutter state management",
+    "expected": ["felangel/bloc", "rrousselGit/riverpod"]
+  },
+  {
+    "id": "q059",
+    "category": "framework",
+    "query": "elixir web framework",
+    "expected": ["phoenixframework/phoenix"]
+  },
+  {
+    "id": "q060",
+    "category": "framework",
+    "query": "ruby web framework",
+    "expected": ["rails/rails", "hanami/hanami"]
+  },
+  {
+    "id": "q061",
+    "category": "framework",
+    "query": "php web framework",
+    "expected": ["laravel/framework", "symfony/symfony"]
+  },
+  {
+    "id": "q062",
+    "category": "framework",
+    "query": "deep learning framework for python",
+    "expected": ["pytorch/pytorch", "tensorflow/tensorflow", "jax-ml/jax"]
+  },
+  {
+    "id": "q063",
+    "category": "app",
+    "query": "run large language models locally",
+    "expected": ["ollama/ollama", "ggml-org/llama.cpp"]
+  },
+  {
+    "id": "q064",
+    "category": "framework",
+    "query": "framework for building LLM apps and agents",
+    "expected": ["langchain-ai/langchain", "run-llama/llama_index"]
+  },
+  {
+    "id": "q065",
+    "category": "app",
+    "query": "vector database",
+    "expected": ["qdrant/qdrant", "milvus-io/milvus", "weaviate/weaviate"]
+  },
+  {
+    "id": "q066",
+    "category": "library",
+    "query": "vector similarity search in postgres",
+    "expected": ["pgvector/pgvector"]
+  },
+  {
+    "id": "q067",
+    "category": "model",
+    "query": "speech recognition model",
+    "expected": ["openai/whisper", "SYSTRAN/faster-whisper", "ggml-org/whisper.cpp"]
+  },
+  {
+    "id": "q068",
+    "category": "app",
+    "query": "web ui for stable diffusion image generation",
+    "expected": ["AUTOMATIC1111/stable-diffusion-webui", "Comfy-Org/ComfyUI"]
+  },
+  {
+    "id": "q069",
+    "category": "library",
+    "query": "typed effects and dependency injection for typescript",
+    "expected": ["Effect-TS/effect"]
+  },
+  {
+    "id": "q070",
+    "category": "app",
+    "query": "time series database",
+    "expected": ["timescale/timescaledb", "influxdata/influxdb", "questdb/questdb"]
+  },
+  {
+    "id": "q071",
+    "category": "app",
+    "query": "event streaming platform",
+    "expected": ["apache/kafka", "redpanda-data/redpanda", "nats-io/nats-server"]
+  },
+  {
+    "id": "q072",
+    "category": "app",
+    "query": "redis compatible in-memory store",
+    "expected": ["valkey-io/valkey", "dragonflydb/dragonfly"]
+  },
+  {
+    "id": "q073",
+    "category": "cli",
+    "query": "infrastructure as code",
+    "expected": ["hashicorp/terraform", "opentofu/opentofu", "pulumi/pulumi"]
+  },
+  {
+    "id": "q074",
+    "category": "cli",
+    "query": "run kubernetes locally",
+    "expected": ["kubernetes-sigs/kind", "kubernetes/minikube", "k3s-io/k3s"]
+  },
+  {
+    "id": "q075",
+    "category": "cli",
+    "query": "terminal ui for kubernetes clusters",
+    "expected": ["derailed/k9s"]
+  },
+  {
+    "id": "q076",
+    "category": "cli",
+    "query": "explore docker image layers",
+    "expected": ["wagoodman/dive"]
+  },
+  {
+    "id": "q077",
+    "category": "cli",
+    "query": "terminal ui for git",
+    "expected": ["jesseduffield/lazygit", "gitui-org/gitui"]
+  },
+  {
+    "id": "q078",
+    "category": "cli",
+    "query": "command line fuzzy finder",
+    "expected": ["junegunn/fzf"]
+  },
+  {
+    "id": "q079",
+    "category": "cli",
+    "query": "faster grep",
+    "expected": ["BurntSushi/ripgrep"]
+  },
+  {
+    "id": "q080",
+    "category": "cli",
+    "query": "cat clone with syntax highlighting",
+    "expected": ["sharkdp/bat"]
+  },
+  {
+    "id": "q081",
+    "category": "cli",
+    "query": "customizable shell prompt",
+    "expected": ["starship/starship"]
+  },
+  {
+    "id": "q082",
+    "category": "app",
+    "query": "gpu accelerated terminal emulator",
+    "expected": ["alacritty/alacritty", "wezterm/wezterm", "ghostty-org/ghostty", "kovidgoyal/kitty"]
+  },
+  {
+    "id": "q083",
+    "category": "cli",
+    "query": "terminal multiplexer",
+    "expected": ["tmux/tmux", "zellij-org/zellij"]
+  },
+  {
+    "id": "q084",
+    "category": "app",
+    "query": "modal text editor for the terminal",
+    "expected": ["helix-editor/helix", "neovim/neovim"]
+  },
+  {
+    "id": "q085",
+    "category": "config",
+    "query": "neovim config to start from",
+    "expected": ["LazyVim/LazyVim", "nvim-lua/kickstart.nvim", "AstroNvim/AstroNvim"]
+  },
+  {
+    "id": "q086",
+    "category": "cli",
+    "query": "manage dotfiles across machines",
+    "expected": ["twpayne/chezmoi"]
+  },
+  {
+    "id": "q087",
+    "category": "cli",
+    "query": "command line benchmarking",
+    "expected": ["sharkdp/hyperfine"]
+  },
+  {
+    "id": "q088",
+    "category": "cli",
+    "query": "load testing tool",
+    "expected": ["grafana/k6"]
+  },
+  {
+    "id": "q089",
+    "category": "cli",
+    "query": "command line json processor",
+    "expected": ["jqlang/jq", "mikefarah/yq"]
+  },
+  {
+    "id": "q090",
+    "category": "framework",
+    "query": "static site generator",
+    "expected": ["gohugoio/hugo", "withastro/astro", "11ty/buildawesome"]
+  },
+  {
+    "id": "q091",
+    "category": "framework",
+    "query": "documentation website generator",
+    "expected": ["meta/docusaurus", "squidfunk/mkdocs-material"]
+  },
+  {
+    "id": "q092",
+    "category": "library",
+    "query": "browser automation for end to end tests",
+    "expected": ["microsoft/playwright", "puppeteer/puppeteer", "cypress-io/cypress"]
+  },
+  {
+    "id": "q093",
+    "category": "library",
+    "query": "vite native unit test framework",
+    "expected": ["vitest-dev/vitest"]
+  },
+  {
+    "id": "q094",
+    "category": "library",
+    "query": "3d graphics in the browser",
+    "expected": ["mrdoob/three.js"]
+  },
+  {
+    "id": "q095",
+    "category": "library",
+    "query": "javascript charting library",
+    "expected": ["apache/echarts", "chartjs/Chart.js", "d3/d3"]
+  },
+  {
+    "id": "q096",
+    "category": "app",
+    "query": "open source game engine",
+    "expected": ["godotengine/godot", "bevyengine/bevy"]
+  },
+  {
+    "id": "q097",
+    "category": "library",
+    "query": "native gui library for rust",
+    "expected": ["iced-rs/iced", "emilk/egui"]
+  },
+  {
+    "id": "q098",
+    "category": "framework",
+    "query": "build desktop apps with web tech, lighter than electron",
+    "expected": ["tauri-apps/tauri", "wailsapp/wails"]
+  },
+  {
+    "id": "q099",
+    "category": "framework",
+    "query": "build mobile apps with react",
+    "expected": ["react/react-native", "expo/expo"]
+  },
+  {
+    "id": "q100",
+    "category": "list",
+    "query": "awesome list of self-hosted software",
+    "expected": ["awesome-selfhosted/awesome-selfhosted"]
+  },
+  {
+    "id": "q101",
+    "category": "list",
+    "query": "curated list of rust crates and tools",
+    "expected": ["rust-unofficial/awesome-rust"]
+  },
+  {
+    "id": "q102",
+    "category": "learning",
+    "query": "learn system design for interviews",
+    "expected": ["donnemartin/system-design-primer", "ByteByteGoHq/system-design-101"]
+  },
+  {
+    "id": "q103",
+    "category": "learning",
+    "query": "build your own database, git, or redis from scratch",
+    "expected": ["codecrafters-io/build-your-own-x"]
+  },
+  {
+    "id": "q104",
+    "category": "list",
+    "query": "free programming books",
+    "expected": ["EbookFoundation/free-programming-books"]
+  },
+  {
+    "id": "q105",
+    "category": "learning",
+    "query": "roadmap to become a frontend or backend developer",
+    "expected": ["nilbuild/developer-roadmap"]
+  },
+  {
+    "id": "q106",
+    "category": "list",
+    "query": "list of free public apis",
+    "expected": ["public-apis/public-apis"]
+  },
+  {
+    "id": "q107",
+    "category": "non-english",
+    "query": "biblioteca de rust para interfaces de terminal",
+    "expected": ["ratatui/ratatui"]
+  },
+  {
+    "id": "q108",
+    "category": "non-english",
+    "query": "gestionnaire de mots de passe open source",
+    "expected": ["bitwarden/clients", "keepassxreboot/keepassxc"]
+  },
+  {
+    "id": "q109",
+    "category": "non-english",
+    "query": "本地运行大语言模型",
+    "expected": ["ollama/ollama", "ggml-org/llama.cpp"]
+  },
+  {
+    "id": "q110",
+    "category": "non-english",
+    "query": "selbst gehostete Fotoverwaltung",
+    "expected": ["immich-app/immich", "photoprism/photoprism"]
+  },
+  {
+    "id": "q111",
+    "category": "non-english",
+    "query": "ターミナルで使うファジーファインダー",
+    "expected": ["junegunn/fzf"]
+  },
+  {
+    "id": "q112",
+    "category": "task",
+    "query": "turn a website into LLM ready markdown",
+    "expected": ["firecrawl/firecrawl", "unclecode/crawl4ai"]
+  },
+  {
+    "id": "q113",
+    "category": "task",
+    "query": "convert pdf and office documents to markdown",
+    "expected": ["microsoft/markitdown", "docling-project/docling"]
+  },
+  {
+    "id": "q114",
+    "category": "task",
+    "query": "download youtube videos from the command line",
+    "expected": ["yt-dlp/yt-dlp"]
+  },
+  {
+    "id": "q115",
+    "category": "task",
+    "query": "block ads for every device on my network",
+    "expected": ["pi-hole/pi-hole", "AdguardTeam/AdGuardHome"]
+  },
+  {
+    "id": "q116",
+    "category": "task",
+    "query": "mesh vpn to connect my devices",
+    "expected": ["tailscale/tailscale", "juanfont/headscale", "slackhq/nebula"]
+  },
+  {
+    "id": "q117",
+    "category": "task",
+    "query": "expose a local server to the internet",
+    "expected": ["fatedier/frp", "ekzhang/bore"]
+  },
+  {
+    "id": "q118",
+    "category": "app",
+    "query": "home automation platform",
+    "expected": ["home-assistant/core"]
+  },
+  {
+    "id": "q119",
+    "category": "app",
+    "query": "self-hosted git service",
+    "expected": ["go-gitea/gitea", "gogs/gogs"]
+  },
+  {
+    "id": "q120",
+    "category": "app",
+    "query": "monitor uptime of my websites",
+    "expected": ["louislam/uptime-kuma"]
+  },
+  {
+    "id": "q121",
+    "category": "app",
+    "query": "reverse proxy with automatic https",
+    "expected": ["caddyserver/caddy", "traefik/traefik"]
+  },
+  {
+    "id": "q122",
+    "category": "library",
+    "query": "background job queue for node backed by redis",
+    "expected": ["taskforcesh/bullmq"]
+  },
+  {
+    "id": "q123",
+    "category": "app",
+    "query": "durable workflow engine",
+    "expected": ["temporalio/temporal", "inngest/inngest"]
+  },
+  {
+    "id": "q124",
+    "category": "library",
+    "query": "authentication library for typescript web apps",
+    "expected": ["nextauthjs/next-auth", "better-auth/better-auth"]
+  },
+  {
+    "id": "q125",
+    "category": "app",
+    "query": "self-hosted identity provider with SSO",
+    "expected": ["keycloak/keycloak", "goauthentik/authentik", "zitadel/zitadel"]
+  },
+  {
+    "id": "q126",
+    "category": "app",
+    "query": "typo tolerant search engine",
+    "expected": ["meilisearch/meilisearch", "typesense/typesense"]
+  },
+  {
+    "id": "q127",
+    "category": "cli",
+    "query": "find secrets leaked in git repos",
+    "expected": ["gitleaks/gitleaks", "trufflesecurity/trufflehog"]
+  },
+  {
+    "id": "q128",
+    "category": "cli",
+    "query": "scan container images for vulnerabilities",
+    "expected": ["aquasecurity/trivy", "anchore/grype"]
+  },
+  {
+    "id": "q129",
+    "category": "app",
+    "query": "desktop database client",
+    "expected": ["dbeaver/dbeaver", "beekeeper-studio/beekeeper-studio"]
+  }
+]
