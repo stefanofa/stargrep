@@ -1,0 +1,7 @@
+language js
+
+`import $_ from $source` as $import where {
+  $source <: r".(?:@stargrep/api|.*packages/api)(?:/.*)?.",
+  not $import <: r"import\s+type\s[\s\S]*",
+  register_diagnostic(span=$source, message="Client code imports packages/api for types only. Use import type so the router stays out of the browser bundle.")
+}
