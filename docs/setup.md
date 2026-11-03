@@ -25,7 +25,7 @@ These are the one-time steps to work on Stargrep. Each later step that needs an 
 4. Run the tests. The `packages/db` tests need Postgres 17 with pgvector, so start the container from "Local stage" first. Each test file creates its own database in it, migrates it, and drops it at the end.
 
    ```sh
-   docker compose --file apps/worker/compose.yaml up --detach --wait
+   docker compose up --detach --wait
    bun test --parallel
    ```
 
@@ -44,7 +44,7 @@ For other editors, run `bunx effect-tsgo setup --help` to see the setup for Neov
 1. Start Postgres 17 with pgvector. It listens on `127.0.0.1:54317` and creates the `vector` extension on first start.
 
    ```sh
-   docker compose --file apps/worker/compose.yaml up --detach --wait
+   docker compose up --detach --wait
    ```
 
 2. Run the stage. Alchemy prints both URLs, the Worker on `http://localhost:1337` and the debug Worker on `http://localhost:1338` unless the ports are taken, and keeps local state in `infra/.alchemy/`.
@@ -90,6 +90,8 @@ DATABASE_URL=postgres://stargrep:stargrep@127.0.0.1:54317/stargrep bun run migra
 ```
 
 Name the database in `DATABASE_URL`, because `migrate` has no default. The first migration creates the `vector` extension, which `drizzle-kit` does not emit.
+
+Deployed stages apply the same migrations through the stage's `Neon.Branch` in `apps/worker/src/database.ts`, before the Worker deploys. Alchemy records them in `__alchemy_migrations`, so never run `bun run migrate` against a stage branch.
 
 To time the search queries, run `bun run --cwd packages/db bench`. It seeds 100,000 repos with random embeddings and 50 accounts of 5,000 stars into a `stargrep_bench` database, then prints the median and p95 of 100 interleaved runs of each query.
 
