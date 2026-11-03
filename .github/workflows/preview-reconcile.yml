@@ -1,0 +1,71 @@
+name: preview-reconcile
+
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Print the stages it would destroy and destroy nothing.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  ALCHEMY_TELEMETRY_DISABLED: "1"
+  CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+  DRY_RUN: ${{ inputs.dry-run && 'true' || 'false' }}
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  list:
+    if: vars.CLOUDFLARE_ACCOUNT_ID != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      stale: ${{ steps.list.outputs.stale }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+      - id: list
+        run: |
+          numbers=$(cd infra && bunx alchemy state list Stargrep -r | grep -oE '^Stargrep/pr-[1-9][0-9]*/' | sed -E 's|Stargrep/pr-([0-9]+)/|\1|' | sort -un)
+          stale=()
+          for number in $numbers; do
+            state=$(scripts/pr-state.sh "$number")
+            echo "pr-$number: $state"
+            if [ "$state" != OPEN ]; then stale+=("$number"); fi
+          done
+          echo "stale=$(printf '%s\n' "${stale[@]}" | jq -Rsc 'split("\n") | map(select(length > 0) | tonumber)')" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+  destroy:
+    needs: list
+    if: needs.list.outputs.stale != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        number: ${{ fromJSON(needs.list.outputs.stale) }}
+    concurrency:
+      group: deploy-pr-${{ matrix.number }}
+      queue: max
+    env:
+      STAGE: pr-${{ matrix.number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+      - run: |
+          state=$(scripts/pr-state.sh "${{ matrix.number }}")
+          if [ "$state" = OPEN ]; then echo "Pull request is open again, so $STAGE stays."; exit 0; fi
+          if [ "$DRY_RUN" = true ]; then echo "Dry run: $STAGE would be destroyed, since its pull request is $state."; exit 0; fi
+          bun run --cwd infra destroy --stage "$STAGE" --yes
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
