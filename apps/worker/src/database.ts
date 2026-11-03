@@ -18,16 +18,14 @@ const localPostgres = {
 
 const extensions = new URL("../sql/extensions.sql", import.meta.url).pathname;
 
-// Neon deletes a preview branch that no deploy has touched for two weeks, in case its destroy job never ran.
-// The date is rounded to the day, so a second deploy on the same day plans no change.
-const previewExpiry = DateTime.now.pipe(
+const twoWeeksFromToday = DateTime.now.pipe(
   Effect.map((now) => DateTime.formatIso(DateTime.add(DateTime.startOf(now, "day"), { days: 14 }))),
 );
 
 const StageBranch = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;
   const project = yield* Neon.Project.ref("Project", { stack: "StargrepDatabase", stage: "shared" });
-  const expiry = stage === "prod" ? {} : { expiresAt: yield* previewExpiry };
+  const expiry = stage === "prod" ? {} : { expiresAt: yield* twoWeeksFromToday };
   return yield* Neon.Branch("Branch", { project, importFiles: [extensions], ...expiry }).pipe(
     RemovalPolicy.retain(stage === "prod"),
   );

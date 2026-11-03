@@ -4,8 +4,6 @@ import * as Alchemy from "alchemy";
 import * as RemovalPolicy from "alchemy/RemovalPolicy";
 import * as Effect from "effect/Effect";
 
-// The Neon project outlives every app stage, which each reference it and own one branch of it.
-// It has its own stack so a pull request stage can deploy before prod exists.
 export default Alchemy.Stack(
   "StargrepDatabase",
   { providers: Neon.providers(), state: Cloudflare.state() },
