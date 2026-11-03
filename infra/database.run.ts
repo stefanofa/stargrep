@@ -1,12 +1,12 @@
-import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Neon from "@alchemy.run/neon";
 import * as Alchemy from "alchemy";
 import * as RemovalPolicy from "alchemy/RemovalPolicy";
 import * as Effect from "effect/Effect";
+import { state } from "./state.ts";
 
 export default Alchemy.Stack(
   "StargrepDatabase",
-  { providers: Neon.providers(), state: Cloudflare.state() },
+  { providers: Neon.providers(), state },
   Effect.gen(function* () {
     const { stage } = yield* Alchemy.Stack;
     if (stage !== "shared") {
