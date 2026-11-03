@@ -17,10 +17,12 @@ import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as GitHub from "../src/github.ts";
-import { BudgetShare, Login, type Star } from "../src/schemas.ts";
+import { BudgetShare, Login, RepoId, type Star } from "../src/schemas.ts";
 import * as TokenGate from "../src/token-gate.ts";
 
-const CACHE_DIRECTORY = ".cache/etag";
+const CACHE_DIRECTORY = ".cache/github";
+
+const KnownStars = Schema.Array(RepoId);
 
 const shareConfig = Config.schema(
   Schema.FiniteFromString.pipe(Schema.decodeTo(BudgetShare)),
@@ -63,28 +65,45 @@ const layerGitHub = Layer.unwrap(
     return GitHub.layer.pipe(
       Layer.provideMerge(TokenGate.layerMemory({ token, share })),
       Layer.provide(layerLoggedFetch),
-      Layer.provide(KeyValueStore.layerFileSystem(CACHE_DIRECTORY)),
+      Layer.provideMerge(KeyValueStore.layerFileSystem(CACHE_DIRECTORY)),
     );
   }),
 );
 
 const formatStar = (star: Star) => `${DateTime.formatIso(star.starredAt)}  ${star.repo.owner}/${star.repo.name}`;
 
+const knownStars = Effect.map(KeyValueStore.KeyValueStore, (store) =>
+  KeyValueStore.toSchemaStore(KeyValueStore.prefix(store, "known/"), KnownStars),
+);
+
 const listStars = Effect.fn("sample.listStars")(function* (login: Login, keep: number) {
   const github = yield* GitHub.GitHub;
   const result = yield* github.stars(login).pipe(
     Stream.runFold(
-      () => ({ count: 0, head: [] as Array<Star> }),
+      () => ({ ids: [] as Array<RepoId>, head: [] as Array<Star> }),
       (state, star) => {
         if (state.head.length < keep) state.head.push(star);
-        state.count++;
+        state.ids.push(star.repo.id);
         return state;
       },
     ),
   );
-  yield* Console.log(`stars: ${result.count}`);
+  yield* (yield* knownStars).set(login, result.ids);
+  yield* Console.log(`stars: ${result.ids.length}`);
   for (const star of result.head.slice(0, 5)) yield* Console.log(`  ${formatStar(star)}`);
   return result.head;
+});
+
+const syncStars = Effect.fn("sample.syncStars")(function* (login: Login) {
+  const github = yield* GitHub.GitHub;
+  const store = yield* knownStars;
+  const known = yield* store.get(login);
+  if (Option.isNone(known)) return yield* Console.log("sync: no earlier listing, run without --sync first");
+  const seen = new Set<number>(known.value);
+  const fresh = yield* Stream.runCollect(github.stars(login).pipe(Stream.takeWhile((star) => !seen.has(star.repo.id))));
+  yield* store.set(login, [...fresh.map((star) => star.repo.id), ...known.value]);
+  yield* Console.log(`sync: ${fresh.length} new stars since the last listing`);
+  for (const star of fresh.slice(0, 5)) yield* Console.log(`  ${formatStar(star)}`);
 });
 
 const showFacts = Effect.fn("sample.showFacts")(function* (stars: ReadonlyArray<Star>) {
@@ -145,23 +164,29 @@ const sample = Command.make(
       Flag.withDescription("Fire N parallel first-page requests instead of listing"),
       Flag.optional,
     ),
+    sync: Flag.Boolean("sync").pipe(
+      Flag.withDescription("Read newest first and stop at the first star the last listing saw"),
+      Flag.withDefault(false),
+    ),
     log: Flag.Boolean("log").pipe(Flag.withDescription("Print every GitHub request"), Flag.withDefault(false)),
   },
   Effect.fn("sample")(function* (input) {
     const started = yield* Clock.currentTimeMillis;
     const run = Option.isSome(input.parallel)
       ? fireParallel(input.login, input.parallel.value)
-      : Effect.gen(function* () {
-          const head = yield* listStars(
-            input.login,
-            Math.max(
-              10,
-              Option.getOrElse(input.facts, () => 0),
-            ),
-          );
-          if (Option.isSome(input.facts)) yield* showFacts(head.slice(0, input.facts.value));
-          if (input.readme) yield* showReadme(head.slice(0, 10));
-        });
+      : input.sync
+        ? syncStars(input.login)
+        : Effect.gen(function* () {
+            const head = yield* listStars(
+              input.login,
+              Math.max(
+                10,
+                Option.getOrElse(input.facts, () => 0),
+              ),
+            );
+            if (Option.isSome(input.facts)) yield* showFacts(head.slice(0, input.facts.value));
+            if (input.readme) yield* showReadme(head.slice(0, 10));
+          });
     yield* run.pipe(
       Effect.tapError((error) => Console.log(`failed: ${error._tag}: ${error.message}`)),
       Effect.ensuring(summarize(started, input.log)),

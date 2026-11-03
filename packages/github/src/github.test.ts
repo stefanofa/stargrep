@@ -19,12 +19,9 @@ const starItem = (n: number) => ({
 });
 
 const starPages =
-  (total: number, etag = (page: number) => `"page-${page}"`): Fake.Handler =>
+  (total: number): Fake.Handler =>
   (sent) => {
     const page = Number(sent.url.searchParams.get("page"));
-    if (sent.headers["if-none-match"] === etag(page)) {
-      return { status: 304, headers: Fake.rateLimitHeaders(4000) };
-    }
     const first = (page - 1) * 100 + 1;
     const items = Array.from({ length: Math.max(0, Math.min(100, total - first + 1)) }, (_, i) => starItem(first + i));
     const last = Math.ceil(total / 100);
@@ -32,7 +29,6 @@ const starPages =
       body: items,
       headers: {
         ...Fake.rateLimitHeaders(4000),
-        etag: etag(page),
         ...(page < last
           ? { link: `<https://api.github.com/user/1/starred?per_page=100&page=${page + 1}>; rel="next"` }
           : {}),
@@ -70,18 +66,16 @@ describe("stars", () => {
     }).pipe(Effect.provide(fake.layer));
   });
 
-  effect("serves unchanged pages from the cache on 304", () => {
-    const fake = Fake.layer(starPages(150));
+  effect("reads one page when a sync stops at the first known star", () => {
+    const fake = Fake.layer(starPages(250));
     return Effect.gen(function* () {
-      const cold = yield* collectStars;
-      const warm = yield* collectStars;
-      expect(warm).toEqual(cold);
-      expect(fake.sent.map((sent) => sent.headers["if-none-match"])).toEqual([
-        undefined,
-        undefined,
-        `"page-1"`,
-        `"page-2"`,
-      ]);
+      const github = yield* GitHub.GitHub;
+      const known = new Set([6, 7, 8]);
+      const fresh = yield* Stream.runCollect(
+        github.stars(login).pipe(Stream.takeWhile((star) => !known.has(star.repo.id))),
+      );
+      expect(fresh.map((star) => star.repo.id as number)).toEqual([1, 2, 3, 4, 5]);
+      expect(fake.sent).toHaveLength(1);
     }).pipe(Effect.provide(fake.layer));
   });
 

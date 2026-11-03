@@ -6,7 +6,6 @@ import * as Effect from "effect/Effect";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
-import * as UrlParams from "effect/http/UrlParams";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
@@ -41,7 +40,6 @@ const REQUEST_TIMEOUT = Duration.seconds(30);
 const MAX_RETRY_WAIT = Duration.minutes(1);
 const MAX_RETRIES = 3;
 
-const StarPageEntry = Schema.Struct({ etag: Schema.String, value: StarList.StarPage });
 const ReadmeEntry = Schema.Struct({ etag: Schema.String, value: Schema.String });
 
 const decodeRetryHeaders = Schema.decodeUnknownOption(RetryHeaders);
@@ -112,9 +110,10 @@ const classify = Effect.fnUntraced(function* (operation: Operation, response: Ht
 
 const make = Effect.gen(function* () {
   const gate = yield* TokenGate.TokenGate;
-  const cache = KeyValueStore.prefix(yield* KeyValueStore.KeyValueStore, "github/etag/");
-  const starPages = KeyValueStore.toSchemaStore(cache, StarPageEntry);
-  const readmes = KeyValueStore.toSchemaStore(cache, ReadmeEntry);
+  const readmes = KeyValueStore.toSchemaStore(
+    KeyValueStore.prefix(yield* KeyValueStore.KeyValueStore, "github/readme/"),
+    ReadmeEntry,
+  );
 
   const send = (operation: Operation, request: HttpClientRequest.HttpClientRequest) =>
     gate
@@ -137,46 +136,16 @@ const make = Effect.gen(function* () {
       Effect.retry({ schedule: retrySchedule, while: isRetryable, times: MAX_RETRIES }),
     );
 
-  const getCached = Effect.fnUntraced(function* <A>(
-    operation: Operation,
-    store: Pick<
-      KeyValueStore.SchemaStore<Schema.Codec<{ readonly etag: string; readonly value: A }, unknown>>,
-      "get" | "set"
-    >,
-    request: HttpClientRequest.HttpClientRequest,
-    parse: (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<A, GitHubError>,
-  ) {
-    const key = `${request.url}?${UrlParams.toString(request.urlParams)}`;
-    const cached = yield* store
-      .get(key)
-      .pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("GitHub ETag cache read failed", { error: error.message }).pipe(Effect.as(Option.none())),
-        ),
-      );
-    const response = yield* send(
-      operation,
-      Option.isSome(cached) ? HttpClientRequest.setHeader(request, "if-none-match", cached.value.etag) : request,
-    );
-    if (response.status === 304 && Option.isSome(cached)) return cached.value.value;
-    const value = yield* parse(response);
-    const etag = response.headers.etag;
-    if (etag !== undefined) {
-      yield* store
-        .set(key, { etag, value })
-        .pipe(Effect.catch((error) => Effect.logWarning("GitHub ETag cache write failed", { error: error.message })));
-    }
-    return value;
-  });
-
   const starPage = Effect.fn("GitHub.starPage")(function* (login: Login, page: number) {
     return yield* withRetry(
       "list-stars",
-      getCached("list-stars", starPages, StarList.request(login, page), (response) =>
-        response.json.pipe(
-          Effect.flatMap(StarList.decodeStarItems),
-          Effect.map((items) => StarList.toPage(items, response.headers.link)),
-          Effect.mapError((cause) => new GitHubResponseInvalid({ operation: "list-stars", cause })),
+      send("list-stars", StarList.request(login, page)).pipe(
+        Effect.flatMap((response) =>
+          response.json.pipe(
+            Effect.flatMap(StarList.decodeStarItems),
+            Effect.map((items) => StarList.toPage(items, response.headers.link)),
+            Effect.mapError((cause) => new GitHubResponseInvalid({ operation: "list-stars", cause })),
+          ),
         ),
       ),
     );
@@ -226,11 +195,35 @@ const make = Effect.gen(function* () {
     readonly name: RepoName;
     readonly oid: ObjectId;
   }) {
+    const request = Readme.request(input);
+    const cached = yield* readmes
+      .get(request.url)
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("GitHub ETag cache read failed", { error: error.message }).pipe(Effect.as(Option.none())),
+        ),
+      );
     return yield* withRetry(
       "readme",
-      getCached("readme", readmes, Readme.request(input), (response) =>
-        response.text.pipe(Effect.mapError((cause) => new GitHubResponseInvalid({ operation: "readme", cause }))),
-      ),
+      Effect.gen(function* () {
+        const response = yield* send(
+          "readme",
+          Option.isSome(cached) ? HttpClientRequest.setHeader(request, "if-none-match", cached.value.etag) : request,
+        );
+        if (response.status === 304 && Option.isSome(cached)) return cached.value.value;
+        const text = yield* response.text.pipe(
+          Effect.mapError((cause) => new GitHubResponseInvalid({ operation: "readme", cause })),
+        );
+        const etag = response.headers.etag;
+        if (etag !== undefined) {
+          yield* readmes
+            .set(request.url, { etag, value: text })
+            .pipe(
+              Effect.catch((error) => Effect.logWarning("GitHub ETag cache write failed", { error: error.message })),
+            );
+        }
+        return text;
+      }),
     );
   });
 

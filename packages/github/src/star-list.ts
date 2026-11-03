@@ -1,12 +1,11 @@
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schema from "effect/Schema";
-import { Login, RepoId, RepoName, RepoNodeId, Star } from "./schemas.ts";
+import { Login, RepoId, RepoName, RepoNodeId, type Star } from "./schemas.ts";
 
-export const StarPage = Schema.Struct({
-  stars: Schema.Array(Star),
-  next: Schema.NullOr(Schema.Int),
-});
-export type StarPage = typeof StarPage.Type;
+export interface StarPage {
+  readonly stars: ReadonlyArray<Star>;
+  readonly next: number | null;
+}
 
 const StarItem = Schema.Struct({
   starred_at: Schema.DateTimeUtcFromString,
