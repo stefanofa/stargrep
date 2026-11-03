@@ -31,7 +31,7 @@ const connect = (connectionString: string) =>
     (client) => Effect.promise(() => client.end()).pipe(Effect.ignore),
   );
 
-const queryRow = <S extends Schema.Top>(
+const rowResponse = <S extends Schema.Top>(
   operation: DatabaseUnavailable["operation"],
   connectionString: string,
   row: S,
@@ -53,7 +53,7 @@ const queryRow = <S extends Schema.Top>(
   );
 
 export const healthResponse = (connectionString: string) =>
-  queryRow("health check", connectionString, DatabaseHealth, async (client) => {
+  rowResponse("health check", connectionString, DatabaseHealth, async (client) => {
     const { rows } = await client.query(
       "select version() as postgres, (select extversion from pg_extension where extname = $1) as pgvector",
       ["vector"],
@@ -62,7 +62,7 @@ export const healthResponse = (connectionString: string) =>
   }).pipe(Effect.withSpan("Health.checkDatabase"));
 
 export const transactionResponse = (connectionString: string) =>
-  queryRow("transaction", connectionString, TransactionResult, async (client) => {
+  rowResponse("transaction", connectionString, TransactionResult, async (client) => {
     await client.query("begin");
     const { rows } = await client.query("select pg_backend_pid() as pid, $1::int + $2::int as sum", [20, 22]);
     await client.query("commit");
