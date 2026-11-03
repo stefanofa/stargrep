@@ -38,6 +38,10 @@ const StageBranch = Effect.gen(function* () {
   }).pipe(RemovalPolicy.retain(stage === "prod"));
 });
 
+export const DatabaseMigrations = Effect.gen(function* () {
+  return (yield* Alchemy.ALCHEMY_DEV) ? "local" : (yield* StageBranch).migrationsHashes;
+});
+
 export const Database = Effect.gen(function* () {
   const origin = (yield* Alchemy.ALCHEMY_DEV) ? localPostgres : (yield* StageBranch).origin;
   return yield* Cloudflare.Hyperdrive.Connection("Database", {
