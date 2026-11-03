@@ -29,7 +29,7 @@ describe("TokenGate.layerMemory", () => {
       const fiber = yield* Effect.forkChild(
         Effect.all(
           Array.from({ length: 20 }, () =>
-            gate.execute(HttpClientRequest.get("https://api.github.com/rate_limit"), readSlowly),
+            gate.execute("list-stars", HttpClientRequest.get("https://api.github.com/rate_limit"), readSlowly),
           ),
           { concurrency: "unbounded" },
         ),
@@ -48,8 +48,10 @@ describe("TokenGate.layerMemory", () => {
     );
     return Effect.gen(function* () {
       const gate = yield* TokenGate.TokenGate;
-      const status = yield* gate.execute(HttpClientRequest.get("https://api.github.com/missing"), (response) =>
-        Effect.succeed(response.status),
+      const status = yield* gate.execute(
+        "list-stars",
+        HttpClientRequest.get("https://api.github.com/missing"),
+        (response) => Effect.succeed(response.status),
       );
       expect(status).toBe(404);
       expect(fake.sent[0]?.signal.aborted).toBe(true);

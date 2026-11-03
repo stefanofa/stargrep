@@ -42,6 +42,8 @@ const MAX_RETRIES = 3;
 
 const ReadmeEntry = Schema.Struct({ etag: Schema.String, value: Schema.String });
 
+const graphQLErrorType = /^[A-Z_]{1,40}$/;
+
 const decodeRetryHeaders = Schema.decodeUnknownOption(RetryHeaders);
 
 const retrySchedule = Schedule.exponential("1 second").pipe(
@@ -125,28 +127,20 @@ const make = Effect.gen(function* () {
     read: (
       response: HttpClientResponse.HttpClientResponse,
     ) => Effect.Effect<A, GitHubError | HttpClientError.HttpClientError | Schema.SchemaError>,
-  ) => {
-    const sent = request.pipe(
-      HttpClientRequest.setHeaders({ "x-github-api-version": "2022-11-28", "user-agent": "stargrep" }),
-    );
-    return gate
-      .execute(sent, (response) => Effect.flatMap(classify(operation, response), read))
-      .pipe(
-        Effect.catchTags({
-          HttpClientError: (error) =>
-            Effect.fail(
-              error.reason._tag === "DecodeError" || error.reason._tag === "EmptyBodyError"
-                ? new GitHubResponseInvalid({ operation, ...endpoint(request), reason: "unreadable-body" })
-                : new GitHubRequestFailed({ operation, ...endpoint(request), status: null, reason: "transport" }),
-            ),
-          SchemaError: () =>
-            Effect.fail(new GitHubResponseInvalid({ operation, ...endpoint(request), reason: "schema-mismatch" })),
-          TimeoutError: () =>
-            Effect.fail(new GitHubRequestFailed({ operation, ...endpoint(request), status: null, reason: "timeout" })),
-        }),
-        Effect.retry({ schedule: retrySchedule, while: isRetryable, times: MAX_RETRIES }),
-      );
-  };
+  ) =>
+    gate
+      .execute(
+        operation,
+        request.pipe(HttpClientRequest.setHeaders({ "x-github-api-version": "2022-11-28", "user-agent": "stargrep" })),
+        (response) =>
+          Effect.flatMap(classify(operation, response), read).pipe(
+            Effect.catchTags({
+              SchemaError: () =>
+                Effect.fail(new GitHubResponseInvalid({ operation, ...endpoint(request), reason: "schema-mismatch" })),
+            }),
+          ),
+      )
+      .pipe(Effect.retry({ schedule: retrySchedule, while: isRetryable, times: MAX_RETRIES }));
 
   const starPage = Effect.fn("GitHub.starPage")(function* (login: Login, page: number) {
     const request = StarList.request(login, page);
@@ -185,7 +179,12 @@ const make = Effect.gen(function* () {
           });
         }
         if (errors.length > 0 || !body.data) {
-          yield* Effect.logWarning("GitHub GraphQL errors", { types: errors.map((error) => error.type ?? "UNKNOWN") });
+          yield* Effect.logWarning("GitHub GraphQL errors", {
+            count: errors.length,
+            types: errors.flatMap((error) =>
+              error.type !== undefined && graphQLErrorType.test(error.type) ? [error.type] : [],
+            ),
+          });
           return yield* new GitHubRequestFailed({
             operation: "repo-facts",
             ...endpoint(request),

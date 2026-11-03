@@ -1,6 +1,7 @@
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Layer from "effect/Layer";
@@ -14,6 +15,7 @@ export interface Reply {
   readonly status?: number;
   readonly body?: unknown;
   readonly headers?: Record<string, string>;
+  readonly transportError?: string;
 }
 
 export interface Sent {
@@ -56,8 +58,14 @@ export const make = (handler: Handler) => {
         signal,
       };
       sent.push(entry);
-      const reply = handler(entry, sent.length - 1);
-      return toResponse(request, Effect.isEffect(reply) ? yield* reply : reply);
+      const planned = handler(entry, sent.length - 1);
+      const reply = Effect.isEffect(planned) ? yield* planned : planned;
+      if (reply.transportError !== undefined) {
+        return yield* new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({ request, cause: new Error(reply.transportError) }),
+        });
+      }
+      return toResponse(request, reply);
     }),
   );
   return { sent, client: Layer.succeed(HttpClient.HttpClient, client) };

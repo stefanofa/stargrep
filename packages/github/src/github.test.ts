@@ -4,7 +4,14 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as OtlpExporter from "effect/observability/OtlpExporter";
+import * as OtlpSerialization from "effect/observability/OtlpSerialization";
+import * as OtlpTracer from "effect/observability/OtlpTracer";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Fake from "./github.fixture.ts";
@@ -343,5 +350,58 @@ describe("readme", () => {
       expect(fake.sent[0]?.headers.accept).toBe("application/vnd.github.raw+json");
       expect(fake.sent[1]?.headers["if-none-match"]).toBe(`"blob"`);
     }).pipe(Effect.provide(fake.layer));
+  });
+});
+
+describe("telemetry", () => {
+  const marker = "BODY_MARKER_SECRET_PAYLOAD";
+
+  effect("logs only bounded GraphQL error types", () => {
+    const logs: Array<unknown> = [];
+    const fake = Fake.layer(() => ({
+      headers: Fake.rateLimitHeaders(4000, 3600, "graphql"),
+      body: {
+        data: null,
+        errors: [
+          { type: `${marker} ${Fake.token}`, message: `${marker} ${Fake.token}` },
+          { type: "FORBIDDEN", message: marker },
+        ],
+      },
+    }));
+    const capture = Logger.layer([Logger.make(({ message }) => logs.push(message))]);
+    return Effect.gen(function* () {
+      const github = yield* GitHub.GitHub;
+      const error = yield* Effect.flip(github.repoFacts(["R_1" as RepoNodeId]));
+      expect(error).toMatchObject({ _tag: "GitHubRequestFailed", reason: "graphql-errors" });
+      const strings = reachableStrings(logs);
+      expect(strings.filter((value) => value.includes(Fake.token) || value.includes(marker))).toEqual([]);
+      expect(logs).toContainEqual(["GitHub GraphQL errors", { count: 2, types: ["FORBIDDEN"] }]);
+    }).pipe(Effect.provide(Layer.merge(fake.layer, capture)));
+  });
+
+  effect("exports only bounded errors in spans when a transport failure carries secrets", () => {
+    const payloads: Array<string> = [];
+    const collector = HttpClient.make((request) =>
+      Effect.sync(() => {
+        if (request.body._tag === "Uint8Array") payloads.push(new TextDecoder().decode(request.body.body));
+        return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+      }),
+    );
+    const otlp = OtlpTracer.layer({
+      url: "https://collector.invalid/v1/traces",
+      resource: { serviceName: "github-test" },
+      exportInterval: "1 hour",
+    }).pipe(Layer.provide(OtlpSerialization.layerJson), Layer.provide(Layer.succeed(HttpClient.HttpClient, collector)));
+    const fake = Fake.layer(() => ({ transportError: `${Fake.token} ${marker}` }));
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(Effect.flip(collectStars));
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Fiber.join(fiber)).toMatchObject({ _tag: "GitHubRequestFailed", reason: "transport" });
+      yield* (yield* OtlpExporter.Flusher).flush;
+      const exported = payloads.join("\n");
+      expect(exported).toContain("TokenGate.execute");
+      expect(exported).not.toContain(Fake.token);
+      expect(exported).not.toContain(marker);
+    }).pipe(Effect.provide(Layer.merge(fake.layer, otlp)));
   });
 });
