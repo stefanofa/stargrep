@@ -11,7 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import Counter from "./counter.ts";
 import { Database } from "./database.ts";
-import { healthResponse } from "./health.ts";
+import { healthResponse, transactionResponse } from "./health.ts";
 
 const Jobs = Cloudflare.Queues.Queue("Jobs");
 const Cache = Cloudflare.KV.Namespace("Cache");
@@ -59,6 +59,9 @@ export default Cloudflare.Worker(
         const count = decodeDebugCount(url.searchParams.get("count") ?? "1");
         if (Option.isNone(count)) return HttpServerResponse.empty({ status: 400 });
         return yield* HttpServerResponse.json({ sent: yield* sendPings(count.value) });
+      }
+      if (method === "POST" && url.pathname === "/debug/transaction") {
+        return yield* transactionResponse(Redacted.value(yield* database.connectionString));
       }
       const counter = /^\/debug\/counter\/([\w-]{1,64})$/.exec(url.pathname)?.[1];
       if (method === "POST" && counter) {
