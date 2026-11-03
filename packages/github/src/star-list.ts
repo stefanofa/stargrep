@@ -1,12 +1,8 @@
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { Login, RepoId, RepoName, RepoNodeId, type Star } from "./schemas.ts";
-
-export interface StarPage {
-  readonly stars: ReadonlyArray<Star>;
-  readonly next: number | null;
-}
 
 const StarItem = Schema.Struct({
   starred_at: Schema.DateTimeUtcFromString,
@@ -17,9 +13,14 @@ const StarItem = Schema.Struct({
     owner: Schema.Struct({ login: Login }),
   }),
 });
-
-export const decodeStarItems = Schema.decodeUnknownEffect(Schema.Array(StarItem));
 type StarItem = typeof StarItem.Type;
+
+export const decodeStarItems = Schema.decodeEffect(Schema.fromJsonString(Schema.Array(StarItem)));
+
+export const toStar = (item: StarItem): Star => ({
+  starredAt: item.starred_at,
+  repo: { id: item.repo.id, nodeId: item.repo.node_id, owner: item.repo.owner.login, name: item.repo.name },
+});
 
 export const request = (login: Login, page: number) =>
   HttpClientRequest.get(`https://api.github.com/users/${encodeURIComponent(login)}/starred`).pipe(
@@ -30,17 +31,11 @@ export const request = (login: Login, page: number) =>
 const nextLink = /<([^>]*)>;\s*rel="next"/;
 const pageNumber = /^[1-9]\d*$/;
 
-export const nextPage = (link: string | undefined): Result.Result<number | null, "invalid-link"> => {
+export const nextPage = (link: string | undefined): Result.Result<Option.Option<number>, "invalid-link"> => {
   const target = link?.match(nextLink)?.[1];
-  if (target === undefined) return Result.succeed(null);
+  if (target === undefined) return Result.succeed(Option.none());
   const page = URL.parse(target)?.searchParams.get("page");
-  return page != null && pageNumber.test(page) ? Result.succeed(Number(page)) : Result.fail("invalid-link");
+  return page != null && pageNumber.test(page)
+    ? Result.succeed(Option.some(Number(page)))
+    : Result.fail("invalid-link");
 };
-
-export const toPage = (items: ReadonlyArray<StarItem>, next: number | null): StarPage => ({
-  stars: items.map((item) => ({
-    starredAt: item.starred_at,
-    repo: { id: item.repo.id, nodeId: item.repo.node_id, owner: item.repo.owner.login, name: item.repo.name },
-  })),
-  next,
-});

@@ -41,7 +41,7 @@ describe("TokenBudget", () => {
   });
 
   test("maps the GraphQL endpoint to its own resource", () => {
-    expect(TokenBudget.resourceOf("https://api.github.com/graphql")).toBe("graphql");
-    expect(TokenBudget.resourceOf("https://api.github.com/users/octocat/starred?page=2")).toBe("core");
+    expect(TokenBudget.resourceOf("/graphql")).toBe("graphql");
+    expect(TokenBudget.resourceOf("/users/octocat/starred")).toBe("core");
   });
 });

@@ -57,11 +57,13 @@ const GraphQLError = Schema.Struct({
   message: Schema.String,
 });
 
-export const decodeResponse = Schema.decodeUnknownEffect(
-  Schema.Struct({
-    data: Schema.optionalKey(Schema.NullOr(Schema.Struct({ nodes: Schema.Array(Schema.NullOr(RepoNode)) }))),
-    errors: Schema.optionalKey(Schema.Array(GraphQLError)),
-  }),
+export const decodeResponse = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      data: Schema.optionalKey(Schema.NullOr(Schema.Struct({ nodes: Schema.Array(Schema.NullOr(RepoNode)) }))),
+      errors: Schema.optionalKey(Schema.Array(GraphQLError)),
+    }),
+  ),
 );
 
 export const request = (ids: ReadonlyArray<RepoNodeId>) =>

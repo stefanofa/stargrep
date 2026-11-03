@@ -26,7 +26,7 @@ export interface Sent {
   readonly signal: AbortSignal;
 }
 
-export type Handler = (sent: Sent, index: number) => Effect.Effect<Reply> | Reply;
+export type Handler = (sent: Sent, index: number) => Reply;
 
 export const token = "ghp_fake_token_never_logged";
 
@@ -58,8 +58,7 @@ export const make = (handler: Handler) => {
         signal,
       };
       sent.push(entry);
-      const planned = handler(entry, sent.length - 1);
-      const reply = Effect.isEffect(planned) ? yield* planned : planned;
+      const reply = handler(entry, sent.length - 1);
       if (reply.transportError !== undefined) {
         return yield* new HttpClientError.HttpClientError({
           reason: new HttpClientError.TransportError({ request, cause: new Error(reply.transportError) }),

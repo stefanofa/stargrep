@@ -3,9 +3,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
@@ -25,12 +23,12 @@ import {
 import * as Readme from "./readme.ts";
 import * as Facts from "./repo-facts.ts";
 import {
+  IntFromString,
   type Login,
   type ObjectId,
   type RepoFacts,
   type RepoName,
   type RepoNodeId,
-  RetryHeaders,
   type Star,
 } from "./schemas.ts";
 import * as StarList from "./star-list.ts";
@@ -44,7 +42,7 @@ const ReadmeEntry = Schema.Struct({ etag: Schema.String, value: Schema.String })
 
 const graphQLErrorType = /^[A-Z_]{1,40}$/;
 
-const decodeRetryHeaders = Schema.decodeUnknownOption(RetryHeaders);
+const decodeRetryAfter = Schema.decodeUnknownOption(Schema.Struct({ "retry-after": IntFromString }));
 
 const retrySchedule = Schedule.exponential("1 second").pipe(
   Schedule.setInputType<GitHubError>(),
@@ -54,12 +52,15 @@ const retrySchedule = Schedule.exponential("1 second").pipe(
 );
 
 const isRetryable = (error: GitHubError) => {
-  switch (error._tag) {
-    case "RateLimited":
-      return error.retryAfterMillis <= Duration.toMillis(MAX_RETRY_WAIT);
-    case "GitHubRequestFailed":
-      return error.status === null || error.status >= 500;
-    default:
+  if (error._tag === "RateLimited") return error.retryAfterMillis <= Duration.toMillis(MAX_RETRY_WAIT);
+  if (error._tag !== "GitHubRequestFailed") return false;
+  switch (error.reason) {
+    case "transport":
+    case "timeout":
+      return true;
+    case "status":
+      return error.status !== null && error.status >= 500;
+    case "graphql-errors":
       return false;
   }
 };
@@ -77,42 +78,41 @@ export class GitHub extends Context.Service<
   }
 >()("@stargrep/github/github") {}
 
-// GitHub asks for a one minute wait on a 429 that has no retry-after.
-const rateLimitWait = (response: HttpClientResponse.HttpClientResponse, now: number): number | undefined => {
-  const headers = Option.getOrUndefined(decodeRetryHeaders(response.headers));
-  if (headers?.["retry-after"] !== undefined) return headers["retry-after"] * 1000;
-  if (headers?.["x-ratelimit-remaining"] === 0 && headers["x-ratelimit-reset"] !== undefined) {
-    return Math.max(0, headers["x-ratelimit-reset"] * 1000 - now);
-  }
-  return response.status === 429 ? 60_000 : undefined;
-};
+interface Endpoint {
+  readonly operation: Operation;
+  readonly method: string;
+  readonly path: string;
+}
 
-const endpoint = (request: HttpClientRequest.HttpClientRequest) => ({
-  method: request.method,
-  path: new URL(request.url).pathname,
-});
+const rateLimitWait = (reply: TokenGate.Reply, now: number): Option.Option<number> =>
+  Option.orElse(
+    Option.map(decodeRetryAfter(reply.headers), (headers) => headers["retry-after"] * 1000),
+    () =>
+      Option.flatMap(reply.rateLimit, (limit) =>
+        limit.remaining === 0 ? Option.some(Math.max(0, limit.resetAt - now)) : Option.none(),
+      ),
+  );
 
-const classify = Effect.fnUntraced(function* (operation: Operation, response: HttpClientResponse.HttpClientResponse) {
-  if ((response.status >= 200 && response.status < 300) || response.status === 304) return response;
-  if (response.status === 401) return yield* new Unauthorized({ operation });
-  if (response.status === 404) return yield* new NotFound({ operation, path: endpoint(response.request).path });
-  if (response.status === 403 || response.status === 429) {
-    const wait = rateLimitWait(response, yield* Clock.currentTimeMillis);
-    if (wait !== undefined) {
-      return yield* new RateLimited({
-        operation,
-        resource: TokenBudget.resourceOf(response.request.url),
-        retryAfterMillis: wait,
-      });
-    }
-  }
-  return yield* new GitHubRequestFailed({
-    operation,
-    ...endpoint(response.request),
-    status: response.status,
-    reason: "status",
+// GitHub asks for a one minute wait on a rate limit that names no reset time.
+const rateLimited = (endpoint: Endpoint, reply: TokenGate.Reply, now: number) =>
+  new RateLimited({
+    operation: endpoint.operation,
+    resource: Option.match(reply.rateLimit, {
+      onNone: () => TokenBudget.resourceOf(endpoint.path),
+      onSome: (limit) => limit.resource,
+    }),
+    retryAfterMillis: Option.getOrElse(rateLimitWait(reply, now), () => 60_000),
   });
-});
+
+const classify = (endpoint: Endpoint, reply: TokenGate.Reply, now: number): GitHubError | undefined => {
+  if ((reply.status >= 200 && reply.status < 300) || reply.status === 304) return undefined;
+  if (reply.status === 401) return new Unauthorized({ operation: endpoint.operation });
+  if (reply.status === 404) return new NotFound({ operation: endpoint.operation, path: endpoint.path });
+  if (reply.status === 429 || (reply.status === 403 && Option.isSome(rateLimitWait(reply, now)))) {
+    return rateLimited(endpoint, reply, now);
+  }
+  return new GitHubRequestFailed({ ...endpoint, status: reply.status, reason: "status" });
+};
 
 const make = Effect.gen(function* () {
   const gate = yield* TokenGate.TokenGate;
@@ -124,60 +124,51 @@ const make = Effect.gen(function* () {
   const exchange = <A>(
     operation: Operation,
     request: HttpClientRequest.HttpClientRequest,
-    read: (
-      response: HttpClientResponse.HttpClientResponse,
-    ) => Effect.Effect<A, GitHubError | HttpClientError.HttpClientError | Schema.SchemaError>,
-  ) =>
-    gate
+    interpret: (
+      reply: TokenGate.Reply,
+      endpoint: Endpoint,
+      now: number,
+    ) => Effect.Effect<A, GitHubError | Schema.SchemaError>,
+  ) => {
+    const endpoint = { operation, method: request.method, path: new URL(request.url).pathname };
+    return gate
       .execute(
         operation,
         request.pipe(HttpClientRequest.setHeaders({ "x-github-api-version": "2022-11-28", "user-agent": "stargrep" })),
-        (response) =>
-          Effect.flatMap(classify(operation, response), read).pipe(
-            Effect.catchTags({
-              SchemaError: () =>
-                Effect.fail(new GitHubResponseInvalid({ operation, ...endpoint(request), reason: "schema-mismatch" })),
-            }),
-          ),
       )
-      .pipe(Effect.retry({ schedule: retrySchedule, while: isRetryable, times: MAX_RETRIES }));
+      .pipe(
+        Effect.flatMap((reply) =>
+          Effect.flatMap(Clock.currentTimeMillis, (now) => {
+            const error = classify(endpoint, reply, now);
+            return error === undefined ? interpret(reply, endpoint, now) : Effect.fail(error);
+          }),
+        ),
+        Effect.catchTags({
+          SchemaError: () => Effect.fail(new GitHubResponseInvalid({ ...endpoint, reason: "schema-mismatch" })),
+        }),
+        Effect.retry({ schedule: retrySchedule, while: isRetryable, times: MAX_RETRIES }),
+      );
+  };
 
   const starPage = Effect.fn("GitHub.starPage")(function* (login: Login, page: number) {
-    const request = StarList.request(login, page);
-    return yield* exchange("list-stars", request, (response) =>
+    return yield* exchange("list-stars", StarList.request(login, page), (reply, endpoint) =>
       Effect.gen(function* () {
-        const items = yield* StarList.decodeStarItems(yield* response.json);
-        const next = StarList.nextPage(response.headers.link);
-        if (Result.isFailure(next)) {
-          return yield* new GitHubResponseInvalid({
-            operation: "list-stars",
-            ...endpoint(request),
-            reason: "invalid-link",
-          });
-        }
-        return StarList.toPage(items, next.success);
+        const items = yield* StarList.decodeStarItems(reply.body);
+        const next = StarList.nextPage(reply.headers.link);
+        if (Result.isFailure(next)) return yield* new GitHubResponseInvalid({ ...endpoint, reason: "invalid-link" });
+        return [items.map(StarList.toStar), next.success] as const;
       }),
     );
   });
 
-  const stars = (login: Login) =>
-    Stream.paginate(1, (page: number) =>
-      starPage(login, page).pipe(Effect.map((result) => [result.stars, Option.fromNullOr(result.next)] as const)),
-    );
+  const stars = (login: Login) => Stream.paginate(1, (page: number) => starPage(login, page));
 
   const factsBatch = Effect.fn("GitHub.factsBatch")(function* (ids: ReadonlyArray<RepoNodeId>) {
-    const request = Facts.request(ids);
-    return yield* exchange("repo-facts", request, (response) =>
+    return yield* exchange("repo-facts", Facts.request(ids), (reply, endpoint, now) =>
       Effect.gen(function* () {
-        const body = yield* Facts.decodeResponse(yield* response.json);
+        const body = yield* Facts.decodeResponse(reply.body);
         const errors = (body.errors ?? []).filter((error) => error.type !== "NOT_FOUND");
-        if (errors.some((error) => error.type === "RATE_LIMITED")) {
-          return yield* new RateLimited({
-            operation: "repo-facts",
-            resource: "graphql",
-            retryAfterMillis: rateLimitWait(response, yield* Clock.currentTimeMillis) ?? 60_000,
-          });
-        }
+        if (errors.some((error) => error.type === "RATE_LIMITED")) return yield* rateLimited(endpoint, reply, now);
         if (errors.length > 0 || !body.data) {
           yield* Effect.logWarning("GitHub GraphQL errors", {
             count: errors.length,
@@ -185,12 +176,7 @@ const make = Effect.gen(function* () {
               error.type !== undefined && graphQLErrorType.test(error.type) ? [error.type] : [],
             ),
           });
-          return yield* new GitHubRequestFailed({
-            operation: "repo-facts",
-            ...endpoint(request),
-            status: response.status,
-            reason: "graphql-errors",
-          });
+          return yield* new GitHubRequestFailed({ ...endpoint, status: null, reason: "graphql-errors" });
         }
         return body.data.nodes.flatMap((node) => (node === null ? [] : [Facts.toFacts(node)]));
       }),
@@ -215,20 +201,19 @@ const make = Effect.gen(function* () {
           Effect.logWarning("GitHub ETag cache read failed", { error: error.message }).pipe(Effect.as(Option.none())),
         ),
       );
-    const fetched = yield* exchange(
+    const reply = yield* exchange(
       "readme",
       Option.isSome(cached) ? HttpClientRequest.setHeader(request, "if-none-match", cached.value.etag) : request,
-      (response) =>
-        response.status === 304 && Option.isSome(cached)
-          ? Effect.succeed({ text: cached.value.value, etag: undefined })
-          : Effect.map(response.text, (text) => ({ text, etag: response.headers.etag })),
+      Effect.succeed,
     );
-    if (fetched.etag !== undefined) {
+    if (reply.status === 304 && Option.isSome(cached)) return cached.value.value;
+    const etag = reply.headers.etag;
+    if (etag !== undefined) {
       yield* readmes
-        .set(request.url, { etag: fetched.etag, value: fetched.text })
+        .set(request.url, { etag, value: reply.body })
         .pipe(Effect.catch((error) => Effect.logWarning("GitHub ETag cache write failed", { error: error.message })));
     }
-    return fetched.text;
+    return reply.body;
   });
 
   return GitHub.of({ stars, repoFacts, readme });

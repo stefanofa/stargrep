@@ -18,7 +18,7 @@ const allowed: Decision = { _tag: "Allowed" };
 
 export const make = (share: BudgetShare): Budget => ({ share, windows: {} });
 
-export const resourceOf = (url: string): string => (new URL(url).pathname === "/graphql" ? "graphql" : "core");
+export const resourceOf = (path: string): string => (path === "/graphql" ? "graphql" : "core");
 
 export const check = (budget: Budget, resource: string, now: number): Decision => {
   const window = budget.windows[resource];

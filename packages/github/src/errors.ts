@@ -68,17 +68,19 @@ export class GitHubResponseInvalid extends Schema.TaggedError<
   operation: Operation,
   method: Schema.String,
   path: Schema.String,
-  reason: Schema.Literals(["unreadable-body", "schema-mismatch", "invalid-link"]),
+  reason: Schema.Literals(["schema-mismatch", "invalid-link"]),
 }) {
   override get message(): string {
     return `GitHub '${this.operation}' returned an invalid response on ${this.method} ${this.path}: ${this.reason}`;
   }
 }
 
-export type GitHubError =
-  | NotFound
-  | Unauthorized
-  | RateLimited
-  | TokenBudgetExhausted
-  | GitHubRequestFailed
-  | GitHubResponseInvalid;
+export const GitHubError = Schema.Union([
+  NotFound,
+  Unauthorized,
+  RateLimited,
+  TokenBudgetExhausted,
+  GitHubRequestFailed,
+  GitHubResponseInvalid,
+]);
+export type GitHubError = typeof GitHubError.Type;

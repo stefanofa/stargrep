@@ -69,18 +69,4 @@ export const RateLimit = Schema.Struct({
 });
 export type RateLimit = typeof RateLimit.Type;
 
-const IntFromString = Schema.NumberFromString.pipe(Schema.check(Schema.isInt()));
-
-export const RateLimitHeaders = Schema.Struct({
-  "x-ratelimit-resource": Schema.String,
-  "x-ratelimit-limit": IntFromString,
-  "x-ratelimit-remaining": IntFromString,
-  "x-ratelimit-reset": IntFromString,
-});
-
-export const RetryHeaders = Schema.Struct({
-  "retry-after": Schema.optionalKey(IntFromString),
-  "x-ratelimit-remaining": Schema.optionalKey(IntFromString),
-  "x-ratelimit-reset": Schema.optionalKey(IntFromString),
-  "x-ratelimit-resource": Schema.optionalKey(Schema.String),
-});
+export const IntFromString = Schema.NumberFromString.pipe(Schema.check(Schema.isInt()));
