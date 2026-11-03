@@ -26,8 +26,6 @@ export default Alchemy.Stack(
 
           Worker: ${worker.url}
           Health: ${worker.url}/health
-
-          Deployed from ${github.sha}.
         `,
       });
     }

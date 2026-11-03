@@ -46,7 +46,16 @@ jobs:
     env:
       STAGE: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'prod' }}
     steps:
+      # The pull request can close while this job waits for the database job, outside the stage's group.
+      - if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          state=$(gh pr view "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY" --json state --jq .state)
+          if [ "$state" != OPEN ]; then echo "Pull request is $state, so $STAGE is not deployed." >&2; exit 1; fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: package.json
@@ -68,7 +77,7 @@ jobs:
     env:
       STAGE: pr-${{ github.event.pull_request.number }}
     steps:
-      # A closed pull request may have no merge ref left, so destroy with the program from its head.
+      # A closed pull request may have no merge ref left, so deploy and destroy both run the program from its head.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
