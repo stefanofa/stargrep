@@ -6,9 +6,9 @@
       "name": "stargrep",
       "devDependencies": {
         "@biomejs/biome": "2.6.4",
-        "@effect/tsgo": "0.64.1",
+        "@effect/tsgo": "catalog:",
         "turbo": "2.11.10",
-        "typescript": "7.0.2",
+        "typescript": "catalog:",
       },
     },
     "packages/config": {
@@ -17,24 +17,30 @@
     "packages/testing": {
       "name": "@stargrep/testing",
       "dependencies": {
-        "effect": "4.1.2",
+        "effect": "catalog:",
       },
       "devDependencies": {
-        "@effect/tsgo": "0.64.1",
+        "@effect/tsgo": "catalog:",
         "@stargrep/config": "workspace:*",
-        "@types/bun": "1.4.3",
-        "typescript": "7.0.2",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
       },
     },
     "scripts": {
       "name": "@stargrep/scripts",
       "devDependencies": {
-        "@effect/tsgo": "0.64.1",
+        "@effect/tsgo": "catalog:",
         "@stargrep/config": "workspace:*",
-        "@types/bun": "1.4.3",
-        "typescript": "7.0.2",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
       },
     },
+  },
+  "catalog": {
+    "@effect/tsgo": "0.64.1",
+    "@types/bun": "1.4.3",
+    "effect": "4.1.2",
+    "typescript": "7.0.2",
   },
   "packages": {
     "@biomejs/biome": ["@biomejs/biome@2.6.4", "", { "optionalDependencies": { "@biomejs/cli-android-arm64": "2.6.4", "@biomejs/cli-android-x64": "2.6.4", "@biomejs/cli-darwin-arm64": "2.6.4", "@biomejs/cli-darwin-x64": "2.6.4", "@biomejs/cli-linux-arm64": "2.6.4", "@biomejs/cli-linux-arm64-musl": "2.6.4", "@biomejs/cli-linux-x64": "2.6.4", "@biomejs/cli-linux-x64-musl": "2.6.4", "@biomejs/cli-win32-arm64": "2.6.4", "@biomejs/cli-win32-x64": "2.6.4" }, "bin": { "biome": "bin/biome" } }, "sha512-8sKKwaNW4ot22awZ3lBjwWLHnUFXgXnrBPYS2gNlBAXRbDC++7kqjK2H7dR/FgCDtPvO1xfKpgEhJkGxAKYkxA=="],

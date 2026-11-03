@@ -1,6 +1,5 @@
 {
   "effect": {
-    "kind": "subset",
     "url": "https://github.com/Effect-TS/effect.git",
     "tag": "effect@4.1.2",
     "paths": [
@@ -26,8 +25,25 @@
     "exclude": [],
     "commit": "506eef143bcc1750ce58920aac1e45da7265d103"
   },
+  "orpc": {
+    "url": "https://github.com/middleapi/orpc.git",
+    "tag": "v2.0.0-beta.48",
+    "paths": [
+      "LICENSE",
+      "README.md",
+      "apps/content/docs",
+      "packages/contract/src",
+      "packages/server/src",
+      "packages/client/src",
+      "packages/openapi/src",
+      "packages/effect/src",
+      "packages/mcp/src",
+      "packages/shared/src"
+    ],
+    "exclude": [],
+    "commit": "221882c571aac2c1752f939c5cfd3aca303e1317"
+  },
   "alchemy": {
-    "kind": "subset",
     "url": "https://github.com/alchemy-run/alchemy-effect.git",
     "tag": "v2.0.0-beta.85",
     "paths": [
@@ -53,11 +69,5 @@
       "**/.env.*"
     ],
     "commit": "d0b4a3326718309793459160e94b35abee517b23"
-  },
-  "orpc": {
-    "kind": "subtree",
-    "url": "https://github.com/middleapi/orpc.git",
-    "tag": "v2.0.0-beta.48",
-    "commit": "221882c571aac2c1752f939c5cfd3aca303e1317"
   }
 }

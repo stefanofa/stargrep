@@ -205,9 +205,9 @@ Some things stay outside the repo. Secret values live in Cloudflare secrets and 
 
 ## Testing
 
-- `packages/core` tests use `bun test` with in-memory layers. They cover behavior, such as "an unstarred repo gets `unstarred_at`", not internal calls. Time runs on `TestClock`, so tests never sleep. `packages/testing` is the only place that calls `Effect.runPromise` in tests.
+- `packages/core` tests use `bun test` with in-memory layers. They cover behavior, such as "an unstarred repo gets `unstarred_at`", not internal calls. Time runs on `TestClock`, so tests never sleep. `packages/testing` provides `it.effect`, `it.live`, and `it.layer` for `bun test` and is the only place that calls `Effect.runPromise` in tests. `docs/effect.md` section 7 shows how to use it.
 - `packages/db` and the pipeline run integration tests against a Neon branch made for each test run.
-- `apps/web` and `apps/worker` tests run on workerd through `@cloudflare/vitest-plugin`. The first test in each file waits about 9 seconds while the module graph loads, so the config sets `testTimeout` to 30 seconds. Workerd test files are named `*.workerd-test.ts`, which `bun test` never matches from any folder, and the vitest config includes only that pattern. `bunfig.toml` also keeps a root `bun test` inside `packages/`.
+- `apps/web` and `apps/worker` tests run on workerd through `@cloudflare/vitest-plugin`. The first test in each file waits about 9 seconds while the module graph loads, so the config sets `testTimeout` to 30 seconds. Workerd test files are named `*.workerd-test.ts`, which `bun test` never matches from any folder, and the vitest config includes only that pattern. `bunfig.toml` ignores `repos/`, so a root `bun test` runs every other `*.test.ts` in the repo.
 - `bun test` runs with `--parallel`, not `--concurrent`, so a test that times out still interrupts its fiber and runs its finalizers.
 
 ## Settled by prototypes
@@ -218,7 +218,7 @@ These ran locally on 2026-11-03, with no cloud account.
 - **TanStack Start, oRPC 2.0 beta, and Effect run together on workerd.** One procedure with an Effect Schema input and an Effect handler answered over RPC, REST, and MCP, and the OpenAPI spec generated. The client bundle stayed free of Effect with type-only contract imports. One runtime import of the contract added about 27 KB gzipped, so a lint rule enforces type-only imports. Every `@orpc/*` package pins `2.0.0-beta.48`, because npm's `latest` tags mix 1.x and different betas.
 - **`drizzle-orm/effect-postgres` works on workerd with `prepare: false`, and Stargrep does not adopt it.** With default prepared statements, 68 of 360 transactions failed behind a transaction-mode pooler. Better Auth's adapter fails on it. `pg` measured no slower and serves both core and auth.
 - **`drizzle-kit` does not emit `CREATE EXTENSION vector`.** The first migration adds it by hand.
-- **The `bun test` helper in `docs/effect.md` works.**
+- **The `bun test` helper works.** It lives in `packages/testing`, and its tests cover what the prototype checked.
 
 ## Open technical questions
 

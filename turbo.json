@@ -4,8 +4,11 @@
     "//#lint": {
       "inputs": ["$TURBO_DEFAULT$", "!repos/**"]
     },
+    "transit": {
+      "dependsOn": ["^transit"]
+    },
     "typecheck": {
-      "dependsOn": ["^typecheck"]
+      "dependsOn": ["transit"]
     },
     "check": {
       "dependsOn": ["//#lint", "typecheck"]

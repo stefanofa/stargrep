@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, onTestFinished, test } from "bun:test";
 import * as Cause from "effect/Cause";
-import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -10,10 +9,15 @@ import * as TestConsole from "effect/testing/TestConsole";
 
 export type TestServices = TestClock.TestClock | TestConsole.TestConsole;
 
-const TestEnv = Layer.mergeAll(TestConsole.layer, TestClock.layer());
+type Register<R> = <A, E>(name: string, body: () => Effect.Effect<A, E, R>) => void;
 
-type Body<A, E, R> = () => Effect.Effect<A, E, R>;
-type Register = (name: string, fn: () => Promise<void>, timeout?: number) => void;
+export type Tester<R> = Register<R> & {
+  readonly only: Register<R>;
+  readonly skip: Register<R>;
+  readonly failing: Register<R>;
+};
+
+const TestEnv = Layer.mergeAll(TestConsole.layer, TestClock.layer());
 
 const toError = (cause: Cause.Cause<unknown>): unknown => {
   // A thrown expect() is a defect. Rethrow it untouched: reading its stack
@@ -24,26 +28,29 @@ const toError = (cause: Cause.Cause<unknown>): unknown => {
   return errors.length === 1 ? errors[0] : new Error(Cause.pretty(cause));
 };
 
+const runOrThrow = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
+  Effect.runPromiseExit(effect).then((exit) => {
+    if (Exit.isFailure(exit)) throw toError(exit.cause);
+    return exit.value;
+  });
+
 // Bun passes no AbortSignal to a test. On timeout it still runs onTestFinished
 // and awaits its promise, so aborting there interrupts the fiber and holds the
 // next test until the finalizers finish. Bun refuses onTestFinished inside a
-// concurrent test, so there a timed-out fiber keeps running.
+// concurrent test, so it is registered before the fiber starts.
 const run = <A, E>(effect: Effect.Effect<A, E>): Promise<void> => {
   const controller = new AbortController();
-  let exit: Promise<Exit.Exit<A, E>> | undefined;
   let reported = false;
-  try {
-    onTestFinished(() => {
-      controller.abort();
-      return exit?.then((result) => {
-        if (reported || Exit.isSuccess(result)) return;
-        // Bun already reported the timeout, so only a finalizer failure is left.
-        const failures = result.cause.reasons.filter((reason) => !Cause.isInterruptReason(reason));
-        if (failures.length > 0) throw toError(Cause.fromReasons(failures));
-      });
+  onTestFinished(() => {
+    controller.abort();
+    return exit.then((result) => {
+      if (reported || Exit.isSuccess(result)) return;
+      // Bun already reported the timeout, so only a finalizer failure is left.
+      const failures = result.cause.reasons.filter((reason) => !Cause.isInterruptReason(reason));
+      if (failures.length > 0) throw toError(Cause.fromReasons(failures));
     });
-  } catch {}
-  exit = Effect.runPromiseExit(effect, { signal: controller.signal });
+  });
+  const exit = Effect.runPromiseExit(effect, { signal: controller.signal });
   return exit.then((result) => {
     // After an abort Bun has already failed the test and stopped awaiting this.
     if (controller.signal.aborted) return;
@@ -52,12 +59,12 @@ const run = <A, E>(effect: Effect.Effect<A, E>): Promise<void> => {
   });
 };
 
-const makeTester = <R>(provide: <A, E>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E>) => {
+const makeTester = <R>(provide: <A, E>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E>): Tester<R> => {
   // Bun throws when CI reads test.only, so read each modifier only when a test uses it.
   const register =
-    (t: () => Register) =>
-    <A, E>(name: string, body: Body<A, E, R>, timeout?: number) =>
-      t()(name, () => run(provide(Effect.suspend(body))), timeout);
+    (t: () => (name: string, fn: () => Promise<void>) => void): Register<R> =>
+    (name, body) =>
+      t()(name, () => run(provide(Effect.suspend(body))));
   return Object.assign(
     register(() => test),
     {
@@ -76,25 +83,19 @@ export const live = makeTester<Scope.Scope>(Effect.scoped);
 
 export const layer =
   <ROut, E>(self: Layer.Layer<ROut, E>) =>
-  (
-    name: string,
-    f: (it: { readonly effect: ReturnType<typeof makeTester<ROut | Scope.Scope | TestServices>> }) => void,
-  ) =>
+  (name: string, f: (it: { readonly effect: Tester<ROut | Scope.Scope | TestServices> }) => void) =>
     describe(name, () => {
       const scope = Scope.makeUnsafe();
-      let context: Context.Context<ROut | TestServices> | undefined;
-      beforeAll(async () => {
-        const exit = await Effect.runPromiseExit(Layer.buildWithScope(Layer.provideMerge(self, TestEnv), scope));
-        if (Exit.isFailure(exit)) throw toError(exit.cause);
-        context = exit.value;
-      });
-      afterAll(() => Effect.runPromise(Scope.close(scope, Exit.void)));
+      const context = Layer.buildWithScope(Layer.provideMerge(self, TestEnv), scope).pipe(
+        Effect.orDie,
+        Effect.cached,
+        Effect.runSync,
+      );
+      beforeAll(() => runOrThrow(context));
+      afterAll(() => runOrThrow(Scope.close(scope, Exit.void)));
       f({
-        effect: makeTester<ROut | Scope.Scope | TestServices>((self) =>
-          Effect.suspend(() => {
-            if (context === undefined) return Effect.die(new Error(`layer for "${name}" was not built`));
-            return self.pipe(Effect.scoped, Effect.provide(context));
-          }),
+        effect: makeTester((self) =>
+          Effect.flatMap(context, (services) => self.pipe(Effect.scoped, Effect.provide(services))),
         ),
       });
     });

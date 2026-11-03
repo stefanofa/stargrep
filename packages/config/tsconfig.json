@@ -76,7 +76,7 @@
         },
         "overrides": [
           {
-            "include": ["../../**/*.test.ts", "../../**/*.test.tsx"],
+            "include": ["../../**/*.test.ts", "../../**/*.test.tsx", "../../**/*.workerd-test.ts"],
             "options": {
               "diagnosticSeverity": {
                 "globalJsonInEffect": "off",

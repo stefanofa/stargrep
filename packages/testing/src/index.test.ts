@@ -73,7 +73,11 @@ describe("timeout", () => {
   let stderr = "";
   let code = 0;
   beforeAll(async () => {
-    const run = Bun.spawn([process.execPath, "test", `${import.meta.dir}/timeout.fixture.ts`], {
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => key !== "FORCE_COLOR" && key !== "CLICOLOR_FORCE"),
+    );
+    const run = Bun.spawn([process.execPath, "test", "--timeout", "50", `${import.meta.dir}/timeout.fixture.ts`], {
+      env,
       stdout: "pipe",
       stderr: "pipe",
     });

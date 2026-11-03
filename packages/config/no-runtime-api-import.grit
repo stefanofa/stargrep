@@ -8,6 +8,6 @@ or {
   `import $source`,
   `import($source)`
 } where {
-  $source <: r".(?:@stargrep/api|(?:\.\./)+(?:packages/)?api)(?:/.*)?.",
+  $source <: r"[\"']@stargrep/api(?:/.*)?[\"']",
   register_diagnostic(span=$source, message="Client code imports packages/api for types only. Use import type so the router stays out of the browser bundle.")
 }
