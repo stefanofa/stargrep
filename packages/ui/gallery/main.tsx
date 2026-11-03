@@ -157,9 +157,6 @@ function Gallery() {
           filters={filters}
           onRemoveFilter={(removed) => setFilters((current) => current.filter((filter) => filter.id !== removed.id))}
         />
-        <div className="flex justify-end">
-          <SortMenu value={sort} onValueChange={setSort} />
-        </div>
         <Results
           view={view}
           results={results}
@@ -184,6 +181,9 @@ function Gallery() {
             />
           }
         />
+        <div className="flex justify-end">
+          <SortMenu value={sort} onValueChange={setSort} />
+        </div>
         <RepoPanel
           repo={panelRepo}
           open={panelOpen}
