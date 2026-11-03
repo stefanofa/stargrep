@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**/*.{ts,tsx,js,jsx,mjs,cjs,json,jsonc,css}", "!repos"]
+    "includes": ["**/*.{ts,tsx,js,jsx,mjs,cjs,json,jsonc,css}", "!repos", "!packages/db/migrations"]
   },
   "formatter": {
     "indentStyle": "space",
