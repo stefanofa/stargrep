@@ -5,6 +5,9 @@
   "scripts": {
     "typecheck": "effect-tsgo tsc -p ."
   },
+  "dependencies": {
+    "effect": "catalog:"
+  },
   "devDependencies": {
     "@effect/tsgo": "catalog:",
     "@stargrep/config": "workspace:*",

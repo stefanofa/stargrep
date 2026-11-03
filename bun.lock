@@ -112,6 +112,9 @@
     },
     "scripts": {
       "name": "@stargrep/scripts",
+      "dependencies": {
+        "effect": "catalog:",
+      },
       "devDependencies": {
         "@effect/tsgo": "catalog:",
         "@stargrep/config": "workspace:*",
