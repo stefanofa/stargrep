@@ -86,10 +86,10 @@ Better Auth owns `user`, `session`, and `account`. Stargrep adds these tables.
 
 | Table | Key | Holds |
 |---|---|---|
-| `github_accounts` | GitHub account ID | type (`user` or `org`), login, name, avatar, followers, public repos, total stars across owned repos, `claimed_by` user, star sync state |
-| `repos` | GitHub repo ID | owner, name, description, topics, language, license, homepage, kind (`app`, `library`, `cli`, `framework`, `list`, and so on), created time, `pushed_at`, archived, README object ID, summary, keywords, `embedding halfvec`, embedding model, full-text column |
+| `github_accounts` | GitHub account ID | type (`user` or `org`), login, name, avatar, followers, public repos, total stars across owned repos, `claimed_by` user, star sync state, including the time of the latest full star snapshot |
+| `repos` | GitHub repo ID | owner, name, description, topics, language, license, homepage, kind (`app`, `library`, `cli`, `framework`, `list`, and so on), created time, `pushed_at`, archived, README object ID from the latest facts fetch, summary and the README object ID it describes, keywords, `embedding halfvec`, embedding model, full-text column |
 | `repo_metrics` | GitHub repo ID | current totals and 30-day and 90-day changes for stars, forks, commits, active contributors, new contributors, merged pull requests, closed issues, and releases, refreshed daily |
-| `stars` | account ID and repo ID | `starred_at`, `unstarred_at`, source (`gharchive` or `api`) |
+| `stars` | account ID and repo ID | `starred_at`, `unstarred_at`, the time of the latest observation, source (`gharchive` or `api`). A star event or snapshot older than that observation, or than the account's latest full snapshot, changes nothing |
 | `follows` | follower ID and followee ID | source (`github` or `stargrep`), created time |
 | `collections` | ID | owner, slug, title, description, kind (`user` or `editorial`) |
 | `collection_items` | collection ID and repo ID | note, position |
