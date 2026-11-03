@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/worker.ts"
+    ".": "./src/worker.ts",
+    "./debug": "./src/debug-worker.ts"
   },
   "scripts": {
     "test": "vitest run",
