@@ -19,7 +19,7 @@ permissions:
 env:
   ALCHEMY_TELEMETRY_DISABLED: "1"
   CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-  DRY_RUN: "true"
+  DRY_RUN: "false"
   GH_TOKEN: ${{ github.token }}
 
 jobs:
