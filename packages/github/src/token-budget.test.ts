@@ -1,0 +1,47 @@
+import { describe, expect, test } from "bun:test";
+import type { BudgetShare } from "./schemas.ts";
+import * as TokenBudget from "./token-budget.ts";
+
+const rateLimit = (remaining: number, resetAt = 3_600_000, resource = "core") => ({
+  resource,
+  limit: 5000,
+  remaining,
+  resetAt,
+});
+
+describe("TokenBudget", () => {
+  test("allows a resource it has not seen yet", () => {
+    expect(TokenBudget.check(TokenBudget.make(0.5 as BudgetShare), "core", 0)._tag).toBe("Allowed");
+  });
+
+  test("stops once the remaining budget reaches the unspent part", () => {
+    let budget = TokenBudget.observe(TokenBudget.make(0.01 as BudgetShare), rateLimit(4900));
+    expect(budget.windows.core?.floor).toBe(4851);
+    budget = TokenBudget.observe(budget, rateLimit(4852));
+    expect(TokenBudget.check(budget, "core", 0)._tag).toBe("Allowed");
+    budget = TokenBudget.observe(budget, rateLimit(4851));
+    expect(TokenBudget.check(budget, "core", 0)).toEqual({ _tag: "Exhausted", resetAt: 3_600_000 });
+  });
+
+  test("keeps the floor within a window and resets it with the next window", () => {
+    let budget = TokenBudget.observe(TokenBudget.make(0.5 as BudgetShare), rateLimit(1000));
+    budget = TokenBudget.observe(budget, rateLimit(500));
+    expect(TokenBudget.check(budget, "core", 0)._tag).toBe("Exhausted");
+    expect(TokenBudget.check(budget, "core", 3_600_000)._tag).toBe("Allowed");
+    budget = TokenBudget.observe(budget, rateLimit(4999, 7_200_000));
+    expect(budget.windows.core?.floor).toBe(2500);
+    expect(TokenBudget.check(budget, "core", 3_600_000)._tag).toBe("Allowed");
+  });
+
+  test("tracks each resource on its own", () => {
+    let budget = TokenBudget.observe(TokenBudget.make(0.5 as BudgetShare), rateLimit(10));
+    budget = TokenBudget.observe(budget, rateLimit(5));
+    expect(TokenBudget.check(budget, "core", 0)._tag).toBe("Exhausted");
+    expect(TokenBudget.check(budget, "graphql", 0)._tag).toBe("Allowed");
+  });
+
+  test("maps the GraphQL endpoint to its own resource", () => {
+    expect(TokenBudget.resourceOf("https://api.github.com/graphql")).toBe("graphql");
+    expect(TokenBudget.resourceOf("https://api.github.com/users/octocat/starred?page=2")).toBe("core");
+  });
+});
