@@ -26,8 +26,7 @@ const decodeDebugCount = Schema.decodeUnknownOption(
 
 export default Cloudflare.Worker(
   "Worker",
-  // Run next to the Neon project in infra/database.run.ts, so each query skips the trip from the caller's edge.
-  { main: import.meta.url, placement: { region: "aws:eu-central-1" } },
+  { main: import.meta.url },
   Effect.gen(function* () {
     const { stage } = yield* Alchemy.Stack;
     const jobs = yield* Jobs;
