@@ -3,6 +3,6 @@ export interface EmbeddingModel {
   readonly dimensions: number;
 }
 
-export const summaryModel = "anthropic/claude-haiku-5.5";
+export const summaryModel = "openai/gpt-6-luna";
 
-export const embeddingModel: EmbeddingModel = { id: "openai/text-embedding-3-small", dimensions: 1024 };
+export const embeddingModel: EmbeddingModel = { id: "voyage/voyage-4", dimensions: 1024 };
