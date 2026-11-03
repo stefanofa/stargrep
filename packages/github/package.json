@@ -1,0 +1,23 @@
+{
+  "name": "@stargrep/github",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "sample": "bun scripts/sample.ts",
+    "typecheck": "effect-tsgo tsc -p ."
+  },
+  "dependencies": {
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/platform-bun": "4.1.2",
+    "@effect/tsgo": "catalog:",
+    "@stargrep/config": "workspace:*",
+    "@stargrep/testing": "workspace:*",
+    "@types/bun": "catalog:",
+    "typescript": "catalog:"
+  }
+}

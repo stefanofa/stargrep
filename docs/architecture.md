@@ -67,7 +67,7 @@ packages/
     src/sponsors/   placements and matching
   api/              oRPC contracts and router
   db/               Drizzle schema, migrations, query functions
-  github/           GitHub client, token budget, ETag store, GH Archive reader
+  github/           GitHub client, token budget, GH Archive reader
   ai/               model registry, prompts, embedding helper
   auth/             Better Auth config
   ui/               design tokens and components
@@ -86,7 +86,7 @@ Better Auth owns `user`, `session`, and `account`. Stargrep adds these tables.
 
 | Table | Key | Holds |
 |---|---|---|
-| `github_accounts` | GitHub account ID | type (`user` or `org`), login, name, avatar, followers, public repos, total stars across owned repos, `claimed_by` user, star sync state and ETag |
+| `github_accounts` | GitHub account ID | type (`user` or `org`), login, name, avatar, followers, public repos, total stars across owned repos, `claimed_by` user, star sync state |
 | `repos` | GitHub repo ID | owner, name, description, topics, language, license, homepage, kind (`app`, `library`, `cli`, `framework`, `list`, and so on), created time, `pushed_at`, archived, README object ID, summary, keywords, `embedding halfvec`, embedding model, full-text column |
 | `repo_metrics` | GitHub repo ID | current totals and 30-day and 90-day changes for stars, forks, commits, active contributors, new contributors, merged pull requests, closed issues, and releases, refreshed daily |
 | `stars` | account ID and repo ID | `starred_at`, `unstarred_at`, source (`gharchive` or `api`) |
@@ -103,14 +103,14 @@ Sponsor tables come with the sponsors phase.
 GitHub limits each user token to 5,000 requests per hour. That budget is shared with every other app the user authorized. The app's own credentials get 5,000 per hour for public data. Stargrep stays inside these limits with five sources, cheapest first.
 
 1. **Event archives.** Public star history with account, repo, and time, loaded without API calls. "Event sources" below explains which archive covers which period.
-2. **Conditional requests.** Stargrep stores the ETag of each star list it fetched. A `304` response does not count against the rate limit.
-3. **README object IDs.** GraphQL returns the README's object ID with the repo. Stargrep fetches and summarizes a README again only when that ID changes.
+2. **Incremental sync.** A sync reads the star list newest first and stops at the first star it already has, so an unchanged account costs one request. ETags do not help here. Each star list page embeds live repo stats such as `pushed_at`, so its ETag changes when any of its 100 repos changes, even when no star changed.
+3. **README object IDs.** GraphQL returns the README's object ID with the repo. Stargrep fetches and summarizes a README again only when that ID changes. A README fetch by object ID sends its stored ETag, and a `304` response does not count against the rate limit.
 4. **The user's own token.** A signed-in user's sync uses their token, capped at a share of their remaining budget read from `x-ratelimit-remaining`.
 5. **The app's credentials.** Signed-out lookups of accounts that GH Archive does not cover yet.
 
 A user's token is used only for work that user started. Stargrep never pools user tokens to crawl other accounts.
 
-`packages/github` sends requests one after another per token, as GitHub's best practices ask. This keeps it under the secondary limit of 100 concurrent requests. An in-memory lock cannot do this, because many Worker isolates run at once. Each token gets a Durable Object that sends its requests in order and tracks its remaining budget from the response headers.
+`packages/github` sends requests one after another per token, as GitHub's best practices ask. This keeps it under the secondary limit of 100 concurrent requests. It also sets the floor for a full sync. The REST star list is the fastest source, at about 1.35 s of GitHub server time per page of 100 and slower on deep pages, so 3,000 stars take about 45 s. GraphQL's `starredRepositories` takes about 2.5 s per page. An in-memory lock cannot do this, because many Worker isolates run at once. Each token gets a Durable Object that sends its requests in order and tracks its remaining budget from the response headers.
 
 ## Event sources
 
@@ -181,7 +181,7 @@ The web app loads the signed-in user's whole library into a TanStack DB collecti
 | Workers cache | Public profile pages, discovery pages, and OG images, with stale-while-revalidate |
 | KV | Parsed queries and query embeddings |
 | Postgres | Summaries and embeddings, shared across accounts |
-| GitHub | ETags, so unchanged lists return `304` |
+| GitHub | README ETags, so an unchanged README returns `304` |
 
 ## Everything as code
 
