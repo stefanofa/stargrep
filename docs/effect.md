@@ -1,6 +1,6 @@
 # Effect conventions
 
-This doc sets Starring's Effect conventions. Each rule comes from T3 Code (github.com/pingdotgg/t3code, commit `e27e12d`, 2026-11-03), which runs Effect 4.1.2. That is the same version Starring pins. Every excerpt is T3 Code's code and is credited by its path in that repo. Each section ends with a verdict for Starring. Adopt means take it as is. Adapt says what to change. Skip says why not.
+This doc sets Stargrep's Effect conventions. Each rule comes from T3 Code (github.com/pingdotgg/t3code, commit `e27e12d`, 2026-11-03), which runs Effect 4.1.2. That is the same version Stargrep pins. Every excerpt is T3 Code's code and is credited by its path in that repo. Each section ends with a verdict for Stargrep. Adopt means take it as is. Adapt says what to change. Skip says why not.
 
 Excerpts from T3 Code are used under its MIT License, Copyright (c) 2026 T3 Tools Inc.
 
@@ -9,7 +9,7 @@ Excerpts from T3 Code are used under its MIT License, Copyright (c) 2026 T3 Tool
 T3 Code is a pnpm monorepo. Its own Effect code is in these places.
 
 - `apps/server` holds 1,313 TypeScript files on Node. It is the main body of services, layers, RPC handlers, persistence on SQLite, and observability.
-- `infra/relay` is a Cloudflare Worker built with Effect, Alchemy, `drizzle-orm/effect-postgres`, `@effect/sql-pg`, and Hyperdrive in front of Postgres. It is the closest match to Starring's runtime, so this doc leans on it.
+- `infra/relay` is a Cloudflare Worker built with Effect, Alchemy, `drizzle-orm/effect-postgres`, `@effect/sql-pg`, and Hyperdrive in front of Postgres. It is the closest match to Stargrep's runtime, so this doc leans on it.
 - `infra/task-cache` is a second, smaller Effect Worker.
 - `packages/contracts` holds the Effect Schema contracts that cross the wire.
 - `packages/source-control-*` and `packages/provider-*` are port packages (`*-core`) with one adapter package per vendor and a `*-testing` package of fakes.
@@ -43,7 +43,7 @@ export class T3ChatAccounts extends Context.Service<
 >()("t3code-relay/t3chat/T3ChatAccounts") {}
 ```
 
-**For Starring.** Adopt as is. The tag key follows `<app>/<folder>/<Service>`, so Starring uses `starring/<package>/<Service>`, such as `starring/core/StarSync`.
+**For Stargrep.** Adopt as is. The tag key follows `<app>/<folder>/<Service>`, so Stargrep uses `stargrep/<package>/<Service>`, such as `stargrep/core/StarSync`.
 
 ### Rule: `make` reads dependencies from the environment, and `layer` wraps it
 
@@ -63,7 +63,7 @@ export const layer = Layer.effect(T3ChatAccounts, make);
 
 `make` stays private unless another module imports it, because knip fails CI on an unused export. Do not write `make = Effect.succeed(...)` to force `Layer.effect`. Use `Layer.succeed` or `Layer.sync` when nothing is effectful (`docs/internals/effect-services.md`).
 
-**For Starring.** Adopt as is.
+**For Stargrep.** Adopt as is.
 
 ### Rule: a port with platform implementations names each one `layer<Platform>`
 
@@ -94,7 +94,7 @@ export const layerCloudflareQueues = (
   );
 ```
 
-**For Starring.** Adopt. This is the "platforms are layers" principle from `docs/architecture.md` in practice. `Queue` in `packages/core` exports `layerMemory`. `apps/worker` builds `layerCloudflareQueues`. Keep Cloudflare types out of `packages/core` by putting the platform layer in the app or in a `*-cloudflare` package.
+**For Stargrep.** Adopt. This is the "platforms are layers" principle from `docs/architecture.md` in practice. `Queue` in `packages/core` exports `layerMemory`. `apps/worker` builds `layerCloudflareQueues`. Keep Cloudflare types out of `packages/core` by putting the platform layer in the app or in a `*-cloudflare` package.
 
 ### Rule: compose layers once per entry point, bottom up with `Layer.provideMerge`
 
@@ -128,7 +128,7 @@ yield* Cloudflare.Queues.consumeQueueMessages<unknown>(fcmDeliveryQueue, { batch
 
 The Node server does the same in `apps/server/src/server.ts` and ends with `export const runServer = Layer.launch(layerMakeServer)`.
 
-**For Starring.** Adapt. Keep one `layerRuntime` per Worker in `apps/web` and `apps/worker`. Note the per-request cost. `worker.ts` provides `layerRuntime` inside each handler, and its own comment says "`fetch` rebuilds its layers per request; the source map cache must outlive one." Anything that must outlive a request, such as a cache, gets built once in the Worker's init effect and passed in as a value, as the relay does with `mobileSourceMapLookups`.
+**For Stargrep.** Adapt. Keep one `layerRuntime` per Worker in `apps/web` and `apps/worker`. Note the per-request cost. `worker.ts` provides `layerRuntime` inside each handler, and its own comment says "`fetch` rebuilds its layers per request; the source map cache must outlive one." Anything that must outlive a request, such as a cache, gets built once in the Worker's init effect and passed in as a value, as the relay does with `mobileSourceMapLookups`.
 
 ### Rule: import Effect modules as namespaces from subpaths
 
@@ -140,7 +140,7 @@ import * as Foo from "./Foo.ts"          // then: yield* Foo.Foo, Foo.layer
 
 Never `import { layer as fooLayer }`. A barrel exposes a whole service as `export * as TokenStore from "./tokenStore.ts"`. The language service enforces the subpath form with `"namespaceImportPackages": ["@effect/platform-node", "effect"]`.
 
-**For Starring.** Adopt as is. Namespace imports keep `make` and `layer` readable at every call site.
+**For Stargrep.** Adopt as is. Namespace imports keep `make` and `layer` readable at every call site.
 
 ## 2. Layout and naming
 
@@ -162,7 +162,7 @@ infra/relay/src/
 
 File names follow the export. Service modules are PascalCase (`ManagedTunnelLimits.ts`). Pure helper modules are camelCase (`fcmPayloads.ts`, `apnsJwt.ts`). Tests sit next to the file as `Foo.test.ts`. Moving a service deletes the old file and updates every consumer, with no re-export shims.
 
-**For Starring.** Adapt. `docs/architecture.md` sets kebab-case files named after their export, so `StarSync` lives in `star-sync.ts` and is imported as `import * as StarSync from "./star-sync.ts"`. Keep T3 Code's module order, one service per module, tests beside the file, and no re-export shims.
+**For Stargrep.** Adapt. `docs/architecture.md` sets kebab-case files named after their export, so `StarSync` lives in `star-sync.ts` and is imported as `import * as StarSync from "./star-sync.ts"`. Keep T3 Code's module order, one service per module, tests beside the file, and no re-export shims.
 
 ### Rule: name things by role
 
@@ -177,7 +177,7 @@ File names follow the export. Service modules are PascalCase (`ManagedTunnelLimi
 | Config value | `<name>Config` | `managedEndpointCleanupModeConfig` |
 | Predicate | `is<Thing>` | `export const isFoo = Schema.is(Foo)` |
 
-**For Starring.** Adopt, with one fix. Pick one error suffix rule, since T3 Code mixes both. Use a past-tense or state name without the `Error` suffix (`RepoNotFound`, `StarSyncFailed`, `TokenBudgetExhausted`), because `_tag` already marks it as an error.
+**For Stargrep.** Adopt, with one fix. Pick one error suffix rule, since T3 Code mixes both. Use a past-tense or state name without the `Error` suffix (`RepoNotFound`, `StarSyncFailed`, `TokenBudgetExhausted`), because `_tag` already marks it as an error.
 
 ## 3. Errors
 
@@ -207,7 +207,7 @@ Three more rules from `docs/internals/effect-services.md`:
 - Split one error into two classes when callers branch on the difference. A field that only helps diagnosis stays a field. Never encode one distinction twice, as a tag and a one-value `reason` literal.
 - No helper that only does `(...args) => new SomeError({...args})`. A real mapper becomes a static factory on the error class.
 
-**For Starring.** Adopt as is. GitHub tokens, model prompts, and README text must never land in an error field.
+**For Stargrep.** Adopt as is. GitHub tokens, model prompts, and README text must never land in an error field.
 
 ### Rule: catch known tags with `Effect.catchTags`, even for one tag
 
@@ -227,7 +227,7 @@ backing.get("revisions").pipe(
 
 `Effect.catch` handles the whole channel. `catchIf` is for structural checks such as a platform error code. Lint rule `t3code/prefer-catch-tags` bans `catchTag`.
 
-**For Starring.** Adopt. Biome cannot load a JS rule like `prefer-catch-tags`, so enforce it in review or with a Biome GritQL plugin.
+**For Stargrep.** Adopt. Biome cannot load a JS rule like `prefer-catch-tags`, so enforce it in review or with a Biome GritQL plugin.
 
 ### Rule: map domain errors to wire errors only in the transport, with a code and a trace id
 
@@ -267,7 +267,7 @@ export class RelayEnvironmentLinkLimitExceededError extends Schema.TaggedError<R
 
 A handler "decodes input, calls one service method, and maps errors. Nothing else" (`AGENTS.md`). The reason given is reach. The same capability is called from WebSocket, MCP, scheduled tasks, and the CLI, so logic in one handler is missing from the others.
 
-**For Starring.** Adapt. Starring's transport is oRPC, not Effect `HttpApi`. Define wire errors once in `packages/api` as oRPC typed errors with a `code` and a `traceId`. Map domain tags to them in the router with an exhaustive `catchTags`. This matters more for Starring, because one oRPC router serves the web client, REST, and MCP. Note that T3 Code's own `apps/server/src/ws.ts` still has handlers that copy `cause.message` into the wire error. The docs call those legacy, so don't copy them.
+**For Stargrep.** Adapt. Stargrep's transport is oRPC, not Effect `HttpApi`. Define wire errors once in `packages/api` as oRPC typed errors with a `code` and a `traceId`. Map domain tags to them in the router with an exhaustive `catchTags`. This matters more for Stargrep, because one oRPC router serves the web client, REST, and MCP. Note that T3 Code's own `apps/server/src/ws.ts` still has handlers that copy `cause.message` into the wire error. The docs call those legacy, so don't copy them.
 
 ## 4. Schemas
 
@@ -285,13 +285,13 @@ export const ProjectId = makeEntityId("ProjectId");
 export type ProjectId = typeof ProjectId.Type;
 ```
 
-**For Starring.** Adapt. Starring keys accounts and repos by GitHub numeric ids, so the base is a positive integer. Something like `const makeGitHubId = (brand) => Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0)), Schema.brand(brand))` gives `GitHubAccountId` and `RepoId`. Logins and repo names get their own brands so they never pass for ids.
+**For Stargrep.** Adapt. Stargrep keys accounts and repos by GitHub numeric ids, so the base is a positive integer. Something like `const makeGitHubId = (brand) => Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0)), Schema.brand(brand))` gives `GitHubAccountId` and `RepoId`. Logins and repo names get their own brands so they never pass for ids.
 
 ### Rule: wire contracts live in one package that every side imports
 
 `packages/contracts` holds every schema that crosses a process or network boundary. `AGENTS.md` says "Change the schema and the server, web, mobile, and desktop all follow." The package is limited to "Effect/Schema contracts plus small derived helpers. No heavy runtime logic."
 
-**For Starring.** Adopt. `packages/api` plays this role for oRPC. Domain types that never cross the wire stay in their `packages/core` feature folder.
+**For Stargrep.** Adopt. `packages/api` plays this role for oRPC. Domain types that never cross the wire stay in their `packages/core` feature folder.
 
 ### Rule: decode external data at the boundary with a hoisted decoder
 
@@ -314,7 +314,7 @@ getLink: Effect.fn("relay.t3chat.get_link")(function* (input) {
 
 Queue messages are `unknown` until decoded. `ApnsDeliveries.processSignedJob(body: unknown)` decodes first and fails with `ApnsDeliveryJobQueuePayloadInvalid`, which records only the received type, never the payload (`infra/relay/src/agentActivity/ApnsDeliveries.ts`). For HTTP responses the server also uses `HttpClientResponse.schemaBodyJson(Schema)` (`apps/server/src/cloud/CliTokenManager.ts`).
 
-**For Starring.** Adopt as is. It applies to GitHub responses, GH Archive rows, queue bodies, model output, and the `QueryPlan`. Biome has no rule for hoisting, so cover it in review.
+**For Stargrep.** Adopt as is. It applies to GitHub responses, GH Archive rows, queue bodies, model output, and the `QueryPlan`. Biome has no rule for hoisting, so cover it in review.
 
 ### Rule: SQL rows decode through a schema too
 
@@ -336,7 +336,7 @@ const getSessionRowById = SqlSchema.findOneOption({
 
 The relay, which uses Drizzle, does not decode rows. It trusts Drizzle's column types and casts JSON columns with `.$type<T>()` (`infra/relay/src/persistence/schema.ts`).
 
-**For Starring.** Adapt. Use `drizzle-orm/effect-schema`, as `docs/architecture.md` already plans, to derive row schemas from tables. Decode `jsonb` columns with a schema rather than `.$type<T>()`, since a cast hides drift between old rows and new code.
+**For Stargrep.** Adapt. Use `drizzle-orm/effect-schema`, as `docs/architecture.md` already plans, to derive row schemas from tables. Decode `jsonb` columns with a schema rather than `.$type<T>()`, since a cast hides drift between old rows and new code.
 
 ## 5. Config and secrets
 
@@ -378,7 +378,7 @@ export const layer = (configuration: RelayConfiguration["Service"]) =>
 
 `Redacted.value(secret)` is called only at the point of use, such as `HttpClientRequest.bearerToken(Redacted.value(linkSecret))`. The `Layer.succeed` form also gives tests a one-line config layer (`RelayConfiguration.layer(config)` in `ApnsDeliveryQueue.test.ts`). The Node CLI groups its env config with `Config.all({...})` in `apps/server/src/cli/config.ts`.
 
-**For Starring.** Adopt. On Workers, env vars and secrets come from the `env` bindings object, not `process.env`. In the relay, Alchemy's runtime supplies a `ConfigProvider` backed by that object (`.repos/alchemy-effect/packages/alchemy/src/Runtime.ts`), so `Config.String` just works. Without Alchemy at runtime, provide `ConfigProvider.fromUnknown(env)` at the entry point. Starring's "validated at startup" means validated in each Worker's init effect. That runs on isolate start, not once per deploy.
+**For Stargrep.** Adopt. On Workers, env vars and secrets come from the `env` bindings object, not `process.env`. In the relay, Alchemy's runtime supplies a `ConfigProvider` backed by that object (`.repos/alchemy-effect/packages/alchemy/src/Runtime.ts`), so `Config.String` just works. Without Alchemy at runtime, provide `ConfigProvider.fromUnknown(env)` at the entry point. Stargrep's "validated at startup" means validated in each Worker's init effect. That runs on isolate start, not once per deploy.
 
 ## 6. Concurrency and resources
 
@@ -404,7 +404,7 @@ const relayRetrySchedule = Schedule.exponential("1 second").pipe(
 
 Inline retries state their count, such as `Effect.retry({ times: 2, schedule: Schedule.exponential("2 seconds") })` in `apps/server/src/orchestration-v2/ThreadTitleRegenerationService.ts`. Then a `catchCause` keeps interrupts as interrupts and logs the rest.
 
-**For Starring.** Adopt. Starring's GitHub client honors `Retry-After` and `x-ratelimit-reset` the same way. Use queue retries for step-level failure and keep in-process `Effect.retry` for short transient calls.
+**For Stargrep.** Adopt. Stargrep's GitHub client honors `Retry-After` and `x-ratelimit-reset` the same way. Use queue retries for step-level failure and keep in-process `Effect.retry` for short transient calls.
 
 ### Rule: put a timeout on every external call, covering the body read
 
@@ -422,7 +422,7 @@ return yield* HttpClientRequest.post(new URL(path, baseUrl).toString()).pipe(
 );
 ```
 
-**For Starring.** Adopt as is. Workers bill wall time against a request, so a hung GitHub or model call is a real cost.
+**For Stargrep.** Adopt as is. Workers bill wall time against a request, so a hung GitHub or model call is a real cost.
 
 ### Rule: acquire resources with `acquireRelease` inside `Effect.scoped`
 
@@ -440,7 +440,7 @@ Effect.scoped(
 ),
 ```
 
-**For Starring.** Adopt as is.
+**For Stargrep.** Adopt as is.
 
 ### Rule: background fibers are scoped to a layer, never detached by default
 
@@ -461,7 +461,7 @@ export const layerPruneWorker = Layer.effectDiscard(
 );
 ```
 
-**For Starring.** Skip the pattern and keep the idea. A Worker has no long-lived process for a repeating fiber. Starring's equivalent is a cron trigger. The relay's cron is the model to copy. It runs prune jobs with `Effect.all([...], { concurrency: 3, discard: true })`, each with its own `Effect.timeout` and a `catchCause` that logs and keeps interrupts (`infra/relay/src/worker.ts`).
+**For Stargrep.** Skip the pattern and keep the idea. A Worker has no long-lived process for a repeating fiber. Stargrep's equivalent is a cron trigger. The relay's cron is the model to copy. It runs prune jobs with `Effect.all([...], { concurrency: 3, discard: true })`, each with its own `Effect.timeout` and a `catchCause` that logs and keeps interrupts (`infra/relay/src/worker.ts`).
 
 ### Rule: serialize shared state in the database, not in memory, when more than one process runs
 
@@ -479,7 +479,7 @@ yield* db
 return yield* db.$client.withTransaction(checkAndReserve).pipe(/* map transaction SqlError */);
 ```
 
-**For Starring.** Adopt. `docs/architecture.md` wants GitHub requests sent one after another per token. An in-memory `Semaphore` does not do that across isolates. Starring uses a Durable Object per token, as `docs/architecture.md` describes. T3 Code does not cover this case.
+**For Stargrep.** Adopt. `docs/architecture.md` wants GitHub requests sent one after another per token. An in-memory `Semaphore` does not do that across isolates. Stargrep uses a Durable Object per token, as `docs/architecture.md` describes. T3 Code does not cover this case.
 
 ### Rule: Postgres behind Hyperdrive runs with `prepare: false`
 
@@ -494,7 +494,7 @@ const db = yield* Drizzle.Postgres(hyperdrive.connectionString, {
 
 Alchemy's `Drizzle.Postgres` helper builds `@effect/sql-pg`'s `PgClient.layer` and wraps it with `drizzle-orm/effect-postgres` (`.repos/alchemy-effect/packages/alchemy/src/Drizzle/Postgres.ts`). The relay Worker sets the `nodejs_compat` flag, pins `drizzle-orm` `1.0.0-rc.5-ab785fc`, and talks to PlanetScale Postgres through Hyperdrive.
 
-**For Starring.** Adopt for any `@effect/sql-pg` client. `docs/architecture.md` leaves open whether `drizzle-orm/effect-postgres` works through Hyperdrive on Workers, and names its default named prepared statements as a risk. T3 Code runs that exact stack in production with `prepare: false`, which is evidence the phase 0 prototype should pass. Neon is not PlanetScale, so the prototype still has to run.
+**For Stargrep.** Adopt for any `@effect/sql-pg` client. `docs/architecture.md` leaves open whether `drizzle-orm/effect-postgres` works through Hyperdrive on Workers, and names its default named prepared statements as a risk. T3 Code runs that exact stack in production with `prepare: false`, which is evidence the phase 0 prototype should pass. Neon is not PlanetScale, so the prototype still has to run.
 
 ## 7. Testing
 
@@ -537,7 +537,7 @@ const t3ChatLayer = (plan: RelayT3ChatPlan | "lookup-fails", lookups?: Array<str
   });
 ```
 
-**For Starring.** Adopt `Layer.mock` and `HttpClient.make`. Both are plain Effect and work under any runner. Skip one relay habit. Several relay tests hand-build a fake Drizzle object and cast it with `as unknown as RelayDb.RelayDb["Service"]` (`EnvironmentLinks.test.ts`, `ManagedTunnelLimits.test.ts`). Those tests break on any query refactor. For SQL behavior, run real SQL. T3 Code already does this in one `ManagedTunnelLimits.test.ts` case with PGlite (`drizzle({ client: pg })`). For `packages/core`, give `Db`-backed services an in-memory repository layer instead of a fake Drizzle object.
+**For Stargrep.** Adopt `Layer.mock` and `HttpClient.make`. Both are plain Effect and work under any runner. Skip one relay habit. Several relay tests hand-build a fake Drizzle object and cast it with `as unknown as RelayDb.RelayDb["Service"]` (`EnvironmentLinks.test.ts`, `ManagedTunnelLimits.test.ts`). Those tests break on any query refactor. For SQL behavior, run real SQL. T3 Code already does this in one `ManagedTunnelLimits.test.ts` case with PGlite (`drizzle({ client: pg })`). For `packages/core`, give `Db`-backed services an in-memory repository layer instead of a fake Drizzle object.
 
 ### Rule: time is virtual in tests, and nothing waits on wall clock
 
@@ -559,35 +559,108 @@ it.effect("times out when T3 Chat stalls while sending the body", () => {
 
 Lint rules `t3code/no-wall-clock-in-tests`, `no-real-time-wait-in-tests`, `no-polling-loop-in-tests`, and `no-test-timeout-or-unreasoned-skip` enforce this. A skipped test needs `// quarantine: #1234 <why>` above it.
 
-**For Starring.** Adopt. `TestClock` is part of `effect`, so it works under `bun test`.
+**For Stargrep.** Adopt. `TestClock` is part of `effect`, so it works under `bun test`.
 
 ### What changes with `bun test` instead of `@effect/vitest`
 
-T3 Code runs every test with `@effect/vitest` 4.1.2 through Vite+. Its lint rule `t3code/no-manual-effect-runtime-in-tests` bans `Effect.runPromise` in tests and says "Use @effect/vitest with it.effect(...) and test layers instead." Starring has to invert that. The upstream source shows what `it.effect` does (`.repos/effect-smol/packages/vitest/src/internal/internal.ts`). It wraps the test in `Effect.scoped`, provides `Layer.mergeAll(TestConsole.layer, TestClock.layer())`, and calls `Effect.runPromise` with the test's abort signal. `it.live` does the same without the test services. `it.layer(L)` builds `L` once in `beforeAll` and closes its scope in `afterAll`.
+T3 Code runs every test with `@effect/vitest` 4.1.2 through Vite+. Its lint rule `t3code/no-manual-effect-runtime-in-tests` bans `Effect.runPromise` in tests and says "Use @effect/vitest with it.effect(...) and test layers instead." Stargrep has to invert that. The upstream source shows what `it.effect` does (`.repos/effect-smol/packages/vitest/src/internal/internal.ts`). It wraps the test in `Effect.scoped`, provides `Layer.mergeAll(TestConsole.layer, TestClock.layer())`, and calls `Effect.runPromise` with the test's abort signal. `it.live` does the same without the test services. `it.layer(L)` builds `L` once in `beforeAll` and closes its scope in `afterAll`.
 
-A small `packages/testing` helper gives Starring the same behavior on `bun test`. This is an untested sketch.
+`packages/testing` gives Stargrep the same behavior on `bun test`. A prototype ran this version on Bun 1.4.3 with Effect 4.1.2 and checked virtual time, finalizers on success and failure, one layer build per block, readable typed failures, `Layer.mock`, interruption on timeout, and clock isolation across parallel files.
 
 ```ts
-import { test, beforeAll, afterAll } from "bun:test";
+import { afterAll, beforeAll, describe, onTestFinished, test } from "bun:test";
+import * as Cause from "effect/Cause";
+import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
 
+export type TestServices = TestClock.TestClock | TestConsole.TestConsole;
+
 const TestEnv = Layer.mergeAll(TestConsole.layer, TestClock.layer());
 
-export const effect = <A, E>(name: string, body: () => Effect.Effect<A, E, never>) =>
-  test(name, () => Effect.runPromise(body().pipe(Effect.scoped, Effect.provide(TestEnv))));
+type Body<A, E, R> = () => Effect.Effect<A, E, R>;
+type Register = (name: string, fn: () => Promise<void>, timeout?: number) => void;
 
-export const layer = <R, E>(l: Layer.Layer<R, E>) => {
-  let runtime: ManagedRuntime.ManagedRuntime<R, E>;
-  beforeAll(() => { runtime = ManagedRuntime.make(l); });
-  afterAll(() => runtime.dispose());
-  return <A, E2>(name: string, body: () => Effect.Effect<A, E2, R>) =>
-    test(name, () => runtime.runPromise(body().pipe(Effect.scoped, Effect.provide(TestEnv))));
+const toError = (cause: Cause.Cause<unknown>): unknown => {
+  // A thrown expect() is a defect. Rethrow it untouched: reading its stack
+  // first, as prettyErrors does, makes Bun lose the code frame.
+  const [reason, ...rest] = cause.reasons;
+  if (rest.length === 0 && reason && Cause.isDieReason(reason) && reason.defect instanceof Error) return reason.defect;
+  const errors = Cause.prettyErrors(cause);
+  return errors.length === 1 ? errors[0] : new Error(Cause.pretty(cause));
 };
+
+// Bun passes no AbortSignal to a test. On timeout it still runs onTestFinished
+// and awaits its promise, so aborting there interrupts the fiber and holds the
+// next test until the finalizers finish. Bun refuses onTestFinished inside a
+// concurrent test, so there a timed-out fiber keeps running.
+const run = <A, E>(effect: Effect.Effect<A, E>): Promise<void> => {
+  const controller = new AbortController();
+  let exit: Promise<Exit.Exit<A, E>> | undefined;
+  try {
+    onTestFinished(() => {
+      controller.abort();
+      return exit?.then(() => undefined);
+    });
+  } catch {}
+  exit = Effect.runPromiseExit(effect, { signal: controller.signal });
+  return exit.then((result) => {
+    // After an abort Bun has already failed the test and stopped awaiting this.
+    if (Exit.isFailure(result) && !controller.signal.aborted) throw toError(result.cause);
+  });
+};
+
+const makeTester = <R>(provide: <A, E>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E>) => {
+  const register =
+    (t: Register) =>
+    <A, E>(name: string, body: Body<A, E, R>, timeout?: number) =>
+      t(name, () => run(provide(Effect.suspend(body))), timeout);
+  return Object.assign(register(test), {
+    only: register(test.only),
+    skip: register(test.skip),
+    failing: register(test.failing),
+  });
+};
+
+export const effect = makeTester<Scope.Scope | TestServices>((self) =>
+  self.pipe(Effect.scoped, Effect.provide(TestEnv)),
+);
+
+export const live = makeTester<Scope.Scope>(Effect.scoped);
+
+export const layer =
+  <ROut, E>(self: Layer.Layer<ROut, E>) =>
+  (name: string, f: (it: { readonly effect: ReturnType<typeof makeTester<ROut | Scope.Scope | TestServices>> }) => void) =>
+    describe(name, () => {
+      const scope = Scope.makeUnsafe();
+      let context: Context.Context<ROut | TestServices> | undefined;
+      beforeAll(async () => {
+        const exit = await Effect.runPromiseExit(Layer.buildWithScope(Layer.provideMerge(self, TestEnv), scope));
+        if (Exit.isFailure(exit)) throw toError(exit.cause);
+        context = exit.value;
+      });
+      afterAll(() => Effect.runPromise(Scope.close(scope, Exit.void)));
+      f({
+        effect: makeTester<ROut | Scope.Scope | TestServices>((self) =>
+          Effect.suspend(() => {
+            if (context === undefined) return Effect.die(new Error(`layer for "${name}" was not built`));
+            return self.pipe(Effect.scoped, Effect.provide(context));
+          }),
+        ),
+      });
+    });
 ```
+
+Limits of `bun test` that the helper cannot remove:
+
+- Bun passes no abort signal to a test. The helper makes one from `onTestFinished`, which Bun refuses inside concurrent tests. Run tests with `--parallel`, not `--concurrent`, so a timed-out test still interrupts its fiber.
+- Ctrl-C ends the run without running finalizers.
+- Tests in one `layer` block share one `TestClock` on purpose.
+- Stock `tsc` does not load the `@effect/language-service` plugin. With TypeScript 7, run `effect-tsgo tsc` from `@effect/tsgo`. With TypeScript 6, run `effect-language-service patch` once, then `tsc`.
 
 Other differences:
 
@@ -596,7 +669,7 @@ Other differences:
 - `@effect/vitest` adds `it.prop` for property tests. Under Bun, call `FastCheck` from `effect/testing` yourself if needed.
 - `bun test` runs on Bun, not workerd. `docs/architecture.md` already flags that Worker-level tests need another runner. T3 Code's relay tests also skip workerd and run on Node with `@effect/platform-node`.
 
-**For Starring.** Adapt. Write the helper once, and allow `runPromise` only in that file.
+**For Stargrep.** Adapt. Write the helper once, and allow `runPromise` only in that file.
 
 ## 8. Observability
 
@@ -628,7 +701,7 @@ export const processMessage = Effect.fn("relay.fcm_delivery_queue.process_messag
 
 Lint rule `t3code/prefer-effect-fn` reports functions that return `Effect.gen`. The language service adds `effectFnOpportunity: "error"`.
 
-**For Starring.** Adopt, with one fix. T3 Code uses two span name styles, `WorkspacePaths.normalizeWorkspaceRoot` in the server and `relay.t3chat.get_link` in the relay. Starring picks `Service.operation` everywhere, since it matches the code and is searchable.
+**For Stargrep.** Adopt, with one fix. T3 Code uses two span name styles, `WorkspacePaths.normalizeWorkspaceRoot` in the server and `relay.t3chat.get_link` in the relay. Stargrep picks `Service.operation` everywhere, since it matches the code and is searchable.
 
 ### Rule: transports instrument in middleware, and handlers add only per-call attributes
 
@@ -650,7 +723,7 @@ export const rpcInstrumentationLayer = Layer.succeed(RpcInstrumentation)((effect
 });
 ```
 
-**For Starring.** Adapt. Write one oRPC middleware that opens the span and records metrics for every procedure, so REST, MCP, and the web client get the same traces.
+**For Stargrep.** Adapt. Write one oRPC middleware that opens the span and records metrics for every procedure, so REST, MCP, and the web client get the same traces.
 
 ### Rule: metrics are module-level constants with a prefix and a description
 
@@ -664,13 +737,13 @@ export const rpcRequestDuration = Metric.timer("t3_rpc_request_duration", {
 });
 ```
 
-**For Starring.** Adopt, with a `starring_` prefix. Useful early ones are GitHub requests by source and status, `304` hits, queue step outcomes, and model tokens.
+**For Stargrep.** Adopt, with a `stargrep_` prefix. Useful early ones are GitHub requests by source and status, `304` hits, queue step outcomes, and model tokens.
 
 ### Rule: logs are structured, with bounded fields
 
 Logs use `Effect.logInfo` and `Effect.logWarning` with a fixed message and an object of fields: `Effect.logWarning("Rate limiter unavailable", { error: error.message })` in `infra/relay/src/worker.ts`. The language service bans `console` (`globalConsole: "error"`). The relay exports traces to Axiom through `Axiom.Telemetry(...)` provided at the Worker root.
 
-**For Starring.** Adopt. Export to whichever OTLP backend Starring picks, provided at each Worker's root layer.
+**For Stargrep.** Adopt. Export to whichever OTLP backend Stargrep picks, provided at each Worker's root layer.
 
 ## 9. Interop with non-Effect code
 
@@ -678,7 +751,7 @@ Logs use `Effect.logInfo` and `Effect.logWarning` with a fixed message and an ob
 
 `ManagedRuntime.make`, `runPromise`, and `runPromiseExit` belong to React, native callbacks, the CLI, and HTTP adapters. Never in a domain service, repository, or service constructor. A shared resource is composed once in an app-owned layer, never in a per-feature runtime (`docs/internals/effect-services.md`).
 
-**For Starring.** Adopt. The boundaries are the oRPC router (through `@orpc/effect`), the queue consumer, the cron handler, and TanStack Start server functions. `packages/core` never calls `runPromise`.
+**For Stargrep.** Adopt. The boundaries are the oRPC router (through `@orpc/effect`), the queue consumer, the cron handler, and TanStack Start server functions. `packages/core` never calls `runPromise`.
 
 ### Rule: wrap promise SDKs in a service with `Effect.tryPromise` and a timeout
 
@@ -703,7 +776,7 @@ return yield* Effect.tryPromise({
 );
 ```
 
-**For Starring.** Adopt. Vercel AI SDK goes behind `Ai` and Better Auth behind its own service this way. Pass an `AbortSignal` from `Effect.tryPromise`'s `try: (signal) => ...` where the SDK accepts one, so interrupts cancel the request.
+**For Stargrep.** Adopt. Vercel AI SDK goes behind `Ai` and Better Auth behind its own service this way. Pass an `AbortSignal` from `Effect.tryPromise`'s `try: (signal) => ...` where the SDK accepts one, so interrupts cancel the request.
 
 ### Rule: Drizzle runs as Effects through `drizzle-orm/effect-postgres`, behind a `Db` service
 
@@ -729,13 +802,13 @@ export class RelayTransactions extends Context.Service<
 
 Queries return Effects, so they pipe straight into `Effect.map` and `Effect.mapError`. Each statement maps its own `SqlError` to a domain error with the operation name. Errors left at the transaction edge come from open or commit (`ManagedTunnelLimits.ts`).
 
-**For Starring.** Adapt. `docs/architecture.md` starts `Db` on `drizzle-orm/node-postgres` and `pg`, because Better Auth's Drizzle adapter awaits queries, and moves core to `effect-postgres` only if phase 0 passes. That makes the shape of the `Db` service matter more than the driver. If `Db` exposes the whole Drizzle database the way `RelayDb` does, core imports Drizzle types, ties itself to one driver, and loses its in-memory test layer. Make `Db`'s methods the query functions from `packages/db`, each returning an Effect with a typed error. On `pg`, each method wraps the promise with `Effect.tryPromise` and maps the failure to a domain error with the operation name, as `ManagedTunnelLimits.ts` does for `SqlError`. Keep `withTransaction` as its own service like `RelayTransactions`. A later move to `effect-postgres` then changes only `packages/db`.
+**For Stargrep.** Adapt. `docs/architecture.md` starts `Db` on `drizzle-orm/node-postgres` and `pg`, because Better Auth's Drizzle adapter awaits queries, and moves core to `effect-postgres` only if phase 0 passes. That makes the shape of the `Db` service matter more than the driver. If `Db` exposes the whole Drizzle database the way `RelayDb` does, core imports Drizzle types, ties itself to one driver, and loses its in-memory test layer. Make `Db`'s methods the query functions from `packages/db`, each returning an Effect with a typed error. On `pg`, each method wraps the promise with `Effect.tryPromise` and maps the failure to a domain error with the operation name, as `ManagedTunnelLimits.ts` does for `SqlError`. Keep `withTransaction` as its own service like `RelayTransactions`. A later move to `effect-postgres` then changes only `packages/db`.
 
 ### Rule: Effect runs in the browser through atoms
 
 `apps/web` builds a `ManagedRuntime` and an `Atom.runtime` from layers, and React reads state with `useAtomValue` from `@effect/atom-react` (`apps/web/src/lib/runtime.ts`, `apps/web/src/connection/runtime.ts`).
 
-**For Starring.** Adapt. Skip atoms and `ManagedRuntime` state, because TanStack DB owns client state and a second store would split ownership. Use Effect in the browser only in code-split routes where it does real work, such as the search box's `Stream` pipeline. Public pages load no Effect code. A probe bundle measured about 25 KB gzipped for Schema alone, 34 KB for the runtime with `Stream` and Schema, and 49 KB with atoms added.
+**For Stargrep.** Adapt. Skip atoms and `ManagedRuntime` state, because TanStack DB owns client state and a second store would split ownership. Use Effect in the browser only in code-split routes where it does real work, such as the search box's `Stream` pipeline. Public pages load no Effect code. A probe bundle measured about 25 KB gzipped for Schema alone, 34 KB for the runtime with `Stream` and Schema, and 49 KB with atoms added.
 
 ## 10. What they avoid, and the lint that enforces it
 
@@ -760,7 +833,7 @@ Other things the docs argue against:
 - Tests that mock the logic under test, use sleeps or polling, set per-test timeouts, or retry.
 - Comments that restate code. `AGENTS.md` says "Default to no comment", with one to four lines allowed for a constraint, an external quirk, or an invariant.
 
-**For Starring.** Adopt the language service config close to whole, including the test overrides. Biome cannot run the custom JS rules, so `prefer-effect-fn`, `prefer-catch-tags`, and `no-inline-schema-compile` need Biome GritQL plugins or a review check. T3 Code's `.macroscope` check is a model for the review check. It reviews only changed lines and posts a specific fix.
+**For Stargrep.** Adopt the language service config close to whole, including the test overrides. Biome cannot run the custom JS rules, so `prefer-effect-fn`, `prefer-catch-tags`, and `no-inline-schema-compile` need Biome GritQL plugins or a review check. T3 Code's `.macroscope` check is a model for the review check. It reviews only changed lines and posts a specific fix.
 
 ## The ten rules that matter most
 

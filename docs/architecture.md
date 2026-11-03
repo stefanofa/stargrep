@@ -1,6 +1,6 @@
-# Starring architecture
+# Stargrep architecture
 
-This doc explains how Starring is built and why. `docs/product.md` explains what it does. Once code exists, the Drizzle schema and the oRPC contracts are the reference, and this doc only explains the decisions behind them.
+This doc explains how Stargrep is built and why. `docs/product.md` explains what it does. Once code exists, the Drizzle schema and the oRPC contracts are the reference, and this doc only explains the decisions behind them.
 
 ## Principles
 
@@ -22,12 +22,14 @@ Versions were checked on 2026-11-03. Pin exact versions in `package.json`.
 | Monorepo | Turborepo 2.11 |
 | Package manager, scripts, tests | Bun 1.4 and `bun test` |
 | Core runtime | Effect 4.1: services and layers, Effect Schema, typed errors, retries and schedules, OpenTelemetry tracing |
-| Infrastructure | Alchemy 2.0 beta, an open source TypeScript infra tool built on Effect. Pulumi is the fallback. A phase 0 prototype confirms the choice |
+| Infrastructure | Alchemy 2.0 beta, pinned to `2.0.0-beta.85`, an open source TypeScript infra tool built on Effect. State lives in `Cloudflare.state()` |
 | App framework | TanStack Start 1.169 |
 | Client data | TanStack DB 1.0 RC |
 | API, REST, MCP | oRPC 2.0 beta, with `@orpc/openapi`, `@orpc/mcp`, and `@orpc/effect`. Every `@orpc/*` package pins the same beta |
 | AI | Vercel AI SDK 7 with `@ai-sdk/gateway`, behind an `Ai` service. Structured output uses `generateText` with `Output`, embeddings use `embedMany`, and bulk summaries use the Gateway batch API. `effect/ai` was considered, but its model modules are marked unstable and it has no Gateway batch API |
-| Activity analytics | GH Archive events stored in R2 as Parquet and rolled up daily into Postgres. The rollup engine (DuckDB or Cloudflare Basin) is decided in phase 0 |
+| Activity analytics | Public GitHub events stored in R2 as Parquet, partitioned by day, and rolled up daily into Postgres. See "Event sources" for where events come from |
+| Type checking | TypeScript 7 with `@effect/tsgo`, which runs the Effect language service rules from the command line. TypeScript 6 with `effect-language-service patch` is the fallback |
+| Worker tests | `@cloudflare/vitest-plugin` with vitest for code that must run on workerd. `bun test` for everything else, scoped by `bunfig.toml` |
 | Auth | Better Auth 1.7, GitHub sign-in through a GitHub App, `@better-auth/oauth-provider` for MCP |
 | Database | Neon Postgres with pgvector. Drizzle 1.0 RC on `drizzle-orm/node-postgres` and `pg` through Hyperdrive, wrapped in a `Db` service. `drizzle-orm/effect-schema` derives Effect Schemas from tables. `drizzle-kit` 1.0 RC generates migrations, and CI runs them |
 | Runtime | Cloudflare Workers, Hyperdrive in front of Neon |
@@ -43,7 +45,7 @@ oRPC 2.0 and Alchemy 2.0 are betas, and Drizzle 1.0 is a release candidate. Pin 
 
 `Db` exposes query functions from `packages/db`, each returning an Effect with a typed error. It never exposes the Drizzle database object, so core does not import Drizzle types and tests can use an in-memory `Db` layer. Transactions are a separate service. A driver change then touches only `packages/db`.
 
-The `Db` service uses `pg` because Hyperdrive documents `pg` and because Better Auth's Drizzle adapter awaits queries, which only the promise-based driver supports. One driver then serves both core and auth. Drizzle 1.0 RC also ships `drizzle-orm/effect-postgres`, which runs queries as Effects on `@effect/sql-pg`. That client opens its own sockets instead of using `pg`, and Hyperdrive does not list it, so phase 0 tests it before core adopts it. Drizzle's JIT row mapping stays off, because Workers block `new Function`.
+The `Db` service uses `pg` because Hyperdrive documents `pg` and because Better Auth's Drizzle adapter awaits queries, which only the promise-based driver supports. One driver then serves both core and auth. Drizzle's JIT row mapping stays off, because Workers block `new Function`.
 
 TanStack DB owns all client state, so the browser has no Effect atoms or second store. The browser loads Effect only in code-split routes where it does real work, such as the search box, which debounces input, cancels stale requests, and merges local and semantic results with `Stream`. A probe bundle of that code measured about 34 KB gzipped. Public pages such as profiles, collections, and discovery pages load no Effect code. The browser does not decode responses from our own API. The oRPC client takes its types from the contracts through type-only imports.
 
@@ -78,7 +80,7 @@ Each feature folder in `core` holds its types, functions, and tests together. Fi
 
 ## Data model
 
-Better Auth owns `user`, `session`, and `account`. Starring adds these tables.
+Better Auth owns `user`, `session`, and `account`. Stargrep adds these tables.
 
 | Table | Key | Holds |
 |---|---|---|
@@ -86,7 +88,7 @@ Better Auth owns `user`, `session`, and `account`. Starring adds these tables.
 | `repos` | GitHub repo ID | owner, name, description, topics, language, license, homepage, kind (`app`, `library`, `cli`, `framework`, `list`, and so on), created time, `pushed_at`, archived, README object ID, summary, keywords, `embedding halfvec`, embedding model, full-text column |
 | `repo_metrics` | GitHub repo ID | current totals and 30-day and 90-day changes for stars, forks, commits, active contributors, new contributors, merged pull requests, closed issues, and releases, refreshed daily |
 | `stars` | account ID and repo ID | `starred_at`, `unstarred_at`, source (`gharchive` or `api`) |
-| `follows` | follower ID and followee ID | source (`github` or `starring`), created time |
+| `follows` | follower ID and followee ID | source (`github` or `stargrep`), created time |
 | `collections` | ID | owner, slug, title, description, kind (`user` or `editorial`) |
 | `collection_items` | collection ID and repo ID | note, position |
 | `search_events` | ID | time, scope, query, result count, clicked repo, with no user identity |
@@ -96,17 +98,31 @@ Sponsor tables come with the sponsors phase.
 
 ## GitHub access
 
-GitHub limits each user token to 5,000 requests per hour. That budget is shared with every other app the user authorized. The app's own credentials get 5,000 per hour for public data. Starring stays inside these limits with five sources, cheapest first.
+GitHub limits each user token to 5,000 requests per hour. That budget is shared with every other app the user authorized. The app's own credentials get 5,000 per hour for public data. Stargrep stays inside these limits with five sources, cheapest first.
 
-1. **GH Archive.** Every public star since 2011, with account, repo, and time. An hourly job loads new star events. A one-time backfill loads history. This source makes no API calls.
-2. **Conditional requests.** Starring stores the ETag of each star list it fetched. A `304` response does not count against the rate limit.
-3. **README object IDs.** GraphQL returns the README's object ID with the repo. Starring fetches and summarizes a README again only when that ID changes.
+1. **Event archives.** Public star history with account, repo, and time, loaded without API calls. "Event sources" below explains which archive covers which period.
+2. **Conditional requests.** Stargrep stores the ETag of each star list it fetched. A `304` response does not count against the rate limit.
+3. **README object IDs.** GraphQL returns the README's object ID with the repo. Stargrep fetches and summarizes a README again only when that ID changes.
 4. **The user's own token.** A signed-in user's sync uses their token, capped at a share of their remaining budget read from `x-ratelimit-remaining`.
 5. **The app's credentials.** Signed-out lookups of accounts that GH Archive does not cover yet.
 
-A user's token is used only for work that user started. Starring never pools user tokens to crawl other accounts.
+A user's token is used only for work that user started. Stargrep never pools user tokens to crawl other accounts.
 
 `packages/github` sends requests one after another per token, as GitHub's best practices ask. This keeps it under the secondary limit of 100 concurrent requests. An in-memory lock cannot do this, because many Worker isolates run at once. Each token gets a Durable Object that sends its requests in order and tracks its remaining budget from the response headers.
+
+## Event sources
+
+No single public source has every star.
+
+- **GH Archive** is complete until 2025-05-24. It holds about 554 million star events, according to ClickHouse's full copy. After that date its collector captures a shrinking share, about 1% of stars by late 2026, and since September 2026 it has no push events. From 2015 on, star and fork events carry numeric account and repo IDs. Events from 2012 to 2014 carry logins only and need ID resolution.
+- **The OpenDigger mirror** uses the same file format from 2026-09-06 and captures roughly 90 to 98% of stars, measured against GH Archive and the API. An hourly file is about 415 MB gzipped with about 650,000 events. Stargrep treats it as a best-effort input, not a dependency.
+- **The GitHub API** gives an account's full star list with `starred_at` through `users/{login}/starred`. A repo's stargazer list is closed: `repos/{owner}/{repo}/stargazers` returns 404, and GraphQL returns only `stargazerCount`. So stars can be rebuilt one account at a time, never one repo at a time.
+
+Between 2025-05-24 and 2026-09-05 no archive is complete. Per-account sync fills that window for the accounts Stargrep serves. Metrics that depend on that window are marked incomplete instead of showing a false dip.
+
+Full star history lives in R2 as Parquet, about 5 GB for all of it. Postgres `stars` holds only the accounts and repos Stargrep serves. Holding all of it in Postgres would take 64 to 74 GB, mostly rows nobody reads.
+
+Since October 2025 push events carry no commit list or count, so commit metrics come from the GraphQL commit history count of each tracked repo, fetched daily in batches. Merged pull requests are counted from both `action: merged` and `action: closed` with `merged: true`, because the payload changed in 2025.
 
 ## Ingestion pipeline
 
@@ -114,8 +130,9 @@ Each step is a queue message type. Each consumer is idempotent.
 
 1. `sync-stars` fetches an account's star list newest first and stops at the first star it already has. A full sync runs on claim and weekly after that. Stars that are gone mark `unstarred_at`.
 2. `enrich-repo` runs for repos that are new or whose README object ID changed. It stores the README in R2, writes the summary, keywords, and kind, and computes the embedding. It also fetches the facts events do not carry, such as license and homepage.
-3. `import-gharchive` is an hourly cron. It keeps star, fork, push, pull request, issue, and release events for indexed repos, writes them to R2 as Parquet, and loads new stars into `stars`.
-4. `rollup-metrics` is a daily cron. It turns the events into weekly series per repo and writes current values and changes into `repo_metrics`.
+3. `import-events` is an hourly cron. It streams the hour's archive file, keeps star, fork, pull request, issue, and release events, writes them to R2 as Parquet, and loads new stars for served accounts into `stars`. A streaming parse of a full OpenDigger hour measured under 15 MB of heap and about 12 seconds of CPU, inside a Worker's 128 MB and the 15-minute limit for hourly crons. Writing Parquet needs a JavaScript Parquet writer in the Worker or a hand-off to a container.
+4. `snapshot-repos` is a daily cron. It fetches facts events no longer carry, such as the commit history count, for tracked repos through batched GraphQL queries.
+5. `rollup-metrics` is a daily job. It turns events and snapshots into weekly series per repo and writes current values and changes into `repo_metrics`. DuckDB does not run in Workers, so the rollup runs in a container or a scheduled CI job.
 
 Bulk enrichment, such as a backfill of popular repos, uses the Gateway batch API for summaries and `embedMany` for embeddings.
 
@@ -188,15 +205,24 @@ Some things stay outside the repo. Secret values live in Cloudflare secrets and 
 
 - `packages/core` tests use `bun test` with in-memory layers. They cover behavior, such as "an unstarred repo gets `unstarred_at`", not internal calls. Time runs on `TestClock`, so tests never sleep. `packages/testing` is the only place that calls `Effect.runPromise` in tests.
 - `packages/db` and the pipeline run integration tests against a Neon branch made for each test run.
-- `apps/web` and `apps/worker` need tests that run on the Workers runtime. `bun test` does not emulate it. Settle the runner with a prototype in phase 0.
+- `apps/web` and `apps/worker` tests run on workerd through `@cloudflare/vitest-plugin`. The first test in each file waits about 9 seconds while the module graph loads, so the config sets `testTimeout` to 30 seconds. `bunfig.toml` scopes `bun test` so it never picks up workerd tests.
+- `bun test` runs with `--parallel`, not `--concurrent`, so a test that times out still interrupts its fiber and runs its finalizers.
+
+## Settled by prototypes
+
+These ran locally on 2026-11-03, with no cloud account.
+
+- **Alchemy 2.0 beta covers every resource Stargrep uses.** Under `alchemy dev` with Bun, one local stage ran a Worker with a queue producer and consumer, a Durable Object, KV, R2, a cron, a Workflow, and Hyperdrive to a local Postgres. Neon projects, branches, roles, and connection strings and GitHub secrets exist in its source. State needs an explicit store. Stargrep uses `Cloudflare.state()`, so CI needs only a Cloudflare token.
+- **TanStack Start, oRPC 2.0 beta, and Effect run together on workerd.** One procedure with an Effect Schema input and an Effect handler answered over RPC, REST, and MCP, and the OpenAPI spec generated. The client bundle stayed free of Effect with type-only contract imports. One runtime import of the contract added about 27 KB gzipped, so a lint rule enforces type-only imports. Every `@orpc/*` package pins `2.0.0-beta.48`, because npm's `latest` tags mix 1.x and different betas.
+- **`drizzle-orm/effect-postgres` works on workerd with `prepare: false`, and Stargrep does not adopt it.** With default prepared statements, 68 of 360 transactions failed behind a transaction-mode pooler. Better Auth's adapter fails on it. `pg` measured no slower and serves both core and auth.
+- **`drizzle-kit` does not emit `CREATE EXTENSION vector`.** The first migration adds it by hand.
+- **The `bun test` helper in `docs/effect.md` works.**
 
 ## Open technical questions
 
-- How many star events GH Archive holds in total, and what the activity backfill costs. BigQuery dry runs report the bytes scanned before anything is spent.
-- Which rollup engine turns the Parquet events into `repo_metrics`: DuckDB in a scheduled job, or Cloudflare Basin.
-- Whether TanStack Start, Hyperdrive, and Neon work together on Workers without friction. A phase 0 prototype settles it.
+- Whether Hyperdrive with `pg` behaves on Neon as it did locally, and what latency, pgvector version, and cold start Neon gives. The first deployed stage answers it.
+- Whether the OpenDigger mirror's license and uptime allow Stargrep to rely on it, and whether it is worth running an own collector instead.
+- Whether the hourly import writes Parquet inside the Worker with a JavaScript writer or hands off to a container.
 - Whether `@orpc/mcp` covers OAuth for MCP clients, or Better Auth's OAuth provider plugin has to wrap it.
-- Whether Alchemy 2.0 beta covers every resource we use: Workers, Queues, Workflows, KV, R2, Hyperdrive, crons, DNS, and Neon branches for each stage. Its home page shows Workers and R2 but does not show Queues, KV, Hyperdrive, or Neon resources. A prototype deploys one stage with all of them. If it falls short, Pulumi with the Cloudflare provider and the community Neon provider takes over.
-- Whether `drizzle-orm/effect-postgres` works through Hyperdrive on Workers with Neon. Its client calls `net.connect` and uses named prepared statements by default. T3 Code's relay runs this stack in production on PlanetScale Postgres with `prepare: false`, through Alchemy's `Drizzle.Postgres` helper. If it works on Neon, `packages/db` moves to it and auth stays on `pg`.
-- Which embedding model to use. A bakeoff over the AI Gateway catalog scores a shortlist on a generated set of realistic queries with known answers, by recall at 10 and query latency. Embedding costs are small enough that quality and latency decide. Switching later means re-embedding, which costs a few dollars.
+- Which embedding model to use. A bakeoff over the AI Gateway catalog scores a shortlist on a generated set of realistic queries with known answers, by recall at 10 and query latency. Switching later means re-embedding.
 - Which model writes the summaries. The same query set compares candidates.

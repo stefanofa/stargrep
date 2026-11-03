@@ -1,6 +1,6 @@
-# Starring product spec
+# Stargrep product spec
 
-Starring is a website for searching GitHub stars in plain language. You type "the Rust library for terminal dashboards I starred last year" and get the repos that match. It works for any public GitHub username without signing in. Signing in with GitHub adds a fresh sync, a social graph, and collections.
+Stargrep is a website for searching GitHub stars in plain language. You type "the Rust library for terminal dashboards I starred last year" and get the repos that match. It works for any public GitHub username without signing in. Signing in with GitHub adds a fresh sync, a social graph, and collections.
 
 ## Who it is for
 
@@ -73,7 +73,7 @@ Comments, likes, and direct messages are out of scope. They need moderation and 
 
 ## Sponsored results
 
-Starring shows sponsored placements. These rules hold for every one.
+Stargrep shows sponsored placements. These rules hold for every one.
 
 - Every sponsored item has a visible label.
 - Placement depends on the page or the query, never on tracking the viewer.
@@ -81,9 +81,9 @@ Starring shows sponsored placements. These rules hold for every one.
 
 ## Data and privacy
 
-Starring stores public GitHub data: accounts, repos, READMEs, stars, and follows. It also stores what it derives from that data, such as repo summaries, embeddings, and daily repo counts.
+Stargrep stores public GitHub data: accounts, repos, READMEs, stars, and follows. It also stores what it derives from that data, such as repo summaries, embeddings, and daily repo counts.
 
 - Search queries are stored without the identity of the person who searched.
-- Starring never sells data about an individual account.
-- Starring never emails anyone who has not signed up.
+- Stargrep never sells data about an individual account.
+- Stargrep never emails anyone who has not signed up.
 - Private repo data is visible only to the user who can access it.
