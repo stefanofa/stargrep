@@ -13,16 +13,16 @@
     "@alchemy.run/cloudflare": "2.0.0-beta.85",
     "@alchemy.run/neon": "2.0.0-beta.85",
     "alchemy": "2.0.0-beta.85",
-    "effect": "4.1.2",
+    "effect": "catalog:",
     "pg": "8.23.1"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.5.1",
     "@cloudflare/workers-types": "5.20261103.1",
-    "@effect/tsgo": "0.64.1",
+    "@effect/tsgo": "catalog:",
     "@stargrep/config": "workspace:*",
     "@types/pg": "8.23.1",
-    "typescript": "7.0.2",
+    "typescript": "catalog:",
     "vitest": "5.1.0"
   }
 }
