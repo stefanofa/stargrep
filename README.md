@@ -1,5 +1,10 @@
-<img src="assets/icon.svg" width="64" height="64" alt="">
+<img src="design/assets/mascot.svg" width="64" height="64" alt="">
 
-# starring
+# Stargrep
 
-Created in [T3 Code](https://t3.codes).
+Search GitHub stars in plain language, yours, your network's, or anyone's.
+
+- [Product spec](docs/product.md)
+- [Architecture](docs/architecture.md)
+- [Effect conventions](docs/effect.md)
+- [Design system](design/system.md)
