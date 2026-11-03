@@ -1,0 +1,5 @@
+.internal/
+.audit/
+node_modules/
+.env*
+!.env.example
