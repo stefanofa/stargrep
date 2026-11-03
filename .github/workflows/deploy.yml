@@ -1,7 +1,5 @@
 name: deploy
 
-# Each pull request deploys Alchemy stage pr-<number> and destroys it when the pull request closes.
-# Pushes to main deploy stage prod. Every job skips until the repository variable CLOUDFLARE_ACCOUNT_ID exists.
 on:
   pull_request:
     types: [opened, reopened, synchronize, closed]
