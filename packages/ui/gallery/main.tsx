@@ -253,7 +253,7 @@ function Gallery() {
         <ul className="flex flex-wrap gap-gap">
           {moods.map((mood) => (
             <li key={mood}>
-              <Tile className="flex w-[180px] flex-col items-center gap-3 p-6">
+              <Tile className="flex w-[180px] flex-col items-center gap-3">
                 <Mascot mood={mood} size={120} />
                 <span className="font-sans text-sm text-muted-foreground">{mood}</span>
               </Tile>

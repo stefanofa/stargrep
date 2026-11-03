@@ -60,7 +60,7 @@ export function RepoPanel({
                       {[repo.owner, repo.language].filter(Boolean).join(" · ")}
                     </p>
                   </div>
-                  <Dialog.Close render={<Button variant="secondary" size="icon" className="bg-muted" />}>
+                  <Dialog.Close render={<Button variant="muted" size="icon" />}>
                     <CloseIcon className="size-4" />
                     <span className="sr-only">Close</span>
                   </Dialog.Close>

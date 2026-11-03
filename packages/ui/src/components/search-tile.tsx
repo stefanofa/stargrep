@@ -15,13 +15,7 @@ export function FilterChip({ filter, onRemove }: { filter: Filter; onRemove: (fi
   return (
     <Badge variant="chip">
       {filter.label}
-      <Button
-        variant="secondary"
-        size="xs"
-        className="bg-transparent text-accent-strong hover:bg-accent/25"
-        aria-label={`Remove ${filter.label}`}
-        onClick={() => onRemove(filter)}
-      >
+      <Button variant="bare" size="xs" aria-label={`Remove ${filter.label}`} onClick={() => onRemove(filter)}>
         <CloseIcon />
       </Button>
     </Badge>

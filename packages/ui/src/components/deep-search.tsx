@@ -23,9 +23,9 @@ export function DeepSearch({
         id={id}
         checked={checked}
         onCheckedChange={onCheckedChange}
-        className="flex h-[26px] w-11 shrink-0 items-center rounded-full bg-border p-[3px] transition-colors duration-120 data-checked:bg-accent"
+        className="flex h-[26px] w-11 shrink-0 items-center rounded-full bg-border p-[3px] transition-[color,background-color] duration-120 data-checked:bg-accent"
       >
-        <Switch.Thumb className="size-5 rounded-full bg-card shadow-[0_1px_2px_#1e1b2e33] transition-transform duration-120 data-checked:translate-x-[18px] motion-reduce:transition-none" />
+        <Switch.Thumb className="size-5 rounded-full bg-[light-dark(var(--color-card),var(--color-muted-foreground))] shadow-[0_1px_2px_#1e1b2e33] transition-transform duration-120 data-checked:translate-x-[18px] motion-reduce:transition-none" />
       </Switch.Root>
       <label htmlFor={id} className="font-sans text-[14px] leading-sm font-medium text-foreground">
         Deep search

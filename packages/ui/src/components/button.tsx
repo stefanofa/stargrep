@@ -3,7 +3,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "../lib/cn.ts";
 
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 rounded-full font-sans font-semibold whitespace-nowrap transition-colors duration-120 select-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
+  "inline-flex shrink-0 items-center justify-center gap-2 rounded-full font-sans font-semibold whitespace-nowrap transition-[color,background-color] duration-120 select-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
   {
     variants: {
       variant: {
@@ -11,6 +11,8 @@ const buttonVariants = cva(
         secondary: "bg-accent-soft text-foreground hover:bg-accent-soft/70",
         ghost: "bg-card text-foreground hover:bg-muted",
         accent: "bg-accent text-ink hover:bg-accent/85",
+        muted: "bg-muted text-foreground hover:bg-border",
+        bare: "text-accent-strong hover:bg-accent/25",
       },
       size: {
         default: "h-9 px-4 text-[14px]",
