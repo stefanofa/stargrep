@@ -38,7 +38,7 @@ For other editors, run `bunx effect-tsgo setup --help` to see the setup for Neov
 
 ## Local stage
 
-`alchemy dev` runs the whole stage on your machine with no cloud account. It runs the Worker in workerd and simulates the queue, KV, R2, the Durable Object, the cron, and Hyperdrive. Only Neon has no local mode, so the local stage points Hyperdrive at a Postgres container.
+`alchemy dev` runs the whole stage on your machine with no cloud account. It runs both Workers in workerd and simulates the queue, KV, R2, the Durable Objects, the cron, and Hyperdrive. Only Neon has no local mode, so the local stage points Hyperdrive at a Postgres container.
 
 1. Start Postgres 17 with pgvector. It listens on `127.0.0.1:54317` and creates the `vector` extension on first start.
 
@@ -46,24 +46,33 @@ For other editors, run `bunx effect-tsgo setup --help` to see the setup for Neov
    docker compose --file apps/worker/compose.yaml up --detach --wait
    ```
 
-2. Run the stage. Alchemy prints the Worker URL, `http://localhost:1337` unless the port is taken, and keeps local state in `infra/.alchemy/`.
+2. Run the stage. Alchemy prints both URLs, the Worker on `http://localhost:1337` and the debug Worker on `http://localhost:1338` unless the ports are taken, and keeps local state in `infra/.alchemy/`.
 
    ```sh
    bun run --cwd infra dev
    ```
 
-3. Call the Worker.
+3. Call the Worker. `/health` returns the Postgres and pgvector versions.
 
    ```sh
    curl http://localhost:1337/health
-   curl -X POST "http://localhost:1337/debug/queue?count=10"
-   curl -X POST http://localhost:1337/debug/counter/demo
-   curl "http://localhost:1337/cdn-cgi/handler/scheduled?cron=0+*+*+*+*"
    ```
 
-   `/health` returns the Postgres and pgvector versions. The `/debug/` routes answer on every stage except `prod`.
+4. Call the debug Worker. Its routes need the stage's token, which the stack generates and keeps in its outputs.
 
-4. Run the Worker tests. They run on workerd and need the Postgres container from step 1.
+   ```sh
+   TOKEN=$(cd infra && bunx alchemy state read "Stargrep/dev_$USER/output" --backend local | jq -r .debugToken.__redacted__)
+   curl -X POST -H "authorization: Bearer $TOKEN" "http://localhost:1338/queue?count=10"
+   curl -X POST -H "authorization: Bearer $TOKEN" http://localhost:1338/counter/demo
+   curl -X POST -H "authorization: Bearer $TOKEN" http://localhost:1338/transaction
+   curl -H "authorization: Bearer $TOKEN" http://localhost:1338/budget
+   curl "http://localhost:1338/cdn-cgi/handler/scheduled?cron=0+*+*+*+*"
+   DEBUG_TOKEN=$TOKEN bun scripts/stage-smoke.ts http://localhost:1338
+   ```
+
+   The routes spend from a budget of 300 units a minute: one per counter read, counter increment, or transaction, and one per queued job. `/budget` is free. `scripts/stage-smoke.ts` checks the token, the budget, the queue, the counter, and pooled transactions. It waits for the next minute and then spends that minute's budget.
+
+5. Run the Worker tests. They run on workerd and need the Postgres container from step 1.
 
    ```sh
    bun run --cwd apps/worker test
@@ -71,7 +80,7 @@ For other editors, run `bunx effect-tsgo setup --help` to see the setup for Neov
 
 ## Cloudflare and Neon
 
-The `deploy` workflow deploys stage `pr-<number>` for each pull request, destroys it when the pull request closes, and deploys stage `prod` on each push to `main`. Its jobs skip until the steps below are done.
+The `deploy` workflow deploys stage `pr-<number>` for each pull request, runs `scripts/stage-smoke.ts` against it, and destroys it when the pull request closes. Each push to `main` deploys the database stack's stage `shared` and then stage `prod`, and running the workflow by hand on `main` does the same. Its jobs skip until the steps below are done.
 
 1. Create a Cloudflare API token for the account with these permissions: Workers Scripts Write, Workers KV Storage Write, Workers R2 Storage Write, Queues Write, Hyperdrive Write, Secrets Store Write, Account Settings Write, and Workers Tail Read. The Secrets Store permission is for Alchemy's state store, which keeps its keys there.
 
@@ -85,11 +94,26 @@ The `deploy` workflow deploys stage `pr-<number>` for each pull request, destroy
    gh variable set CLOUDFLARE_ACCOUNT_ID --body <account id>
    ```
 
-4. Create Alchemy's state store in the account once. In CI, Alchemy refuses to create it, so a missing store fails the deploy.
+4. Create Alchemy's state store in the account, as described in the next section.
 
-   ```sh
-   cd infra
-   CLOUDFLARE_ACCOUNT_ID=<account id> CLOUDFLARE_API_TOKEN=<token> bunx alchemy state bootstrap
-   ```
+5. Push to `main`. That deploy creates the Neon project `stargrep` in stage `shared`, and then `prod`. A pull request stage fails with a missing reference until it has run.
 
-The first deploy creates the Neon project `stargrep` through `infra/database.run.ts`. Every stage then gets its own branch of it. Neon deletes a preview branch about two weeks after its last deploy, in case its destroy job never ran.
+Every stage gets its own Neon branch of the project. Neon deletes a preview branch about two weeks after its last deploy, in case its destroy job never ran.
+
+## State store maintenance
+
+Alchemy keeps state in one store per Cloudflare account, and other projects in the account use it too. CI never creates or upgrades it. A deploy fails instead, with "State Store ... not found" or "is out of date". Create or upgrade the store by hand, with an account token that has the permissions above:
+
+```sh
+cd infra
+CLOUDFLARE_ACCOUNT_ID=<account id> CLOUDFLARE_API_TOKEN=<token> bunx alchemy state bootstrap --backend cloudflare
+```
+
+An upgrade changes the store for every project that uses it, so check with the account's other projects first.
+
+To read a deployed stage's debug token, run this with the same credentials:
+
+```sh
+cd infra
+CLOUDFLARE_ACCOUNT_ID=<account id> CLOUDFLARE_API_TOKEN=<token> bunx alchemy state read Stargrep/pr-<number>/output | jq -r .debugToken.__redacted__
+```
