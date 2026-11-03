@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, spyOn } from "bun:test";
 import { GatewayModelNotFoundError } from "@ai-sdk/gateway";
 import * as it from "@stargrep/testing";
 import { APICallError } from "ai";
@@ -7,6 +7,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Metric from "effect/Metric";
 import * as TestClock from "effect/testing/TestClock";
 import * as Embeddings from "./embeddings.ts";
@@ -181,4 +182,65 @@ describe("gateway production layer", () => {
       expect(embeddings.model).toEqual(Models.embeddingModel);
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ AI_GATEWAY_API_KEY: "test-key" })))),
   );
+});
+
+describe("gateway privacy", () => {
+  const promptCanary = "PRIVATE_GATEWAY_PROMPT_CANARY";
+  const outputCanary = "PRIVATE_GATEWAY_OUTPUT_CANARY";
+  const warning = { type: "other" as const, message: `provider warning with ${promptCanary} ${outputCanary}` };
+
+  it.effect("keeps provider warnings, prompts, and output out of stdout, stderr, and logs", () => {
+    globalThis.AI_SDK_LOG_WARNINGS = undefined;
+    const printed: Array<string> = [];
+    const record = (...args: ReadonlyArray<unknown>) => {
+      printed.push(args.map(String).join(" "));
+      return true;
+    };
+    const spies = [
+      spyOn(console, "log").mockImplementation(record),
+      spyOn(console, "info").mockImplementation(record),
+      spyOn(console, "warn").mockImplementation(record),
+      spyOn(console, "error").mockImplementation(record),
+      spyOn(process, "emitWarning").mockImplementation(record),
+      spyOn(process.stdout, "write").mockImplementation(record),
+      spyOn(process.stderr, "write").mockImplementation(record),
+    ];
+    const provider = Gateway.AiProvider.of({
+      languageModel: () =>
+        new MockLanguageModelV4({
+          doGenerate: async () => ({
+            ...textResult(JSON.stringify({ ...validSummary, summary: outputCanary })),
+            warnings: [warning],
+          }),
+        }),
+      embeddingModel: () =>
+        new MockEmbeddingModelV4({
+          doEmbed: async ({ values }) => ({ embeddings: values.map(() => [1, 0, 0]), warnings: [warning] }),
+        }),
+    });
+    const layer = Layer.merge(
+      Gateway.layerTextGeneration("private/model"),
+      Gateway.layerEmbeddings({ id: "private/embed", dimensions: 3 }),
+    ).pipe(Layer.provide(Layer.succeed(Gateway.AiProvider, provider)));
+    const logs: Array<unknown> = [];
+    const logger = Logger.make((options) => {
+      logs.push(options.message);
+    });
+    return Effect.gen(function* () {
+      const summary = yield* Summarize.summarize({ ...repo, readme: promptCanary });
+      const embeddings = yield* Embeddings.Embeddings;
+      yield* embeddings.embed([promptCanary]);
+      expect(summary.summary).toBe(outputCanary);
+      const seen = JSON.stringify({ printed, logs });
+      expect(seen).not.toContain(promptCanary);
+      expect(seen).not.toContain(outputCanary);
+    }).pipe(
+      Effect.provide(Layer.merge(layer, Logger.layer([logger]))),
+      Effect.ensuring(
+        Effect.sync(() => {
+          for (const spy of spies) spy.mockRestore();
+        }),
+      ),
+    );
+  });
 });

@@ -28,6 +28,10 @@ export class AiProvider extends Context.Service<
   }
 >()("@stargrep/ai/gateway/AiProvider") {}
 
+const silenceSdkWarnings = () => {
+  globalThis.AI_SDK_LOG_WARNINGS = false;
+};
+
 const detailOf = (cause: unknown) => {
   if (APICallError.isInstance(cause)) return `${cause.name} with status ${cause.statusCode ?? "none"}`;
   return cause instanceof Error ? cause.name : "unknown error";
@@ -43,54 +47,60 @@ const fromSdkError = (operation: Operation, model: string) => (cause: unknown) =
 export const layerTextGeneration = (model: string) =>
   Layer.effect(
     TextGeneration.TextGeneration,
-    AiProvider.useSync((provider) =>
-      TextGeneration.make({
-        provider: "gateway",
-        model,
-        timeout: Duration.seconds(60),
-        run: (request) =>
-          Effect.tryPromise({
-            try: (abortSignal) =>
-              generateText({
-                model: provider.languageModel(model),
-                output: Output.object({ schema: jsonSchema(request.jsonSchema) }),
-                system: request.system,
-                prompt: request.prompt,
-                maxRetries: 0,
-                abortSignal,
-              }),
-            catch: fromSdkError("generate", model),
-          }).pipe(
-            Effect.map((result) => ({
-              output: result.output,
-              usage: { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens },
-            })),
-          ),
-      }),
+    Effect.andThen(
+      Effect.sync(silenceSdkWarnings),
+      AiProvider.useSync((provider) =>
+        TextGeneration.make({
+          provider: "gateway",
+          model,
+          timeout: Duration.seconds(60),
+          run: (request) =>
+            Effect.tryPromise({
+              try: (abortSignal) =>
+                generateText({
+                  model: provider.languageModel(model),
+                  output: Output.object({ schema: jsonSchema(request.jsonSchema) }),
+                  system: request.system,
+                  prompt: request.prompt,
+                  maxRetries: 0,
+                  abortSignal,
+                }),
+              catch: fromSdkError("generate", model),
+            }).pipe(
+              Effect.map((result) => ({
+                output: result.output,
+                usage: { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens },
+              })),
+            ),
+        }),
+      ),
     ),
   );
 
 export const layerEmbeddings = (model: Models.EmbeddingModel) =>
   Layer.effect(
     Embeddings.Embeddings,
-    AiProvider.useSync((provider) =>
-      Embeddings.make({
-        provider: "gateway",
-        model,
-        timeout: Duration.seconds(30),
-        run: (values) =>
-          Effect.tryPromise({
-            try: (abortSignal) =>
-              embedMany({
-                model: provider.embeddingModel(model.id),
-                values: [...values],
-                dimensions: model.dimensions,
-                maxRetries: 0,
-                abortSignal,
-              }),
-            catch: fromSdkError("embed", model.id),
-          }).pipe(Effect.map((result) => ({ vectors: result.embeddings, tokens: result.usage.tokens }))),
-      }),
+    Effect.andThen(
+      Effect.sync(silenceSdkWarnings),
+      AiProvider.useSync((provider) =>
+        Embeddings.make({
+          provider: "gateway",
+          model,
+          timeout: Duration.seconds(30),
+          run: (values) =>
+            Effect.tryPromise({
+              try: (abortSignal) =>
+                embedMany({
+                  model: provider.embeddingModel(model.id),
+                  values: [...values],
+                  dimensions: model.dimensions,
+                  maxRetries: 0,
+                  abortSignal,
+                }),
+              catch: fromSdkError("embed", model.id),
+            }).pipe(Effect.map((result) => ({ vectors: result.embeddings, tokens: result.usage.tokens }))),
+        }),
+      ),
     ),
   );
 

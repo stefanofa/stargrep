@@ -37,7 +37,7 @@
       "plugins": ["./packages/config/no-runtime-api-import.grit"]
     },
     {
-      "includes": ["apps/**", "!apps/**/*.test.ts", "!apps/**/*.workerd-test.ts"],
+      "includes": ["apps/**", "!apps/**/*.test.ts", "!apps/**/*.test.tsx", "!apps/**/*.workerd-test.ts"],
       "plugins": ["./packages/config/no-local-ai-import.grit"]
     }
   ]
