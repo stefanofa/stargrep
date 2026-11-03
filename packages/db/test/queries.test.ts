@@ -592,6 +592,72 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
   );
 };
 
+const settingsCases = (test: { readonly effect: it.Tester<TestDatabase.TestDatabase> }) => {
+  const stored = Effect.flatMap(Effect.service(TestDatabase.TestDatabase), (database) =>
+    database.query("select model, dimensions from embedding_settings"),
+  );
+  const withDb = <A, E>(embeddingModel: EmbeddingModelId, use: (db: Db.Db["Service"]) => Effect.Effect<A, E>) =>
+    Effect.flatMap(Effect.service(TestDatabase.TestDatabase), (database) =>
+      Effect.flatMap(Effect.service(Db.Db), use).pipe(Effect.provide(database.connect({ embeddingModel }))),
+    );
+
+  test.effect("adopts the configured model in a fresh database", () =>
+    Effect.gen(function* () {
+      expect(yield* stored).toEqual([{ model, dimensions: 1024 }]);
+    }),
+  );
+
+  test.effect("refuses to start with another model and keeps the stored one", () =>
+    Effect.gen(function* () {
+      const error = yield* withDb(otherModel, () => Effect.void).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "EmbeddingModelConflict",
+        stored: model,
+        storedDimensions: 1024,
+        configured: otherModel,
+        configuredDimensions: 1024,
+      });
+      expect(yield* stored).toEqual([{ model, dimensions: 1024 }]);
+    }),
+  );
+
+  test.effect("starts again with the stored model and saves its vectors", () =>
+    Effect.gen(function* () {
+      const id = repoId(9701);
+      const saved = yield* withDb(model, (db) =>
+        db.repos
+          .upsertRefs([ref(id)])
+          .pipe(
+            Effect.andThen(db.repos.saveEmbedding({ id, embedding: embedding({ 0: 1 }) })),
+            Effect.andThen(db.repos.get(id)),
+          ),
+      );
+      expect(Option.getOrThrow(saved).embeddingModel).toBe(model);
+    }),
+  );
+
+  test.effect("changes the stored model only through an explicit migration", () =>
+    Effect.gen(function* () {
+      const database = yield* TestDatabase.TestDatabase;
+      yield* database.query("update repos set embedding = null, embedding_model = null");
+      yield* database.query("update embedding_settings set model = $1", [otherModel]);
+
+      expect((yield* withDb(model, () => Effect.void).pipe(Effect.flip))._tag).toBe("EmbeddingModelConflict");
+      const id = repoId(9701);
+      const refused = yield* withDb(otherModel, (db) =>
+        db.repos
+          .saveEmbedding({ id, embedding: embedding({ 0: 1 }, otherModel) })
+          .pipe(Effect.andThen(db.repos.saveEmbedding({ id, embedding: embedding({ 0: 1 }) }).pipe(Effect.flip))),
+      );
+      expect(refused._tag).toBe("EmbeddingModelMismatch");
+      expect(yield* stored).toEqual([{ model: otherModel, dimensions: 1024 }]);
+    }),
+  );
+};
+
+it.layer(TestDatabase.layerMemory({ embeddingModel: model }))("PGlite embedding settings", settingsCases);
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgres embedding settings", settingsCases);
+
 it.layer(TestDatabase.layerMemory({ embeddingModel: model }))("PGlite Db", sharedCases);
 it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgres Db", (test) => {
   sharedCases(test);
@@ -626,11 +692,14 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgr
 
 const password = "p3-test-secret";
 
-it.effect("reports an unreachable Postgres as a transport failure that holds no credential", () =>
+it.effect("fails to start on an unreachable Postgres with a transport failure that holds no credential", () =>
   Effect.gen(function* () {
-    const db = yield* Db.Db;
-    const error = yield* db.accounts.get(accountId(1)).pipe(Effect.flip);
-    expect(error).toMatchObject({ _tag: "DbQueryFailed", operation: "accounts.get", reason: "transport" });
+    const unreachable = Db.layerNodePostgres({
+      connectionString: Redacted.make(`postgres://stargrep:${password}@127.0.0.1:1/stargrep`),
+      embeddingModel: model,
+    });
+    const error = yield* Effect.service(Db.Db).pipe(Effect.provide(unreachable), Effect.flip);
+    expect(error).toMatchObject({ _tag: "DbQueryFailed", operation: "settings.adopt", reason: "transport" });
 
     const seen = new Set<unknown>();
     const strings: Array<string> = [String(error), error.message, error.stack ?? ""];
@@ -642,12 +711,5 @@ it.effect("reports an unreachable Postgres as a transport failure that holds no 
     };
     walk(error);
     expect(strings.filter((text) => text.includes(password))).toEqual([]);
-  }).pipe(
-    Effect.provide(
-      Db.layerNodePostgres({
-        connectionString: Redacted.make(`postgres://stargrep:${password}@127.0.0.1:1/stargrep`),
-        embeddingModel: model,
-      }),
-    ),
-  ),
+  }),
 );

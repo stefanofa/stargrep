@@ -10,6 +10,7 @@ import * as Postgres from "./postgres.ts";
 import * as Accounts from "./queries/accounts.ts";
 import * as Repos from "./queries/repos.ts";
 import * as Search from "./queries/search.ts";
+import * as Settings from "./queries/settings.ts";
 import * as Stars from "./queries/stars.ts";
 import * as Usage from "./queries/usage.ts";
 
@@ -50,11 +51,12 @@ export const layer = (options: Options) =>
     Layer.effect(
       Db,
       Effect.gen(function* () {
+        const embeddingModel = yield* Settings.adopt(options.embeddingModel);
         return Db.of({
           accounts: yield* Accounts.make,
-          repos: yield* Repos.make(options.embeddingModel),
+          repos: yield* Repos.make(embeddingModel),
           stars: yield* Stars.make,
-          search: yield* Search.make(options.embeddingModel),
+          search: yield* Search.make(embeddingModel),
           usage: yield* Usage.make,
         });
       }),

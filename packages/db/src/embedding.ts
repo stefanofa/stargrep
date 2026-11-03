@@ -34,3 +34,17 @@ export const requireModel = (
   embedding.model === configured
     ? Effect.succeed(embedding.vector)
     : Effect.fail(new EmbeddingModelMismatch({ expected: configured, received: embedding.model }));
+
+export class EmbeddingModelConflict extends Schema.TaggedError<
+  EmbeddingModelConflict,
+  { readonly brand: unique symbol }
+>()("EmbeddingModelConflict", {
+  stored: EmbeddingModelId,
+  storedDimensions: Schema.Int,
+  configured: EmbeddingModelId,
+  configuredDimensions: Schema.Int,
+}) {
+  override get message(): string {
+    return `The database holds '${this.stored}' embeddings with ${this.storedDimensions} dimensions, and this process is configured for '${this.configured}' with ${this.configuredDimensions}`;
+  }
+}

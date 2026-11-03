@@ -18,6 +18,7 @@ export const Operation = Schema.Literals([
   "search.hybrid",
   "usage.increment",
   "usage.get",
+  "settings.adopt",
 ]);
 export type Operation = typeof Operation.Type;
 

@@ -2,6 +2,7 @@ import { type SQL, sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  check,
   customType,
   date,
   halfvec,
@@ -26,6 +27,16 @@ export const starSource = pgEnum("star_source", ["gharchive", "api"]);
 export const followSource = pgEnum("follow_source", ["github", "stargrep"]);
 export const collectionKind = pgEnum("collection_kind", ["user", "editorial"]);
 export const searchScope = pgEnum("search_scope", ["stars", "network", "global"]);
+
+export const embeddingSettings = pgTable(
+  "embedding_settings",
+  {
+    singleton: boolean("singleton").primaryKey().default(true),
+    model: text("model").notNull(),
+    dimensions: integer("dimensions").notNull(),
+  },
+  () => [check("embedding_settings_one_row", sql`singleton`)],
+);
 
 export const githubAccounts = pgTable("github_accounts", {
   id: githubId("id").primaryKey(),

@@ -12,20 +12,27 @@ import { migrationsFolder } from "../src/migrations.ts";
 
 const adminUrl = process.env.DATABASE_URL ?? "postgres://stargrep:stargrep@127.0.0.1:54317/stargrep";
 
+type DbLayer = ReturnType<typeof Db.layerNodePostgres>;
+
 export class TestDatabase extends Context.Service<
   TestDatabase,
   {
     readonly query: (text: string, values?: ReadonlyArray<unknown>) => Effect.Effect<ReadonlyArray<unknown>>;
+    readonly connect: (options: Db.Options) => DbLayer;
   }
 >()("@stargrep/db/test/database/TestDatabase") {}
 
-const testDatabase = (query: (text: string, values: Array<unknown>) => Promise<{ rows: Array<unknown> }>) =>
+const testDatabase = (
+  query: (text: string, values: Array<unknown>) => Promise<{ rows: Array<unknown> }>,
+  connect: (options: Db.Options) => DbLayer,
+) =>
   Layer.succeed(
     TestDatabase,
     TestDatabase.of({
       query: Effect.fn("TestDatabase.query")(function* (text: string, values: ReadonlyArray<unknown> = []) {
         return (yield* Effect.promise(() => query(text, [...values]))).rows;
       }),
+      connect,
     }),
   );
 
@@ -34,7 +41,10 @@ export const layerMemory = (options: Db.Options) =>
     Effect.map(Memory.open, (client) =>
       Layer.merge(
         Memory.layerPglite(client, options),
-        testDatabase((text, values) => client.query(text, values)),
+        testDatabase(
+          (text, values) => client.query(text, values),
+          (connectOptions) => Memory.layerPglite(client, connectOptions),
+        ),
       ),
     ),
   );
@@ -70,7 +80,10 @@ export const layerNodePostgres = (options: Db.Options) =>
     Effect.map(freshDatabase, ({ url, pool }) =>
       Layer.merge(
         Db.layerNodePostgres({ ...options, connectionString: url }),
-        testDatabase((text, values) => pool.query(text, values)),
+        testDatabase(
+          (text, values) => pool.query(text, values),
+          (connectOptions) => Db.layerNodePostgres({ ...connectOptions, connectionString: url }),
+        ),
       ),
     ),
   );
