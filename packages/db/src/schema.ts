@@ -15,8 +15,7 @@ import {
   timestamp,
   unique,
 } from "drizzle-orm/pg-core";
-
-export const embeddingDimensions = 1024;
+import { embeddingDimensions } from "./embedding.ts";
 
 const githubId = (name: string) => bigint(name, { mode: "number" });
 const time = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });

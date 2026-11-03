@@ -1,5 +1,5 @@
+import { GitHubAccountId, RepoId } from "@stargrep/github/schemas";
 import * as Schema from "effect/Schema";
-import { EmbeddingModel, GitHubAccountId, RepoId } from "./ids.ts";
 
 export const Operation = Schema.Literals([
   "transaction",
@@ -7,6 +7,7 @@ export const Operation = Schema.Literals([
   "accounts.get",
   "accounts.recordStarSync",
   "repos.upsertRefs",
+  "repos.unenriched",
   "repos.saveFacts",
   "repos.saveSummary",
   "repos.saveEmbedding",
@@ -14,8 +15,7 @@ export const Operation = Schema.Literals([
   "stars.upsert",
   "stars.markUnstarred",
   "stars.list",
-  "search.nearestStars",
-  "search.hybridStars",
+  "search.hybrid",
   "usage.increment",
   "usage.get",
 ]);
@@ -38,22 +38,11 @@ export class DbRowInvalid extends Schema.TaggedError<DbRowInvalid, { readonly br
   "DbRowInvalid",
   {
     operation: Operation,
+    column: Schema.NullOr(Schema.String),
   },
 ) {
   override get message(): string {
-    return `Db '${this.operation}' read a row that does not match its schema`;
-  }
-}
-
-export class EmbeddingModelMismatch extends Schema.TaggedError<
-  EmbeddingModelMismatch,
-  { readonly brand: unique symbol }
->()("EmbeddingModelMismatch", {
-  expected: EmbeddingModel,
-  received: EmbeddingModel,
-}) {
-  override get message(): string {
-    return `The database holds '${this.expected}' embeddings and refuses a vector from '${this.received}'`;
+    return `Db '${this.operation}' read a row that does not match its schema${this.column === null ? "" : ` in '${this.column}'`}`;
   }
 }
 

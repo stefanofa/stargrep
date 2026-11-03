@@ -1,16 +1,23 @@
+import { drizzle } from "drizzle-orm/node-postgres";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type * as Redacted from "effect/Redacted";
+import * as Redacted from "effect/Redacted";
+import pg from "pg";
+import type { EmbeddingModelId } from "./embedding.ts";
 import type { DbQueryFailed } from "./errors.ts";
-import type { EmbeddingModel } from "./ids.ts";
-import * as Memory from "./memory.ts";
 import * as Postgres from "./postgres.ts";
 import * as Accounts from "./queries/accounts.ts";
 import * as Repos from "./queries/repos.ts";
 import * as Search from "./queries/search.ts";
 import * as Stars from "./queries/stars.ts";
 import * as Usage from "./queries/usage.ts";
+
+export type { Account, AccountFacts, StarSync } from "./queries/accounts.ts";
+export type { Repo, RepoEmbedding, RepoFacts, RepoRef, RepoSummary } from "./queries/repos.ts";
+export type { HybridSearch, SearchHit, SearchScope } from "./queries/search.ts";
+export type { Star, StarredRepo, StarsUpsert, Unstar } from "./queries/stars.ts";
+export type { UsageCall, UsageCounts, UsageDay } from "./queries/usage.ts";
 
 export class Db extends Context.Service<
   Db,
@@ -31,24 +38,24 @@ export class Transactions extends Context.Service<
 >()("@stargrep/db/db/Transactions") {}
 
 export interface Options {
-  readonly embeddingModel: EmbeddingModel;
+  readonly embeddingModel: EmbeddingModelId;
 }
 
-export interface PostgresOptions extends Options {
+export interface NodePostgresOptions extends Options {
   readonly connectionString: Redacted.Redacted<string>;
 }
 
-export const layerNodePostgres = (options: PostgresOptions) =>
+export const layer = (options: Options) =>
   Layer.mergeAll(
     Layer.effect(
       Db,
       Effect.gen(function* () {
         return Db.of({
-          accounts: yield* Accounts.postgres,
-          repos: yield* Repos.postgres(options.embeddingModel),
-          stars: yield* Stars.postgres,
-          search: yield* Search.postgres(options.embeddingModel),
-          usage: yield* Usage.postgres,
+          accounts: yield* Accounts.make,
+          repos: yield* Repos.make(options.embeddingModel),
+          stars: yield* Stars.make,
+          search: yield* Search.make(options.embeddingModel),
+          usage: yield* Usage.make,
         });
       }),
     ),
@@ -59,27 +66,37 @@ export const layerNodePostgres = (options: PostgresOptions) =>
         return Transactions.of({ withTransaction });
       }),
     ),
-  ).pipe(Layer.provide(Postgres.layer(options.connectionString)));
+  );
 
-export const layerMemory = (options: Options) =>
-  Layer.mergeAll(
-    Layer.effect(
-      Db,
-      Effect.gen(function* () {
-        return Db.of({
-          accounts: yield* Accounts.memory,
-          repos: yield* Repos.memory(options.embeddingModel),
-          stars: yield* Stars.memory,
-          search: yield* Search.memory(options.embeddingModel),
-          usage: yield* Usage.memory,
-        });
+const nodePostgres = (connectionString: Redacted.Redacted<string>) =>
+  Layer.effect(
+    Postgres.Postgres,
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        const pool = new pg.Pool({ connectionString: Redacted.value(connectionString) });
+        // pg emits idle-client failures on the pool, and an unhandled emit ends the process.
+        // The pool drops that client, and the next query reports its own error.
+        pool.on("error", () => {});
+        return pool;
       }),
+      (pool) => Effect.promise(() => pool.end()),
+    ).pipe(
+      Effect.map((pool) =>
+        Postgres.make({
+          database: drizzle({ client: pool }),
+          connect: async () => {
+            const client = await pool.connect();
+            return {
+              database: drizzle({ client }),
+              query: (statement) => client.query(statement),
+              release: (broken) => client.release(broken),
+            };
+          },
+          isDatabaseError: (error) => error instanceof pg.DatabaseError,
+        }),
+      ),
     ),
-    Layer.effect(
-      Transactions,
-      Effect.gen(function* () {
-        const { withTransaction } = yield* Memory.MemoryStore;
-        return Transactions.of({ withTransaction });
-      }),
-    ),
-  ).pipe(Layer.provide(Memory.layer));
+  );
+
+export const layerNodePostgres = (options: NodePostgresOptions) =>
+  layer(options).pipe(Layer.provide(nodePostgres(options.connectionString)));

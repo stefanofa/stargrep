@@ -1,3 +1,4 @@
+import { GitHubAccountId } from "@stargrep/github/schemas";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import * as Console from "effect/Console";
@@ -8,8 +9,8 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import pg from "pg";
 import * as Db from "../src/db.ts";
-import { Embedding } from "../src/embedding.ts";
-import { EmbeddingModel, GitHubAccountId } from "../src/ids.ts";
+import { Embedding, EmbeddingModelId } from "../src/embedding.ts";
+import { migrationsFolder } from "../src/migrations.ts";
 
 const adminUrl = process.env.DATABASE_URL ?? "postgres://stargrep:stargrep@127.0.0.1:54317/stargrep";
 const repoCount = 100_000;
@@ -17,7 +18,7 @@ const starCount = 5_000;
 const accountCount = 50;
 const rounds = 100;
 const warmup = 5;
-const model = Schema.decodeSync(EmbeddingModel)("bench/random-1024");
+const model = Schema.decodeSync(EmbeddingModelId)("bench/random-1024");
 const accountId = Schema.decodeSync(GitHubAccountId)(1);
 const words = [
   "terminal",
@@ -110,9 +111,7 @@ const prepare = withClient(adminUrl, async (client) => {
   Effect.andThen(
     Effect.promise(async () => {
       const pool = new pg.Pool({ connectionString: benchUrl });
-      await migrate(drizzle({ client: pool }), {
-        migrationsFolder: new URL("../migrations", import.meta.url).pathname,
-      });
+      await migrate(drizzle({ client: pool }), { migrationsFolder });
       await pool.end();
     }),
   ),
@@ -183,9 +182,9 @@ const bench = Effect.gen(function* () {
   const timed = <A, E>(effect: Effect.Effect<ReadonlyArray<A>, E>) =>
     Effect.timed(effect).pipe(Effect.map(([duration, rows]) => [Duration.toMillis(duration), rows.length] as const));
   const lookup = timed(db.accounts.get(accountId).pipe(Effect.map((account) => [account])));
-  const nearest = (embedding: Embedding) => timed(db.search.nearestStars({ accountId, embedding, limit: 20 }));
-  const hybrid = (embedding: Embedding, text: string) =>
-    timed(db.search.hybridStars({ accountId, text, embedding, limit: 20 }));
+  const scope: Db.SearchScope = { kind: "stars", accountId };
+  const nearest = (embedding: Embedding) => timed(db.search.hybrid({ scope, text: "", embedding, limit: 20 }));
+  const hybrid = (embedding: Embedding, text: string) => timed(db.search.hybrid({ scope, text, embedding, limit: 20 }));
 
   const results = { lookup: [] as Array<number>, nearest: [] as Array<number>, hybrid: [] as Array<number> };
   const counts = { lookup: [] as Array<number>, nearest: [] as Array<number>, hybrid: [] as Array<number> };
@@ -208,7 +207,7 @@ const bench = Effect.gen(function* () {
     `${rounds} interleaved rounds after ${warmup} warmup rounds, ${starCount} stars of ${repoCount} repos`,
   );
   yield* Console.log(summarize("pk lookup", results.lookup, counts.lookup));
-  yield* Console.log(summarize("exact vector", results.nearest, counts.nearest));
+  yield* Console.log(summarize("vector only", results.nearest, counts.nearest));
   yield* Console.log(summarize("hybrid rrf", results.hybrid, counts.hybrid));
 }).pipe(Effect.provide(Db.layerNodePostgres({ connectionString: Redacted.make(benchUrl), embeddingModel: model })));
 

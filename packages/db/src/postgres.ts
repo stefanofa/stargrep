@@ -1,35 +1,53 @@
-import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { PgAsyncDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
-import * as Redacted from "effect/Redacted";
-import pg from "pg";
 import { DbQueryFailed, type Operation } from "./errors.ts";
 
-type Database = NodePgDatabase;
+export type Database = PgAsyncDatabase<PgQueryResultHKT>;
+
+export interface TransactionClient {
+  readonly database: Database;
+  readonly query: (statement: "begin" | "commit" | "rollback") => PromiseLike<unknown>;
+  readonly release: (broken: boolean) => void;
+}
+
+export interface Driver {
+  readonly database: Database;
+  readonly connect: () => PromiseLike<TransactionClient>;
+  readonly isDatabaseError: (error: unknown) => error is { readonly code?: string | undefined };
+}
 
 const queryTimeout = "10 seconds";
 
-const sqlStateOf = (error: unknown): string | null => {
-  if (!Predicate.isObject(error)) return null;
-  if (Predicate.hasProperty(error, "code") && Predicate.isString(error.code) && /^[0-9A-Z]{5}$/.test(error.code)) {
-    return error.code;
-  }
-  return Predicate.hasProperty(error, "cause") ? sqlStateOf(error.cause) : null;
-};
+const socketErrors = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ECONNABORTED",
+  "EHOSTUNREACH",
+  "ENOTFOUND",
+  "EPIPE",
+  "ETIMEDOUT",
+]);
 
-const queryFailed = (operation: Operation, error: unknown) => {
-  const sqlState = sqlStateOf(error);
-  const reason =
-    sqlState === null || /^(08|28|53|57)/.test(sqlState)
-      ? "transport"
-      : sqlState.startsWith("23")
-        ? "constraint"
-        : "query";
-  return new DbQueryFailed({ operation, reason, sqlState });
+const reasonOf = (sqlState: string | null) =>
+  sqlState === null || /^(08|28|53|57)/.test(sqlState)
+    ? "transport"
+    : sqlState.startsWith("23")
+      ? "constraint"
+      : "query";
+
+const classify = (driver: Driver, operation: Operation, error: unknown): Option.Option<DbQueryFailed> => {
+  if (driver.isDatabaseError(error)) {
+    const sqlState = error.code ?? null;
+    return Option.some(new DbQueryFailed({ operation, reason: reasonOf(sqlState), sqlState }));
+  }
+  if (Predicate.hasProperty(error, "code") && Predicate.isString(error.code) && socketErrors.has(error.code)) {
+    return Option.some(new DbQueryFailed({ operation, reason: "transport", sqlState: null }));
+  }
+  return Predicate.hasProperty(error, "cause") ? classify(driver, operation, error.cause) : Option.none();
 };
 
 const CurrentTransaction = Context.Reference<Option.Option<Database>>("@stargrep/db/postgres/CurrentTransaction", {
@@ -44,36 +62,30 @@ export class Postgres extends Context.Service<
   }
 >()("@stargrep/db/postgres") {}
 
-const attempt = <A>(operation: Operation, run: () => PromiseLike<A>) =>
-  Effect.tryPromise({ try: run, catch: (error) => queryFailed(operation, error) }).pipe(
-    Effect.timeoutOrElse({
-      duration: queryTimeout,
-      orElse: () => Effect.fail(new DbQueryFailed({ operation, reason: "timeout", sqlState: null })),
-    }),
-  );
-
-const make = Effect.fn("Postgres.make")(function* (connectionString: Redacted.Redacted<string>) {
-  const pool = yield* Effect.acquireRelease(
-    Effect.sync(() => {
-      const pool = new pg.Pool({ connectionString: Redacted.value(connectionString) });
-      // pg emits idle-client failures on the pool, and an unhandled emit ends the process.
-      // The pool drops that client, and the next query reports its own error.
-      pool.on("error", () => {});
-      return pool;
-    }),
-    (pool) => Effect.promise(() => pool.end()),
-  );
-  const db = drizzle({ client: pool });
+export const make = (driver: Driver) => {
+  const attempt = <A>(operation: Operation, evaluate: () => PromiseLike<A>) =>
+    Effect.promise(evaluate).pipe(
+      Effect.catchDefect((defect) =>
+        Option.match(classify(driver, operation, defect), {
+          onNone: () => Effect.die(defect),
+          onSome: Effect.fail,
+        }),
+      ),
+      Effect.timeoutOrElse({
+        duration: queryTimeout,
+        orElse: () => Effect.fail(new DbQueryFailed({ operation, reason: "timeout", sqlState: null })),
+      }),
+    );
 
   const run = Effect.fnUntraced(
     function* <A>(operation: Operation, query: (db: Database) => PromiseLike<A>) {
       const transaction = yield* CurrentTransaction;
-      return yield* attempt(operation, () => query(Option.getOrElse(transaction, () => db)));
+      return yield* attempt(operation, () => query(Option.getOrElse(transaction, () => driver.database)));
     },
     (effect, operation) => Effect.withSpan(effect, `Db.${operation}`),
   );
 
-  const begin = attempt("transaction", () => pool.connect()).pipe(
+  const begin = attempt("transaction", driver.connect).pipe(
     Effect.tap((client) =>
       attempt("transaction", () => client.query("begin")).pipe(
         Effect.onError(() => Effect.sync(() => client.release(true))),
@@ -81,7 +93,7 @@ const make = Effect.fn("Postgres.make")(function* (connectionString: Redacted.Re
     ),
   );
 
-  const finish = (client: pg.PoolClient, statement: "commit" | "rollback") =>
+  const finish = (client: TransactionClient, statement: "commit" | "rollback") =>
     attempt("transaction", () => client.query(statement)).pipe(
       Effect.onExit((exit) => Effect.sync(() => client.release(Exit.isFailure(exit)))),
     );
@@ -92,13 +104,11 @@ const make = Effect.fn("Postgres.make")(function* (connectionString: Redacted.Re
     if (Option.isSome(yield* CurrentTransaction)) return yield* effect;
     return yield* Effect.acquireUseRelease(
       begin,
-      (client) => Effect.provideService(effect, CurrentTransaction, Option.some(drizzle({ client }))),
+      (client) => Effect.provideService(effect, CurrentTransaction, Option.some(client.database)),
       (client, exit) =>
         Exit.isSuccess(exit) ? finish(client, "commit") : finish(client, "rollback").pipe(Effect.ignore),
     );
   });
 
   return Postgres.of({ run, withTransaction });
-});
-
-export const layer = (connectionString: Redacted.Redacted<string>) => Layer.effect(Postgres, make(connectionString));
+};

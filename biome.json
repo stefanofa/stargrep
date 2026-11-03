@@ -36,8 +36,8 @@
               "options": {
                 "patterns": [
                   {
-                    "group": ["drizzle-orm", "drizzle-orm/**"],
-                    "message": "Core reaches Postgres through the Db service in @stargrep/db, never through Drizzle."
+                    "group": ["drizzle-orm", "drizzle-orm/**", "pg", "pg/**"],
+                    "message": "Core reaches Postgres through the Db service in @stargrep/db, never through Drizzle or pg."
                   }
                 ]
               }

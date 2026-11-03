@@ -1,17 +1,15 @@
+import { Login, ObjectId, RepoId, RepoName } from "@stargrep/github/schemas";
 import { eq, getColumns, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import * as Arr from "effect/Array";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
+import type * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
-import { type Embedding, requireModel } from "../embedding.ts";
-import { type DbQueryFailed, type DbRowInvalid, type EmbeddingModelMismatch, RepoNotFound } from "../errors.ts";
-import { EmbeddingModel, Login, ObjectId, RepoId, RepoName } from "../ids.ts";
-import * as Memory from "../memory.ts";
+import { type Embedding, EmbeddingModelId, type EmbeddingModelMismatch, requireModel } from "../embedding.ts";
+import { type DbQueryFailed, type DbRowInvalid, RepoNotFound } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
-import { NullableTime, rowsDecoder } from "../rows.ts";
+import { excluded, NullableTime, rowsDecoder, writeEncoder } from "../rows.ts";
 import { repos } from "../schema.ts";
 
 const RepoRow = createSelectSchema(repos, {
@@ -23,7 +21,7 @@ const RepoRow = createSelectSchema(repos, {
   pushedAt: NullableTime,
   readmeOid: Schema.NullOr(ObjectId),
   keywords: Schema.Array(Schema.String),
-  embeddingModel: Schema.NullOr(EmbeddingModel),
+  embeddingModel: Schema.NullOr(EmbeddingModelId),
 });
 
 export const Repo = Schema.Struct(Struct.omit(RepoRow.fields, ["embedding", "search"]));
@@ -34,38 +32,40 @@ export const repoColumns = columns;
 
 export type RepoRef = Pick<Repo, "id" | "owner" | "name">;
 
-export type RepoFacts = Pick<
-  Repo,
-  | "id"
-  | "owner"
-  | "name"
-  | "description"
-  | "topics"
-  | "language"
-  | "license"
-  | "homepage"
-  | "createdAt"
-  | "pushedAt"
-  | "archived"
->;
+const RepoFacts = Schema.Struct(
+  Struct.pick(Repo.fields, [
+    "id",
+    "owner",
+    "name",
+    "description",
+    "topics",
+    "language",
+    "license",
+    "homepage",
+    "createdAt",
+    "pushedAt",
+    "archived",
+  ]),
+);
+export type RepoFacts = typeof RepoFacts.Type;
 
-export interface RepoSummary {
-  readonly id: RepoId;
-  readonly readmeOid: ObjectId | null;
-  readonly summary: string;
-  readonly keywords: ReadonlyArray<string>;
-  readonly kind: string;
-}
+const RepoSummary = Schema.Struct({
+  ...Struct.pick(Repo.fields, ["id", "readmeOid", "keywords"]),
+  summary: Schema.String,
+  kind: Schema.String,
+});
+export type RepoSummary = typeof RepoSummary.Type;
 
 export interface RepoEmbedding {
   readonly id: RepoId;
   readonly embedding: Embedding;
 }
 
-export type StoredRepo = Repo & { readonly embedding: ReadonlyArray<number> | null };
-
 export interface Queries {
-  readonly upsertRefs: (refs: ReadonlyArray<RepoRef>) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed>;
+  readonly upsertRefs: (refs: ReadonlyArray<RepoRef>) => Effect.Effect<void, DbQueryFailed>;
+  readonly unenriched: (
+    ids: ReadonlyArray<RepoId>,
+  ) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
   readonly saveFacts: (facts: RepoFacts) => Effect.Effect<void, DbQueryFailed>;
   readonly saveSummary: (summary: RepoSummary) => Effect.Effect<void, DbQueryFailed | RepoNotFound>;
   readonly saveEmbedding: (
@@ -76,71 +76,79 @@ export interface Queries {
 
 const batchSize = 1000;
 const decodeRepos = rowsDecoder(Repo);
-const excluded = (column: string) => sql.raw(`excluded."${column}"`);
-const toDate = (time: DateTime.Utc | null) => (time === null ? null : DateTime.toDateUtc(time));
+const decodeIds = rowsDecoder(Schema.Struct({ id: RepoId }));
+const encodeFacts = writeEncoder(RepoFacts);
+const encodeSummary = writeEncoder(RepoSummary);
 
 const requireUpdated =
   (id: RepoId) =>
   (rows: ReadonlyArray<unknown>): Effect.Effect<void, RepoNotFound> =>
     rows.length === 0 ? Effect.fail(new RepoNotFound({ repoId: id })) : Effect.void;
 
-export const postgres = Effect.fn("Db.repos.postgres")(function* (configuredModel: EmbeddingModel) {
-  const { run } = yield* Postgres.Postgres;
+export const make = Effect.fn("Db.repos.make")(function* (configuredModel: EmbeddingModelId) {
+  const { run, withTransaction } = yield* Postgres.Postgres;
 
   return {
     upsertRefs: (refs) =>
-      Effect.forEach(Arr.chunksOf(refs, batchSize), (chunk) =>
-        run("repos.upsertRefs", (db) =>
-          db
-            .insert(repos)
-            .values([...chunk])
-            .onConflictDoUpdate({
-              target: repos.id,
-              set: { owner: excluded("owner"), name: excluded("name") },
-              setWhere: sql`(${repos.owner}, ${repos.name}) is distinct from (excluded."owner", excluded."name")`,
-            })
-            .returning({ id: repos.id, inserted: sql<boolean>`xmax = 0` }),
+      withTransaction(
+        Effect.forEach(
+          Arr.chunksOf(refs, batchSize),
+          (chunk) =>
+            run("repos.upsertRefs", (db) =>
+              db
+                .insert(repos)
+                .values([...chunk])
+                .onConflictDoUpdate({
+                  target: repos.id,
+                  set: { owner: excluded(repos.owner), name: excluded(repos.name) },
+                  setWhere: sql`(${repos.owner}, ${repos.name}) is distinct from (${excluded(repos.owner)}, ${excluded(repos.name)})`,
+                }),
+            ),
+          { discard: true },
         ),
+      ),
+    unenriched: (ids) =>
+      run("repos.unenriched", (db) =>
+        db
+          .select({ id: repos.id })
+          .from(repos)
+          .where(sql`${repos.id} = any(${sql.param([...ids])}::bigint[]) and ${repos.summary} is null`),
       ).pipe(
-        Effect.map((results) => {
-          const inserted = new Set(results.flat().flatMap((row) => (row.inserted ? [row.id] : [])));
-          return refs.flatMap((ref) => (inserted.has(ref.id) ? [ref.id] : []));
+        Effect.flatMap(decodeIds("repos.unenriched")),
+        Effect.map((rows) => {
+          const pending = new Set<number>(rows.map((row) => row.id));
+          return ids.filter((id) => pending.has(id));
         }),
       ),
-    saveFacts: (facts) => {
-      const values = {
-        ...facts,
-        topics: [...facts.topics],
-        createdAt: toDate(facts.createdAt),
-        pushedAt: toDate(facts.pushedAt),
-      };
-      const { id: _, ...changes } = values;
-      return run("repos.saveFacts", (db) =>
-        db.insert(repos).values(values).onConflictDoUpdate({ target: repos.id, set: changes }),
-      );
-    },
+    saveFacts: (facts) =>
+      encodeFacts(facts).pipe(
+        Effect.flatMap((values) => {
+          const { id: _, ...changes } = values;
+          return run("repos.saveFacts", (db) =>
+            db.insert(repos).values(values).onConflictDoUpdate({ target: repos.id, set: changes }),
+          );
+        }),
+      ),
     saveSummary: (summary) =>
-      run("repos.saveSummary", (db) =>
-        db
-          .update(repos)
-          .set({
-            readmeOid: summary.readmeOid,
-            summary: summary.summary,
-            keywords: [...summary.keywords],
-            kind: summary.kind,
-            embedding: null,
-            embeddingModel: null,
-          })
-          .where(eq(repos.id, summary.id))
-          .returning({ id: repos.id }),
-      ).pipe(Effect.flatMap(requireUpdated(summary.id))),
+      encodeSummary(summary).pipe(
+        Effect.flatMap(({ id, ...values }) =>
+          run("repos.saveSummary", (db) =>
+            db
+              .update(repos)
+              .set({ ...values, embedding: null, embeddingModel: null })
+              .where(eq(repos.id, id))
+              .returning({ id: repos.id }),
+          ),
+        ),
+        Effect.flatMap(requireUpdated(summary.id)),
+      ),
     saveEmbedding: (input) =>
       requireModel(configuredModel, input.embedding).pipe(
         Effect.flatMap((vector) =>
           run("repos.saveEmbedding", (db) =>
             db
               .update(repos)
-              .set({ embedding: [...vector], embeddingModel: input.embedding.model })
+              .set({ embedding: [...vector], embeddingModel: configuredModel })
               .where(eq(repos.id, input.id))
               .returning({ id: repos.id }),
           ),
@@ -151,63 +159,6 @@ export const postgres = Effect.fn("Db.repos.postgres")(function* (configuredMode
       run("repos.get", (db) => db.select(repoColumns).from(repos).where(eq(repos.id, id))).pipe(
         Effect.flatMap(decodeRepos("repos.get")),
         Effect.map(Arr.head),
-      ),
-  } satisfies Queries;
-});
-
-const emptyRepo = (ref: RepoRef): StoredRepo => ({
-  ...ref,
-  description: null,
-  topics: [],
-  language: null,
-  license: null,
-  homepage: null,
-  kind: null,
-  createdAt: null,
-  pushedAt: null,
-  archived: false,
-  readmeOid: null,
-  summary: null,
-  keywords: [],
-  embedding: null,
-  embeddingModel: null,
-});
-
-export const memory = Effect.fn("Db.repos.memory")(function* (configuredModel: EmbeddingModel) {
-  const { tables } = yield* Memory.MemoryStore;
-
-  const update = (id: RepoId, change: (repo: StoredRepo) => StoredRepo) =>
-    Effect.suspend(() => {
-      const repo = tables.repos.get(id);
-      if (repo === undefined) return Effect.fail(new RepoNotFound({ repoId: id }));
-      tables.repos.set(id, change(repo));
-      return Effect.void;
-    });
-
-  return {
-    upsertRefs: (refs) =>
-      Effect.sync(() =>
-        refs.flatMap((ref) => {
-          const existing = tables.repos.get(ref.id);
-          tables.repos.set(ref.id, { ...(existing ?? emptyRepo(ref)), owner: ref.owner, name: ref.name });
-          return existing === undefined ? [ref.id] : [];
-        }),
-      ),
-    saveFacts: (facts) =>
-      Effect.sync(() => {
-        tables.repos.set(facts.id, { ...(tables.repos.get(facts.id) ?? emptyRepo(facts)), ...facts });
-      }),
-    saveSummary: (summary) =>
-      update(summary.id, (repo) => ({ ...repo, ...summary, embedding: null, embeddingModel: null })),
-    saveEmbedding: (input) =>
-      requireModel(configuredModel, input.embedding).pipe(
-        Effect.flatMap((vector) =>
-          update(input.id, (repo) => ({ ...repo, embedding: vector, embeddingModel: input.embedding.model })),
-        ),
-      ),
-    get: (id) =>
-      Effect.sync(() =>
-        Option.fromUndefinedOr(tables.repos.get(id)).pipe(Option.map(({ embedding: _, ...repo }) => repo)),
       ),
   } satisfies Queries;
 });

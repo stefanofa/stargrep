@@ -6,7 +6,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { DbQueryFailed, DbRowInvalid } from "../errors.ts";
-import * as Memory from "../memory.ts";
 import * as Postgres from "../postgres.ts";
 import { rowsDecoder } from "../rows.ts";
 import { apiUsage } from "../schema.ts";
@@ -34,7 +33,7 @@ export interface Queries {
 
 const decodeUsage = rowsDecoder(UsageRow);
 
-export const postgres = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const { run } = yield* Postgres.Postgres;
 
   return {
@@ -62,21 +61,5 @@ export const postgres = Effect.gen(function* () {
           Arr.head(rows).pipe(Option.match({ onNone: (): UsageCounts => ({}), onSome: (row) => row.counts })),
         ),
       ),
-  } satisfies Queries;
-});
-
-const usageKey = (key: string, at: DateTime.Utc) => `${key}/${DateTime.formatIsoDateUtc(at)}`;
-
-export const memory = Effect.gen(function* () {
-  const { tables } = yield* Memory.MemoryStore;
-
-  return {
-    increment: (call) =>
-      Effect.sync(() => {
-        const key = usageKey(call.key, call.at);
-        const counts = tables.usage.get(key) ?? {};
-        tables.usage.set(key, { ...counts, [call.procedure]: (counts[call.procedure] ?? 0) + 1 });
-      }),
-    get: (day) => Effect.sync(() => tables.usage.get(usageKey(day.key, day.on)) ?? {}),
   } satisfies Queries;
 });

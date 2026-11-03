@@ -1,21 +1,18 @@
 import { expect } from "bun:test";
+import { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Db from "../src/db.ts";
-import { Embedding } from "../src/embedding.ts";
-import { EmbeddingModel, GitHubAccountId, Login, RepoId, RepoName } from "../src/ids.ts";
-import type { AccountFacts } from "../src/queries/accounts.ts";
-import type { RepoRef } from "../src/queries/repos.ts";
+import { Embedding, EmbeddingModelId } from "../src/embedding.ts";
 import * as TestDatabase from "./database.ts";
 
-const model = Schema.decodeSync(EmbeddingModel)("test/embedding-1024");
-const otherModel = Schema.decodeSync(EmbeddingModel)("test/other-embedding");
+const model = Schema.decodeSync(EmbeddingModelId)("test/embedding-1024");
+const otherModel = Schema.decodeSync(EmbeddingModelId)("test/other-embedding");
 const accountId = Schema.decodeSync(GitHubAccountId);
 const repoId = Schema.decodeSync(RepoId);
 const login = Schema.decodeSync(Login);
@@ -29,7 +26,7 @@ const embedding = (weights: Readonly<Record<number, number>>, embeddingModel = m
     vector: Array.from({ length: 1024 }, (_, index) => weights[index] ?? 0),
   });
 
-const account = (id: GitHubAccountId, facts: Partial<AccountFacts> = {}): AccountFacts => ({
+const account = (id: GitHubAccountId, facts: Partial<Db.AccountFacts> = {}): Db.AccountFacts => ({
   id,
   type: "user",
   login: login(`user-${id}`),
@@ -41,11 +38,13 @@ const account = (id: GitHubAccountId, facts: Partial<AccountFacts> = {}): Accoun
   ...facts,
 });
 
-const ref = (id: RepoId, name = `repo-${id}`): RepoRef => ({ id, owner: login("owner"), name: repoName(name) });
+const ref = (id: RepoId, name = `repo-${id}`): Db.RepoRef => ({ id, owner: login("owner"), name: repoName(name) });
+
+const stars = (accountId: GitHubAccountId): Db.SearchScope => ({ kind: "stars", accountId });
 
 const starred = (id: RepoId, starredAt: string) => ({ repoId: id, starredAt: at(starredAt), source: "api" as const });
 
-const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions> }) => {
+const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | TestDatabase.TestDatabase> }) => {
   test.effect("upserts an account and reads the latest facts back", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
@@ -64,8 +63,8 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions>
       const db = yield* Db.Db;
       const id = accountId(102);
       yield* db.accounts.upsert(account(id));
-      yield* db.accounts.recordStarSync({ id, etag: "full", at: at("2026-10-01T00:00:00Z"), full: true });
-      yield* db.accounts.recordStarSync({ id, etag: "next", at: at("2026-10-02T00:00:00Z"), full: false });
+      yield* db.accounts.recordStarSync({ accountId: id, etag: "full", at: at("2026-10-01T00:00:00Z"), full: true });
+      yield* db.accounts.recordStarSync({ accountId: id, etag: "next", at: at("2026-10-02T00:00:00Z"), full: false });
 
       const stored = Option.getOrThrow(yield* db.accounts.get(id));
       expect(stored.starsEtag).toBe("next");
@@ -73,20 +72,34 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions>
       expect(iso(stored.starsFullSyncedAt)).toBe("2026-10-01T00:00:00.000Z");
 
       const missing = yield* db.accounts
-        .recordStarSync({ id: accountId(999_998), etag: null, at: at("2026-10-02T00:00:00Z"), full: true })
+        .recordStarSync({ accountId: accountId(999_998), etag: null, at: at("2026-10-02T00:00:00Z"), full: true })
         .pipe(Effect.flip);
       expect(missing._tag).toBe("AccountNotFound");
     }),
   );
 
-  test.effect("reports only new repos from upsertRefs and follows renames", () =>
+  test.effect("stores repo refs and follows renames", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
-      const [first, second, third] = [repoId(2001), repoId(2002), repoId(2003)];
+      const [first, second] = [repoId(2001), repoId(2002)];
+      yield* db.repos.upsertRefs([ref(first), ref(second)]);
+      yield* db.repos.upsertRefs([ref(first, "renamed"), ref(second)]);
 
-      expect(yield* db.repos.upsertRefs([ref(first), ref(second)])).toEqual([first, second]);
-      expect(yield* db.repos.upsertRefs([ref(first, "renamed"), ref(second), ref(third)])).toEqual([third]);
       expect(Option.getOrThrow(yield* db.repos.get(first)).name).toBe(repoName("renamed"));
+      expect(Option.getOrThrow(yield* db.repos.get(second)).name).toBe(repoName(`repo-${second}`));
+    }),
+  );
+
+  test.effect("reports stored repos without a summary as unenriched, in the order asked", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const [fresh, summarized, alsoFresh, missing] = [repoId(2051), repoId(2052), repoId(2053), repoId(2059)];
+      yield* db.repos.upsertRefs([ref(fresh), ref(summarized), ref(alsoFresh)]);
+      yield* db.repos.saveSummary({ id: summarized, readmeOid: null, summary: "done", keywords: [], kind: "app" });
+
+      expect(yield* db.repos.unenriched([alsoFresh, missing, summarized, fresh])).toEqual([alsoFresh, fresh]);
+      yield* db.repos.upsertRefs([ref(fresh), ref(summarized), ref(alsoFresh)]);
+      expect(yield* db.repos.unenriched([fresh, summarized, alsoFresh])).toEqual([fresh, alsoFresh]);
     }),
   );
 
@@ -247,7 +260,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions>
     }),
   );
 
-  test.effect("finds the account's nearest starred repos in distance order", () =>
+  test.effect("ranks the account's active stars by vector distance when the text matches nothing", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
       const [owner, other] = [accountId(401), accountId(402)];
@@ -277,15 +290,17 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions>
       yield* db.stars.upsert({ accountId: other, stars: [starred(notMine, "2026-01-01T00:00:00Z")] });
       yield* db.stars.markUnstarred({ accountId: owner, keep: [same, close, far], at: at("2026-02-01T00:00:00Z") });
 
-      const query = { accountId: owner, embedding: embedding({ 0: 1 }) };
-      const hits = yield* db.search.nearestStars({ ...query, limit: 10 });
-      expect(hits.map((hit) => hit.repo.id)).toEqual([same, close, far]);
-      expect(hits[0]?.distance).toBeCloseTo(0, 3);
-      expect(hits[2]?.distance).toBeCloseTo(1, 3);
-      expect((yield* db.search.nearestStars({ ...query, limit: 2 })).map((hit) => hit.repo.id)).toEqual([same, close]);
+      const query = { scope: stars(owner), text: "", embedding: embedding({ 0: 1 }) };
+      const hits = yield* db.search.hybrid({ ...query, limit: 10 });
+      expect(hits.map((hit) => [hit.repo.id, hit.textRank, hit.vectorRank])).toEqual([
+        [same, null, 1],
+        [close, null, 2],
+        [far, null, 3],
+      ]);
+      expect((yield* db.search.hybrid({ ...query, limit: 2 })).map((hit) => hit.repo.id)).toEqual([same, close]);
 
       const refused = yield* db.search
-        .nearestStars({ ...query, embedding: embedding({ 0: 1 }, otherModel), limit: 10 })
+        .hybrid({ ...query, embedding: embedding({ 0: 1 }, otherModel), limit: 10 })
         .pipe(Effect.flip);
       expect(refused._tag).toBe("EmbeddingModelMismatch");
     }),
@@ -312,8 +327,8 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions>
         stars: [textOnly, both, vectorOnly, neither].map((repo) => starred(repo, "2026-01-01T00:00:00Z")),
       });
 
-      const hits = yield* db.search.hybridStars({
-        accountId: id,
+      const hits = yield* db.search.hybrid({
+        scope: stars(id),
         text: "terminal dashboard",
         embedding: embedding({ 0: 1 }),
         limit: 10,
@@ -385,21 +400,8 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions>
       expect((yield* db.stars.list(id)).map((star) => star.repoId)).toEqual([repo]);
     }),
   );
-};
 
-it.layer(Db.layerMemory({ embeddingModel: model }))("in-memory Db", sharedCases);
-
-const layerPostgres = Layer.unwrap(
-  Effect.gen(function* () {
-    const { url } = yield* TestDatabase.TestDatabase;
-    return Db.layerNodePostgres({ connectionString: url, embeddingModel: model });
-  }),
-).pipe(Layer.provideMerge(TestDatabase.layer));
-
-it.layer(layerPostgres)("Postgres Db", (test) => {
-  sharedCases(test);
-
-  test.effect("fails with DbRowInvalid when a jsonb column holds an older shape", () =>
+  test.effect("fails with DbRowInvalid naming the column when a jsonb column holds an older shape", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
       const database = yield* TestDatabase.TestDatabase;
@@ -408,7 +410,7 @@ it.layer(layerPostgres)("Postgres Db", (test) => {
       yield* database.query(`update repos set topics = '"rust,cli"'::jsonb where id = $1`, [id]);
 
       const error = yield* db.repos.get(id).pipe(Effect.flip);
-      expect(error).toMatchObject({ _tag: "DbRowInvalid", operation: "repos.get" });
+      expect(error).toMatchObject({ _tag: "DbRowInvalid", operation: "repos.get", column: "topics" });
     }),
   );
 
@@ -428,12 +430,14 @@ it.layer(layerPostgres)("Postgres Db", (test) => {
       });
       yield* database.query(`update repos set embedding_model = 'old/model' where id = $1`, [stale]);
 
-      const query = { accountId: id, embedding: embedding({ 0: 1 }), limit: 10 };
-      expect((yield* db.search.nearestStars(query)).map((hit) => hit.repo.id)).toEqual([current]);
-      expect((yield* db.search.hybridStars({ ...query, text: "" })).map((hit) => hit.repo.id)).toEqual([current]);
+      const hits = yield* db.search.hybrid({ scope: stars(id), text: "", embedding: embedding({ 0: 1 }), limit: 10 });
+      expect(hits.map((hit) => hit.repo.id)).toEqual([current]);
     }),
   );
-});
+};
+
+it.layer(TestDatabase.layerMemory({ embeddingModel: model }))("PGlite Db", sharedCases);
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgres Db", sharedCases);
 
 const password = "p3-test-secret";
 
