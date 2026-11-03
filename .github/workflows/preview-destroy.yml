@@ -16,6 +16,10 @@ env:
   ALCHEMY_TELEMETRY_DISABLED: "1"
   CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   destroy:
     if: vars.CLOUDFLARE_ACCOUNT_ID != ''
