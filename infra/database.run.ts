@@ -14,7 +14,7 @@ export default Alchemy.Stack(
     }
     const project = yield* Neon.Project("Project", {
       name: "stargrep",
-      region: "aws-us-east-1",
+      region: "aws-eu-central-1",
       pgVersion: 17,
     }).pipe(RemovalPolicy.retain());
     return { projectId: project.projectId };
