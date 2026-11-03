@@ -36,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
-      - run: docker compose --file apps/worker/compose.yaml up --detach --wait
+      - run: docker compose up --detach --wait
       - run: bun test --parallel
 
   worker-test:
@@ -44,5 +44,5 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
-      - run: docker compose --file apps/worker/compose.yaml up --detach --wait
+      - run: docker compose up --detach --wait
       - run: bun run --cwd apps/worker test

@@ -9,7 +9,7 @@ services:
     ports:
       - "127.0.0.1:54317:5432"
     volumes:
-      - ./sql:/docker-entrypoint-initdb.d:ro
+      - ./apps/worker/sql:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U stargrep -d stargrep"]
       interval: 1s
