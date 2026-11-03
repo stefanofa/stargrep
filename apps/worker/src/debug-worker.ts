@@ -11,15 +11,15 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Database } from "./database.ts";
-import { connect } from "./postgres.ts";
+import { withClient } from "./postgres.ts";
 
 const UNITS_PER_MINUTE = 300;
 
 export const DebugToken = Alchemy.makeRandom("DebugToken");
 
-const Jobs = Cloudflare.Queues.Queue("Jobs");
-const Cache = Cloudflare.KV.Namespace("Cache");
-const Blobs = Cloudflare.R2.Bucket("Blobs");
+const DebugJobs = Cloudflare.Queues.Queue("DebugJobs");
+const DebugCache = Cloudflare.KV.Namespace("DebugCache");
+const DebugBlobs = Cloudflare.R2.Bucket("DebugBlobs");
 
 export class Counter extends Cloudflare.DurableObject<Counter>()(
   "Counter",
@@ -43,30 +43,25 @@ export class Budget extends Cloudflare.DurableObject<Budget>()(
   "Budget",
   Effect.gen(function* () {
     const state = yield* Cloudflare.DurableObjectState;
+    const read = Effect.fn("Budget.read")(function* () {
+      const minute = Math.floor(DateTime.toEpochMillis(yield* DateTime.now) / 60_000);
+      const stored = yield* state.storage.get<{ minute: number; used: number }>("budget");
+      return { minute, used: stored?.minute === minute ? stored.used : 0, cap: UNITS_PER_MINUTE };
+    });
     return Effect.succeed({
+      read,
       spend: Effect.fn("Budget.spend")(function* (units: number) {
-        const minute = Math.floor(DateTime.toEpochMillis(yield* DateTime.now) / 60_000);
-        const stored = yield* state.storage.get<{ minute: number; used: number }>("budget");
-        const used = stored?.minute === minute ? stored.used : 0;
-        const allowed = used + units <= UNITS_PER_MINUTE;
-        if (allowed && units > 0) yield* state.storage.put("budget", { minute, used: used + units });
-        return { allowed, minute, used: allowed ? used + units : used, cap: UNITS_PER_MINUTE };
+        const budget = yield* read();
+        if (budget.used + units > budget.cap) return { allowed: false, budget };
+        const used = budget.used + units;
+        yield* state.storage.put("budget", { minute: budget.minute, used });
+        return { allowed: true, budget: { ...budget, used } };
       }),
     });
   }),
 ) {}
 
-class TransactionFailed extends Schema.TaggedError<TransactionFailed, { readonly brand: unique symbol }>()(
-  "TransactionFailed",
-  { cause: Schema.Defect() },
-) {
-  override get message(): string {
-    return "Postgres transaction failed";
-  }
-}
-
-const Ping = Schema.Struct({ id: Schema.String });
-const decodePing = Schema.decodeUnknownEffect(Ping);
+const decodePing = Schema.decodeUnknownEffect(Schema.Struct({ id: Schema.String }));
 const decodeCount = Schema.decodeUnknownOption(
   Schema.NumberFromString.pipe(Schema.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 100 }))),
 );
@@ -86,10 +81,10 @@ export default Cloudflare.Worker(
   { main: import.meta.url },
   Effect.gen(function* () {
     const token = yield* yield* DebugToken;
-    const jobs = yield* Jobs;
+    const jobs = yield* DebugJobs;
     const sender = yield* Cloudflare.Queues.WriteQueue(jobs);
-    yield* Cloudflare.KV.ReadWriteNamespace(Cache);
-    yield* Cloudflare.R2.ReadWriteBucket(Blobs);
+    yield* Cloudflare.KV.ReadWriteNamespace(DebugCache);
+    yield* Cloudflare.R2.ReadWriteBucket(DebugBlobs);
     const database = yield* Cloudflare.Hyperdrive.Connect(Database);
     const counters = yield* Counter;
     const budgets = yield* Budget;
@@ -112,21 +107,16 @@ export default Cloudflare.Worker(
       return ids;
     });
 
-    const runTransaction = Effect.fn("DebugWorker.runTransaction")(
-      function* () {
-        const client = yield* connect(Redacted.value(yield* database.connectionString));
-        const row = yield* Effect.tryPromise(async () => {
+    const runTransaction = Effect.fn("DebugWorker.runTransaction")(function* () {
+      return yield* withClient(Redacted.value(yield* database.connectionString), "transaction", (client) =>
+        Effect.tryPromise(async () => {
           await client.query("begin");
           const { rows } = await client.query("select pg_backend_pid() as pid, $1::int + $2::int as sum", [20, 22]);
           await client.query("commit");
           return rows[0];
-        });
-        return yield* decodeTransactionRow(row);
-      },
-      Effect.scoped,
-      Effect.timeout("10 seconds"),
-      Effect.mapError((cause) => new TransactionFailed({ cause })),
-    );
+        }).pipe(Effect.flatMap(decodeTransactionRow)),
+      );
+    });
 
     const withinBudget = Effect.fn("DebugWorker.withinBudget")(function* <A, E, R>(
       units: number,
@@ -134,14 +124,14 @@ export default Cloudflare.Worker(
     ) {
       const spent = yield* budgets.getByName("stage").spend(units);
       if (!spent.allowed) {
-        return yield* HttpServerResponse.json({ error: "debug budget spent", budget: spent }, { status: 429 });
+        return yield* HttpServerResponse.json({ error: "debug budget spent", budget: spent.budget }, { status: 429 });
       }
       return yield* work;
     });
 
     const route = Effect.fn("DebugWorker.route")(function* (method: string, url: URL) {
       if (method === "GET" && url.pathname === "/budget") {
-        return yield* HttpServerResponse.json(yield* budgets.getByName("stage").spend(0));
+        return yield* HttpServerResponse.json(yield* budgets.getByName("stage").read());
       }
       if (method === "POST" && url.pathname === "/queue") {
         const count = decodeCount(url.searchParams.get("count") ?? "1");
@@ -157,7 +147,7 @@ export default Cloudflare.Worker(
           runTransaction().pipe(
             Effect.flatMap((row) => HttpServerResponse.json(row)),
             Effect.catchTags({
-              TransactionFailed: (error) =>
+              PostgresFailed: (error) =>
                 Effect.logError(error.message, error.cause).pipe(
                   Effect.andThen(HttpServerResponse.json({ error: error.message }, { status: 503 })),
                 ),
