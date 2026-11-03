@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -19,7 +20,9 @@ const Blobs = Cloudflare.R2.Bucket("Blobs");
 const Ping = Schema.Struct({ id: Schema.String });
 const decodePing = Schema.decodeUnknownEffect(Ping);
 
-const MAX_DEBUG_MESSAGES = 100;
+const decodeDebugCount = Schema.decodeUnknownOption(
+  Schema.NumberFromString.pipe(Schema.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 100 }))),
+);
 
 export default Cloudflare.Worker(
   "Worker",
@@ -53,8 +56,9 @@ export default Cloudflare.Worker(
 
     const debug = Effect.fn("Worker.debug")(function* (method: string, url: URL) {
       if (method === "POST" && url.pathname === "/debug/queue") {
-        const count = Math.min(Number(url.searchParams.get("count") ?? 1) || 1, MAX_DEBUG_MESSAGES);
-        return yield* HttpServerResponse.json({ sent: yield* sendPings(count) });
+        const count = decodeDebugCount(url.searchParams.get("count") ?? "1");
+        if (Option.isNone(count)) return HttpServerResponse.empty({ status: 400 });
+        return yield* HttpServerResponse.json({ sent: yield* sendPings(count.value) });
       }
       const counter = /^\/debug\/counter\/([\w-]{1,64})$/.exec(url.pathname)?.[1];
       if (method === "POST" && counter) {
