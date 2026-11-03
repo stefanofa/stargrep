@@ -95,6 +95,7 @@ CREATE TABLE "repos" (
 	"archived" boolean DEFAULT false NOT NULL,
 	"readme_oid" text,
 	"summary" text,
+	"summary_readme_oid" text,
 	"keywords" jsonb DEFAULT '[]' NOT NULL,
 	"embedding" halfvec(1024),
 	"embedding_model" text,
@@ -120,6 +121,7 @@ CREATE TABLE "stars" (
 	"repo_id" bigint,
 	"starred_at" timestamp with time zone NOT NULL,
 	"unstarred_at" timestamp with time zone,
+	"observed_at" timestamp with time zone NOT NULL,
 	"source" "star_source" NOT NULL,
 	CONSTRAINT "stars_pkey" PRIMARY KEY("account_id","repo_id")
 );

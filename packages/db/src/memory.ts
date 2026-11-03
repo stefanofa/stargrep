@@ -21,9 +21,10 @@ const driver = (client: PGlite): Postgres.Driver => {
   const database = drizzle({ client });
   return {
     database,
-    // PGlite has one connection, so a query from another fiber during a transaction runs inside it.
+    // PGlite has one connection, so a transaction and every query outside it take turns.
     connect: async () => ({ database, query: (statement) => client.query(statement), release: () => undefined }),
     isDatabaseError: (error) => error instanceof messages.DatabaseError,
+    singleConnection: true,
   };
 };
 

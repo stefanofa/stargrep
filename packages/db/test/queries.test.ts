@@ -1,8 +1,11 @@
 import { expect } from "bun:test";
-import { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
+import { GitHubAccountId, Login, ObjectId, RepoId, RepoName } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
@@ -17,6 +20,7 @@ const accountId = Schema.decodeSync(GitHubAccountId);
 const repoId = Schema.decodeSync(RepoId);
 const login = Schema.decodeSync(Login);
 const repoName = Schema.decodeSync(RepoName);
+const readme = (digit: string) => Schema.decodeSync(ObjectId)(digit.repeat(40));
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const iso = (time: DateTime.Utc | null) => (time === null ? null : DateTime.formatIso(time));
 
@@ -40,6 +44,19 @@ const account = (id: GitHubAccountId, facts: Partial<Db.AccountFacts> = {}): Db.
 
 const ref = (id: RepoId, name = `repo-${id}`): Db.RepoRef => ({ id, owner: login("owner"), name: repoName(name) });
 
+const facts = (id: RepoId): Db.RepoFacts => ({
+  ...ref(id),
+  description: null,
+  topics: [],
+  language: null,
+  license: null,
+  homepage: null,
+  createdAt: null,
+  pushedAt: null,
+  archived: false,
+  readmeOid: null,
+});
+
 const stars = (accountId: GitHubAccountId): Db.SearchScope => ({ kind: "stars", accountId });
 
 const starred = (id: RepoId, starredAt: string) => ({ repoId: id, starredAt: at(starredAt), source: "api" as const });
@@ -58,23 +75,28 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     }),
   );
 
-  test.effect("keeps the last full sync time across an incremental sync", () =>
+  test.effect("records the newest full snapshot and leaves it alone on an incremental sync", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
       const id = accountId(102);
       yield* db.accounts.upsert(account(id));
-      yield* db.accounts.recordStarSync({ accountId: id, etag: "full", at: at("2026-10-01T00:00:00Z"), full: true });
-      yield* db.accounts.recordStarSync({ accountId: id, etag: "next", at: at("2026-10-02T00:00:00Z"), full: false });
+      expect(yield* db.stars.markUnstarred({ accountId: id, keep: [], at: at("2026-10-02T00:00:00Z") })).toBe(0);
+      yield* db.accounts.recordStarSync({ accountId: id, etag: "next", at: at("2026-10-03T00:00:00Z") });
+      expect(yield* db.stars.markUnstarred({ accountId: id, keep: [], at: at("2026-10-01T00:00:00Z") })).toBe(0);
 
       const stored = Option.getOrThrow(yield* db.accounts.get(id));
       expect(stored.starsEtag).toBe("next");
-      expect(iso(stored.starsSyncedAt)).toBe("2026-10-02T00:00:00.000Z");
-      expect(iso(stored.starsFullSyncedAt)).toBe("2026-10-01T00:00:00.000Z");
+      expect(iso(stored.starsSyncedAt)).toBe("2026-10-03T00:00:00.000Z");
+      expect(iso(stored.starsFullSyncedAt)).toBe("2026-10-02T00:00:00.000Z");
 
-      const missing = yield* db.accounts
-        .recordStarSync({ accountId: accountId(999_998), etag: null, at: at("2026-10-02T00:00:00Z"), full: true })
+      const missing = accountId(999_998);
+      const sync = yield* db.accounts
+        .recordStarSync({ accountId: missing, etag: null, at: at("2026-10-02T00:00:00Z") })
         .pipe(Effect.flip);
-      expect(missing._tag).toBe("AccountNotFound");
+      const snapshot = yield* db.stars
+        .markUnstarred({ accountId: missing, keep: [], at: at("2026-10-02T00:00:00Z") })
+        .pipe(Effect.flip);
+      expect([sync._tag, snapshot._tag]).toEqual(["AccountNotFound", "AccountNotFound"]);
     }),
   );
 
@@ -108,19 +130,24 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       const db = yield* Db.Db;
       const id = repoId(2101);
       yield* db.repos.saveFacts({
-        ...ref(id),
+        ...facts(id),
         description: "A terminal UI kit",
         topics: ["tui", "rust"],
         language: "Rust",
         license: "MIT",
-        homepage: null,
         createdAt: at("2020-01-02T03:04:05Z"),
-        pushedAt: null,
         archived: true,
+        readmeOid: readme("c"),
       });
 
       const stored = Option.getOrThrow(yield* db.repos.get(id));
-      expect(stored).toMatchObject({ topics: ["tui", "rust"], language: "Rust", archived: true, summary: null });
+      expect(stored).toMatchObject({
+        topics: ["tui", "rust"],
+        language: "Rust",
+        archived: true,
+        readmeOid: readme("c"),
+        summary: null,
+      });
       expect(iso(stored.createdAt)).toBe("2020-01-02T03:04:05.000Z");
       expect(Option.isNone(yield* db.repos.get(repoId(2199)))).toBe(true);
     }),
@@ -434,10 +461,168 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       expect(hits.map((hit) => hit.repo.id)).toEqual([current]);
     }),
   );
+
+  test.effect("keeps the newer summary when a summary of an older README is replayed", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const id = repoId(9001);
+      yield* db.repos.saveFacts({ ...facts(id), readmeOid: readme("b") });
+      yield* db.repos.saveSummary({ id, readmeOid: readme("b"), summary: "NEW", keywords: ["new"], kind: "app" });
+      yield* db.repos.saveEmbedding({ id, embedding: embedding({ 0: 1 }) });
+      yield* db.repos.saveSummary({ id, readmeOid: readme("a"), summary: "STALE", keywords: ["old"], kind: "cli" });
+
+      expect(Option.getOrThrow(yield* db.repos.get(id))).toMatchObject({
+        summary: "NEW",
+        readmeOid: readme("b"),
+        summaryReadmeOid: readme("b"),
+        keywords: ["new"],
+        kind: "app",
+        embeddingModel: model,
+      });
+      expect(yield* db.repos.unenriched([id])).toEqual([]);
+
+      yield* db.repos.saveFacts({ ...facts(id), readmeOid: readme("d") });
+      yield* db.repos.saveSummary({ id, readmeOid: readme("b"), summary: "LATE", keywords: [], kind: "app" });
+      expect(Option.getOrThrow(yield* db.repos.get(id)).summary).toBe("NEW");
+      expect(yield* db.repos.unenriched([id])).toEqual([id]);
+    }),
+  );
+
+  test.effect("writes no embedding through saveFacts or upsertRefs, whatever extra fields they carry", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const [viaFacts, viaRefs] = [repoId(9101), repoId(9102)];
+      const foreign = embedding({ 0: 1 }, otherModel);
+      const factsWithVector = { ...facts(viaFacts), embedding: [...foreign.vector], embeddingModel: otherModel };
+      const refWithVector = { ...ref(viaRefs), embedding: [...foreign.vector], embeddingModel: otherModel };
+      yield* db.repos.saveFacts(factsWithVector);
+      yield* db.repos.upsertRefs([refWithVector]);
+      expect(Option.getOrThrow(yield* db.repos.get(viaFacts)).embeddingModel).toBeNull();
+      expect(Option.getOrThrow(yield* db.repos.get(viaRefs)).embeddingModel).toBeNull();
+
+      yield* db.repos.saveEmbedding({ id: viaFacts, embedding: embedding({ 0: 1 }) });
+      yield* db.repos.saveFacts(factsWithVector);
+      expect(Option.getOrThrow(yield* db.repos.get(viaFacts)).embeddingModel).toBe(model);
+    }),
+  );
+
+  test.effect("keeps a star unstarred when a star older than the latest snapshot is replayed", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const id = accountId(9201);
+      const repo = repoId(9201);
+      yield* db.accounts.upsert(account(id));
+      yield* db.repos.upsertRefs([ref(repo)]);
+      yield* db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-10-01T00:00:00Z")] });
+      yield* db.stars.markUnstarred({ accountId: id, keep: [], at: at("2026-10-02T00:00:00Z") });
+      yield* db.stars.markUnstarred({ accountId: id, keep: [], at: at("2026-10-05T00:00:00Z") });
+      yield* db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-10-03T00:00:00Z")] });
+
+      expect(yield* db.stars.list(id)).toEqual([]);
+    }),
+  );
+
+  test.effect("ignores a snapshot older than a star", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const id = accountId(9301);
+      const repo = repoId(9301);
+      yield* db.accounts.upsert(account(id));
+      yield* db.repos.upsertRefs([ref(repo)]);
+      yield* db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-10-05T00:00:00Z")] });
+
+      expect(yield* db.stars.markUnstarred({ accountId: id, keep: [], at: at("2026-10-02T00:00:00Z") })).toBe(0);
+      expect((yield* db.stars.list(id)).map((star) => star.repoId)).toEqual([repo]);
+    }),
+  );
+
+  test.effect("keeps a write committed beside a transaction that fails", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const { withTransaction } = yield* Db.Transactions;
+      const [aborted, committed] = [repoId(9401), repoId(9402)];
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const failing = yield* Effect.forkChild(
+        withTransaction(
+          Effect.gen(function* () {
+            yield* db.repos.upsertRefs([ref(aborted)]);
+            yield* Deferred.succeed(started, undefined);
+            yield* Deferred.await(release);
+            return yield* Effect.fail("abort" as const);
+          }),
+        ).pipe(Effect.exit),
+      );
+      yield* Deferred.await(started);
+      const beside = yield* Effect.forkChild(withTransaction(db.repos.upsertRefs([ref(committed)])));
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(failing);
+      yield* Fiber.join(beside);
+
+      expect(Option.isNone(yield* db.repos.get(aborted))).toBe(true);
+      expect(Option.isSome(yield* db.repos.get(committed))).toBe(true);
+    }),
+  );
+
+  test.effect("matches either word of a websearch OR query", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const id = accountId(9501);
+      const repo = repoId(9501);
+      yield* db.accounts.upsert(account(id));
+      yield* db.repos.upsertRefs([ref(repo, "terminal")]);
+      yield* db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-01-01T00:00:00Z")] });
+
+      const hits = yield* db.search.hybrid({
+        scope: stars(id),
+        text: "terminal OR dashboard",
+        embedding: embedding({ 0: 1 }),
+        limit: 10,
+      });
+      expect(hits.map((hit) => [hit.repo.id, hit.textRank])).toEqual([[repo, 1]]);
+    }),
+  );
+
+  test.effect("does nothing for an empty star upsert, even for an unknown account", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const result = yield* db.stars.upsert({ accountId: accountId(999_996), stars: [] }).pipe(Effect.exit);
+      expect(Exit.isSuccess(result)).toBe(true);
+    }),
+  );
 };
 
 it.layer(TestDatabase.layerMemory({ embeddingModel: model }))("PGlite Db", sharedCases);
-it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgres Db", sharedCases);
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgres Db", (test) => {
+  sharedCases(test);
+
+  test.effect("never erases another connection's commit when a transaction fails", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const { withTransaction } = yield* Db.Transactions;
+      const [aborted, committed] = [repoId(9601), repoId(9602)];
+      const started = yield* Deferred.make<void>();
+      const otherCommitted = yield* Deferred.make<void>();
+      const failing = yield* Effect.forkChild(
+        withTransaction(
+          Effect.gen(function* () {
+            yield* db.repos.upsertRefs([ref(aborted)]);
+            yield* Deferred.succeed(started, undefined);
+            yield* Deferred.await(otherCommitted);
+            return yield* Effect.fail("abort" as const);
+          }),
+        ).pipe(Effect.exit),
+      );
+      yield* Deferred.await(started);
+      yield* withTransaction(db.repos.upsertRefs([ref(committed)]));
+      yield* Deferred.succeed(otherCommitted, undefined);
+      yield* Fiber.join(failing);
+
+      expect(Option.isNone(yield* db.repos.get(aborted))).toBe(true);
+      expect(Option.isSome(yield* db.repos.get(committed))).toBe(true);
+    }),
+  );
+});
 
 const password = "p3-test-secret";
 

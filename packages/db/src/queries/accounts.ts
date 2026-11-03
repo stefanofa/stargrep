@@ -1,5 +1,5 @@
 import { GitHubAccountId, Login } from "@stargrep/github/schemas";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import * as Arr from "effect/Array";
 import type * as DateTime from "effect/DateTime";
@@ -29,7 +29,6 @@ export interface StarSync {
   readonly accountId: GitHubAccountId;
   readonly etag: string | null;
   readonly at: DateTime.Utc;
-  readonly full: boolean;
 }
 
 export interface Queries {
@@ -39,18 +38,22 @@ export interface Queries {
 }
 
 const decodeAccounts = rowsDecoder(Account);
+const encodeFacts = writeEncoder(AccountFacts);
 const encodeTime = writeEncoder(Schema.DateTimeUtcFromDate);
 
 export const make = Effect.gen(function* () {
   const { run } = yield* Postgres.Postgres;
 
   return {
-    upsert: (facts) => {
-      const { id: _, ...changes } = facts;
-      return run("accounts.upsert", (db) =>
-        db.insert(githubAccounts).values(facts).onConflictDoUpdate({ target: githubAccounts.id, set: changes }),
-      );
-    },
+    upsert: (facts) =>
+      encodeFacts(facts).pipe(
+        Effect.flatMap((values) => {
+          const { id: _, ...changes } = values;
+          return run("accounts.upsert", (db) =>
+            db.insert(githubAccounts).values(values).onConflictDoUpdate({ target: githubAccounts.id, set: changes }),
+          );
+        }),
+      ),
     get: (id) =>
       run("accounts.get", (db) => db.select().from(githubAccounts).where(eq(githubAccounts.id, id))).pipe(
         Effect.flatMap(decodeAccounts("accounts.get")),
@@ -62,11 +65,7 @@ export const make = Effect.gen(function* () {
           run("accounts.recordStarSync", (db) =>
             db
               .update(githubAccounts)
-              .set({
-                starsEtag: sync.etag,
-                starsSyncedAt: at,
-                starsFullSyncedAt: sync.full ? at : sql`${githubAccounts.starsFullSyncedAt}`,
-              })
+              .set({ starsEtag: sync.etag, starsSyncedAt: at })
               .where(eq(githubAccounts.id, sync.accountId))
               .returning({ id: githubAccounts.id }),
           ),

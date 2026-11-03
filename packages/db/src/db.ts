@@ -93,6 +93,7 @@ const nodePostgres = (connectionString: Redacted.Redacted<string>) =>
             };
           },
           isDatabaseError: (error) => error instanceof pg.DatabaseError,
+          singleConnection: false,
         }),
       ),
     ),

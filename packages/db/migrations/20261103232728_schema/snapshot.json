@@ -2,7 +2,7 @@
   "type": "diff",
   "version": "9",
   "dialect": "postgres",
-  "id": "7fbc0d65-9a59-4f1b-905d-5cc9f5eda0c2",
+  "id": "ef753ec6-1306-497f-95ae-f342217be3ec",
   "prevIds": [
     "d4617405-ae5a-457d-a33c-32891b073b1b"
   ],
@@ -1758,6 +1758,22 @@
       "row": {
         "schema": "public",
         "table": "repos",
+        "name": "summary_readme_oid",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
         "name": "keywords",
         "type": "jsonb",
         "typeSchema": null,
@@ -1982,6 +1998,22 @@
         "type": "timestamp with time zone",
         "typeSchema": null,
         "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "stars",
+        "name": "observed_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
         "dimensions": 0,
         "default": null,
         "generated": null,

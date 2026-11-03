@@ -1,5 +1,5 @@
 import { Login, ObjectId, RepoId, RepoName } from "@stargrep/github/schemas";
-import { eq, getColumns, sql } from "drizzle-orm";
+import { and, eq, getColumns, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
@@ -20,6 +20,7 @@ const RepoRow = createSelectSchema(repos, {
   createdAt: NullableTime,
   pushedAt: NullableTime,
   readmeOid: Schema.NullOr(ObjectId),
+  summaryReadmeOid: Schema.NullOr(ObjectId),
   keywords: Schema.Array(Schema.String),
   embeddingModel: Schema.NullOr(EmbeddingModelId),
 });
@@ -30,7 +31,8 @@ export type Repo = typeof Repo.Type;
 const { embedding: _embedding, search: _search, ...columns } = getColumns(repos);
 export const repoColumns = columns;
 
-export type RepoRef = Pick<Repo, "id" | "owner" | "name">;
+const RepoRef = Schema.Struct(Struct.pick(Repo.fields, ["id", "owner", "name"]));
+export type RepoRef = typeof RepoRef.Type;
 
 const RepoFacts = Schema.Struct(
   Struct.pick(Repo.fields, [
@@ -45,6 +47,7 @@ const RepoFacts = Schema.Struct(
     "createdAt",
     "pushedAt",
     "archived",
+    "readmeOid",
   ]),
 );
 export type RepoFacts = typeof RepoFacts.Type;
@@ -77,10 +80,11 @@ export interface Queries {
 const batchSize = 1000;
 const decodeRepos = rowsDecoder(Repo);
 const decodeIds = rowsDecoder(Schema.Struct({ id: RepoId }));
+const encodeRefs = writeEncoder(Schema.Array(RepoRef));
 const encodeFacts = writeEncoder(RepoFacts);
 const encodeSummary = writeEncoder(RepoSummary);
 
-const requireUpdated =
+const requireFound =
   (id: RepoId) =>
   (rows: ReadonlyArray<unknown>): Effect.Effect<void, RepoNotFound> =>
     rows.length === 0 ? Effect.fail(new RepoNotFound({ repoId: id })) : Effect.void;
@@ -94,15 +98,19 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
         Effect.forEach(
           Arr.chunksOf(refs, batchSize),
           (chunk) =>
-            run("repos.upsertRefs", (db) =>
-              db
-                .insert(repos)
-                .values([...chunk])
-                .onConflictDoUpdate({
-                  target: repos.id,
-                  set: { owner: excluded(repos.owner), name: excluded(repos.name) },
-                  setWhere: sql`(${repos.owner}, ${repos.name}) is distinct from (${excluded(repos.owner)}, ${excluded(repos.name)})`,
-                }),
+            encodeRefs(chunk).pipe(
+              Effect.flatMap((values) =>
+                run("repos.upsertRefs", (db) =>
+                  db
+                    .insert(repos)
+                    .values([...values])
+                    .onConflictDoUpdate({
+                      target: repos.id,
+                      set: { owner: excluded(repos.owner), name: excluded(repos.name) },
+                      setWhere: sql`(${repos.owner}, ${repos.name}) is distinct from (${excluded(repos.owner)}, ${excluded(repos.name)})`,
+                    }),
+                ),
+              ),
             ),
           { discard: true },
         ),
@@ -112,7 +120,9 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
         db
           .select({ id: repos.id })
           .from(repos)
-          .where(sql`${repos.id} = any(${sql.param([...ids])}::bigint[]) and ${repos.summary} is null`),
+          .where(
+            sql`${repos.id} = any(${sql.param([...ids])}::bigint[]) and (${repos.summary} is null or ${repos.summaryReadmeOid} is distinct from ${repos.readmeOid})`,
+          ),
       ).pipe(
         Effect.flatMap(decodeIds("repos.unenriched")),
         Effect.map((rows) => {
@@ -131,16 +141,22 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
       ),
     saveSummary: (summary) =>
       encodeSummary(summary).pipe(
-        Effect.flatMap(({ id, ...values }) =>
+        Effect.flatMap(({ id, readmeOid, ...values }) =>
           run("repos.saveSummary", (db) =>
             db
               .update(repos)
-              .set({ ...values, embedding: null, embeddingModel: null })
-              .where(eq(repos.id, id))
+              .set({ ...values, summaryReadmeOid: readmeOid, embedding: null, embeddingModel: null })
+              .where(and(eq(repos.id, id), sql`${repos.readmeOid} is not distinct from ${readmeOid}`))
               .returning({ id: repos.id }),
           ),
         ),
-        Effect.flatMap(requireUpdated(summary.id)),
+        Effect.flatMap((rows) =>
+          rows.length > 0
+            ? Effect.void
+            : run("repos.saveSummary", (db) =>
+                db.select({ id: repos.id }).from(repos).where(eq(repos.id, summary.id)),
+              ).pipe(Effect.flatMap(requireFound(summary.id))),
+        ),
       ),
     saveEmbedding: (input) =>
       requireModel(configuredModel, input.embedding).pipe(
@@ -153,7 +169,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
               .returning({ id: repos.id }),
           ),
         ),
-        Effect.flatMap(requireUpdated(input.id)),
+        Effect.flatMap(requireFound(input.id)),
       ),
     get: (id) =>
       run("repos.get", (db) => db.select(repoColumns).from(repos).where(eq(repos.id, id))).pipe(

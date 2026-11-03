@@ -137,10 +137,12 @@ const prepare = withClient(adminUrl, async (client) => {
         [words, model, repoCount],
       );
       await client.query(
-        `insert into stars (account_id, repo_id, starred_at, source)
-         select a, r.id, now() - random() * interval '1000 days', 'api'
+        `insert into stars (account_id, repo_id, starred_at, observed_at, source)
+         select a, r.id, r.starred_at, r.starred_at, 'api'
          from generate_series(1, $1::int) a
-         cross join lateral (select id from repos where a > 0 order by random() limit $2) r`,
+         cross join lateral (
+           select id, now() - random() * interval '1000 days' as starred_at from repos where a > 0 order by random() limit $2
+         ) r`,
         [accountCount, starCount],
       );
       await client.query("vacuum analyze");

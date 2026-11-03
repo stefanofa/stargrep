@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
+import * as Semaphore from "effect/Semaphore";
 import { DbQueryFailed, type Operation } from "./errors.ts";
 
 export type Database = PgAsyncDatabase<PgQueryResultHKT>;
@@ -18,6 +19,7 @@ export interface Driver {
   readonly database: Database;
   readonly connect: () => PromiseLike<TransactionClient>;
   readonly isDatabaseError: (error: unknown) => error is { readonly code?: string | undefined };
+  readonly singleConnection: boolean;
 }
 
 const queryTimeout = "10 seconds";
@@ -63,6 +65,10 @@ export class Postgres extends Context.Service<
 >()("@stargrep/db/postgres") {}
 
 export const make = (driver: Driver) => {
+  const turn = driver.singleConnection
+    ? Semaphore.makeUnsafe(1).withPermits(1)
+    : <A, E, R>(effect: Effect.Effect<A, E, R>) => effect;
+
   const attempt = <A>(operation: Operation, evaluate: () => PromiseLike<A>) =>
     Effect.promise(evaluate).pipe(
       Effect.catchDefect((defect) =>
@@ -80,7 +86,10 @@ export const make = (driver: Driver) => {
   const run = Effect.fnUntraced(
     function* <A>(operation: Operation, query: (db: Database) => PromiseLike<A>) {
       const transaction = yield* CurrentTransaction;
-      return yield* attempt(operation, () => query(Option.getOrElse(transaction, () => driver.database)));
+      return yield* Option.match(transaction, {
+        onNone: () => turn(attempt(operation, () => query(driver.database))),
+        onSome: (database) => attempt(operation, () => query(database)),
+      });
     },
     (effect, operation) => Effect.withSpan(effect, `Db.${operation}`),
   );
@@ -102,11 +111,13 @@ export const make = (driver: Driver) => {
     effect: Effect.Effect<A, E, R>,
   ) {
     if (Option.isSome(yield* CurrentTransaction)) return yield* effect;
-    return yield* Effect.acquireUseRelease(
-      begin,
-      (client) => Effect.provideService(effect, CurrentTransaction, Option.some(client.database)),
-      (client, exit) =>
-        Exit.isSuccess(exit) ? finish(client, "commit") : finish(client, "rollback").pipe(Effect.ignore),
+    return yield* turn(
+      Effect.acquireUseRelease(
+        begin,
+        (client) => Effect.provideService(effect, CurrentTransaction, Option.some(client.database)),
+        (client, exit) =>
+          Exit.isSuccess(exit) ? finish(client, "commit") : finish(client, "rollback").pipe(Effect.ignore),
+      ),
     );
   });
 
