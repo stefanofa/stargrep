@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 import { Client } from "pg";
 
 class PostgresFailed extends Schema.TaggedError<PostgresFailed, { readonly brand: unique symbol }>()("PostgresFailed", {
-  operation: Schema.Literals(["health check", "transaction"]),
+  operation: Schema.Literals(["health check", "transaction", "sleep"]),
   cause: Schema.Defect(),
 }) {
   override get message(): string {

@@ -66,6 +66,9 @@ const decodePing = Schema.decodeUnknownEffect(Schema.Struct({ id: Schema.String 
 const decodeCount = Schema.decodeUnknownOption(
   Schema.NumberFromString.pipe(Schema.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 100 }))),
 );
+const decodeSeconds = Schema.decodeUnknownOption(
+  Schema.NumberFromString.pipe(Schema.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 60 }))),
+);
 const decodeTransactionRow = Schema.decodeUnknownEffect(Schema.Struct({ pid: Schema.Int, sum: Schema.Int }));
 
 const encoder = new TextEncoder();
@@ -123,6 +126,13 @@ export default Cloudflare.Worker(
       );
     });
 
+    // Runs pg_sleep through Hyperdrive, so a check can watch pg_stat_activity for what happens after the Worker gives up.
+    const runSleep = Effect.fn("DebugWorker.runSleep")(function* (seconds: number) {
+      return yield* withClient(Redacted.value(yield* database.connectionString), "sleep", (client) =>
+        Effect.tryPromise(() => client.query("select pg_sleep($1)", [seconds])),
+      );
+    });
+
     const withinBudget = Effect.fn("DebugWorker.withinBudget")(function* <A, E, R>(
       units: number,
       work: Effect.Effect<A, E, R>,
@@ -156,6 +166,19 @@ export default Cloudflare.Worker(
                 Effect.logError(error.message, error.cause).pipe(
                   Effect.andThen(HttpServerResponse.json({ error: error.message }, { status: 503 })),
                 ),
+            }),
+          ),
+        );
+      }
+      if (method === "POST" && url.pathname === "/sleep") {
+        const seconds = decodeSeconds(url.searchParams.get("seconds") ?? "");
+        if (Option.isNone(seconds)) return HttpServerResponse.empty({ status: 400 });
+        return yield* withinBudget(
+          1,
+          runSleep(seconds.value).pipe(
+            Effect.andThen(HttpServerResponse.json({ slept: seconds.value })),
+            Effect.catchTags({
+              PostgresFailed: (error) => HttpServerResponse.json({ error: error.message }, { status: 503 }),
             }),
           ),
         );
