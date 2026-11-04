@@ -8,6 +8,7 @@
   "scripts": {
     "bench": "bun scripts/bench.ts",
     "enrich": "bun scripts/enrich.ts",
+    "search": "bun scripts/search.ts",
     "sync": "bun scripts/sync.ts",
     "typecheck": "effect-tsgo tsc -p ."
   },

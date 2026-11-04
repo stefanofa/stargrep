@@ -6,6 +6,7 @@
     ".": "./src/db.ts",
     "./embedding": "./src/embedding.ts",
     "./errors": "./src/errors.ts",
+    "./local-database": "./src/local-database.ts",
     "./memory": "./src/memory.ts",
     "./migrations": "./src/migrations.ts",
     "./test-database": "./test/database.ts"

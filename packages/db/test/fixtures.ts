@@ -1,7 +1,7 @@
 import { GitHubAccountId, Login, ObjectId, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import type * as Db from "../src/db.ts";
+import * as Db from "../src/db.ts";
 import { Embedding, EmbeddingModelId } from "../src/embedding.ts";
 
 export const model = Schema.decodeSync(EmbeddingModelId)("test/embedding-1024");
@@ -60,3 +60,7 @@ export const starred = (id: RepoId, starredAt: string, observedAt = starredAt): 
   observedAt: at(observedAt),
   source: "api",
 });
+
+export const hybrid = (
+  search: Pick<Db.HybridSearch, "scope" | "text" | "embedding" | "limit"> & Partial<Db.HybridSearch>,
+): Db.HybridSearch => ({ name: null, metrics: [], filters: Db.noFilters, rankBy: null, ...search });

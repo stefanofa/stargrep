@@ -16,6 +16,7 @@ import {
   at,
   embedding,
   facts,
+  hybrid,
   iso,
   login,
   model,
@@ -46,6 +47,16 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       const stored = Option.getOrThrow(yield* db.accounts.get(id));
       expect(stored).toMatchObject({ id, type: "org", login: "after", followers: 7, starsEtag: null });
       expect(Option.isNone(yield* db.accounts.get(accountId(999_999)))).toBe(true);
+    }),
+  );
+
+  test.effect("finds an account by login in any case", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const id = accountId(102);
+      yield* db.accounts.upsert(account(id, { login: login("Octo-Cat") }));
+      expect(Option.getOrThrow(yield* db.accounts.byLogin(login("octo-cat"))).id).toBe(id);
+      expect(Option.isNone(yield* db.accounts.byLogin(login("nobody-here")))).toBe(true);
     }),
   );
 
@@ -240,16 +251,19 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       });
 
       const query = { scope: stars(owner), text: "", embedding: embedding({ 0: 1 }) };
-      const hits = yield* db.search.hybrid({ ...query, limit: 10 });
+      const hits = yield* db.search.hybrid(hybrid({ ...query, limit: 10 }));
       expect(hits.map((hit) => [hit.repo.id, hit.textRank, hit.vectorRank])).toEqual([
         [same, null, 1],
         [close, null, 2],
         [far, null, 3],
       ]);
-      expect((yield* db.search.hybrid({ ...query, limit: 2 })).map((hit) => hit.repo.id)).toEqual([same, close]);
+      expect((yield* db.search.hybrid(hybrid({ ...query, limit: 2 }))).map((hit) => hit.repo.id)).toEqual([
+        same,
+        close,
+      ]);
 
       const refused = yield* db.search
-        .hybrid({ ...query, embedding: embedding({ 0: 1 }, otherModel), limit: 10 })
+        .hybrid(hybrid({ ...query, embedding: embedding({ 0: 1 }, otherModel), limit: 10 }))
         .pipe(Effect.flip);
       expect(refused._tag).toBe("EmbeddingModelMismatch");
     }),
@@ -276,12 +290,14 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         stars: [textOnly, both, vectorOnly, neither].map((repo) => starred(repo, "2026-01-01T00:00:00Z")),
       });
 
-      const hits = yield* db.search.hybrid({
-        scope: stars(id),
-        text: "terminal dashboard",
-        embedding: embedding({ 0: 1 }),
-        limit: 10,
-      });
+      const hits = yield* db.search.hybrid(
+        hybrid({
+          scope: stars(id),
+          text: "terminal dashboard",
+          embedding: embedding({ 0: 1 }),
+          limit: 10,
+        }),
+      );
       expect(hits[0]?.repo.id).toBe(both);
       expect(hits[0]?.textRank).not.toBeNull();
       expect(hits[0]?.vectorRank).toBe(1);
@@ -379,7 +395,9 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       });
       yield* database.query(`update repos set embedding_model = 'old/model' where id = $1`, [stale]);
 
-      const hits = yield* db.search.hybrid({ scope: stars(id), text: "", embedding: embedding({ 0: 1 }), limit: 10 });
+      const hits = yield* db.search.hybrid(
+        hybrid({ scope: stars(id), text: "", embedding: embedding({ 0: 1 }), limit: 10 }),
+      );
       expect(hits.map((hit) => hit.repo.id)).toEqual([current]);
     }),
   );
@@ -529,12 +547,14 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.repos.upsertRefs([ref(repo, "terminal")]);
       yield* db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-01-01T00:00:00Z")] });
 
-      const hits = yield* db.search.hybrid({
-        scope: stars(id),
-        text: "terminal OR dashboard",
-        embedding: embedding({ 0: 1 }),
-        limit: 10,
-      });
+      const hits = yield* db.search.hybrid(
+        hybrid({
+          scope: stars(id),
+          text: "terminal OR dashboard",
+          embedding: embedding({ 0: 1 }),
+          limit: 10,
+        }),
+      );
       expect(hits.map((hit) => [hit.repo.id, hit.textRank])).toEqual([[repo, 1]]);
     }),
   );

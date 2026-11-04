@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 export const embeddingDimensions = 1024;
 
@@ -14,6 +15,23 @@ export type EmbeddingVector = typeof EmbeddingVector.Type;
 
 export const Embedding = Schema.Struct({ model: EmbeddingModelId, vector: EmbeddingVector });
 export type Embedding = typeof Embedding.Type;
+
+export const Float32Vector = Schema.Uint8ArrayFromBase64.pipe(
+  Schema.check(
+    Schema.makeFilter((bytes: Uint8Array) =>
+      bytes.length === embeddingDimensions * 4
+        ? undefined
+        : `expected ${embeddingDimensions * 4} bytes of float32, got ${bytes.length}`,
+    ),
+  ),
+  Schema.decodeTo(
+    Schema.Array(Schema.Finite),
+    SchemaTransformation.transform<ReadonlyArray<number>, Uint8Array>({
+      decode: (bytes) => Array.from(new Float32Array(bytes.slice().buffer)),
+      encode: (vector) => new Uint8Array(Float32Array.from(vector).buffer),
+    }),
+  ),
+);
 
 export class EmbeddingModelMismatch extends Schema.TaggedError<
   EmbeddingModelMismatch,
