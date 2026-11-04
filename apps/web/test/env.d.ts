@@ -8,5 +8,6 @@ declare namespace Cloudflare {
     readonly SYNC_STARS: Queue<unknown>;
     readonly SYNC_PER_CALLER: RateLimit;
     readonly SYNC_OVERALL: RateLimit;
+    readonly WORKER: Fetcher;
   }
 }

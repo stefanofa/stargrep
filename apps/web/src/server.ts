@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
 import type { DeclaredEnv } from "./server/env.ts";
+import { withHealth } from "./server/health.ts";
 import { layerRequest } from "./server/layers.ts";
 import { makeServer } from "./server/serve.ts";
 
@@ -25,5 +26,5 @@ const serve = makeServer((request) => {
 }, Tracing.tracer);
 
 export default {
-  fetch: (request: Request) => serve(request) ?? start.fetch(request),
+  fetch: withHealth(bindings, (request) => serve(request) ?? start.fetch(request)),
 };

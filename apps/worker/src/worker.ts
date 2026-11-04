@@ -9,16 +9,13 @@ import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import { budgetShareName, stageBudgetShare } from "./budget-share.ts";
 import { Database, DatabaseMigrations } from "./database.ts";
+import { prodWorkerHosting } from "./domain.ts";
 import { tokenGate } from "./github-gate.ts";
 import { healthResponse } from "./health.ts";
 import * as Layers from "./layers.ts";
 import * as Queues from "./queues.ts";
 import { Readmes } from "./readmes.ts";
 import { requireStageSecrets } from "./secrets.ts";
-
-// The stargrep.com zone already exists in the account, so the domain only references it and never creates or deletes it.
-const zone = "stargrep.com";
-const prodDomain = { name: zone, zoneName: zone, redirects: [`www.${zone}`] };
 
 export default class Worker extends Cloudflare.Worker<Worker>()(
   "Worker",
@@ -36,7 +33,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
       },
       placement: { region: "aws:us-east-1" },
       observability: { enabled: true, logs: { enabled: true, invocationLogs: true }, traces: { enabled: true } },
-      ...(stage === "prod" ? { domain: prodDomain } : {}),
+      ...(stage === "prod" ? prodWorkerHosting : {}),
     };
   }),
   Effect.gen(function* () {

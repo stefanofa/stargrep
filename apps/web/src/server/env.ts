@@ -6,6 +6,7 @@ export interface WebEnv {
   readonly SYNC_STARS: Queue<unknown>;
   readonly SYNC_PER_CALLER: RateLimit;
   readonly SYNC_OVERALL: RateLimit;
+  readonly WORKER: Fetcher;
   readonly AI_GATEWAY_API_KEY?: string;
 }
 

@@ -18,7 +18,8 @@ export default Alchemy.Stack(
     const { stage } = yield* Alchemy.Stack;
     const worker = yield* Worker;
     const web = yield* Website;
-    if (stage === "prod") return { url: worker.url, webUrl: web.url };
+    // In prod a zone route serves the web Worker on the main Worker's hostname, so it has no URL of its own.
+    if (stage === "prod") return { url: worker.url, webUrl: worker.url };
 
     const debug = yield* DebugWorker;
     const github = yield* GitHub.GitHubEnv;

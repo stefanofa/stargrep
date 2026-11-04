@@ -15,6 +15,21 @@ export default defineConfig({
           SYNC_PER_CALLER: { namespace_id: "1", simple: { limit: 5, period: 60 } },
           SYNC_OVERALL: { namespace_id: "2", simple: { limit: 60, period: 60 } },
         },
+        serviceBindings: { WORKER: "main-worker" },
+        workers: [
+          {
+            // Stands in for the main Worker and echoes what it receives, so a test sees exactly what was forwarded.
+            name: "main-worker",
+            modules: true,
+            compatibilityDate: "2026-11-01",
+            script: `export default {
+              fetch: (request) => Response.json(
+                { method: request.method, url: request.url, probe: request.headers.get("x-probe") },
+                { headers: { "x-answered-by": "main" } },
+              ),
+            };`,
+          },
+        ],
       },
     }),
   ],
