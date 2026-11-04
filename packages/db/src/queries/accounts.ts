@@ -1,5 +1,5 @@
 import { GitHubAccountId, Login } from "@stargrep/github/schemas";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import * as Arr from "effect/Array";
 import type * as DateTime from "effect/DateTime";
@@ -87,7 +87,10 @@ export const make = Effect.gen(function* () {
           run("accounts.recordStarSync", (db) =>
             db
               .update(githubAccounts)
-              .set({ starsEtag: sync.etag, starsSyncedAt: at })
+              .set({
+                starsEtag: sql`case when ${githubAccounts.starsSyncedAt} > ${at}::timestamptz then ${githubAccounts.starsEtag} else ${sync.etag} end`,
+                starsSyncedAt: sql`greatest(${githubAccounts.starsSyncedAt}, ${at}::timestamptz)`,
+              })
               .where(eq(githubAccounts.id, sync.accountId))
               .returning({ id: githubAccounts.id }),
           ),
