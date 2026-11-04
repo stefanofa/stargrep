@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { readStageOutput } from "./stage-output.ts";
 
@@ -19,16 +20,33 @@ const Transaction = Schema.Struct({ pid: Schema.Int, sum: Schema.Int });
 type Check = { readonly check: string; readonly ok: boolean; readonly detail: unknown };
 const check = (name: string, ok: boolean, detail: unknown): Check => ({ check: name, ok, detail });
 
+// Until a new workers.dev URL reaches every edge machine, some requests get Cloudflare's own HTML 404 page instead of
+// the Worker, for over a minute under this load. The Worker never answers with HTML, so those requests are sent again.
+class NotRoutedYet extends Schema.TaggedError<NotRoutedYet>()("NotRoutedYet", {}) {}
+
 const call = Effect.fn("StageSmoke.call")(function* (
   method: "GET" | "POST",
   path: string,
   authorization: string | null = `Bearer ${debugToken}`,
 ) {
-  const request = HttpClientRequest.make(method)(new URL(path, debugUrl));
-  const response = yield* HttpClient.execute(
-    authorization === null ? request : HttpClientRequest.setHeader(request, "authorization", authorization),
+  const url = new URL(path, debugUrl);
+  const request = HttpClientRequest.make(method)(url);
+  const send = Effect.gen(function* () {
+    const response = yield* HttpClient.execute(
+      authorization === null ? request : HttpClientRequest.setHeader(request, "authorization", authorization),
+    );
+    if (response.status === 404 && response.headers["content-type"]?.startsWith("text/html")) {
+      return yield* new NotRoutedYet();
+    }
+    return { status: response.status, body: yield* response.text };
+  });
+  return yield* send.pipe(
+    Effect.retry({ while: (error) => error._tag === "NotRoutedYet", schedule: Schedule.spaced("1 second") }),
+    Effect.timeoutOrElse({
+      duration: "60 seconds",
+      orElse: () => Effect.die(new Error(`${method} ${url} got Cloudflare's 404 page for 60 s, not the Worker`)),
+    }),
   );
-  return { status: response.status, body: yield* response.text };
 });
 
 const decode = <S extends Schema.Top>(schema: S, body: string) =>
@@ -72,6 +90,10 @@ const unauthenticated = Effect.gen(function* () {
       results.every(({ status }) => status === 401),
       {
         statuses: Object.fromEntries(Object.entries(statuses).map(([status, calls]) => [status, calls?.length])),
+        unexpected: results
+          .filter(({ status }) => status !== 401)
+          .slice(0, 3)
+          .map(({ status, body }) => `${status} ${body.slice(0, 120)}`),
       },
     ),
     check("unauthenticated calls change no counter", counterAfter.count === counterBefore.count, {
