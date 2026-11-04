@@ -1,0 +1,9 @@
+{
+  "extends": "@stargrep/config/tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["bun"]
+  },
+  "include": ["*.test.ts"]
+}
