@@ -25,6 +25,17 @@ export default Alchemy.Stack(
       pgVersion: 17,
       historyRetentionSeconds: 21600,
     }).pipe(RemovalPolicy.retain());
-    return { euCentralProjectId: euCentral.projectId, usEastProjectId: usEast.projectId };
+    // Preview branches live in their own project, so the preview Neon key can be scoped away from prod's branch.
+    const previewsUsEast = yield* Neon.Project("ProjectPreviewsUsEast", {
+      name: "stargrep-previews-us-east",
+      region: "aws-us-east-1",
+      pgVersion: 17,
+      historyRetentionSeconds: 0,
+    }).pipe(RemovalPolicy.retain());
+    return {
+      euCentralProjectId: euCentral.projectId,
+      usEastProjectId: usEast.projectId,
+      previewsUsEastProjectId: previewsUsEast.projectId,
+    };
   }),
 );
