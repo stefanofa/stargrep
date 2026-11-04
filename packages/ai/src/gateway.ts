@@ -219,10 +219,21 @@ export const layerTextGeneration = (model: string, options: Partial<TextOptions>
                 }),
               catch: fromSdkError("generate", model),
             }).pipe(
-              Effect.map((result) => ({
-                output: result.output,
-                usage: { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens },
-              })),
+              Effect.flatMap((result) =>
+                // The SDK's output getter throws when the last step stopped without text, such as on a length limit.
+                Effect.try({
+                  try: () => ({
+                    output: result.output,
+                    usage: { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens },
+                  }),
+                  catch: () =>
+                    new AiOutputInvalid({
+                      operation: "generate",
+                      model,
+                      detail: `the model returned no output, finish reason ${result.finishReason}`,
+                    }),
+                }),
+              ),
             ),
           ...(batch ? { batch: { timeout: batchTimeout, run: runBatch(provider, model) } } : {}),
         }),

@@ -35,6 +35,12 @@ const textResult = (text: string): GenerateResult => ({
   warnings: [],
 });
 
+const noTextResult: GenerateResult = {
+  ...textResult(""),
+  content: [],
+  finishReason: { unified: "length", raw: "max_tokens" },
+};
+
 const unused = () => {
   throw new Error("not used in this test");
 };
@@ -116,6 +122,16 @@ describe("gateway text generation", () => {
         "Model 'test/model' returned output that does not match the expected shape in 'generate': the model did not return a JSON object",
       );
     }).pipe(Effect.provide(textLayer(async () => textResult("Sure! Here is the summary you asked for.")))),
+  );
+
+  it.effect("fails with AiOutputInvalid naming the finish reason when the model returns no text", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(Summarize.summarize(repo));
+      expect(error).toMatchObject({
+        _tag: "AiOutputInvalid",
+        detail: "the model returned no output, finish reason length",
+      });
+    }).pipe(Effect.provide(textLayer(async () => noTextResult))),
   );
 
   it.effect("fails with AiOutputInvalid when the JSON does not match the schema", () =>
@@ -620,6 +636,23 @@ describe("gateway without the batch API", () => {
         ),
       );
     }).pipe(Effect.provide(layer), Effect.withTracer(tracer));
+  });
+
+  it.effect("fails only the prompt whose call returns no output", () => {
+    let calls = 0;
+    const layer = textLayer(
+      () => Promise.resolve(++calls === 2 ? noTextResult : textResult(JSON.stringify(validSummary))),
+      Models.summaryModel,
+      { batch: false },
+    );
+    return Effect.gen(function* () {
+      const results = yield* Summarize.summarizeBatch([repo, { ...repo, fullName: "other/repo" }, repo]);
+      expect(results.map((result) => (Result.isSuccess(result) ? "summary" : result.failure._tag))).toEqual([
+        "summary",
+        "AiOutputInvalid",
+        "summary",
+      ]);
+    }).pipe(Effect.provide(layer));
   });
 });
 
