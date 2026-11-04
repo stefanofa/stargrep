@@ -12,6 +12,7 @@ export const Operation = Schema.Literals([
   "repos.upsertRefs",
   "repos.pendingEnrichment",
   "repos.saveFacts",
+  "repos.saveCounts",
   "repos.saveSummary",
   "repos.saveEmbedding",
   "repos.get",

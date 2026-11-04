@@ -6,6 +6,7 @@ import * as SummarizeFake from "@stargrep/ai/summarize.fake";
 import * as TextGeneration from "@stargrep/ai/text-generation";
 import * as Db from "@stargrep/db";
 import { EmbeddingModelId } from "@stargrep/db/embedding";
+import { DbQueryFailed } from "@stargrep/db/errors";
 import * as TestDatabase from "@stargrep/db/test-database";
 import * as GitHubFake from "@stargrep/github/github.fixture";
 import { ObjectId, Repo } from "@stargrep/github/schemas";
@@ -34,6 +35,8 @@ interface Remote {
   readonly description: string | null;
   readonly archived?: boolean;
   readonly readme?: { readonly oid: ObjectId; readonly text: string };
+  readonly stars?: number;
+  readonly forks?: number;
 }
 
 const remotes = new Map<number, Remote>();
@@ -53,8 +56,8 @@ const node = (n: number, remote: Remote) => ({
   pushedAt: "2026-10-01T00:00:00Z",
   isArchived: remote.archived ?? false,
   isFork: false,
-  stargazerCount: 10,
-  forkCount: 1,
+  stargazerCount: remote.stars ?? 10,
+  forkCount: remote.forks ?? 1,
   root: { entries: remote.readme === undefined ? [] : [{ name: "README.md", type: "blob", oid: remote.readme.oid }] },
 });
 
@@ -147,6 +150,11 @@ const enrich = (n: number) =>
 
 const get = (n: number) => Effect.flatMap(Db.Db, (db) => Effect.map(db.repos.get(id(n)), Option.getOrThrow));
 
+const countsOf = (n: number) =>
+  Effect.flatMap(TestDatabase.TestDatabase, (database) =>
+    database.query("select stars, forks from repo_metrics where repo_id = $1", [n]),
+  );
+
 const resummarize = (n: number) =>
   Effect.gen(function* () {
     const db = yield* Db.Db;
@@ -186,6 +194,35 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       const blobs = yield* BlobStore.BlobStore;
       expect(Option.getOrThrow(yield* blobs.get(EnrichRepo.readmeKey(oid("a"))))).toContain("![logo](logo.png)");
       expect(yield* db.repos.pendingEnrichment([id(1)])).toEqual([]);
+    }),
+  );
+
+  it.effect("keeps the star and fork counts and refreshes them on a retry after their write failed", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      remotes.set(40, { description: "Counter", stars: 100, forks: 2, readme: { oid: oid("a"), text: "# A" } });
+      yield* enrich(40);
+      expect(yield* countsOf(40)).toEqual([{ stars: 100, forks: 2 }]);
+
+      yield* db.repos.saveFacts({ ...(yield* get(40)), readmeOid: oid("b") });
+      remotes.set(40, { description: "Counter", stars: 200, forks: 3, readme: { oid: oid("a"), text: "# A" } });
+      const failing = Db.Db.of({
+        ...db,
+        repos: {
+          ...db.repos,
+          saveCounts: () =>
+            Effect.fail(new DbQueryFailed({ operation: "repos.saveCounts", reason: "transport", sqlState: null })),
+        },
+      });
+      const withFailingCounts = Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(Layer.succeed(Db.Db, failing)));
+      expect(yield* Effect.flip(enrich(40).pipe(Effect.provide(withFailingCounts)))).toMatchObject({
+        _tag: "DbQueryFailed",
+        operation: "repos.saveCounts",
+      });
+      expect(yield* db.repos.pendingEnrichment([id(40)])).toEqual([id(40)]);
+
+      expect(yield* enrich(40)).toEqual({ _tag: "Unchanged", id: id(40) });
+      expect(yield* countsOf(40)).toEqual([{ stars: 200, forks: 3 }]);
     }),
   );
 

@@ -16,7 +16,15 @@ import * as SyncRequests from "./queries/sync-requests.ts";
 import * as Usage from "./queries/usage.ts";
 
 export type { Account, AccountFacts, OwnedRepoStars, StarSync } from "./queries/accounts.ts";
-export type { Repo, RepoEmbedding, RepoFacts, RepoRef, RepoSummary, StoredRepo } from "./queries/repos.ts";
+export type {
+  Repo,
+  RepoCounts,
+  RepoEmbedding,
+  RepoFacts,
+  RepoRef,
+  RepoSummary,
+  StoredRepo,
+} from "./queries/repos.ts";
 export type {
   HybridSearch,
   MetricBound,

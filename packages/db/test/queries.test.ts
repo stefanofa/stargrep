@@ -199,6 +199,21 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     }),
   );
 
+  test.effect("saves star and fork counts and replaces them on the next save", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const id = repoId(2150);
+      yield* db.repos.saveFacts(facts(id));
+      yield* db.repos.saveCounts({ id, stars: 1200, forks: 30 });
+      yield* db.repos.saveCounts({ id, stars: 1250, forks: 31 });
+
+      expect(yield* database.query("select stars, forks from repo_metrics where repo_id = $1", [id])).toEqual([
+        { stars: 1250, forks: 31 },
+      ]);
+    }),
+  );
+
   test.effect("saves repo facts and reads them back", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
