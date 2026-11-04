@@ -4,6 +4,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schema from "effect/Schema";
+import { isCloudflare404, NotSettled, untilRouted, waitUntilReady } from "./fresh-stage.ts";
 import { readStageOutput } from "./stage-output.ts";
 
 const [stage, ...alchemyArgs] = process.argv.slice(2);
@@ -19,16 +20,28 @@ const Transaction = Schema.Struct({ pid: Schema.Int, sum: Schema.Int });
 type Check = { readonly check: string; readonly ok: boolean; readonly detail: unknown };
 const check = (name: string, ok: boolean, detail: unknown): Check => ({ check: name, ok, detail });
 
+let resent = 0;
+
 const call = Effect.fn("StageSmoke.call")(function* (
   method: "GET" | "POST",
   path: string,
   authorization: string | null = `Bearer ${debugToken}`,
 ) {
-  const request = HttpClientRequest.make(method)(new URL(path, debugUrl));
-  const response = yield* HttpClient.execute(
-    authorization === null ? request : HttpClientRequest.setHeader(request, "authorization", authorization),
-  );
-  return { status: response.status, body: yield* response.text };
+  const url = new URL(path, debugUrl);
+  const request = HttpClientRequest.make(method)(url);
+  const send = Effect.gen(function* () {
+    const response = yield* HttpClient.execute(
+      authorization === null ? request : HttpClientRequest.setHeader(request, "authorization", authorization),
+    );
+    const answer = {
+      status: response.status,
+      contentType: response.headers["content-type"] ?? "",
+      body: yield* response.text,
+    };
+    if (isCloudflare404(answer)) resent++;
+    return answer;
+  });
+  return yield* untilRouted(`${method} ${url}`, send);
 });
 
 const decode = <S extends Schema.Top>(schema: S, body: string) =>
@@ -44,6 +57,20 @@ const read = Effect.fn("StageSmoke.read")(function* <S extends Schema.Top>(
     return yield* Effect.die(new Error(`${method} ${path} returned ${status}: ${body.slice(0, 200)}`));
   return yield* decode(schema, body);
 });
+
+// A fresh stage's Durable Objects can fail for a few seconds after the deploy, so the checks start once the budget and
+// a counter both answer.
+const answers = (path: string) =>
+  call("GET", path).pipe(
+    Effect.catch((error) => Effect.succeed({ status: 0, body: String(error) })),
+    Effect.flatMap(({ status, body }) =>
+      status === 200
+        ? Effect.void
+        : Effect.fail(new NotSettled({ answer: `GET ${path} ${status} ${body.slice(0, 120)}` })),
+    ),
+  );
+
+const ready = waitUntilReady(debugUrl, Effect.all([answers("/budget"), answers("/counter/ready")]).pipe(Effect.asVoid));
 
 const unauthenticated = Effect.gen(function* () {
   const probe = `smoke-${yield* Clock.currentTimeMillis}`;
@@ -72,6 +99,10 @@ const unauthenticated = Effect.gen(function* () {
       results.every(({ status }) => status === 401),
       {
         statuses: Object.fromEntries(Object.entries(statuses).map(([status, calls]) => [status, calls?.length])),
+        unexpected: results
+          .filter(({ status }) => status !== 401)
+          .slice(0, 3)
+          .map(({ status, body }) => `${status} ${/<title>([^<]*)<\/title>/i.exec(body)?.[1] ?? body.slice(0, 120)}`),
       },
     ),
     check("unauthenticated calls change no counter", counterAfter.count === counterBefore.count, {
@@ -135,7 +166,10 @@ const flood = Effect.gen(function* () {
 });
 
 const checks = (
-  await Effect.runPromise(Effect.all([unauthenticated, traffic, flood]).pipe(Effect.provide(FetchHttpClient.layer)))
+  await Effect.runPromise(
+    ready.pipe(Effect.andThen(Effect.all([unauthenticated, traffic, flood])), Effect.provide(FetchHttpClient.layer)),
+  )
 ).flat();
 for (const result of checks) console.log(JSON.stringify(result));
+console.log(JSON.stringify({ resentAfterCloudflare404: resent }));
 if (checks.some(({ ok }) => !ok)) process.exit(1);

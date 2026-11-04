@@ -39,7 +39,12 @@ jobs:
           pr=$(gh pr view "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY" --json state,headRefOid --jq '.state + " " + .headRefOid')
           if [ "${pr% *}" != OPEN ]; then echo "Pull request is ${pr% *}, so $STAGE is left to the destroy job."; exit 0; fi
           if [ "${pr#* }" != "${{ github.event.pull_request.head.sha }}" ]; then echo "The head moved to ${pr#* }, so the run for that commit deploys $STAGE."; exit 0; fi
-          bun run --cwd infra deploy --stage "$STAGE" --yes
+          # Cloudflare can take longer than Alchemy's own retries to find a Worker or queue it just created. Deploying again converges.
+          if ! bun run --cwd infra deploy --stage "$STAGE" --yes; then
+            echo "Deploying $STAGE failed, so it deploys once more in 30 seconds."
+            sleep 30
+            bun run --cwd infra deploy --stage "$STAGE" --yes
+          fi
           bun scripts/stage-smoke.ts "$STAGE"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
