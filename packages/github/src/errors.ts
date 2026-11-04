@@ -46,6 +46,17 @@ export class TokenBudgetExhausted extends Schema.TaggedError<TokenBudgetExhauste
   }
 }
 
+export class GitHubTokenMissing extends Schema.TaggedError<GitHubTokenMissing, { readonly brand: unique symbol }>()(
+  "GitHubTokenMissing",
+  {
+    operation: Operation,
+  },
+) {
+  override get message(): string {
+    return `No GitHub token is configured, so '${this.operation}' cannot run`;
+  }
+}
+
 export class GitHubRequestFailed extends Schema.TaggedError<GitHubRequestFailed, { readonly brand: unique symbol }>()(
   "GitHubRequestFailed",
   {
@@ -80,6 +91,7 @@ export const GitHubError = Schema.Union([
   Unauthorized,
   RateLimited,
   TokenBudgetExhausted,
+  GitHubTokenMissing,
   GitHubRequestFailed,
   GitHubResponseInvalid,
 ]);

@@ -15,8 +15,8 @@ import type * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import { GitHubRequestFailed, Operation, TokenBudgetExhausted } from "./errors.ts";
-import { type BudgetShare, IntFromString } from "./schemas.ts";
+import { GitHubRequestFailed, GitHubTokenMissing, Operation, TokenBudgetExhausted } from "./errors.ts";
+import { BudgetShare, IntFromString } from "./schemas.ts";
 import * as TokenBudget from "./token-budget.ts";
 
 const EXCHANGE_TIMEOUT = Duration.seconds(30);
@@ -52,7 +52,7 @@ export class TokenGate extends Context.Service<
     readonly execute: (
       operation: Operation,
       request: HttpClientRequest.HttpClientRequest,
-    ) => Effect.Effect<Reply, GitHubRequestFailed | TokenBudgetExhausted>;
+    ) => Effect.Effect<Reply, GitHubRequestFailed | TokenBudgetExhausted | GitHubTokenMissing>;
     readonly budget: Effect.Effect<TokenBudget.Budget>;
   }
 >()("@stargrep/github/token-gate/TokenGate") {}
@@ -116,6 +116,16 @@ export const layerMemory = (options: {
     }),
   );
 
+export const layerMissing = Layer.succeed(
+  TokenGate,
+  TokenGate.of({
+    execute: Effect.fn("TokenGate.execute")(function* (operation: Operation) {
+      return yield* new GitHubTokenMissing({ operation });
+    }),
+    budget: Effect.succeed(TokenBudget.make(BudgetShare.make(1))),
+  }),
+);
+
 // A gate that runs elsewhere, such as in a Durable Object, receives requests and returns results as plain
 // data. The request carries no token, because the remote gate adds its own.
 const StringRecord = Schema.Record(Schema.String, Schema.String);
@@ -133,6 +143,7 @@ export const RemoteResult = Schema.Union([
   Schema.TaggedStruct("Replied", { status: Schema.Int, headers: StringRecord, body: Schema.NullOr(Schema.String) }),
   GitHubRequestFailed,
   TokenBudgetExhausted,
+  GitHubTokenMissing,
 ]);
 export type RemoteResult = typeof RemoteResult.Type;
 

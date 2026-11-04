@@ -11,7 +11,7 @@ import * as Stream from "effect/Stream";
 import { GitHubRequestFailed, TokenBudgetExhausted } from "./errors.ts";
 import * as Fake from "./github.fixture.ts";
 import * as GitHub from "./github.ts";
-import type { BudgetShare, Login } from "./schemas.ts";
+import type { BudgetShare, Login, RepoNodeId } from "./schemas.ts";
 import * as TokenBudget from "./token-budget.ts";
 import * as TokenGate from "./token-gate.ts";
 
@@ -135,5 +135,26 @@ describe("TokenGate.layerRemote", () => {
         }),
       ),
     ),
+  );
+});
+
+describe("TokenGate.layerMissing", () => {
+  effect("fails every GitHub call with GitHubTokenMissing and sends nothing", () =>
+    Effect.gen(function* () {
+      const github = yield* GitHub.GitHub;
+      const errors = yield* Effect.all([
+        Effect.flip(github.account(login)),
+        Effect.flip(Stream.runCollect(github.stars(login))),
+        Effect.flip(github.starCount(login)),
+        Effect.flip(github.repoFacts(["R_1" as RepoNodeId])),
+      ]);
+      expect(errors.map((error) => error._tag)).toEqual(Array.from({ length: 4 }, () => "GitHubTokenMissing"));
+      expect(errors.map((error) => error._tag === "GitHubTokenMissing" && error.operation)).toEqual([
+        "account",
+        "list-stars",
+        "star-count",
+        "repo-facts",
+      ]);
+    }).pipe(Effect.provide(GitHub.layer.pipe(Layer.provide(TokenGate.layerMissing)))),
   );
 });
