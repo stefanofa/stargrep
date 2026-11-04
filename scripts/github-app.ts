@@ -42,10 +42,22 @@ const convert = (code: string) =>
   );
 
 const store = async ({ client_id, client_secret }: Conversion) => {
-  await $`gh variable set STARGREP_GITHUB_APP_CLIENT_ID --body ${client_id}`.quiet();
+  await $`gh variable set STARGREP_GITHUB_APP_CLIENT_ID --body ${client_id}`;
   for (const env of values.env) {
-    await $`gh secret set STARGREP_GITHUB_APP_CLIENT_SECRET --env ${env} < ${new Response(client_secret)}`.quiet();
+    await $`gh secret set STARGREP_GITHUB_APP_CLIENT_SECRET --env ${env} < ${new Response(client_secret)}`;
   }
+};
+
+// GitHub hands out the client secret once, so a failed store has to say how to get a new one.
+const create = async (code: string) => {
+  const app = await convert(code);
+  await store(app).catch((cause: unknown) => {
+    throw new Error(
+      `The app exists at ${app.html_url}, but its credentials were not stored. Generate a new client secret in the app's settings and store it with: gh secret set STARGREP_GITHUB_APP_CLIENT_SECRET --env <env>`,
+      { cause },
+    );
+  });
+  return app.html_url;
 };
 
 const done = Promise.withResolvers<string>();
@@ -64,17 +76,24 @@ const server = Bun.serve({
     if (url.pathname !== "/created" || url.searchParams.get("state") !== state || !code) {
       return new Response("Not found", { status: 404 });
     }
-    const app = await convert(code);
-    await store(app);
-    done.resolve(app.html_url);
-    return new Response("The app exists and its credentials are stored. Close this tab.");
+    const created = create(code);
+    done.resolve(created);
+    return created.then(
+      () => new Response("The app exists and its credentials are stored. Close this tab."),
+      () => new Response("Storing the app's credentials failed. The terminal says what to do.", { status: 500 }),
+    );
   },
 });
 
 console.log(`Open http://127.0.0.1:${server.port}/ and press the button.`);
-const appUrl = await done.promise;
-console.log(`Created ${appUrl}`);
-console.log(
-  `Set STARGREP_GITHUB_APP_CLIENT_ID as a repository variable and STARGREP_GITHUB_APP_CLIENT_SECRET in: ${values.env.join(", ")}`,
-);
-await server.stop();
+try {
+  console.log(`Created ${await done.promise}`);
+  console.log(
+    `Set STARGREP_GITHUB_APP_CLIENT_ID as a repository variable and STARGREP_GITHUB_APP_CLIENT_SECRET in: ${values.env.join(", ")}`,
+  );
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error);
+  process.exitCode = 1;
+} finally {
+  await server.stop();
+}
