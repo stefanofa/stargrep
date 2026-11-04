@@ -57,7 +57,7 @@ const insertStars = (accountId: GitHubAccountId, starred: string, observedAt: SQ
   from (
     select distinct on ("repoId") "repoId", "starredAt", source
     from jsonb_to_recordset(${starred}::jsonb) as listed("repoId" bigint, "starredAt" timestamptz, source star_source)
-    order by "repoId", "starredAt" desc
+    order by "repoId", "starredAt" desc, case source when 'api' then 0 else 1 end, source
   ) as starred
   where ${filter}
   on conflict (${column(stars.accountId)}, ${column(stars.repoId)}) do update set

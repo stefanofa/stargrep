@@ -628,6 +628,33 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     }),
   );
 
+  test.effect("prefers the API star over the archive star at the same time, in either order", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const [viaUpsert, viaSnapshot] = [accountId(9381), accountId(9382)];
+      const [apiFirst, archiveFirst] = [repoId(9381), repoId(9382)];
+      const sameTime = at("2026-10-03T00:00:00Z");
+      const both = (repo: RepoId, first: "api" | "gharchive", second: "api" | "gharchive") => [
+        { repoId: repo, starredAt: sameTime, source: first },
+        { repoId: repo, starredAt: sameTime, source: second },
+      ];
+      const repeated = [...both(apiFirst, "api", "gharchive"), ...both(archiveFirst, "gharchive", "api")];
+      yield* db.accounts.upsert(account(viaUpsert));
+      yield* db.accounts.upsert(account(viaSnapshot));
+      yield* db.repos.upsertRefs([ref(apiFirst), ref(archiveFirst)]);
+
+      yield* db.stars.upsert({ accountId: viaUpsert, stars: repeated });
+      yield* db.stars.applySnapshot({ accountId: viaSnapshot, stars: repeated, at: at("2026-10-05T00:00:00Z") });
+
+      for (const id of [viaUpsert, viaSnapshot]) {
+        expect((yield* db.stars.list(id)).map((star) => [star.repoId, star.source])).toEqual([
+          [apiFirst, "api"],
+          [archiveFirst, "api"],
+        ]);
+      }
+    }),
+  );
+
   test.effect("keeps a write committed beside a transaction that fails", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
