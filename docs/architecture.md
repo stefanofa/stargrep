@@ -86,11 +86,11 @@ Each feature folder in `core` holds its types, functions, and tests together. Fi
 
 ## Data model
 
-Better Auth owns `user`, `session`, and `account`. Stargrep adds these tables.
+Better Auth owns `user`, `session`, `account`, and `verification`, declared in `packages/db/src/auth-schema.ts` so they migrate with the rest of the schema. Stargrep adds these tables.
 
 | Table | Key | Holds |
 |---|---|---|
-| `github_accounts` | GitHub account ID | type (`user` or `org`), login, name, avatar, followers, public repos, total stars across owned repos, `claimed_by` user, star sync state, including the time of the latest full star snapshot |
+| `github_accounts` | GitHub account ID | type (`user` or `org`), login, name, avatar, followers, public repos, total stars across owned repos, how many repos it starred when it last signed in, `claimed_by` user, star sync state, including the time of the latest full star snapshot |
 | `repos` | GitHub repo ID | owner, name, GitHub node ID, description, topics, language, license, homepage, kind (`app`, `library`, `cli`, `framework`, `list`, and so on), created time, `pushed_at`, archived, README object ID from the latest facts fetch, summary and the README object ID it describes, keywords, `embedding halfvec`, embedding model, full-text column |
 | `repo_metrics` | GitHub repo ID | current totals and 30-day and 90-day changes for stars, forks, commits, active contributors, new contributors, merged pull requests, closed issues, and releases. Enrichment writes the star and fork totals each time it fetches a repo's facts, and the daily rollup writes every column. `refreshed_at` is the time of the latest write from either |
 | `stars` | account ID and repo ID | `starred_at`, `unstarred_at`, the time of the latest observation, source (`gharchive` or `api`). Every star event carries the time it was observed: an API sync's start, or an archive event's own time. An event or snapshot observed at or before the row's latest observation, or at or before the account's latest full snapshot, changes nothing |
@@ -206,9 +206,21 @@ Deployed code uses the layers from `@stargrep/ai/gateway`. `layer` serves both p
 
 **Embeddings from different models cannot be compared.** Each database has one embedding model and size. The one-row `embedding_settings` table records them, and a migration creates it. When the `Db` layer starts, it reads that row. In a fresh database it writes the configured model once, and when the configured model or size differs from the stored one, the layer fails with `EmbeddingModelConflict` before any query runs. Reading the row costs one query per `Db` build. The Worker builds `Db` per request, because a Hyperdrive socket opened in one request cannot serve another, and passes a `Ref` it keeps for the isolate's lifetime. So only an isolate's first request reads the row. So a local run configured with fake or foreign embeddings can never write into a database that production reads. Every embedding carries the ID of the model that made it, every `repos` row stores it in `embedding_model`, and `saveEmbedding` refuses a vector from any model other than the stored one with `EmbeddingModelMismatch`. No `Db` function changes the stored model. To switch models on purpose, write a migration that clears `embedding` and `embedding_model` on every repo and updates `embedding_settings`, then re-embed every repo with the new model.
 
+## Sign-in
+
+People sign in with GitHub through a GitHub App, whose manifest is `.github/app-manifest.json`. `packages/auth` configures Better Auth on `pg` and `drizzle-orm/node-postgres`, the same driver as `Db`, with its own pool for each request that connects only when a query runs. Better Auth serves `/auth/*`, because `/api/*` is the REST API. The session cookie carries a five-minute cache of the session, so most API calls read no session row. Better Auth stores the user's GitHub token encrypted.
+
+A new session imports the GitHub account with the user's own token: `GET /user` for the login and profile, and one GraphQL call for the number of repos the account starred. It claims the `github_accounts` row for the user and queues a sync. If that import fails, the first `viewer` or `library` call runs it again. The sync page compares the library's size with the starred count to show progress.
+
+A GitHub App cannot match callback URLs by wildcard, and each preview stage has its own workers.dev host. So previews sign in through prod with Better Auth's `oAuthProxy` plugin. The preview sends GitHub's redirect to prod's callback and packs its own state, PKCE verifier included, into GitHub's `state`, encrypted with `AUTH_PROXY_SECRET`. Prod exchanges the code and redirects to the preview with the profile and tokens encrypted for 60 seconds. The preview creates the user and session in its own database. Prod creates neither. `AUTH_PROXY_ORIGIN` decides: unset, a stage signs in directly with the client secret, and set, a stage proxies through that origin and never reads the client secret.
+
+Any branch's workflow can read the `preview` environment, so the design assumes the proxy secret leaks. Two guards on prod keep that leak inside preview databases. Prod answers 404 on the proxy's completion paths, so a forged profile cannot sign anyone in to prod. Prod forwards a sign-in only to its own origin or to a preview Worker of this account, so a forged state cannot send a user's GitHub token to another host.
+
 ## Client
 
-The web app loads the signed-in user's whole library into a TanStack DB collection. For 3,000 stars that is about 200 KB compressed. Filtering, sorting, and keyword search then run in the browser on each keystroke. Semantic results come from the server and merge into the same list.
+The web app loads the signed-in user's whole library into a TanStack DB collection, one snapshot per load. For 3,000 stars that is about 200 KB compressed. Filtering, sorting, and keyword search then run in the browser on each keystroke, through a live query that matches every word of the query. Semantic results come from the server through an Effect `Stream` that waits for typing to pause and interrupts the request for a query typed over. They append after the keyword results, so no tile the user can see moves. While a sync runs, the page reloads the library every two seconds.
+
+The landing page loads no Effect code. The search route renders only in the browser, in its own chunk, which holds Effect, TanStack DB, and the oRPC client.
 
 ## API and MCP
 
@@ -218,7 +230,7 @@ The web app loads the signed-in user's whole library into a TanStack DB collecti
 - `/api` serves REST, and `/openapi.json` is the OpenAPI document generated from the contract.
 - `/mcp` serves every procedure as an MCP tool over Streamable HTTP, named by its `operationId`.
 
-The procedures are `search`, `triggerSync`, `syncStatus`, and `getRepo`. All of them are public until sign-in lands.
+The procedures are `search`, `triggerSync`, `syncStatus`, `getRepo`, `viewer`, and `library`. The first four are public. `viewer` and `library` read the session cookie and answer `UNAUTHORIZED` without one, so they stay out of the MCP tool list and the OpenAPI document until MCP clients can sign in.
 
 - **Errors.** Every outcome other than success is a tagged error, such as `AccountNotSynced` from search, `RepoNotFound` from `Db`, or `SyncRateLimited` from the limiter. The router catches once per procedure and maps each tag to a wire error through one table, so a new tag fails typecheck until it has a row. A wire error has a stable `code`, such as `ACCOUNT_NOT_SYNCED` or `SERVICE_UNAVAILABLE`, a fixed message, and the call's `traceId` in `data`. `packages/api/src/errors.ts` holds each code's status and message. A failure outside the table becomes `INTERNAL_SERVER_ERROR` with the trace ID and no detail. oRPC decodes a request body before any middleware runs, so the web Worker's handler interceptor gives a body it cannot decode `BAD_REQUEST` with the request's trace ID, and MCP's own JSON-RPC errors, such as a parse error, carry it in `error.data`. Every API response, the OpenAPI document included, also has an `x-trace-id` header. A path under `/api`, `/rpc`, or `/mcp` that matches no procedure answers `NOT_FOUND` in that transport's error shape with the trace ID, and a failure outside the API answers `INTERNAL_SERVER_ERROR` the same way.
 - **Services per request.** A Hyperdrive socket cannot outlive its request, so the web Worker builds `Db`, search, and sync services for each request, and only once a procedure has validated its input. A database outage then fails a search with `SERVICE_UNAVAILABLE`, while validation, the tool list, and the OpenAPI document keep working.
