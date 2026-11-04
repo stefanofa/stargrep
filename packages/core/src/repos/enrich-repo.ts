@@ -151,8 +151,8 @@ const make = Effect.gen(function* () {
   ): Effect.fn.Return<Step<Job>, DbQueryFailed | DbRowInvalid> {
     const id = row.id;
     if (facts === undefined) return Result.fail(Enrichment.Gone({ id }));
-    const { pending } = yield* db.repos.saveFacts(storedFacts(facts));
     yield* db.repos.saveCounts({ id: facts.id, stars: facts.stars, forks: facts.forks });
+    const { pending } = yield* db.repos.saveFacts(storedFacts(facts));
     if (!pending) return Result.fail(Enrichment.Unchanged({ id }));
     const work = yield* Option.match(summaryOf(row, readmeOidOf(facts)), {
       onSome: (summary) => Effect.succeed(Result.succeed<Work>({ _tag: "Embed", summary })),

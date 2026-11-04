@@ -6,6 +6,7 @@ import * as SummarizeFake from "@stargrep/ai/summarize.fake";
 import * as TextGeneration from "@stargrep/ai/text-generation";
 import * as Db from "@stargrep/db";
 import { EmbeddingModelId } from "@stargrep/db/embedding";
+import { DbQueryFailed } from "@stargrep/db/errors";
 import * as TestDatabase from "@stargrep/db/test-database";
 import * as GitHubFake from "@stargrep/github/github.fixture";
 import { ObjectId, Repo } from "@stargrep/github/schemas";
@@ -460,6 +461,40 @@ for (const [adapter, database] of adapters) {
         yield* Effect.flip(enrich(23).pipe(using(failingEmbeddings)));
         expect(yield* enrich(23)).toMatchObject({ _tag: "Embedded", id: id(23) });
         expect(yield* enrich(23)).toEqual({ _tag: "Unchanged", id: id(23) });
+      }),
+    );
+  });
+}
+
+for (const [adapter, database] of [
+  ["PGlite", TestDatabase.layerMemory({ embeddingModel })],
+  ["Postgres", TestDatabase.layerNodePostgres({ embeddingModel })],
+] as const) {
+  it.layer(enrichment(database), { timeout: 30_000 })(`enrichRepo counts on ${adapter}`, (it) => {
+    it.effect("refreshes the counts on a retry after their write failed", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const database = yield* TestDatabase.TestDatabase;
+        remotes.set(80, { description: "Retry", stars: 100, forks: 2, readme: { oid: oid("a"), text: "# Retry" } });
+        yield* enrich(80);
+        yield* db.repos.saveFacts({ ...(yield* get(80)), readmeOid: oid("b") });
+        remotes.set(80, { description: "Retry", stars: 200, forks: 3, readme: { oid: oid("a"), text: "# Retry" } });
+
+        const failing = Db.Db.of({
+          ...db,
+          repos: {
+            ...db.repos,
+            saveCounts: () =>
+              Effect.fail(new DbQueryFailed({ operation: "repos.saveCounts", reason: "transport", sqlState: null })),
+          },
+        });
+        const withFailingCounts = Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(Layer.succeed(Db.Db, failing)));
+        expect(Exit.isFailure(yield* Effect.exit(enrich(80).pipe(Effect.provide(withFailingCounts))))).toBe(true);
+
+        yield* enrich(80);
+        expect(yield* database.query("select stars, forks from repo_metrics where repo_id = $1", [80])).toEqual([
+          { stars: 200, forks: 3 },
+        ]);
       }),
     );
   });
