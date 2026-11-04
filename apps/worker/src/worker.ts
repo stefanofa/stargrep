@@ -10,7 +10,12 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
   "Worker",
   // The Worker binds Hyperdrive by an ID that stays stable across updates, so Alchemy would deploy it
   // while the branch still migrates. Reading the applied migrations makes the deploy wait for them.
-  Effect.map(DatabaseMigrations, (migrations) => ({ main: import.meta.url, env: { DATABASE_MIGRATIONS: migrations } })),
+  // The placement region matches the Neon projects in infra/database.run.ts, so queries stay in one region.
+  Effect.map(DatabaseMigrations, (migrations) => ({
+    main: import.meta.url,
+    env: { DATABASE_MIGRATIONS: migrations },
+    placement: { region: "aws:us-east-1" },
+  })),
   Effect.gen(function* () {
     const database = yield* Cloudflare.Hyperdrive.Connect(Database);
     return {

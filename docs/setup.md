@@ -144,7 +144,7 @@ Four workflows run the stages, and their jobs skip until the steps below are don
 
 5. Push to `main`. That deploy creates the Neon projects in stage `shared`, and then `prod`. A pull request stage fails with a missing reference until it has run.
 
-Every stage gets its own Neon branch of the project. Neon deletes a preview branch about two weeks after its last deploy, in case its destroy job never ran.
+Every stage gets its own Neon branch. Prod's branch is in the project `stargrep-us-east`, and each preview stage's branch is in `stargrep-previews-us-east`. Neon deletes a preview branch about two weeks after its last deploy, in case its destroy job never ran.
 
 ## State store maintenance
 

@@ -28,7 +28,10 @@ const twoWeeksFromToday = DateTime.now.pipe(
 
 const StageBranch = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;
-  const project = yield* Neon.Project.ref("Project", { stack: "StargrepDatabase", stage: "shared" });
+  const project = yield* Neon.Project.ref(stage === "prod" ? "ProjectUsEast" : "ProjectPreviewsUsEast", {
+    stack: "StargrepDatabase",
+    stage: "shared",
+  });
   const expiry = stage === "prod" ? {} : { expiresAt: yield* twoWeeksFromToday };
   return yield* Neon.Branch("Branch", {
     project,
