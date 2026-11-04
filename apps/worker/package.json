@@ -14,12 +14,14 @@
   "dependencies": {
     "@alchemy.run/cloudflare": "2.0.0-beta.85",
     "@alchemy.run/neon": "2.0.0-beta.85",
+    "@effect/sql-pg": "4.1.2",
     "@stargrep/ai": "workspace:*",
     "@stargrep/core": "workspace:*",
     "@stargrep/db": "workspace:*",
     "@stargrep/github": "workspace:*",
     "@stargrep/telemetry": "workspace:*",
     "alchemy": "2.0.0-beta.85",
+    "drizzle-orm": "1.0.0-rc.5",
     "effect": "catalog:",
     "pg": "catalog:"
   },

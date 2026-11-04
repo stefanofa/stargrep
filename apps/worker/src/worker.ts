@@ -9,12 +9,14 @@ import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import { budgetShareName, stageBudgetShare } from "./budget-share.ts";
 import { Database, DatabaseMigrations } from "./database.ts";
+import { authorized, DebugToken } from "./debug-token.ts";
 import { tokenGate } from "./github-gate.ts";
 import { healthResponse } from "./health.ts";
 import * as Layers from "./layers.ts";
 import * as Queues from "./queues.ts";
 import { Readmes } from "./readmes.ts";
 import { requireStageSecrets } from "./secrets.ts";
+import { spikeRoute } from "./spike.ts";
 
 export default class Worker extends Cloudflare.Worker<Worker>()(
   "Worker",
@@ -45,9 +47,22 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
       adopted: yield* Ref.make(false),
     });
     yield* Queues.consumeAll(runtime);
+    const spikeToken = yield* yield* DebugToken;
     return {
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest;
+        const url = new URL(request.url, "http://worker");
+        if (url.pathname.startsWith("/spike/")) {
+          if (!authorized(request.headers.authorization, yield* spikeToken))
+            return HttpServerResponse.empty({ status: 401 });
+          const spike = spikeRoute(
+            request.method,
+            url,
+            Redacted.value(yield* database.connectionString),
+            "main (placed)",
+          );
+          if (spike !== undefined) return yield* spike;
+        }
         if (request.method === "GET" && new URL(request.url, "http://worker").pathname === "/health") {
           return yield* healthResponse(Redacted.value(yield* database.connectionString));
         }

@@ -1,5 +1,4 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
-import * as Alchemy from "alchemy";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -11,12 +10,14 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Database } from "./database.ts";
+import { authorized, DebugToken } from "./debug-token.ts";
 import { withClient } from "./postgres.ts";
 import { EnrichRepos, queueNames, SyncStars } from "./queues.ts";
+import { spikeRoute } from "./spike.ts";
 
 const UNITS_PER_MINUTE = 300;
 
-export const DebugToken = Alchemy.makeRandom("DebugToken");
+export { DebugToken };
 
 const DebugJobs = Cloudflare.Queues.Queue("DebugJobs");
 const DebugCache = Cloudflare.KV.Namespace("DebugCache");
@@ -67,15 +68,6 @@ const decodeCount = Schema.decodeUnknownOption(
   Schema.NumberFromString.pipe(Schema.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 100 }))),
 );
 const decodeTransactionRow = Schema.decodeUnknownEffect(Schema.Struct({ pid: Schema.Int, sum: Schema.Int }));
-
-const encoder = new TextEncoder();
-const authorized = (header: string | undefined, token: Redacted.Redacted<string>) => {
-  const given = encoder.encode(header ?? "");
-  const expected = encoder.encode(`Bearer ${Redacted.value(token)}`);
-  let difference = given.byteLength ^ expected.byteLength;
-  for (const [index, byte] of expected.entries()) difference |= byte ^ (given[index] ?? 0);
-  return difference === 0;
-};
 
 export default Cloudflare.Worker(
   "DebugWorker",
@@ -135,6 +127,8 @@ export default Cloudflare.Worker(
     });
 
     const route = Effect.fn("DebugWorker.route")(function* (method: string, url: URL) {
+      const spike = spikeRoute(method, url, Redacted.value(yield* database.connectionString), "debug (unplaced)");
+      if (spike !== undefined) return yield* withinBudget(1, spike);
       if (method === "GET" && url.pathname === "/budget") {
         return yield* HttpServerResponse.json(yield* budgets.getByName("stage").read());
       }

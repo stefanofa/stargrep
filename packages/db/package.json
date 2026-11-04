@@ -9,7 +9,9 @@
     "./local-database": "./src/local-database.ts",
     "./memory": "./src/memory.ts",
     "./migrations": "./src/migrations.ts",
-    "./test-database": "./test/database.ts"
+    "./test-database": "./test/database.ts",
+    "./postgres": "./src/postgres.ts",
+    "./node-postgres": "./src/node-postgres.ts"
   },
   "scripts": {
     "bench": "bun scripts/bench.ts",
