@@ -16,6 +16,9 @@ import * as Queues from "./queues.ts";
 import { Readmes } from "./readmes.ts";
 import { requireStageSecrets } from "./secrets.ts";
 
+// The stargrep.com zone already exists in the account, so the domain only references it and never creates or deletes it.
+const prodDomain = { name: "stargrep.com", zoneName: "stargrep.com", redirects: ["www.stargrep.com"] };
+
 export default class Worker extends Cloudflare.Worker<Worker>()(
   "Worker",
   // The Worker binds Hyperdrive by an ID that stays stable across updates, so Alchemy would deploy it
@@ -32,6 +35,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
       },
       placement: { region: "aws:us-east-1" },
       observability: { enabled: true, logs: { enabled: true, invocationLogs: true }, traces: { enabled: true } },
+      ...(stage === "prod" ? { domain: prodDomain } : {}),
     };
   }),
   Effect.gen(function* () {

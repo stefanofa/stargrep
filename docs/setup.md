@@ -151,7 +151,7 @@ DATABASE_URL=postgres://stargrep:stargrep@127.0.0.1:54317/stargrep_bench \
 
 Four workflows run the stages, and their jobs skip until the steps below are done. `preview` deploys stage `pr-<number>` for each pull request and runs `scripts/stage-smoke.ts` against it. A failed preview deploy runs once more after 30 seconds, because Cloudflare can take a while to find a Worker or queue it just created. `preview-destroy` destroys the stage when the pull request closes. `preview-reconcile` runs daily, or by hand with a dry-run option, and destroys any `pr-<number>` stage whose pull request is closed or gone. `deploy` runs on each push to `main`, or by hand on `main`. It deploys the database stack's stage `shared` and then stage `prod`. Each deploy first checks that its commit is still the head of `main` or of the pull request, so an older run never replaces a newer deploy.
 
-1. Create two Cloudflare API tokens for the account, one for prod and one for previews, each with these permissions: Workers Scripts Write, Workers KV Storage Write, Workers R2 Storage Write, Queues Write, Hyperdrive Write, Secrets Store Write, Account Settings Write, and Workers Tail Read. The Secrets Store permission is for Alchemy's state store, which keeps its keys there. Each preview creates new Workers, and Cloudflare grants creating Workers only across the whole account, so the preview token can still change prod's Workers. It can also read prod's records in the shared state store.
+1. Create two Cloudflare API tokens for the account, one for prod and one for previews, each with these permissions: Workers Scripts Write, Workers KV Storage Write, Workers R2 Storage Write, Queues Write, Hyperdrive Write, Secrets Store Write, Account Settings Write, and Workers Tail Read. The Secrets Store permission is for Alchemy's state store, which keeps its keys there. Each preview creates new Workers, and Cloudflare grants creating Workers only across the whole account, so the preview token can still change prod's Workers. It can also read prod's records in the shared state store. The prod token also needs four permissions on the zone `stargrep.com` only: Zone Read, Workers Routes Write, Dynamic URL Redirects Write, and DNS Write. The preview token gets no zone permissions.
 
 2. Create two Neon API keys in the Neon console. Prod's key is an organization key, because the deploy from `main` creates the projects. The preview key is scoped to the project `stargrep-previews-us-east`, so create it after that deploy.
 
@@ -179,7 +179,9 @@ Four workflows run the stages, and their jobs skip until the steps below are don
 
 6. Create Alchemy's state store in the account, as described in the next section.
 
-7. Push to `main`. That deploy creates the Neon projects in stage `shared`, and then `prod`. A pull request stage fails with a missing reference until it has run.
+7. Check that the zone `stargrep.com` is active in the account. Cloudflare Registrar created it with the domain. Deploys attach custom domains to it and never create or delete it.
+
+8. Push to `main`. That deploy creates the Neon projects in stage `shared`, and then `prod`. A pull request stage fails with a missing reference until it has run.
 
 Every stage gets its own Neon branch. Prod's branch is in the project `stargrep-us-east`, and each preview stage's branch is in `stargrep-previews-us-east`. Neon deletes a preview branch about two weeks after its last deploy, in case its destroy job never ran.
 
