@@ -20,6 +20,7 @@ import * as Schema from "effect/Schema";
 import * as Embeddings from "./embeddings.ts";
 import {
   type AiError,
+  AiKeyMissing,
   AiModelNotFound,
   AiOutputInvalid,
   AiRequestFailed,
@@ -43,6 +44,7 @@ export class AiProvider extends Context.Service<
 >()("@stargrep/ai/gateway/AiProvider") {}
 
 const textTimeout = Duration.seconds(60);
+const embedTimeout = Duration.seconds(30);
 const batchTimeout = Duration.hours(24);
 const batchPollInterval = Duration.seconds(10);
 
@@ -236,7 +238,7 @@ export const layerEmbeddings = (model: Models.EmbeddingModel) =>
         Embeddings.make({
           provider: "gateway",
           model,
-          timeout: Duration.seconds(30),
+          timeout: embedTimeout,
           run: (values) =>
             Effect.tryPromise({
               try: (abortSignal) =>
@@ -253,6 +255,31 @@ export const layerEmbeddings = (model: Models.EmbeddingModel) =>
       ),
     ),
   );
+
+export const layerKeyMissing = Layer.merge(
+  Layer.succeed(
+    TextGeneration.TextGeneration,
+    TextGeneration.make({
+      provider: "gateway",
+      model: Models.summaryModel,
+      timeout: textTimeout,
+      run: Effect.fn("Gateway.keyMissing")(function* () {
+        return yield* new AiKeyMissing({ operation: "generate", model: Models.summaryModel });
+      }),
+    }),
+  ),
+  Layer.succeed(
+    Embeddings.Embeddings,
+    Embeddings.make({
+      provider: "gateway",
+      model: Models.embeddingModel,
+      timeout: embedTimeout,
+      run: Effect.fn("Gateway.keyMissing")(function* () {
+        return yield* new AiKeyMissing({ operation: "embed", model: Models.embeddingModel.id });
+      }),
+    }),
+  ),
+);
 
 export const layerProvider = (config: { readonly apiKey: Redacted.Redacted<string> }) =>
   Layer.sync(AiProvider, () => AiProvider.of(createGateway({ apiKey: Redacted.value(config.apiKey) })));

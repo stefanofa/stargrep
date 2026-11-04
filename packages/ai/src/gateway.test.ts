@@ -596,3 +596,17 @@ describe("gateway privacy", () => {
     ),
   );
 });
+
+describe("gateway with no key", () => {
+  it.effect("fails every summary and embedding with AiKeyMissing and sends nothing", () =>
+    Effect.gen(function* () {
+      const embeddings = yield* Embeddings.Embeddings;
+      const summary = yield* Effect.flip(Summarize.summarize(repo));
+      const embedded = yield* Effect.flip(embeddings.embed(["a repo"]));
+      expect([summary, embedded]).toMatchObject([
+        { _tag: "AiKeyMissing", operation: "generate", model: Models.summaryModel },
+        { _tag: "AiKeyMissing", operation: "embed", model: Models.embeddingModel.id },
+      ]);
+    }).pipe(Effect.provide(Gateway.layerKeyMissing)),
+  );
+});

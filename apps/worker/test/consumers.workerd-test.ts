@@ -1,5 +1,7 @@
 import { createExecutionContext, createMessageBatch, getQueueResult } from "cloudflare:test";
+import * as Embeddings from "@stargrep/ai/embeddings";
 import { AiRequestFailed } from "@stargrep/ai/errors";
+import * as Summarize from "@stargrep/ai/summarize";
 import { EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
 import { StarSync } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
@@ -14,13 +16,15 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vitest";
 import * as EnrichRepoConsumer from "../src/consumers/enrich-repo.ts";
 import * as Settle from "../src/consumers/settle.ts";
 import * as SyncStarsConsumer from "../src/consumers/sync-stars.ts";
-import { requireGitHubToken } from "../src/github-token.ts";
+import * as Layers from "../src/layers.ts";
+import { requireStageSecrets } from "../src/secrets.ts";
 
 const report = { listed: 1, added: 1, unchanged: 0, unstarred: 0, enqueued: 1, shifted: false };
 const repoId = Schema.decodeUnknownSync(RepoId);
@@ -167,13 +171,32 @@ describe("a stage with no GitHub token", () => {
   const withEnv = (env: Record<string, string>) =>
     Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)));
 
-  it("fails a prod deploy that has no token, and deploys a preview stage without one", async () => {
-    const prod = await Effect.runPromiseExit(requireGitHubToken("prod").pipe(withEnv({})));
-    const prodWithToken = await Effect.runPromiseExit(
-      requireGitHubToken("prod").pipe(withEnv({ STARGREP_GITHUB_TOKEN: "token" })),
+  it("fails a prod deploy that lacks either secret, and deploys a preview stage without them", async () => {
+    const both = { STARGREP_GITHUB_TOKEN: "token", AI_GATEWAY_API_KEY: "key" };
+    const outcomes = await Promise.all(
+      [
+        requireStageSecrets("prod").pipe(withEnv({})),
+        requireStageSecrets("prod").pipe(withEnv({ STARGREP_GITHUB_TOKEN: "token" })),
+        requireStageSecrets("prod").pipe(withEnv({ AI_GATEWAY_API_KEY: "key" })),
+        requireStageSecrets("prod").pipe(withEnv(both)),
+        requireStageSecrets("pr-18").pipe(withEnv({})),
+      ].map((check) => Effect.runPromiseExit(check)),
     );
-    const preview = await Effect.runPromiseExit(requireGitHubToken("pr-18").pipe(withEnv({})));
-    expect([Exit.isFailure(prod), Exit.isSuccess(prodWithToken), Exit.isSuccess(preview)]).toEqual([true, true, true]);
+    expect(outcomes.map(Exit.isSuccess)).toEqual([false, false, false, true, true]);
+  });
+
+  it("fails every model call with AiKeyMissing when the stage has no AI Gateway key", async () => {
+    const errors = await Effect.runPromise(
+      Effect.gen(function* () {
+        const embeddings = yield* Embeddings.Embeddings;
+        const facts = { fullName: "owner/repo", description: null, topics: [], language: null, readme: null };
+        return [
+          (yield* Effect.flip(Summarize.summarize(facts)))._tag,
+          (yield* Effect.flip(embeddings.embed(["x"])))._tag,
+        ];
+      }).pipe(Effect.provide(Layers.layerAi(Option.none()))),
+    );
+    expect(errors).toEqual(["AiKeyMissing", "AiKeyMissing"]);
   });
 
   it("retries a sync that fails with GitHubTokenMissing, so it reaches the dead-letter queue", async () => {

@@ -15,10 +15,10 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { Database, DatabaseMigrations } from "./database.ts";
 import { GitHubGate } from "./github-gate.ts";
-import { githubToken, requireGitHubToken } from "./github-token.ts";
 import { healthResponse } from "./health.ts";
 import * as Layers from "./layers.ts";
 import * as Queues from "./queues.ts";
+import { aiGatewayKey, githubToken, requireStageSecrets } from "./secrets.ts";
 
 const decodeModelId = Schema.decodeEffect(EmbeddingModelId);
 
@@ -30,7 +30,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
   // while the branch still migrates. Reading the applied migrations makes the deploy wait for them.
   // The placement region matches the Neon projects in infra/database.run.ts, so queries stay in one region.
   Effect.gen(function* () {
-    yield* requireGitHubToken((yield* Alchemy.Stack).stage);
+    yield* requireStageSecrets((yield* Alchemy.Stack).stage);
     return {
       main: import.meta.url,
       env: { DATABASE_MIGRATIONS: yield* DatabaseMigrations },
@@ -46,7 +46,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
       readmes: yield* Cloudflare.R2.ReadWriteBucket(Readmes),
       enrichQueue: yield* Cloudflare.Queues.WriteQueue(yield* Queues.EnrichRepos),
       gates: Option.isSome(token) ? Option.some(yield* GitHubGate) : Option.none(),
-      aiGatewayKey: yield* Effect.orDie(Config.Redacted("AI_GATEWAY_API_KEY")),
+      aiGatewayKey: yield* Effect.orDie(Config.option(aiGatewayKey)),
       embeddingModel: yield* Effect.orDie(decodeModelId(Models.embeddingModel.id)),
       adopted: yield* Ref.make(false),
     });

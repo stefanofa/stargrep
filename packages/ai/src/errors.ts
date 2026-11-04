@@ -51,4 +51,16 @@ export class AiUnavailable extends Schema.TaggedError<AiUnavailable>()("AiUnavai
   }
 }
 
-export type AiError = AiModelNotFound | AiOutputInvalid | AiTimeout | AiRequestFailed | AiUnavailable;
+export class AiKeyMissing extends Schema.TaggedError<AiKeyMissing, { readonly brand: unique symbol }>()(
+  "AiKeyMissing",
+  {
+    operation: Operation,
+    model: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `No AI Gateway key is configured, so model '${this.model}' cannot run '${this.operation}'`;
+  }
+}
+
+export type AiError = AiModelNotFound | AiOutputInvalid | AiTimeout | AiRequestFailed | AiUnavailable | AiKeyMissing;

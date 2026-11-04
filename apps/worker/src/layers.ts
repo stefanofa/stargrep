@@ -88,17 +88,22 @@ const layerGate = (gates: Gates) =>
 export const layerGitHub = (gates: Option.Option<Gates>) =>
   GitHub.layer.pipe(Layer.provide(Option.match(gates, { onNone: () => TokenGate.layerMissing, onSome: layerGate })));
 
-export const layerAi = (apiKey: Redacted.Redacted<string>) =>
-  Layer.merge(Gateway.layerTextGeneration(Models.summaryModel), Gateway.layerEmbeddings(Models.embeddingModel)).pipe(
-    Layer.provide(Gateway.layerProvider({ apiKey })),
-  );
+export const layerAi = (apiKey: Option.Option<Redacted.Redacted<string>>) =>
+  Option.match(apiKey, {
+    onNone: () => Gateway.layerKeyMissing,
+    onSome: (key) =>
+      Layer.merge(
+        Gateway.layerTextGeneration(Models.summaryModel),
+        Gateway.layerEmbeddings(Models.embeddingModel),
+      ).pipe(Layer.provide(Gateway.layerProvider({ apiKey: key }))),
+  });
 
 export interface Bindings {
   readonly database: Effect.Effect<Redacted.Redacted<string>, never, RuntimeContext>;
   readonly readmes: Cloudflare.R2.ReadWriteBucketClient;
   readonly enrichQueue: Cloudflare.Queues.WriteQueueClient;
   readonly gates: Option.Option<Gates>;
-  readonly aiGatewayKey: Redacted.Redacted<string>;
+  readonly aiGatewayKey: Option.Option<Redacted.Redacted<string>>;
   readonly embeddingModel: EmbeddingModelId;
   readonly adopted: Ref.Ref<boolean>;
 }

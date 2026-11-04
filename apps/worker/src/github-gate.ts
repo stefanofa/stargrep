@@ -6,7 +6,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
-import { githubToken } from "./github-token.ts";
+import { githubToken } from "./secrets.ts";
 
 const share = BudgetShare.make(0.5);
 
