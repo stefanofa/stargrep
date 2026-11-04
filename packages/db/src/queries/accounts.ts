@@ -39,6 +39,7 @@ export interface OwnedRepoStars {
 export interface Queries {
   readonly upsert: (facts: AccountFacts) => Effect.Effect<void, DbQueryFailed>;
   readonly get: (id: GitHubAccountId) => Effect.Effect<Option.Option<Account>, DbQueryFailed | DbRowInvalid>;
+  readonly byLogin: (login: Login) => Effect.Effect<Option.Option<Account>, DbQueryFailed | DbRowInvalid>;
   readonly require: (id: GitHubAccountId) => Effect.Effect<Account, DbQueryFailed | DbRowInvalid | AccountNotFound>;
   readonly setOwnedRepoStars: (input: OwnedRepoStars) => Effect.Effect<void, DbQueryFailed | AccountNotFound>;
   readonly recordStarSync: (sync: StarSync) => Effect.Effect<void, DbQueryFailed | AccountNotFound>;
@@ -66,6 +67,15 @@ export const make = Effect.gen(function* () {
         Effect.flatMap(decodeAccounts("accounts.get")),
         Effect.map(Arr.head),
       ),
+    byLogin: (login) =>
+      run("accounts.byLogin", (db) =>
+        db
+          .select()
+          .from(githubAccounts)
+          .where(sql`lower(${githubAccounts.login}) = lower(${login})`)
+          .orderBy(sql`${githubAccounts.starsSyncedAt} desc nulls last`, githubAccounts.id)
+          .limit(1),
+      ).pipe(Effect.flatMap(decodeAccounts("accounts.byLogin")), Effect.map(Arr.head)),
     require: (id) =>
       run("accounts.require", (db) => db.select().from(githubAccounts).where(eq(githubAccounts.id, id))).pipe(
         Effect.flatMap(decodeAccounts("accounts.require")),

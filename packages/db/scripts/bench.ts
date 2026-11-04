@@ -152,8 +152,9 @@ const measure = Effect.gen(function* () {
     Effect.timed(effect).pipe(Effect.map(([duration, rows]) => [Duration.toMillis(duration), rows.length] as const));
   const lookup = timed(db.accounts.get(accountId).pipe(Effect.map((account) => [account])));
   const scope: Db.SearchScope = { kind: "stars", accountId };
-  const nearest = (embedding: Embedding) => timed(db.search.hybrid({ scope, text: "", embedding, limit: 20 }));
-  const hybrid = (embedding: Embedding, text: string) => timed(db.search.hybrid({ scope, text, embedding, limit: 20 }));
+  const plain = { scope, limit: 20, name: null, metrics: [], filters: Db.noFilters, rankBy: null };
+  const nearest = (embedding: Embedding) => timed(db.search.hybrid({ ...plain, text: "", embedding }));
+  const hybrid = (embedding: Embedding, text: string) => timed(db.search.hybrid({ ...plain, text, embedding }));
 
   const results = { lookup: [] as Array<number>, nearest: [] as Array<number>, hybrid: [] as Array<number> };
   const counts = { lookup: [] as Array<number>, nearest: [] as Array<number>, hybrid: [] as Array<number> };
