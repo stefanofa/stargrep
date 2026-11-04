@@ -11,7 +11,8 @@
       "!repos",
       "!packages/db/migrations",
       "!evals/fixtures",
-      "!packages/config/fixtures"
+      "!packages/config/fixtures",
+      "!apps/web/src/routeTree.gen.ts"
     ]
   },
   "formatter": {
@@ -32,6 +33,14 @@
     }
   },
   "overrides": [
+    {
+      "includes": ["apps/web/src/server.ts", "apps/web/src/server/**", "apps/web/website.ts", "apps/web/test/**"],
+      "linter": {
+        "domains": {
+          "react": "none"
+        }
+      }
+    },
     {
       "includes": ["packages/core/**"],
       "linter": {

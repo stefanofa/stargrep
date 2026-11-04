@@ -5,6 +5,8 @@
   "exports": {
     ".": "./src/worker.ts",
     "./debug": "./src/debug-worker.ts",
+    "./database": "./src/database.ts",
+    "./queues": "./src/queues.ts",
     "./readmes": "./src/readmes.ts"
   },
   "scripts": {
@@ -18,6 +20,7 @@
     "@stargrep/core": "workspace:*",
     "@stargrep/db": "workspace:*",
     "@stargrep/github": "workspace:*",
+    "@stargrep/runtime": "workspace:*",
     "@stargrep/telemetry": "workspace:*",
     "alchemy": "2.0.0-beta.85",
     "effect": "catalog:",

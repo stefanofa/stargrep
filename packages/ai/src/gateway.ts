@@ -15,6 +15,7 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -306,15 +307,19 @@ export const layerKeyMissing = Layer.merge(
 export const layerProvider = (config: { readonly apiKey: Redacted.Redacted<string> }) =>
   Layer.sync(AiProvider, () => AiProvider.of(createGateway({ apiKey: Redacted.value(config.apiKey) })));
 
+export const apiKeyName = "AI_GATEWAY_API_KEY";
+
 export const layerProviderConfig = Layer.unwrap(
-  Config.Redacted("AI_GATEWAY_API_KEY").pipe(Effect.map((apiKey) => layerProvider({ apiKey }))),
+  Config.Redacted(apiKeyName).pipe(Effect.map((apiKey) => layerProvider({ apiKey }))),
 );
 
-export const layerPlannerTextGeneration = layerTextGeneration(Models.plannerModel, {
+export const layerPlanner = layerTextGeneration(Models.plannerModel, {
   reasoning: "none",
   timeout: Duration.seconds(4),
   retry: noRetry,
-}).pipe(Layer.provide(layerProviderConfig));
+});
+
+export const layerPlannerTextGeneration = layerPlanner.pipe(Layer.provide(layerProviderConfig));
 
 export const layerModels = <E, R>(provider: Layer.Layer<AiProvider, E, R>, options: Partial<TextOptions> = {}) =>
   Layer.merge(layerTextGeneration(Models.summaryModel, options), layerEmbeddings(Models.embeddingModel)).pipe(
@@ -322,3 +327,18 @@ export const layerModels = <E, R>(provider: Layer.Layer<AiProvider, E, R>, optio
   );
 
 export const layer = layerModels(layerProviderConfig);
+
+type ApiKey = Option.Option<Redacted.Redacted<string>>;
+
+export const layerModelsForKey = (key: ApiKey, options: Partial<TextOptions> = {}) =>
+  Option.match(key, {
+    onNone: () => layerKeyMissing,
+    onSome: (apiKey) => layerModels(layerProvider({ apiKey }), options),
+  });
+
+export const layerSearchForKey = (key: ApiKey) =>
+  Option.match(key, {
+    onNone: () => Layer.merge(keyMissingText(Models.plannerModel), keyMissingEmbeddings(Models.embeddingModel)),
+    onSome: (apiKey) =>
+      Layer.merge(layerPlanner, layerEmbeddings(Models.embeddingModel)).pipe(Layer.provide(layerProvider({ apiKey }))),
+  });

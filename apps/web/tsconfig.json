@@ -1,0 +1,9 @@
+{
+  "extends": "@stargrep/config/tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types"]
+  },
+  "include": ["src", "test", "website.ts", "vite.config.ts", "vitest.config.ts"]
+}

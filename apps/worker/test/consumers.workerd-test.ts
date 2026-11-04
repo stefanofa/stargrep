@@ -28,9 +28,11 @@ import * as GitHub from "@stargrep/github/github";
 import * as GitHubFake from "@stargrep/github/github.fixture";
 import { GitHubAccountId, RepoId } from "@stargrep/github/schemas";
 import * as TokenGate from "@stargrep/github/token-gate";
+import { aiGatewayKey } from "@stargrep/runtime/config";
 import { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -428,7 +430,7 @@ describe("stage secrets", () => {
 
   it("treats an empty secret as missing", async () => {
     const read = await Effect.runPromise(
-      Effect.all([Secrets.githubToken, Secrets.aiGatewayKey]).pipe(
+      Effect.all([Secrets.githubToken, aiGatewayKey]).pipe(
         withEnv({ STARGREP_GITHUB_TOKEN: "", AI_GATEWAY_API_KEY: "" }),
       ),
     );
@@ -492,21 +494,51 @@ describe("stage secrets", () => {
 });
 
 describe("dead letters", () => {
-  it("logs the ids of a body it decodes and only the type of one it cannot", async () => {
-    const logs: Array<unknown> = [];
-    const batch = batchOf("sync-stars-dead-letters", ["secret-looking payload", { login: "octocat", mode: "full" }]);
-    await Effect.runPromise(
-      Settle.logDeadLetters(
+  const recordingDb = () => {
+    const failed: Array<[string, number]> = [];
+    const layer = Layer.succeed(
+      Db.Db,
+      Db.Db.of({
+        syncRequests: {
+          markFailed: (login: string, requestedAt: DateTime.Utc) =>
+            Effect.sync(() => void failed.push([login, DateTime.toEpochMillis(requestedAt)])),
+        },
+      } as unknown as Db.Db["Service"]),
+    );
+    return { failed, layer };
+  };
+
+  const handle = (bodies: ReadonlyArray<unknown>, layer: Layer.Layer<Db.Db>, logs: Array<unknown> = []) =>
+    Effect.runPromise(
+      Settle.handleDeadLetters(
         "sync-stars",
         SyncStarsConsumer.pipeline,
-      )(Stream.fromIterable(batch.messages)).pipe(
-        Effect.provide(Logger.layer([Logger.make(({ message }) => logs.push(message))])),
+      )(Stream.fromIterable(batchOf("sync-stars-dead-letters", bodies).messages)).pipe(
+        Effect.provide(Layer.merge(layer, Logger.layer([Logger.make(({ message }) => logs.push(message))]))),
       ),
     );
+
+  it("logs the ids of a body it decodes and only the type of one it cannot", async () => {
+    const logs: Array<unknown> = [];
+    await handle(["secret-looking payload", { login: "octocat", mode: "full" }], recordingDb().layer, logs);
     expect(JSON.stringify(logs)).not.toContain("secret-looking payload");
     expect(logs).toEqual([
       ["Dead letter", { queue: "sync-stars", messageId: "m0", attempts: 1, bodyType: "string" }],
       ["Dead letter", { queue: "sync-stars", messageId: "m1", attempts: 1, login: "octocat", mode: "full" }],
     ]);
+  });
+
+  it("marks the request a login sync carries as failed, and leaves other syncs alone", async () => {
+    const db = recordingDb();
+    const requestedAt = Date.parse("2026-11-04T12:00:00Z");
+    await handle(
+      [
+        { login: "No-Such-Login", mode: "incremental", requestedAt },
+        { login: "octocat", mode: "full" },
+        { accountId: 5, mode: "full" },
+      ],
+      db.layer,
+    );
+    expect(db.failed).toEqual([["No-Such-Login", requestedAt]]);
   });
 });

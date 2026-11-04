@@ -3,6 +3,7 @@ import { type RepoId, RepoNodeId } from "@stargrep/github/schemas";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -35,6 +36,8 @@ import {
   stars,
 } from "./fixtures.ts";
 
+const syncCooldown = Duration.minutes(10);
+const syncLifetime = Duration.days(1);
 const summaryOf = (id: RepoId) => `summary of ${id}`;
 
 const embedSummarized = (db: Db.Db["Service"], id: RepoId, vector: Embedding) =>
@@ -74,7 +77,8 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.repos.upsertRefs([ref(first, "renamed"), ref(second)]);
 
       expect(Option.getOrThrow(yield* db.repos.get(first)).name).toBe(repoName("renamed"));
-      expect(Option.getOrThrow(yield* db.repos.get(second)).name).toBe(repoName(`repo-${second}`));
+      expect((yield* db.repos.require(second)).name).toBe(repoName(`repo-${second}`));
+      expect(yield* Effect.flip(db.repos.require(repoId(2099)))).toMatchObject({ _tag: "RepoNotFound", repoId: 2099 });
     }),
   );
 
@@ -86,6 +90,59 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       expect(Option.getOrThrow(yield* db.repos.get(id)).nodeId).toBe(RepoNodeId.make(`R_${id}`));
       yield* db.repos.upsertRefs([ref(id, `repo-${id}`, "R_moved")]);
       expect(Option.getOrThrow(yield* db.repos.get(id)).nodeId).toBe(RepoNodeId.make("R_moved"));
+    }),
+  );
+
+  test.effect("lets one of many parallel claims for a login win, and claims again after the cooldown", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const claim = (name: string, time: string) =>
+        db.syncRequests.claim({ login: login(name), at: at(time), cooldown: syncCooldown, lifetime: syncLifetime });
+      const first = at("2026-11-04T12:00:00Z");
+      const claims = yield* Effect.all(
+        Array.from({ length: 8 }, (_, i) => claim(i % 2 === 0 ? "Racer" : "racer", "2026-11-04T12:00:00Z")),
+        { concurrency: "unbounded" },
+      );
+      expect(claims.filter(Boolean)).toHaveLength(1);
+      expect(yield* db.syncRequests.get(login("RACER"))).toEqual(
+        Option.some({ login: "racer", requestedAt: first, outcome: "pending" }),
+      );
+
+      expect(yield* claim("racer", "2026-11-04T12:09:59Z")).toBe(false);
+      expect(yield* claim("racer", "2026-11-04T12:10:00Z")).toBe(true);
+      yield* db.syncRequests.markFailed(login("Racer"), at("2026-11-04T12:10:00Z"));
+      expect(yield* db.syncRequests.get(login("racer"))).toEqual(
+        Option.some({ login: "racer", requestedAt: at("2026-11-04T12:10:00Z"), outcome: "failed" }),
+      );
+      yield* db.syncRequests.markFailed(login("never-requested"), first);
+      expect(yield* db.syncRequests.get(login("never-requested"))).toEqual(Option.none());
+    }),
+  );
+
+  test.effect("keeps a fresh claim pending when the dead letter of an older one arrives", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const claim = (time: string) =>
+        db.syncRequests.claim({ login: login("stale"), at: at(time), cooldown: syncCooldown, lifetime: syncLifetime });
+      expect(yield* claim("2026-11-04T13:00:00Z")).toBe(true);
+      expect(yield* claim("2026-11-04T13:11:00Z")).toBe(true);
+      yield* db.syncRequests.markFailed(login("stale"), at("2026-11-04T13:00:00Z"));
+      expect(yield* db.syncRequests.get(login("stale"))).toEqual(
+        Option.some({ login: "stale", requestedAt: at("2026-11-04T13:11:00Z"), outcome: "pending" }),
+      );
+    }),
+  );
+
+  test.effect("deletes requests older than their lifetime when another login claims", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const claim = (name: string, time: string) =>
+        db.syncRequests.claim({ login: login(name), at: at(time), cooldown: syncCooldown, lifetime: syncLifetime });
+      yield* claim("expired", "2026-11-01T08:00:00Z");
+      yield* claim("recent", "2026-11-05T07:00:00Z");
+      yield* claim("newcomer", "2026-11-05T08:00:00Z");
+      expect(yield* db.syncRequests.get(login("expired"))).toEqual(Option.none());
+      expect(Option.isSome(yield* db.syncRequests.get(login("recent")))).toBe(true);
     }),
   );
 

@@ -1,6 +1,7 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import type { EnrichRepo } from "@stargrep/core/repos";
 import type { StarSync } from "@stargrep/core/stars";
+import type * as Db from "@stargrep/db";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
@@ -18,12 +19,12 @@ export const queueNames = { syncStars: "sync-stars", enrichRepo: "enrich-repo" }
 
 const retries = { maxRetries: 5, retryDelay: "1 minute" } as const;
 
-const consume = Effect.fn("Queues.consume")(function* <A, R, E>(
+const consume = Effect.fn("Queues.consume")(function* <A, R, D, E>(
   name: string,
   queues: { readonly queue: typeof SyncStars; readonly deadLetters: typeof SyncStars },
   settings: Omit<Cloudflare.Queues.MessagesProps, "deadLetterQueue">,
-  pipeline: Settle.Pipeline<A, R>,
-  runtime: Layer.Layer<NoInfer<R>, E, RuntimeContext>,
+  pipeline: Settle.Pipeline<A, R, D>,
+  runtime: Layer.Layer<NoInfer<R | D>, E, RuntimeContext>,
 ) {
   const queue = yield* queues.queue;
   const deadLetters = yield* queues.deadLetters;
@@ -35,14 +36,14 @@ const consume = Effect.fn("Queues.consume")(function* <A, R, E>(
       yield* Settle.processBatch(pipeline, bound, yield* Stream.runCollect(stream));
     }).pipe(Effect.provide(runtime)),
   );
-  yield* Cloudflare.Queues.consumeQueueMessages(
-    deadLetters,
-    { batchSize: 10, maxWaitTime: "1 second" },
-    Settle.logDeadLetters(name, pipeline),
+  yield* Cloudflare.Queues.consumeQueueMessages(deadLetters, { batchSize: 10, maxWaitTime: "1 second" }, (stream) =>
+    Settle.handleDeadLetters(name, pipeline)(stream).pipe(Effect.provide(runtime)),
   );
 });
 
-export const consumeAll = <E>(runtime: Layer.Layer<StarSync.StarSync | EnrichRepo.EnrichRepo, E, RuntimeContext>) =>
+export const consumeAll = <E>(
+  runtime: Layer.Layer<StarSync.StarSync | EnrichRepo.EnrichRepo | Db.Db, E, RuntimeContext>,
+) =>
   Effect.all([
     consume(
       queueNames.syncStars,

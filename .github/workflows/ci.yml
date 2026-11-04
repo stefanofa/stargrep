@@ -53,3 +53,4 @@ jobs:
       - uses: ./.github/actions/setup
       - run: docker compose up --detach --wait
       - run: bun run --cwd apps/worker test
+      - run: bun run --cwd apps/web test

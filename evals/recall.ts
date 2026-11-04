@@ -26,7 +26,8 @@ import { EnrichedRepo, enrich } from "./enriched-corpus.ts";
 const bar = 0.97;
 const topK = 10;
 const accountId = GitHubAccountId.make(1);
-const scope = { _tag: "stars", accountId } as const;
+const login = Login.make("recall-eval");
+const scope = { _tag: "stars", login } as const;
 const negativesPerQuery = 3;
 
 const FixtureMeta = Schema.Struct({ recall: Schema.Finite, queries: Schema.Array(Schema.String) });
@@ -77,7 +78,7 @@ const loadAccount = Effect.fn("Recall.loadAccount")(function* (repos: ReadonlyAr
   yield* db.accounts.upsert({
     id: accountId,
     type: "user",
-    login: Login.make("recall-eval"),
+    login,
     name: null,
     avatarUrl: null,
     followers: null,

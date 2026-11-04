@@ -147,26 +147,29 @@ export const settle = Effect.fn("Consumer.settle")(function* (
   }
 });
 
-export interface Pipeline<A, R> {
+export interface Pipeline<A, R, D = never> {
   readonly decode: (body: unknown) => Result.Result<A, Schema.SchemaError>;
   readonly run: (
     bodies: ReadonlyArray<A>,
   ) => Effect.Effect<ReadonlyArray<Result.Result<Settlement, Failure>>, never, R>;
   readonly describe: (body: A) => Record<string, unknown>;
+  readonly onDeadLetter: (body: A) => Effect.Effect<void, never, D>;
 }
 
-export const pipeline = <S extends Schema.Decoder<unknown>, R>(options: {
+export const pipeline = <S extends Schema.Decoder<unknown>, R, D = never>(options: {
   readonly schema: S;
   readonly run: Pipeline<S["Type"], R>["run"];
   readonly describe: Pipeline<S["Type"], R>["describe"];
-}): Pipeline<S["Type"], R> => ({
+  readonly onDeadLetter?: Pipeline<S["Type"], R, D>["onDeadLetter"];
+}): Pipeline<S["Type"], R, D> => ({
   decode: Schema.decodeUnknownResult(options.schema),
   run: options.run,
   describe: options.describe,
+  onDeadLetter: options.onDeadLetter ?? (() => Effect.void),
 });
 
-export const processBatch = Effect.fn("Consumer.processBatch")(function* <A, R>(
-  pipeline: Pipeline<A, R>,
+export const processBatch = Effect.fn("Consumer.processBatch")(function* <A, R, D>(
+  pipeline: Pipeline<A, R, D>,
   queues: Queues,
   messages: ReadonlyArray<Message>,
 ) {
@@ -195,9 +198,9 @@ const bodyType = (body: unknown) => ({
   bodyType: body === null ? "null" : Array.isArray(body) ? "array" : typeof body,
 });
 
-export const logDeadLetters = <A, R>(name: string, pipeline: Pipeline<A, R>) =>
+export const handleDeadLetters = <A, R, D>(name: string, pipeline: Pipeline<A, R, D>) =>
   Stream.runForEach(
-    Effect.fn("DeadLetters.log")(function* (message: Message) {
+    Effect.fn("DeadLetters.handle")(function* (message: Message) {
       const decoded = pipeline.decode(message.body);
       yield* Effect.logError("Dead letter", {
         queue: name,
@@ -205,5 +208,6 @@ export const logDeadLetters = <A, R>(name: string, pipeline: Pipeline<A, R>) =>
         attempts: message.attempts,
         ...(Result.isSuccess(decoded) ? pipeline.describe(decoded.success) : bodyType(message.body)),
       });
+      if (Result.isSuccess(decoded)) yield* pipeline.onDeadLetter(decoded.success);
     }),
   );

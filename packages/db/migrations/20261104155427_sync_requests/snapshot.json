@@ -1,0 +1,132 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "34ed118d-1aa3-415d-9518-b8b1cea73ce8",
+  "prevIds": [
+    "9c6dbdbd-bb52-4a73-956d-5cfbd97db749"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "sync_request_outcome"
+      ],
+      "writes": [
+        "s|enum|public.sync_request_outcome",
+        "n|enum|public.sync_request_outcome",
+        "e|enum|public.sync_request_outcome",
+        "n|type|public.sync_request_outcome"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "sync_requests"
+      ],
+      "writes": [
+        "s|tbl|public.sync_requests",
+        "n|tbl|public.sync_requests",
+        "e|tbl|public.sync_requests",
+        "n|rel|public.sync_requests",
+        "n|type|public.sync_requests",
+        "n|rel|public.sync_requests_pkey"
+      ],
+      "reads": [
+        "n|sch|public",
+        "n|enum|public.sync_request_outcome"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "sync_requests",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "sync_request_outcome",
+        "values": [
+          "pending",
+          "failed"
+        ],
+        "entityType": "enums"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "sync_requests",
+        "name": "login",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "sync_requests",
+        "name": "requested_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "sync_requests",
+        "name": "outcome",
+        "type": "sync_request_outcome",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "sync_requests",
+        "name": "sync_requests_pkey",
+        "columns": [
+          "login"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    }
+  ]
+}

@@ -9,7 +9,7 @@ import { readStageOutput } from "./stage-output.ts";
 
 const [stage, ...alchemyArgs] = process.argv.slice(2);
 if (!stage) throw new Error("usage: bun scripts/stage-smoke.ts <stage> [alchemy state read flags]");
-const { debugUrl, debugToken } = await readStageOutput(stage, alchemyArgs);
+const { debugUrl, debugToken, webUrl } = await readStageOutput(stage, alchemyArgs);
 
 const Budget = Schema.Struct({ minute: Schema.Int, used: Schema.Int, cap: Schema.Int });
 const Count = Schema.Struct({ count: Schema.Int });
@@ -22,25 +22,22 @@ const check = (name: string, ok: boolean, detail: unknown): Check => ({ check: n
 
 const resends = { cloudflare404: 0, dropped: 0 };
 
-const call = Effect.fn("StageSmoke.call")(function* (
-  method: "GET" | "POST",
-  path: string,
-  authorization: string | null = `Bearer ${debugToken}`,
-) {
-  const url = new URL(path, debugUrl);
-  const request = HttpClientRequest.make(method)(url);
-  const send = Effect.gen(function* () {
-    const response = yield* HttpClient.execute(
-      authorization === null ? request : HttpClientRequest.setHeader(request, "authorization", authorization),
-    );
+const send = Effect.fn("StageSmoke.send")(function* (request: HttpClientRequest.HttpClientRequest) {
+  const attempt = Effect.gen(function* () {
+    const response = yield* HttpClient.execute(request);
     return {
       status: response.status,
       contentType: response.headers["content-type"] ?? "",
       body: yield* response.text,
     };
   });
-  return yield* untilRouted(`${method} ${url}`, send, resends);
+  return yield* untilRouted(`${request.method} ${request.url}`, attempt, resends);
 });
+
+const call = (method: "GET" | "POST", path: string, authorization: string | null = `Bearer ${debugToken}`) => {
+  const request = HttpClientRequest.make(method)(new URL(path, debugUrl));
+  return send(authorization === null ? request : HttpClientRequest.setHeader(request, "authorization", authorization));
+};
 
 const decode = <S extends Schema.Top>(schema: S, body: string) =>
   Schema.decodeEffect(Schema.fromJsonString(schema))(body);
@@ -142,6 +139,60 @@ const traffic = Effect.gen(function* () {
   ];
 });
 
+const Spec = Schema.Struct({ paths: Schema.Record(Schema.String, Schema.Unknown) });
+const SyncState = Schema.Struct({ state: Schema.String });
+const WireError = Schema.Struct({
+  code: Schema.String,
+  data: Schema.optional(Schema.Struct({ traceId: Schema.optional(Schema.String) })),
+});
+
+const web = Effect.gen(function* () {
+  const get = (path: string) => send(HttpClientRequest.get(new URL(path, webUrl)));
+  const post = (path: string, body: object) =>
+    send(
+      HttpClientRequest.post(new URL(path, webUrl)).pipe(
+        HttpClientRequest.setHeader("accept", "application/json, text/event-stream"),
+        HttpClientRequest.bodyJsonUnsafe(body),
+      ),
+    );
+  const spec = yield* get("/openapi.json");
+  const paths = Object.keys((yield* decode(Spec, spec.body)).paths).sort();
+  const emptyQuery = yield* post("/api/search", { login: "octocat", q: "" });
+  const emptyQueryBody = yield* decode(WireError, emptyQuery.body);
+  const stranger = `smoke-${yield* Clock.currentTimeMillis}`;
+  const status = yield* get(`/api/sync/${stranger}`);
+  const statusBody = yield* decode(SyncState, status.body);
+  const unsynced = yield* post("/api/search", { login: stranger, q: "terminal dashboards" });
+  const unsyncedBody = yield* decode(WireError, unsynced.body);
+  const tools = yield* post("/mcp", { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
+  const toolList = tools.body;
+  return [
+    check("the OpenAPI document lists every route", paths.join(" ") === "/repos/{id} /search /sync/{login}", {
+      status: spec.status,
+      paths,
+    }),
+    check(
+      "an empty search query answers 400 with a trace ID",
+      emptyQuery.status === 400 && emptyQueryBody.data?.traceId !== undefined,
+      { status: emptyQuery.status, code: emptyQueryBody.code },
+    ),
+    check("a login never seen reads as unknown through Postgres", statusBody.state === "unknown", {
+      status: status.status,
+      state: statusBody.state,
+    }),
+    check(
+      "a search of that login answers ACCOUNT_NOT_SYNCED with every service built",
+      unsynced.status === 404 && unsyncedBody.code === "ACCOUNT_NOT_SYNCED",
+      { status: unsynced.status, code: unsyncedBody.code },
+    ),
+    check(
+      "MCP lists the four tools",
+      ["search", "triggerSync", "syncStatus", "getRepo"].every((name) => toolList.includes(`"name":"${name}"`)),
+      { status: tools.status },
+    ),
+  ];
+});
+
 const flood = Effect.gen(function* () {
   const now = yield* Clock.currentTimeMillis;
   yield* Effect.sleep(60_000 - (now % 60_000) + 1_000);
@@ -165,7 +216,10 @@ const flood = Effect.gen(function* () {
 
 const checks = (
   await Effect.runPromise(
-    ready.pipe(Effect.andThen(Effect.all([unauthenticated, traffic, flood])), Effect.provide(FetchHttpClient.layer)),
+    ready.pipe(
+      Effect.andThen(Effect.all([web, unauthenticated, traffic, flood])),
+      Effect.provide(FetchHttpClient.layer),
+    ),
   )
 ).flat();
 for (const result of checks) console.log(JSON.stringify(result));
