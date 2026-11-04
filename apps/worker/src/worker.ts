@@ -13,9 +13,8 @@ import { tokenGate } from "./github-gate.ts";
 import { healthResponse } from "./health.ts";
 import * as Layers from "./layers.ts";
 import * as Queues from "./queues.ts";
+import { Readmes } from "./readmes.ts";
 import { requireStageSecrets } from "./secrets.ts";
-
-const Readmes = Cloudflare.R2.Bucket("Readmes");
 
 export default class Worker extends Cloudflare.Worker<Worker>()(
   "Worker",
