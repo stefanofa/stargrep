@@ -76,4 +76,22 @@ describe("matched words", () => {
     expect(container.querySelectorAll("mark")).toHaveLength(2);
     expect(container.querySelector("h3 a")?.getAttribute("href")).toBe("?repo=ClementTsang/bottom");
   });
+
+  test("a result tile shows no star count until the repo has one", () => {
+    const result: Result = {
+      owner: "ratatui",
+      name: "ratatui",
+      href: "?repo=ratatui/ratatui",
+      reason: "Widgets for terminal dashboards.",
+      matches: [],
+      activity: { state: "quiet", label: "no pushes yet" },
+      stars: null,
+      starred: "Mar 14, 2025",
+      network: [],
+    };
+    const { container } = render(<ResultItem result={result} />);
+    const terms = [...container.querySelectorAll("dt")].map((term) => term.textContent);
+    expect(terms).not.toContain("stars");
+    expect(terms).toContain("starred");
+  });
 });

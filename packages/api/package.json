@@ -7,7 +7,8 @@
     "./errors": "./src/errors.ts",
     "./router": "./src/router.ts",
     "./middleware/instrumentation": "./src/middleware/instrumentation.ts",
-    "./sync-limiter": "./src/sync-limiter.ts"
+    "./sync-limiter": "./src/sync-limiter.ts",
+    "./viewers": "./src/viewers.ts"
   },
   "scripts": {
     "typecheck": "effect-tsgo tsc -p ."

@@ -12,6 +12,7 @@ import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
+import { UserId } from "../src/auth-schema.ts";
 import * as Db from "../src/db.ts";
 import type { Embedding, EmbeddingModelId } from "../src/embedding.ts";
 import * as NodePostgres from "../src/node-postgres.ts";
@@ -56,6 +57,73 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       const stored = Option.getOrThrow(yield* db.accounts.get(id));
       expect(stored).toMatchObject({ id, type: "org", login: "after", followers: 7, starsEtag: null });
       expect(Option.isNone(yield* db.accounts.get(accountId(999_999)))).toBe(true);
+    }),
+  );
+
+  test.effect("claims an account for a user and finds it by that user", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const [ada, grace] = [UserId.make("user-ada"), UserId.make("user-grace")];
+      for (const id of [ada, grace]) {
+        yield* database.query("insert into \"user\" (id, name, email) values ($1, $1, $1 || '@example.com')", [id]);
+      }
+      const id = accountId(110);
+      yield* db.accounts.claim({ facts: account(id, { login: login("ada") }), userId: ada, starredCount: 2431 });
+      yield* db.accounts.claim({
+        facts: account(id, { login: login("ada-renamed") }),
+        userId: ada,
+        starredCount: 2432,
+      });
+
+      expect(Option.getOrThrow(yield* db.accounts.claimedBy(ada))).toMatchObject({
+        id,
+        login: "ada-renamed",
+        claimedBy: ada,
+        starredCount: 2432,
+      });
+      expect(Option.isNone(yield* db.accounts.claimedBy(grace))).toBe(true);
+      const second = yield* Effect.flip(
+        db.accounts.claim({ facts: account(accountId(112)), userId: ada, starredCount: 1 }),
+      );
+      expect([second._tag, second.operation]).toEqual(["DbQueryFailed", "accounts.claim"]);
+    }),
+  );
+
+  test.effect("lists an account's library newest star first, with star totals and without unstarred repos", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const owner = accountId(111);
+      const [older, newer, gone, untracked] = [repoId(2501), repoId(2502), repoId(2503), repoId(2504)];
+      yield* db.accounts.upsert(account(owner));
+      yield* db.repos.upsertRefs([older, newer, gone, untracked].map((id) => ref(id)));
+      yield* db.repos.saveFacts({ ...facts(newer), description: "Newest star" });
+      for (const [id, count] of [
+        [older, 10],
+        [newer, 1200],
+      ] as const) {
+        yield* database.query("insert into repo_metrics (repo_id, stars, refreshed_at) values ($1, $2, now())", [
+          id,
+          count,
+        ]);
+      }
+      const kept = [
+        starred(older, "2025-01-01T00:00:00Z"),
+        starred(newer, "2026-03-01T00:00:00Z"),
+        starred(untracked, "2025-06-01T00:00:00Z"),
+      ];
+      yield* db.stars.upsert({ accountId: owner, stars: [...kept, starred(gone, "2026-02-01T00:00:00Z")] });
+      yield* db.stars.applySnapshot({ accountId: owner, stars: kept, at: at("2026-04-01T00:00:00Z") });
+
+      const library = yield* db.stars.library(owner);
+      expect(library.map((entry) => [entry.repo.id, iso(entry.starredAt), entry.stars])).toEqual([
+        [newer, "2026-03-01T00:00:00.000Z", 1200],
+        [untracked, "2025-06-01T00:00:00.000Z", null],
+        [older, "2025-01-01T00:00:00.000Z", 10],
+      ]);
+      expect(library[0]?.repo.description).toBe("Newest star");
+      expect(yield* db.stars.library(accountId(999_998))).toEqual([]);
     }),
   );
 

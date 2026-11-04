@@ -1,0 +1,58 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "037f3dc1-3076-4aca-88b4-a5cae3fe3549",
+  "prevIds": [
+    "2526d6c8-001a-43c8-8316-b840d3bf9cf6",
+    "d7e02429-6d4e-4016-9ef7-ca8d9b1bd7d4"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "github_accounts",
+        "github_accounts_claimed_by_key"
+      ],
+      "writes": [
+        "s|idx|public.github_accounts_claimed_by_key",
+        "n|idx|public.github_accounts_claimed_by_key",
+        "e|idx|public.github_accounts_claimed_by_key",
+        "n|rel|public.github_accounts_claimed_by_key"
+      ],
+      "reads": [
+        "n|tbl|public.github_accounts",
+        "n|sch|public",
+        "n|col|public.github_accounts.claimed_by"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_accounts",
+        "name": "github_accounts_claimed_by_key",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "claimed_by",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": true,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    }
+  ]
+}

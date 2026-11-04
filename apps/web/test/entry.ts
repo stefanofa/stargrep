@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { NotSignedIn, Viewers } from "@stargrep/api/viewers";
 import { QueryPlan, Search } from "@stargrep/core/search";
 import { SyncQueue, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
@@ -86,6 +87,7 @@ const serve = makeServer(
   (request) =>
     Layer.mergeAll(
       Layer.succeed(Search.Search, search),
+      Layer.succeed(Viewers, Viewers.of({ current: Effect.fail(new NotSignedIn()) })),
       SyncRequests.layer,
       layerSyncLimiter(
         { perCaller: env.SYNC_PER_CALLER, overall: env.SYNC_OVERALL },

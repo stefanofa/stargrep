@@ -48,6 +48,9 @@ export const SearchResult = Schema.Struct({
   reason: Schema.String.annotate({
     description: "Why the repo matched, such as 'keyword match #2, +38% contributors in 90 days'.",
   }),
+  rankedBy: Schema.Array(Schema.String).annotate({
+    description: "The values that ranked the repo, such as '+38% contributors in 90 days'.",
+  }),
   metrics: Schema.Array(Schema.Struct({ metric: MetricRegistry.MetricId, value: Schema.NullOr(Schema.Finite) })),
 });
 
@@ -79,6 +82,26 @@ export const RepoDetail = Schema.Struct({
   homepage: Schema.NullOr(Schema.String),
   createdAt: Schema.NullOr(Timestamp),
 });
+
+export const Viewer = Schema.Struct({
+  login: Schema.String,
+  name: Schema.NullOr(Schema.String),
+  avatarUrl: Schema.NullOr(Schema.String),
+  starredCount: Schema.NullOr(Schema.Int).annotate({
+    description: "How many repos the account had starred on GitHub when it last signed in.",
+  }),
+});
+
+export const LibraryRepo = Schema.Struct({
+  ...RepoFields.fields,
+  keywords: Schema.Array(Schema.String),
+  starredAt: Timestamp,
+  stars: Schema.NullOr(Schema.Int).annotate({ description: "The repo's star count, when Stargrep has read it." }),
+});
+
+export const Library = Schema.Struct({ repos: Schema.Array(LibraryRepo) });
+
+export const signedIn = new Set(["viewer", "library"]);
 
 const procedure = oc.errors(errors);
 
@@ -129,4 +152,22 @@ export const contract = {
     })
     .input(RepoInput)
     .output(RepoDetail),
+  viewer: procedure
+    .route({
+      method: "GET",
+      path: "/viewer",
+      operationId: "viewer",
+      summary: "Read the signed-in account",
+      description: "Returns the GitHub account of the person signed in with the session cookie.",
+    })
+    .output(Viewer),
+  library: procedure
+    .route({
+      method: "GET",
+      path: "/library",
+      operationId: "library",
+      summary: "List the signed-in account's stars",
+      description: "Returns every repo the signed-in account starred, newest star first.",
+    })
+    .output(Library),
 };

@@ -17,7 +17,7 @@ export type RepoDetail = {
   readonly language?: string;
   readonly description: string;
   readonly summary: string;
-  readonly stars: number;
+  readonly stars: number | null;
   readonly starred?: string;
   readonly activity: Activity;
   readonly release?: string;
@@ -75,21 +75,23 @@ export function RepoPanel({
 
               <div className="flex flex-col gap-[18px]">
                 <div className="flex flex-wrap items-end justify-between gap-3">
-                  <p className="flex items-center gap-2">
-                    <svg viewBox="0 0 24 24" aria-hidden className="size-10">
-                      <path
-                        d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"
-                        fill="var(--color-highlight)"
-                        stroke="var(--color-highlight-edge)"
-                        strokeWidth="1.6"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                    <span className="font-display text-[76px] leading-[76px] font-semibold tracking-[-0.03em]">
-                      {formatStars(repo.stars)}
-                    </span>
-                    <span className="sr-only">stars</span>
-                  </p>
+                  {repo.stars !== null && (
+                    <p className="flex items-center gap-2">
+                      <svg viewBox="0 0 24 24" aria-hidden className="size-10">
+                        <path
+                          d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"
+                          fill="var(--color-highlight)"
+                          stroke="var(--color-highlight-edge)"
+                          strokeWidth="1.6"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                      <span className="font-display text-[76px] leading-[76px] font-semibold tracking-[-0.03em]">
+                        {formatStars(repo.stars)}
+                      </span>
+                      <span className="sr-only">stars</span>
+                    </p>
+                  )}
                   {repo.starred && (
                     <p className="mb-2 flex h-8 items-center gap-[7px] rounded-full bg-accent-soft pr-[13px] pl-[11px] font-sans text-sm font-semibold text-accent-strong">
                       <StarIcon className="size-[13px]" />

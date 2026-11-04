@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
+import { UserId } from "../auth-schema.ts";
 import { AccountNotFound, type DbQueryFailed, type DbRowInvalid } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
 import { NullableTime, requireRow, rowsDecoder, writeEncoder } from "../rows.ts";
@@ -15,13 +16,21 @@ import { githubAccounts } from "../schema.ts";
 export const Account = createSelectSchema(githubAccounts, {
   id: GitHubAccountId,
   login: Login,
+  claimedBy: Schema.NullOr(UserId),
   starsSyncedAt: NullableTime,
   starsFullSyncedAt: NullableTime,
 });
 export type Account = typeof Account.Type;
 
 const AccountFacts = Schema.Struct(
-  Struct.omit(Account.fields, ["claimedBy", "ownedRepoStars", "starsEtag", "starsSyncedAt", "starsFullSyncedAt"]),
+  Struct.omit(Account.fields, [
+    "claimedBy",
+    "starredCount",
+    "ownedRepoStars",
+    "starsEtag",
+    "starsSyncedAt",
+    "starsFullSyncedAt",
+  ]),
 );
 export type AccountFacts = typeof AccountFacts.Type;
 
@@ -31,6 +40,12 @@ export interface StarSync {
   readonly at: DateTime.Utc;
 }
 
+export interface AccountClaim {
+  readonly facts: AccountFacts;
+  readonly userId: UserId;
+  readonly starredCount: number;
+}
+
 export interface OwnedRepoStars {
   readonly accountId: GitHubAccountId;
   readonly stars: number;
@@ -38,6 +53,8 @@ export interface OwnedRepoStars {
 
 export interface Queries {
   readonly upsert: (facts: AccountFacts) => Effect.Effect<void, DbQueryFailed>;
+  readonly claim: (claim: AccountClaim) => Effect.Effect<void, DbQueryFailed>;
+  readonly claimedBy: (userId: UserId) => Effect.Effect<Option.Option<Account>, DbQueryFailed | DbRowInvalid>;
   readonly get: (id: GitHubAccountId) => Effect.Effect<Option.Option<Account>, DbQueryFailed | DbRowInvalid>;
   readonly byLogin: (login: Login) => Effect.Effect<Option.Option<Account>, DbQueryFailed | DbRowInvalid>;
   readonly require: (id: GitHubAccountId) => Effect.Effect<Account, DbQueryFailed | DbRowInvalid | AccountNotFound>;
@@ -62,6 +79,23 @@ export const make = Effect.gen(function* () {
           );
         }),
       ),
+    claim: ({ facts, userId, starredCount }) =>
+      encodeFacts(facts).pipe(
+        Effect.flatMap((values) => {
+          const { id: _, ...changes } = values;
+          const claimed = { claimedBy: userId, starredCount };
+          return run("accounts.claim", (db) =>
+            db
+              .insert(githubAccounts)
+              .values({ ...values, ...claimed })
+              .onConflictDoUpdate({ target: githubAccounts.id, set: { ...changes, ...claimed } }),
+          );
+        }),
+      ),
+    claimedBy: (userId) =>
+      run("accounts.claimedBy", (db) =>
+        db.select().from(githubAccounts).where(eq(githubAccounts.claimedBy, userId)),
+      ).pipe(Effect.flatMap(decodeAccounts("accounts.claimedBy")), Effect.map(Arr.head)),
     get: (id) =>
       run("accounts.get", (db) => db.select().from(githubAccounts).where(eq(githubAccounts.id, id))).pipe(
         Effect.flatMap(decodeAccounts("accounts.get")),

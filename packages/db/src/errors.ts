@@ -4,6 +4,8 @@ import * as Schema from "effect/Schema";
 export const Operation = Schema.Literals([
   "transaction",
   "accounts.upsert",
+  "accounts.claim",
+  "accounts.claimedBy",
   "accounts.get",
   "accounts.byLogin",
   "accounts.require",
@@ -21,6 +23,7 @@ export const Operation = Schema.Literals([
   "stars.upsert",
   "stars.applySnapshot",
   "stars.list",
+  "stars.library",
   "search.hybrid",
   "syncRequests.get",
   "syncRequests.claim",

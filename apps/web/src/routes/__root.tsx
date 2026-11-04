@@ -1,7 +1,16 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
+import styles from "../styles.css?url";
 
 export const Route = createRootRoute({
-  head: () => ({ meta: [{ charSet: "utf-8" }, { title: "Stargrep" }] }),
+  head: () => ({
+    meta: [
+      { charSet: "utf-8" },
+      { name: "viewport", content: "width=device-width, initial-scale=1, viewport-fit=cover" },
+      { title: "Stargrep" },
+      { name: "description", content: "Search your GitHub stars in plain words." },
+    ],
+    links: [{ rel: "stylesheet", href: styles }],
+  }),
   component: () => (
     <html lang="en">
       <head>

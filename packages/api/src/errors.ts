@@ -8,6 +8,7 @@ const TraceData = Schema.Struct({
 });
 
 const wire = {
+  UNAUTHORIZED: { status: 401, message: "Sign in with GitHub to see your stars." },
   ACCOUNT_NOT_SYNCED: { status: 404, message: "Stargrep has not synced this login's stars yet. Trigger a sync first." },
   REPO_NOT_FOUND: { status: 404, message: "Stargrep has no repo with this ID." },
   SCOPE_UNAVAILABLE: { status: 422, message: "This search scope is not available yet." },

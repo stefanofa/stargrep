@@ -1,5 +1,6 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import { apiKeyName } from "@stargrep/ai/gateway";
+import { bindings, githubSignIn, names, optionalSecret, required } from "@stargrep/auth/config";
 import { aiGatewayKey } from "@stargrep/runtime/config";
 import MainWorker from "@stargrep/worker";
 import { Database, DatabaseMigrations } from "@stargrep/worker/database";
@@ -10,6 +11,28 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 const SearchCache = Cloudflare.KV.Namespace("SearchCache");
+
+const BetterAuthSecret = Alchemy.makeRandom("BetterAuthSecret");
+
+const signInBindings = Effect.gen(function* () {
+  const { stage } = yield* Alchemy.Stack;
+  const signIn = yield* githubSignIn;
+  if (stage === "prod") {
+    const github = Option.filter(signIn, (config) => config._tag === "direct" && Option.isSome(config.proxySecret));
+    if (Option.isNone(github)) {
+      return yield* Effect.die(
+        `prod signs in directly and forwards previews' sign-ins, so it needs ${names.clientId}, ${names.proxySecret}, and no ${names.proxyOrigin}`,
+      );
+    }
+    return { ...bindings(github.value), [names.secret]: yield* required(names.secret) };
+  }
+  if (Option.isNone(signIn)) return {};
+  const secret = yield* optionalSecret(names.secret);
+  return {
+    ...bindings(signIn.value),
+    [names.secret]: Option.isSome(secret) ? secret.value : yield* BetterAuthSecret,
+  };
+});
 
 // Cloudflare counts a rate limit per namespace ID across the whole account, so each stage gets its own IDs.
 const namespaceId = (stage: string, name: string) => {
@@ -45,6 +68,7 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
           simple: { limit: 60, period: 60 },
         }),
         ...Option.match(key, { onNone: () => ({}), onSome: (value) => ({ [apiKeyName]: value }) }),
+        ...(yield* signInBindings),
       },
     };
   }).pipe(Effect.orDie),

@@ -22,7 +22,7 @@ export type Result = {
   readonly reason: string;
   readonly matches: ReadonlyArray<Match>;
   readonly activity: Activity;
-  readonly stars: number;
+  readonly stars: number | null;
   readonly starred: string;
   readonly network: ReadonlyArray<Person>;
 };
@@ -167,30 +167,32 @@ export function ResultItem({
         {highlight(result.reason, result.matches)}
       </p>
       <dl className="contents font-sans">
-        <div
-          className={cn(
-            "[grid-area:stars] flex items-center gap-[5px] self-start justify-self-end",
-            dim && "text-muted-foreground",
-            layout.stars,
-            "list:mt-0 list:self-center list:justify-self-start",
-          )}
-        >
-          <dt className="sr-only">stars</dt>
-          <dd className="flex items-center gap-[inherit]">
-            <StarIcon
-              className={cn("size-5", dim && "opacity-(--opacity-archived)", layout.starIcon, "list:size-[15px]")}
-            />
-            <span
-              className={cn(
-                "font-display text-2xl font-semibold tracking-tight",
-                layout.starCount,
-                "list:text-lg list:leading-gap list:tracking-normal",
-              )}
-            >
-              {formatStars(result.stars)}
-            </span>
-          </dd>
-        </div>
+        {result.stars !== null && (
+          <div
+            className={cn(
+              "[grid-area:stars] flex items-center gap-[5px] self-start justify-self-end",
+              dim && "text-muted-foreground",
+              layout.stars,
+              "list:mt-0 list:self-center list:justify-self-start",
+            )}
+          >
+            <dt className="sr-only">stars</dt>
+            <dd className="flex items-center gap-[inherit]">
+              <StarIcon
+                className={cn("size-5", dim && "opacity-(--opacity-archived)", layout.starIcon, "list:size-[15px]")}
+              />
+              <span
+                className={cn(
+                  "font-display text-2xl font-semibold tracking-tight",
+                  layout.starCount,
+                  "list:text-lg list:leading-gap list:tracking-normal",
+                )}
+              >
+                {formatStars(result.stars)}
+              </span>
+            </dd>
+          </div>
+        )}
         <div
           className={cn(
             "[grid-area:starred] hidden",

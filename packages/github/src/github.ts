@@ -20,6 +20,7 @@ import {
   RateLimited,
   Unauthorized,
 } from "./errors.ts";
+import { apiHeaders } from "./headers.ts";
 import * as Readme from "./readme.ts";
 import * as Facts from "./repo-facts.ts";
 import {
@@ -159,25 +160,20 @@ const make = Effect.gen(function* () {
     ) => Effect.Effect<A, GitHubError | Schema.SchemaError>,
   ) => {
     const endpoint = { operation, method: request.method, path: new URL(request.url).pathname };
-    return gate
-      .execute(
-        operation,
-        request.pipe(HttpClientRequest.setHeaders({ "x-github-api-version": "2022-11-28", "user-agent": "stargrep" })),
-      )
-      .pipe(
-        Effect.flatMap((reply) =>
-          Effect.flatMap(Clock.currentTimeMillis, (now) =>
-            Result.match(classify(endpoint, reply, now), {
-              onFailure: Effect.fail,
-              onSuccess: (body) => interpret(body, reply, endpoint, now),
-            }),
-          ),
+    return gate.execute(operation, request.pipe(HttpClientRequest.setHeaders(apiHeaders))).pipe(
+      Effect.flatMap((reply) =>
+        Effect.flatMap(Clock.currentTimeMillis, (now) =>
+          Result.match(classify(endpoint, reply, now), {
+            onFailure: Effect.fail,
+            onSuccess: (body) => interpret(body, reply, endpoint, now),
+          }),
         ),
-        Effect.catchTags({
-          SchemaError: () => Effect.fail(new GitHubResponseInvalid({ ...endpoint, reason: "schema-mismatch" })),
-        }),
-        Effect.retry({ schedule: retrySchedule, while: isRetryable, times: MAX_RETRIES }),
-      );
+      ),
+      Effect.catchTags({
+        SchemaError: () => Effect.fail(new GitHubResponseInvalid({ ...endpoint, reason: "schema-mismatch" })),
+      }),
+      Effect.retry({ schedule: retrySchedule, while: isRetryable, times: MAX_RETRIES }),
+    );
   };
 
   const account = Effect.fn("GitHub.account")(function* (login: Login) {

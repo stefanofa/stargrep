@@ -103,6 +103,37 @@ To search from Claude Code, add the stage's MCP endpoint and ask it to search a 
 claude mcp add --transport http stargrep "$WEB/mcp"
 ```
 
+## Sign-in with GitHub
+
+Sign-in needs a GitHub App. `.github/app-manifest.json` describes it: private until launch, webhook off, read-only access to email addresses, and callback URLs for `stargrep.com` and the local stage. Better Auth needs an email for each user, and GitHub hides most of them from the public profile.
+
+1. Create the app from the manifest. With `gh` signed in as the repository's owner, run the script and press the button on the page it prints. It stores the client ID as the repository variable `STARGREP_GITHUB_APP_CLIENT_ID` and the client secret in each `--env` it names, without printing it.
+
+   ```sh
+   bun scripts/github-app.ts --env production
+   ```
+
+2. Add the Better Auth secret to `production`, and one proxy secret to both environments.
+
+   ```sh
+   openssl rand -base64 32 | gh secret set BETTER_AUTH_SECRET --env production
+   secret=$(openssl rand -base64 32)
+   for env in production preview; do printf %s "$secret" | gh secret set AUTH_PROXY_SECRET --env "$env"; done
+   unset secret
+   ```
+
+3. Set the repository variable `AUTH_PROXY_ORIGIN` to prod's web origin. Preview stages then sign in through prod, need no client secret, and generate their own Better Auth secret.
+
+   ```sh
+   gh variable set AUTH_PROXY_ORIGIN --body https://stargrep.com
+   ```
+
+A `prod` deploy fails without `STARGREP_GITHUB_APP_CLIENT_ID`, `STARGREP_GITHUB_APP_CLIENT_SECRET`, `BETTER_AUTH_SECRET`, or `AUTH_PROXY_SECRET`. `AUTH_PROXY_ORIGIN` must be an https origin with no path. A preview deploy that has the client ID but neither `AUTH_PROXY_ORIGIN` nor the client secret fails too, so set the proxy origin before you remove a client secret from `preview`.
+
+To sign in on the local stage, export `STARGREP_GITHUB_APP_CLIENT_ID`, `STARGREP_GITHUB_APP_CLIENT_SECRET`, and any `BETTER_AUTH_SECRET` before `bun run --cwd infra dev`. The manifest registers `http://localhost:1340/auth/callback/github`.
+
+Signed in, the browser's session cookie also works on `/api/viewer` and `/api/library`, which answer `401` without it. Neither appears in `/openapi.json` or the MCP tool list.
+
 ## Database schema
 
 The Drizzle schema in `packages/db/src/schema.ts` is the source of truth. After changing it, generate a migration and apply it to the local Postgres.
