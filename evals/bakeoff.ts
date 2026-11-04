@@ -39,7 +39,7 @@ const retryTransient = <A, R>(effect: Effect.Effect<A, AiError, R>) =>
   Effect.retry(effect, {
     times: 3,
     schedule: Schedule.exponential("2 seconds"),
-    while: (error) => error._tag === "AiRequestFailed" || error._tag === "AiTimeout",
+    while: (error) => error._tag === "AiUnavailable" || error._tag === "AiRequestFailed" || error._tag === "AiTimeout",
   });
 
 const Catalog = Schema.Struct({

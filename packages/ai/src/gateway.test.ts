@@ -1,5 +1,5 @@
 import { describe, expect, spyOn } from "bun:test";
-import { GatewayModelNotFoundError } from "@ai-sdk/gateway";
+import { GatewayInternalServerError, GatewayModelNotFoundError } from "@ai-sdk/gateway";
 import * as it from "@stargrep/testing";
 import { APICallError } from "ai";
 import { MockEmbeddingModelV4, MockLanguageModelV4 } from "ai/test";
@@ -9,6 +9,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Metric from "effect/Metric";
+import * as Result from "effect/Result";
 import * as TestClock from "effect/testing/TestClock";
 import * as Embeddings from "./embeddings.ts";
 import * as Gateway from "./gateway.ts";
@@ -38,7 +39,11 @@ const textLayer = (doGenerate: (options: CallOptions) => PromiseLike<GenerateRes
     Layer.provide(
       Layer.succeed(
         Gateway.AiProvider,
-        Gateway.AiProvider.of({ languageModel: () => new MockLanguageModelV4({ doGenerate }), embeddingModel: unused }),
+        Gateway.AiProvider.of({
+          languageModel: () => new MockLanguageModelV4({ doGenerate }),
+          embeddingModel: unused,
+          experimental_batch: unused,
+        }),
       ),
     ),
   );
@@ -121,8 +126,29 @@ describe("gateway text generation", () => {
   it.effect("fails with AiRequestFailed that keeps the status and drops the request body", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(Summarize.summarize(repo));
-      expect(error.message).toBe("Model 'test/model' request failed in 'generate': AI_APICallError with status 502");
+      expect(error.message).toBe("Model 'test/model' request failed in 'generate': AI_APICallError with status 400");
       expect(JSON.stringify(error)).not.toContain("SECRET");
+    }).pipe(
+      Effect.provide(
+        textLayer(async () => {
+          throw new APICallError({
+            message: "bad request",
+            url: "https://ai-gateway.vercel.sh/v1",
+            requestBodyValues: { prompt: "SECRET README TEXT" },
+            statusCode: 400,
+          });
+        }),
+      ),
+    ),
+  );
+
+  it.effect("fails with AiUnavailable when the error says a retry may succeed", () =>
+    Effect.gen(function* () {
+      const upstream = yield* Effect.flip(Summarize.summarize(repo));
+      expect(upstream.message).toBe(
+        "Model 'test/model' is unavailable for 'generate' and may answer a retry: AI_APICallError with status 502",
+      );
+      expect(JSON.stringify(upstream)).not.toContain("SECRET");
     }).pipe(
       Effect.provide(
         textLayer(async () => {
@@ -132,6 +158,20 @@ describe("gateway text generation", () => {
             requestBodyValues: { prompt: "SECRET README TEXT" },
             statusCode: 502,
           });
+        }),
+      ),
+    ),
+  );
+
+  it.effect("fails with AiUnavailable on the gateway's internal server error", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(Summarize.summarize(repo));
+      expect(error._tag).toBe("AiUnavailable");
+      expect(error.message).toContain("GatewayInternalServerError with status 500");
+    }).pipe(
+      Effect.provide(
+        textLayer(async () => {
+          throw new GatewayInternalServerError({ message: "Internal server error" });
         }),
       ),
     ),
@@ -148,6 +188,100 @@ describe("gateway text generation", () => {
   });
 });
 
+type BatchApi = ReturnType<Gateway.AiProvider["Service"]["experimental_batch"]>;
+type StartOptions = Parameters<BatchApi["doStartBatch"]>[0];
+type BatchItem = Awaited<ReturnType<BatchApi["doGetBatchResults"]>> extends ReadableStream<infer Item> ? Item : never;
+
+const succeeded = (id: string, text: string): BatchItem => ({
+  type: "text",
+  id,
+  status: "succeeded",
+  result: textResult(text),
+});
+
+const fakeBatch = (options: { readonly items: ReadonlyArray<BatchItem>; readonly fails?: boolean }) => {
+  const starts: Array<StartOptions> = [];
+  const api: BatchApi = {
+    specificationVersion: "v4",
+    provider: "gateway.batch",
+    supportedUrls: {},
+    doStartBatch: async (start) => {
+      starts.push(start);
+      return { batchId: `job_${starts.length}`, status: "pending", warnings: [] };
+    },
+    doGetBatchStatus: async () =>
+      options.fails
+        ? { status: "failed", error: { message: "rejected", code: "invalid_batch" } }
+        : { status: "completed" },
+    doGetBatchResults: async () =>
+      new ReadableStream<BatchItem>({
+        start: (controller) => {
+          for (const item of options.items) controller.enqueue(item);
+          controller.close();
+        },
+      }),
+  };
+  const layer = Gateway.layerTextGeneration("test/model").pipe(
+    Layer.provide(
+      Layer.succeed(
+        Gateway.AiProvider,
+        Gateway.AiProvider.of({ languageModel: unused, embeddingModel: unused, experimental_batch: () => api }),
+      ),
+    ),
+  );
+  return { starts, layer };
+};
+
+const batchRepos = [repo, { ...repo, fullName: "junegunn/fzf" }, { ...repo, fullName: "sharkdp/bat" }];
+
+describe("gateway batch", () => {
+  it.effect("submits one job with the JSON schema and decodes each item on its own", () => {
+    const fake = fakeBatch({
+      items: [
+        succeeded("2", "Sure! Here is the summary."),
+        succeeded("0", JSON.stringify(validSummary)),
+        { type: "text", id: "1", status: "failed", error: { message: "upstream", code: "server_error" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const results = yield* Summarize.summarizeBatch(batchRepos);
+      expect(fake.starts).toHaveLength(1);
+      const request = fake.starts[0]?.requests[0];
+      expect(request?.modelId).toBe("test/model");
+      expect(request?.type === "text" && request.options.responseFormat?.type).toBe("json");
+      const [ok, failed, invalid] = results;
+      expect(ok).toEqual(Result.succeed(validSummary));
+      expect(invalid && Result.isFailure(invalid) && invalid.failure._tag).toBe("AiOutputInvalid");
+      expect(failed && Result.isFailure(failed) && failed.failure.message).toBe(
+        "Model 'test/model' request failed in 'generate': batch item failed with server_error",
+      );
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  it.effect("sends the same idempotency key for the same batch and a new one when a prompt changes", () => {
+    const fake = fakeBatch({ items: [succeeded("0", JSON.stringify(validSummary))] });
+    const keyOf = (start: StartOptions | undefined) =>
+      (start?.providerOptions?.gateway as { readonly idempotencyKey?: string } | undefined)?.idempotencyKey;
+    return Effect.gen(function* () {
+      yield* Summarize.summarizeBatch([repo]);
+      yield* Summarize.summarizeBatch([repo]);
+      yield* Summarize.summarizeBatch([{ ...repo, readme: "a new README" }]);
+      const [first, again, changed] = fake.starts.map(keyOf);
+      expect(first).toMatch(/^stargrep-batch-[0-9a-f]{64}$/);
+      expect(again).toBe(first);
+      expect(changed).not.toBe(first);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  it.effect("fails with AiRequestFailed when the gateway fails the whole batch", () => {
+    const fake = fakeBatch({ items: [], fails: true });
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(Summarize.summarizeBatch(batchRepos));
+      expect(error.message).toBe("Model 'test/model' request failed in 'generate': batch failed with invalid_batch");
+    }).pipe(Effect.provide(fake.layer));
+  });
+});
+
 describe("gateway embeddings", () => {
   it.effect("fails with AiOutputInvalid when the model ignores the requested size", () => {
     const provider = Gateway.AiProvider.of({
@@ -156,6 +290,7 @@ describe("gateway embeddings", () => {
         new MockEmbeddingModelV4({
           doEmbed: async ({ values }) => ({ embeddings: values.map(() => [0.1, 0.2]), warnings: [] }),
         }),
+      experimental_batch: unused,
     });
     return Effect.gen(function* () {
       const embeddings = yield* Embeddings.Embeddings;
@@ -217,6 +352,7 @@ describe("gateway privacy", () => {
         new MockEmbeddingModelV4({
           doEmbed: async ({ values }) => ({ embeddings: values.map(() => [1, 0, 0]), warnings: [warning] }),
         }),
+      experimental_batch: unused,
     });
     const layer = Layer.merge(
       Gateway.layerTextGeneration("private/model"),

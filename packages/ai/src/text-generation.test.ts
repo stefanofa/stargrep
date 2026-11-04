@@ -4,6 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Metric from "effect/Metric";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { toAiSchema } from "./schema-bridge.ts";
@@ -49,6 +50,30 @@ describe("TextGeneration.make", () => {
       yield* TestClock.adjust("10 seconds");
       const error = yield* Fiber.join(fiber);
       expect(error.message).toBe("Model 'seam/model' did not answer 'generate' within 10000 ms");
+    }),
+  );
+
+  it.effect("answers a batch through one call per prompt when the adapter has no batch API", () =>
+    Effect.gen(function* () {
+      const prompts: Array<string> = [];
+      const generation = service((request) =>
+        Effect.sync(() => {
+          prompts.push(request.prompt);
+          return { output: { answer: request.prompt === "bad" ? "nope" : request.prompt.length }, usage };
+        }),
+      );
+      const results = yield* generation.generateBatch({
+        schema: Answer,
+        system: "s",
+        prompts: [
+          { id: "a", prompt: "one" },
+          { id: "b", prompt: "bad" },
+        ],
+      });
+      expect(prompts.toSorted()).toEqual(["bad", "one"]);
+      const [ok, failed] = results;
+      expect(ok).toEqual(Result.succeed({ answer: 3 }));
+      expect(failed && Result.isFailure(failed) && failed.failure._tag).toBe("AiOutputInvalid");
     }),
   );
 

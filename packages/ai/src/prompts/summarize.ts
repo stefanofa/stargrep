@@ -64,5 +64,17 @@ export const summarize = Effect.fnUntraced(function* (repo: RepoFacts) {
   return yield* textGeneration.generate({ schema: repoSummarySchema, system, prompt: prompt(repo) });
 });
 
-export const embeddingText = (repo: RepoFacts, summary: RepoSummary): string =>
+export const summarizeBatch = Effect.fnUntraced(function* (repos: ReadonlyArray<RepoFacts>) {
+  const textGeneration = yield* TextGeneration.TextGeneration;
+  return yield* textGeneration.generateBatch({
+    schema: repoSummarySchema,
+    system,
+    prompts: repos.map((repo, index) => ({ id: String(index), prompt: prompt(repo) })),
+  });
+});
+
+export const embeddingText = (
+  repo: Pick<RepoFacts, "fullName" | "description">,
+  summary: Pick<RepoSummary, "summary" | "keywords">,
+): string =>
   [repo.fullName, repo.description ?? "", summary.summary, summary.keywords.join(", ")].filter(Boolean).join("\n");

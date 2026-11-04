@@ -41,4 +41,14 @@ export class AiRequestFailed extends Schema.TaggedError<AiRequestFailed>()("AiRe
   }
 }
 
-export type AiError = AiModelNotFound | AiOutputInvalid | AiTimeout | AiRequestFailed;
+export class AiUnavailable extends Schema.TaggedError<AiUnavailable>()("AiUnavailable", {
+  operation: Operation,
+  model: Schema.String,
+  detail: Schema.String,
+}) {
+  override get message(): string {
+    return `Model '${this.model}' is unavailable for '${this.operation}' and may answer a retry: ${this.detail}`;
+  }
+}
+
+export type AiError = AiModelNotFound | AiOutputInvalid | AiTimeout | AiRequestFailed | AiUnavailable;
