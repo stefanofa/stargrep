@@ -43,9 +43,9 @@ describe("auth config", () => {
         }),
       );
       expect(config.github._tag).toBe("direct");
-      expect(reveal(bindings(config))).toContain(clientSecret);
-      expect(Object.keys(bindings(config)).toSorted()).toEqual(
-        [names.clientId, names.clientSecret, names.proxySecret, names.secret].toSorted(),
+      expect(reveal(bindings(config.github))).toContain(clientSecret);
+      expect(Object.keys(bindings(config.github)).toSorted()).toEqual(
+        [names.clientId, names.clientSecret, names.proxySecret].toSorted(),
       );
     }),
   );
@@ -63,8 +63,8 @@ describe("auth config", () => {
       );
       expect(config.github).toMatchObject({ _tag: "proxied", productionOrigin: "https://stargrep.com" });
       expect(reveal(config)).not.toContain(clientSecret);
-      expect(reveal(bindings(config))).not.toContain(clientSecret);
-      expect(Object.keys(bindings(config))).not.toContain(names.clientSecret);
+      expect(reveal(bindings(config.github))).not.toContain(clientSecret);
+      expect(Object.keys(bindings(config.github))).not.toContain(names.clientSecret);
     }),
   );
 
@@ -90,7 +90,7 @@ describe("auth config", () => {
       ]) {
         const config = Option.getOrThrow(yield* read(authConfig, env));
         const written = Object.fromEntries(
-          Object.entries(bindings(config)).map(([name, value]) => [
+          Object.entries({ ...bindings(config.github), [names.secret]: config.secret }).map(([name, value]) => [
             name,
             Redacted.isRedacted(value) ? Redacted.value(value) : value,
           ]),

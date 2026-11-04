@@ -76,14 +76,15 @@ export const authConfig: Config.Config<Option.Option<AuthConfig>> = Config.all({
   ),
 );
 
-export const bindings = (config: AuthConfig): Record<string, string | Redacted.Redacted<string>> => {
-  const { github } = config;
-  const shared = { [names.clientId]: github.clientId, [names.secret]: config.secret };
-  return github._tag === "direct"
+export const bindings = (github: GitHubSignIn): Record<string, string | Redacted.Redacted<string>> =>
+  github._tag === "direct"
     ? {
-        ...shared,
+        [names.clientId]: github.clientId,
         [names.clientSecret]: github.clientSecret,
         ...Option.match(github.proxySecret, { onNone: () => ({}), onSome: (key) => ({ [names.proxySecret]: key }) }),
       }
-    : { ...shared, [names.proxyOrigin]: github.productionOrigin, [names.proxySecret]: github.proxySecret };
-};
+    : {
+        [names.clientId]: github.clientId,
+        [names.proxyOrigin]: github.productionOrigin,
+        [names.proxySecret]: github.proxySecret,
+      };
