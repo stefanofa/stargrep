@@ -3,9 +3,19 @@ name: preview
 on:
   pull_request:
     types: [opened, reopened, synchronize]
+    # Docs never reach a stage. Preview is not a required check, so a skipped run blocks no merge.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
 
 permissions:
   contents: read
+
+# A newer push cancels this run, even mid-deploy: Alchemy records each change before it makes it, and the next deploy
+# of the stage finishes what was cut off. The job's deploy-pr group is separate, so destroys are never cancelled.
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 env:
   ALCHEMY_TELEMETRY_DISABLED: "1"
