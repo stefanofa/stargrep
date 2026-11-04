@@ -1,5 +1,6 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import type * as HttpClientError from "effect/http/HttpClientError";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
@@ -38,23 +39,48 @@ export const waitUntilReady = <R>(url: string, check: Effect.Effect<void, NotSet
   );
 
 export type Answer = { readonly status: number; readonly contentType: string; readonly body: string };
+export type Resends = { cloudflare404: number; dropped: number };
 
 // Until a new workers.dev URL reaches every edge machine, some requests get Cloudflare's own HTML 404 page instead of
 // the Worker, for over a minute under load. The Worker never answers with HTML, so those requests are sent again.
-export const isCloudflare404 = (answer: Answer) => answer.status === 404 && answer.contentType.startsWith("text/html");
+const isCloudflare404 = (answer: Answer) => answer.status === 404 && answer.contentType.startsWith("text/html");
 
-export const untilRouted = <E extends { readonly _tag: string }, R>(what: string, send: Effect.Effect<Answer, E, R>) =>
-  untilSettled(
-    send.pipe(
+// In CI, a run has lost a single call of the 1000-call burst to ECONNRESET between the runner and Cloudflare, before any
+// answer arrived. A reset carries no status to judge and each run lost only one call, so the call is sent once more. A
+// second drop of the same call fails the run, because a path that keeps dropping is a real fault.
+export const untilRouted = <R>(
+  what: string,
+  send: Effect.Effect<Answer, HttpClientError.HttpClientError, R>,
+  resends: Resends,
+) =>
+  Effect.suspend(() => {
+    let dropped = false;
+    const attempt = send.pipe(
       Effect.timeoutOrElse({
         duration: requestTimeout,
         orElse: () => Effect.die(new Error(`${what} sent no answer within ${Duration.toSeconds(requestTimeout)} s`)),
       }),
+      Effect.catchIf(
+        (error) => error.reason._tag === "TransportError" && !dropped,
+        (error) =>
+          Effect.sync(() => {
+            dropped = true;
+            resends.dropped++;
+          }).pipe(
+            Effect.andThen(Effect.fail(new NotSettled({ answer: `dropped before any answer: ${error.message}` }))),
+          ),
+      ),
       Effect.filterOrFail(
         (answer) => !isCloudflare404(answer),
-        () => new NotSettled({ answer: "Cloudflare's 404 page" }),
+        () => {
+          resends.cloudflare404++;
+          return new NotSettled({ answer: "Cloudflare's 404 page" });
+        },
       ),
-    ),
-    (lastAnswer) =>
-      `${what} did not reach the Worker within ${Duration.toSeconds(freshStageWait)} s, last answer: ${lastAnswer}`,
-  );
+    );
+    return untilSettled(
+      attempt,
+      (lastAnswer) =>
+        `${what} did not reach the Worker within ${Duration.toSeconds(freshStageWait)} s, last answer: ${lastAnswer}`,
+    );
+  });

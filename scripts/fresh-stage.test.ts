@@ -4,8 +4,11 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as TestClock from "effect/testing/TestClock";
-import { type Answer, NotSettled, untilRouted, waitUntilReady } from "./fresh-stage.ts";
+import { type Answer, NotSettled, type Resends, untilRouted, waitUntilReady } from "./fresh-stage.ts";
 
 const url = "https://stage.example";
 const notReady = new NotSettled({ answer: "GET /budget 500" });
@@ -61,6 +64,12 @@ describe("waitUntilReady", () => {
 
 describe("untilRouted", () => {
   const what = `GET ${url}/budget`;
+  const noResends = (): Resends => ({ cloudflare404: 0, dropped: 0 });
+  const failure = (reason: HttpClientError.HttpClientErrorReason) => new HttpClientError.HttpClientError({ reason });
+  const request = HttpClientRequest.get(`${url}/budget`);
+  const connectionReset = failure(
+    new HttpClientError.TransportError({ request, cause: new Error("read ECONNRESET"), description: "fetch failed" }),
+  );
 
   test("gives up 60 s after it starts when 404 pages turn into a request that never answers", () =>
     runOnTestClock(
@@ -68,7 +77,7 @@ describe("untilRouted", () => {
         const send = Effect.flatMap(Clock.currentTimeMillis, (now) =>
           now < 58_000 ? Effect.succeed(cloudflare404) : Effect.never,
         );
-        const fiber = yield* Effect.forkChild(Effect.exit(untilRouted(what, send)));
+        const fiber = yield* Effect.forkChild(Effect.exit(untilRouted(what, send, noResends())));
         yield* TestClock.adjust("59 seconds");
         expect(fiber.pollUnsafe()).toBeUndefined();
         yield* TestClock.adjust("1 second");
@@ -81,7 +90,7 @@ describe("untilRouted", () => {
   test("blames the request, not a 404, when the first request never answers", () =>
     runOnTestClock(
       Effect.gen(function* () {
-        const fiber = yield* Effect.forkChild(Effect.exit(untilRouted(what, Effect.never)));
+        const fiber = yield* Effect.forkChild(Effect.exit(untilRouted(what, Effect.never, noResends())));
         yield* TestClock.adjust("30 seconds");
         expect(outcome(yield* Fiber.join(fiber))).toBe(`Error: ${what} sent no answer within 30 s`);
       }),
@@ -91,11 +100,13 @@ describe("untilRouted", () => {
     runOnTestClock(
       Effect.gen(function* () {
         let sent = 0;
+        const resends = noResends();
         const send = Effect.sync(() => (++sent < 3 ? cloudflare404 : refused));
-        const fiber = yield* Effect.forkChild(Effect.exit(untilRouted(what, send)));
+        const fiber = yield* Effect.forkChild(Effect.exit(untilRouted(what, send, resends)));
         yield* TestClock.adjust("3 seconds");
         expect(outcome(yield* Fiber.join(fiber))).toBe(`succeeded with ${JSON.stringify(refused)}`);
         expect(sent).toBe(3);
+        expect(resends).toEqual({ cloudflare404: 2, dropped: 0 });
       }),
     ));
 
@@ -112,10 +123,61 @@ describe("untilRouted", () => {
                 sent++;
                 return workerNotFound;
               }),
+              noResends(),
             ),
           ),
         );
         expect(outcome(yield* Fiber.join(fiber))).toBe(`succeeded with ${JSON.stringify(workerNotFound)}`);
+        expect(sent).toBe(1);
+      }),
+    ));
+
+  test("sends once more after a connection drops before any answer", () =>
+    runOnTestClock(
+      Effect.gen(function* () {
+        let sent = 0;
+        const resends = noResends();
+        const send = Effect.suspend(() => (++sent === 1 ? Effect.fail(connectionReset) : Effect.succeed(refused)));
+        const fiber = yield* Effect.forkChild(Effect.exit(untilRouted(what, send, resends)));
+        yield* TestClock.adjust("1 second");
+        expect(outcome(yield* Fiber.join(fiber))).toBe(`succeeded with ${JSON.stringify(refused)}`);
+        expect(sent).toBe(2);
+        expect(resends).toEqual({ cloudflare404: 0, dropped: 1 });
+      }),
+    ));
+
+  test("fails with the transport error when the connection drops twice", () =>
+    runOnTestClock(
+      Effect.gen(function* () {
+        let sent = 0;
+        const resends = noResends();
+        const send = Effect.suspend(() => {
+          sent++;
+          return Effect.fail(connectionReset);
+        });
+        const fiber = yield* Effect.forkChild(Effect.exit(untilRouted(what, send, resends)));
+        yield* TestClock.adjust("1 second");
+        expect(outcome(yield* Fiber.join(fiber))).toBe(`HttpClientError: ${connectionReset.message}`);
+        expect(connectionReset.message).toBe(`Transport: fetch failed (GET ${url}/budget)`);
+        expect(sent).toBe(2);
+        expect(resends).toEqual({ cloudflare404: 0, dropped: 1 });
+      }),
+    ));
+
+  test("never resends a failure that came after an answer", () =>
+    runOnTestClock(
+      Effect.gen(function* () {
+        let sent = 0;
+        const response = HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+        const unreadable = failure(
+          new HttpClientError.DecodeError({ request, response, description: "body ended early" }),
+        );
+        const send = Effect.suspend(() => {
+          sent++;
+          return Effect.fail(unreadable);
+        });
+        const exit = yield* Effect.exit(untilRouted(what, send, noResends()));
+        expect(Exit.isFailure(exit)).toBe(true);
         expect(sent).toBe(1);
       }),
     ));
