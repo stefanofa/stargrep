@@ -1,11 +1,10 @@
 import * as Clock from "effect/Clock";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schema from "effect/Schema";
-import { freshStageSchedule, freshStageWait, NotReady, waitUntilReady } from "./fresh-stage.ts";
+import { isCloudflare404, NotSettled, untilRouted, waitUntilReady } from "./fresh-stage.ts";
 import { readStageOutput } from "./stage-output.ts";
 
 const [stage, ...alchemyArgs] = process.argv.slice(2);
@@ -21,11 +20,6 @@ const Transaction = Schema.Struct({ pid: Schema.Int, sum: Schema.Int });
 type Check = { readonly check: string; readonly ok: boolean; readonly detail: unknown };
 const check = (name: string, ok: boolean, detail: unknown): Check => ({ check: name, ok, detail });
 
-const requestTimeout = Duration.seconds(30);
-
-// Until a new workers.dev URL reaches every edge machine, some requests get Cloudflare's own HTML 404 page instead of
-// the Worker, for over a minute under this load. The Worker never answers with HTML, so those requests are sent again.
-class NotRoutedYet extends Schema.TaggedError<NotRoutedYet>()("NotRoutedYet", {}) {}
 let resent = 0;
 
 const call = Effect.fn("StageSmoke.call")(function* (
@@ -39,28 +33,15 @@ const call = Effect.fn("StageSmoke.call")(function* (
     const response = yield* HttpClient.execute(
       authorization === null ? request : HttpClientRequest.setHeader(request, "authorization", authorization),
     );
-    if (response.status === 404 && response.headers["content-type"]?.startsWith("text/html")) {
-      resent++;
-      return yield* new NotRoutedYet();
-    }
-    return { status: response.status, body: yield* response.text };
-  }).pipe(
-    Effect.timeoutOrElse({
-      duration: requestTimeout,
-      orElse: () =>
-        Effect.die(new Error(`${method} ${url} sent no answer within ${Duration.toSeconds(requestTimeout)} s`)),
-    }),
-  );
-  return yield* send.pipe(
-    Effect.retry({ while: (error) => error._tag === "NotRoutedYet", schedule: freshStageSchedule }),
-    Effect.catchTag("NotRoutedYet", () =>
-      Effect.die(
-        new Error(
-          `${method} ${url} got Cloudflare's 404 page for ${Duration.toSeconds(freshStageWait)} s, not the Worker`,
-        ),
-      ),
-    ),
-  );
+    const answer = {
+      status: response.status,
+      contentType: response.headers["content-type"] ?? "",
+      body: yield* response.text,
+    };
+    if (isCloudflare404(answer)) resent++;
+    return answer;
+  });
+  return yield* untilRouted(`${method} ${url}`, send);
 });
 
 const decode = <S extends Schema.Top>(schema: S, body: string) =>
@@ -85,7 +66,7 @@ const answers = (path: string) =>
     Effect.flatMap(({ status, body }) =>
       status === 200
         ? Effect.void
-        : Effect.fail(new NotReady({ answer: `GET ${path} ${status} ${body.slice(0, 120)}` })),
+        : Effect.fail(new NotSettled({ answer: `GET ${path} ${status} ${body.slice(0, 120)}` })),
     ),
   );
 
