@@ -39,7 +39,7 @@ For other editors, run `bunx effect-tsgo setup --help` to see the setup for Neov
 
 ## Local stage
 
-`alchemy dev` runs the whole stage on your machine with no cloud account. It runs both Workers in workerd and simulates the queue, KV, R2, the Durable Objects, the cron, and Hyperdrive. Only Neon has no local mode, so the local stage points Hyperdrive at a Postgres container.
+`alchemy dev` runs the whole stage on your machine with no cloud account. It runs the Worker, the debug Worker, and the web Worker in workerd and simulates the queue, KV, R2, the Durable Objects, the cron, the rate limits, and Hyperdrive. Only Neon has no local mode, so the local stage points Hyperdrive at a Postgres container.
 
 1. Start Postgres 17 with pgvector. It listens on `127.0.0.1:54317` and creates the `vector` extension on first start.
 
@@ -47,7 +47,7 @@ For other editors, run `bunx effect-tsgo setup --help` to see the setup for Neov
    docker compose up --detach --wait
    ```
 
-2. Run the stage. Alchemy prints both URLs, the Worker on `http://localhost:1337` and the debug Worker on `http://localhost:1338` unless the ports are taken, and keeps local state in `infra/.alchemy/`.
+2. Run the stage. Alchemy prints each URL, the Worker on `http://localhost:1337`, the debug Worker on `http://localhost:1338`, and the web Worker on `http://localhost:1340` unless the ports are taken, and keeps local state in `infra/.alchemy/`.
 
    ```sh
    bun run --cwd infra dev
@@ -80,6 +80,27 @@ For other editors, run `bunx effect-tsgo setup --help` to see the setup for Neov
    ```sh
    bun run --cwd apps/worker test
    ```
+
+## API
+
+The web Worker serves the API from one oRPC contract in `packages/api`. Search needs a synced login and the AI Gateway key, so on a local stage without them it answers `SERVICE_UNAVAILABLE`. Replace the URL with a stage's `Web` URL from its pull request comment to call a deployed stage.
+
+```sh
+WEB=http://localhost:1340
+curl -X POST "$WEB/api/sync/octocat"
+curl "$WEB/api/sync/octocat"
+curl "$WEB/api/search?login=octocat&q=terminal+dashboards"
+curl "$WEB/api/repos/1300192"
+curl "$WEB/openapi.json"
+```
+
+`triggerSync` answers `queued` and `syncStatus` answers `done` once the sync has run. Each caller may trigger 5 syncs a minute. Every error body has a `code` and a `traceId`. Each response's `Server-Timing` header gives the handler's total time and the time spent searching, in milliseconds.
+
+To search from Claude Code, add the stage's MCP endpoint and ask it to search a synced login's stars:
+
+```sh
+claude mcp add --transport http stargrep "$WEB/mcp"
+```
 
 ## Database schema
 

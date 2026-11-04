@@ -9,7 +9,7 @@ import { readStageOutput } from "./stage-output.ts";
 
 const [stage, ...alchemyArgs] = process.argv.slice(2);
 if (!stage) throw new Error("usage: bun scripts/stage-smoke.ts <stage> [alchemy state read flags]");
-const { debugUrl, debugToken } = await readStageOutput(stage, alchemyArgs);
+const { debugUrl, debugToken, webUrl } = await readStageOutput(stage, alchemyArgs);
 
 const Budget = Schema.Struct({ minute: Schema.Int, used: Schema.Int, cap: Schema.Int });
 const Count = Schema.Struct({ count: Schema.Int });
@@ -142,6 +142,34 @@ const traffic = Effect.gen(function* () {
   ];
 });
 
+const Spec = Schema.Struct({ paths: Schema.Record(Schema.String, Schema.Unknown) });
+
+const web = Effect.gen(function* () {
+  const get = (path: string) => HttpClient.get(new URL(path, webUrl));
+  const spec = yield* get("/openapi.json");
+  const paths = Object.keys((yield* decode(Spec, yield* spec.text)).paths).sort();
+  const emptyQuery = yield* get("/api/search?login=octocat&q=");
+  const tools = yield* HttpClient.execute(
+    HttpClientRequest.post(new URL("/mcp", webUrl)).pipe(
+      HttpClientRequest.setHeader("accept", "application/json, text/event-stream"),
+      HttpClientRequest.bodyJsonUnsafe({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    ),
+  );
+  const toolList = yield* tools.text;
+  return [
+    check("the OpenAPI document lists every route", paths.join(" ") === "/repos/{id} /search /sync/{login}", {
+      status: spec.status,
+      paths,
+    }),
+    check("an empty search query answers 400", emptyQuery.status === 400, { status: emptyQuery.status }),
+    check(
+      "MCP lists the four tools",
+      ["search", "triggerSync", "syncStatus", "getRepo"].every((name) => toolList.includes(`"name":"${name}"`)),
+      { status: tools.status },
+    ),
+  ];
+});
+
 const flood = Effect.gen(function* () {
   const now = yield* Clock.currentTimeMillis;
   yield* Effect.sleep(60_000 - (now % 60_000) + 1_000);
@@ -165,7 +193,10 @@ const flood = Effect.gen(function* () {
 
 const checks = (
   await Effect.runPromise(
-    ready.pipe(Effect.andThen(Effect.all([unauthenticated, traffic, flood])), Effect.provide(FetchHttpClient.layer)),
+    ready.pipe(
+      Effect.andThen(Effect.all([web, unauthenticated, traffic, flood])),
+      Effect.provide(FetchHttpClient.layer),
+    ),
   )
 ).flat();
 for (const result of checks) console.log(JSON.stringify(result));

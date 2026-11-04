@@ -14,6 +14,7 @@
     "@alchemy.run/neon": "2.0.0-beta.85",
     "@effect/platform-bun": "4.1.2",
     "@effect/platform-node": "4.1.2",
+    "@stargrep/web": "workspace:*",
     "@stargrep/worker": "workspace:*",
     "alchemy": "2.0.0-beta.85",
     "effect": "catalog:"

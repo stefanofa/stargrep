@@ -51,7 +51,7 @@ TanStack DB owns all client state, so the browser has no Effect atoms or second 
 
 App code talks to Postgres through Hyperdrive with a standard driver and uses no Neon-only APIs, so moving to another Postgres host is a dump and restore. Development and preview branches scale to zero. Production does not scale to zero, because a woken compute starts with an empty cache and the first vector searches then read from remote storage.
 
-Every stage's database runs in `aws-us-east-1`, and the main Worker has the placement hint `aws:us-east-1`, so Cloudflare runs its `fetch` handler in the data center nearest that region. A request crosses the distance to the caller once, and its queries stay near the database. Placement moves only `fetch` handlers. Cron triggers, queue consumers, and Durable Objects run where Cloudflare starts them, and the debug Worker has no placement.
+Every stage's database runs in `aws-us-east-1`, and the main Worker and the web Worker have the placement hint `aws:us-east-1`, so Cloudflare runs their `fetch` handlers in the data center nearest that region. A request crosses the distance to the caller once, and its queries stay near the database. Placement moves only `fetch` handlers. Cron triggers, queue consumers, and Durable Objects run where Cloudflare starts them, and the debug Worker has no placement.
 
 ## Repo layout
 
@@ -75,6 +75,7 @@ packages/
   ui/               design tokens and components
   testing/          bun test helpers that stand in for it.effect and it.layer
   telemetry/        the tracer wrapper that drops span results, the OTLP and Workers tracers built with it, and a span collector for tests and scripts
+  runtime/          production layers every Worker builds the same way: AI models chosen by key, and Db on node-postgres
   config/           shared tsconfig and Biome plugins
 infra/              Alchemy stacks, providers, state store, and which Workers each stage deploys
 repos/              read-only source of effect, orpc, and alchemy at the pinned versions, for reference
@@ -174,7 +175,9 @@ The planner sets only the filters a query states, and code holds it to that afte
 
 Each result shows the values that ranked it, such as "+38% contributors in 90 days".
 
-A repo name, an `owner/name`, or two plain words skip the planner. A query with a word that can name a filter, such as a language, a kind, a license, "only", "more", or a number, goes to the planner, so "only MIT libraries" keeps its filters. The `SearchCache` port caches plans and query embeddings under a SHA-256 of the normalized query text. Each entry records when it expires, 30 days after it was written, so an old entry is a miss on every backend. A corrupt entry is a miss too. A plan with a date filter is reused only on the day it was planned, because "starred last year" depends on today. Tests use the memory layer. The KV layer for deployed stages lands with the worker pipeline and the API, and until then nothing outside tests and local scripts caches searches.
+`QueryPlanner.plan` sets `search.plan_source` on its span to `keyword`, `cache`, `model`, or `fallback`, and counts each plan in `stargrep_search_plans`. A fallback also sets `search.planner_failure` to the error tag, such as `AiTimeout`, so traces show how often Haiku's tail latency sends a search to the typed text.
+
+A repo name, an `owner/name`, or two plain words skip the planner. A query with a word that can name a filter, such as a language, a kind, a license, "only", "more", or a number, goes to the planner, so "only MIT libraries" keeps its filters. The `SearchCache` port caches plans and query embeddings under a SHA-256 of the normalized query text. Each entry records when it expires, 30 days after it was written, so an old entry is a miss on every backend. A corrupt entry is a miss too. A plan with a date filter is reused only on the day it was planned, because "starred last year" depends on today. Tests use the memory layer. The web Worker keeps entries in a KV namespace and sets each one's KV expiration from its TTL, at least the 60 seconds KV accepts.
 
 ## AI providers
 
@@ -208,11 +211,20 @@ The web app loads the signed-in user's whole library into a TanStack DB collecti
 
 ## API and MCP
 
-`packages/api` defines oRPC contracts. One router implements them. `apps/web` mounts that router three ways.
+`packages/api` defines the oRPC contract, one router that implements it, the wire errors, and one instrumentation middleware. `apps/web` is a TanStack Start app on Workers, and `src/server.ts` serves the router three ways before TanStack Start sees the request.
 
-- The web app calls it with the typed oRPC client.
-- `@orpc/openapi` serves it as REST, with a generated OpenAPI spec and a docs page.
-- `@orpc/mcp` serves the procedures marked public as MCP tools over Streamable HTTP.
+- `/rpc` serves the typed oRPC client.
+- `/api` serves REST, and `/openapi.json` is the OpenAPI document generated from the contract.
+- `/mcp` serves every procedure as an MCP tool over Streamable HTTP, named by its `operationId`.
+
+The procedures are `search`, `triggerSync`, `syncStatus`, and `getRepo`. All of them are public until sign-in lands.
+
+- **Errors.** Services fail with domain errors. The router maps each tag to a wire error through one table, so a new tag fails typecheck until it has a row. A wire error has a stable `code`, such as `ACCOUNT_NOT_SYNCED` or `SERVICE_UNAVAILABLE`, a fixed message, and the call's `traceId` in `data`. HTTP statuses come from `errorStatus` in `packages/api/src/errors.ts`, passed to every handler. A failure outside the table becomes `INTERNAL_SERVER_ERROR` with the trace ID and no detail.
+- **Services per request.** A Hyperdrive socket cannot outlive its request, so the web Worker builds `Db`, search, and sync services for each request, and only once a procedure has validated its input. A database outage then fails a search with `SERVICE_UNAVAILABLE`, while validation, the tool list, and the OpenAPI document keep working.
+- **Tracing.** The middleware opens `Api.<procedure>` under the request's `Web.<transport>` span and sets `api.transport` and `stargrep.trace_id`. No span holds the query, the plan, or results. Each response carries a `Server-Timing` header with the handler's total time and the time spent in `Search.search`, so a stage measures transport overhead apart from search.
+- **Sync.** `triggerSync` queues an incremental `sync-stars` message for a login and records the request time in KV. `syncStatus` reads that time and the account's star sync time and says `queued`, `done`, or `unknown`. A login queued or synced in the last 10 minutes is not queued again. Each caller IP may trigger 5 syncs a minute and all callers together 60, through Workers rate limiting. The web Worker has no GitHub token and no `GitHubGate` binding, so every GitHub request a trigger causes goes through the gate's budget share in the main Worker.
+
+`@orpc/mcp` registers tools and does no auth. The MCP SDK checks bearer tokens with a verifier the app supplies, serves protected resource metadata, and answers with the `WWW-Authenticate` challenge, but it is not an authorization server. So MCP sign-in needs Better Auth's OAuth provider plugin as the authorization server, and `/mcp` verifies the token and passes `authInfo` to the MCP handler.
 
 ## Caching
 
@@ -220,7 +232,7 @@ The web app loads the signed-in user's whole library into a TanStack DB collecti
 |---|---|
 | Browser | The user's library in TanStack DB |
 | Workers cache | Public profile pages, discovery pages, and OG images, with stale-while-revalidate |
-| KV | Query plans and query embeddings, through the `SearchCache` port |
+| KV | Query plans and query embeddings, through the `SearchCache` port, and the time each login's sync was last requested |
 | Postgres | Summaries and embeddings, shared across accounts |
 | R2 | README text by object ID, so GitHub serves each README once |
 
@@ -248,7 +260,7 @@ Some things stay outside the repo. Secret values live in Cloudflare secrets and 
 
 The Alchemy program has two stacks, so no app stage's state holds a Neon project. `infra/database.run.ts` owns the projects in its only stage, `shared`. `infra/alchemy.run.ts` is the app stack, deployed once per stage: `pr-<number>` for each pull request and `prod` for `main`. Each app stage references one project and owns one branch of it, so destroying a stage deletes its branch and never the project. `prod` uses `stargrep-us-east`, and every preview stage uses `stargrep-previews-us-east`, both in `aws-us-east-1`, so a Neon key scoped to the previews project can't reach prod's branch. The first project, `stargrep` in `aws-eu-central-1`, stays declared and retained, and no stage uses it. Only the deploy from `main` deploys `shared`. A pull request stage fails with a missing reference until `main` has deployed once.
 
-`prod` deploys only the Worker, its database, and the queues, R2 bucket, and Durable Object the pipeline needs. Every other stage also deploys a debug Worker with a queue and consumer, KV, R2, two Durable Objects, and an hourly cron, so the checks in `docs/setup.md` can drive them. Its routes take a bearer token that the stack generates per stage, and a Durable Object caps them at 300 units of work a minute.
+`prod` deploys only the Worker, its database, the queues, R2 bucket, and Durable Object the pipeline needs, and the web Worker with its two KV namespaces. Every other stage also deploys a debug Worker with a queue and consumer, KV, R2, two Durable Objects, and an hourly cron, so the checks in `docs/setup.md` can drive them. Its routes take a bearer token that the stack generates per stage, and a Durable Object caps them at 300 units of work a minute.
 
 Deployed stages keep Alchemy state in the Cloudflare account through `Cloudflare.state()`. Under `alchemy dev`, state stays in `infra/.alchemy/` and the stage declares no Neon resources, so a local stage needs no credentials.
 
@@ -274,4 +286,3 @@ These ran locally on 2026-11-03, with no cloud account.
 - Whether Hyperdrive with `pg` behaves on Neon as it did locally, and what latency, pgvector version, and cold start Neon gives. The first deployed stage answers it.
 - Whether the OpenDigger mirror's license and uptime allow Stargrep to rely on it, and whether it is worth running an own collector instead.
 - Whether the hourly import writes Parquet inside the Worker with a JavaScript writer or hands off to a container.
-- Whether `@orpc/mcp` covers OAuth for MCP clients, or Better Auth's OAuth provider plugin has to wrap it.
