@@ -148,7 +148,11 @@ const web = Effect.gen(function* () {
   const get = (path: string) => HttpClient.get(new URL(path, webUrl));
   const spec = yield* get("/openapi.json");
   const paths = Object.keys((yield* decode(Spec, yield* spec.text)).paths).sort();
-  const emptyQuery = yield* get("/api/search?login=octocat&q=");
+  const emptyQuery = yield* HttpClient.execute(
+    HttpClientRequest.post(new URL("/api/search", webUrl)).pipe(
+      HttpClientRequest.bodyJsonUnsafe({ login: "octocat", q: "" }),
+    ),
+  );
   const tools = yield* HttpClient.execute(
     HttpClientRequest.post(new URL("/mcp", webUrl)).pipe(
       HttpClientRequest.setHeader("accept", "application/json, text/event-stream"),

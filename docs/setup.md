@@ -89,12 +89,12 @@ The web Worker serves the API from one oRPC contract in `packages/api`. Search n
 WEB=http://localhost:1340
 curl -X POST "$WEB/api/sync/octocat"
 curl "$WEB/api/sync/octocat"
-curl "$WEB/api/search?login=octocat&q=terminal+dashboards"
+curl -X POST -H "content-type: application/json" -d '{"login":"octocat","q":"terminal dashboards"}' "$WEB/api/search"
 curl "$WEB/api/repos/1300192"
 curl "$WEB/openapi.json"
 ```
 
-`triggerSync` answers `queued` and `syncStatus` answers `done` once the sync has run. Each caller may trigger 5 syncs a minute. Every error body has a `code` and a `traceId`. Each response's `Server-Timing` header gives the handler's total time and the time spent searching, in milliseconds.
+Search takes its query in a JSON body, so the query never appears in a URL, a request log, or Cloudflare's request span. `triggerSync` answers `queued` and `syncStatus` answers `done` once the sync has run. Each caller may trigger 5 syncs a minute. Every error body has a `code` and a `traceId`. Each response's `Server-Timing` header gives the handler's total time and the time spent searching, in milliseconds.
 
 To search from Claude Code, add the stage's MCP endpoint and ask it to search a synced login's stars:
 

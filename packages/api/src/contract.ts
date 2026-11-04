@@ -1,6 +1,7 @@
 import "@orpc/effect/extensions/schema";
 import "@orpc/openapi/extensions/route";
 import { oc } from "@orpc/contract";
+import { mcp } from "@orpc/mcp";
 import { MetricRegistry } from "@stargrep/core/search";
 import { Login, RepoId } from "@stargrep/github/schemas";
 import * as Effect from "effect/Effect";
@@ -90,15 +91,17 @@ export const RepoDetail = Schema.Struct({
 const procedure = oc.errors(errors);
 
 export const contract = {
+  // The query goes in the body, so it never lands in a URL, a request log, or the platform's request span.
   search: procedure
     .route({
-      method: "GET",
+      method: "POST",
       path: "/search",
       operationId: "search",
       summary: "Search a login's GitHub stars",
       description:
         "Searches the repos a GitHub login starred, in plain language, and ranks them by how well they match. The login must be synced first.",
     })
+    .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
     .input(SearchInput)
     .output(SearchOutput),
   triggerSync: procedure

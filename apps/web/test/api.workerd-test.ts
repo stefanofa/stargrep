@@ -53,11 +53,19 @@ const mcp = async (method: string, params: object) => {
 
 const tool = (name: string, args: object) => mcp("tools/call", { name, arguments: args });
 
-const search = "/search?login=ada&q=terminal%20dashboards";
+const post = (input: object): RequestInit => ({
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify(input),
+});
+
+const searchRest = (input: object) => rest("/search", post(input));
+
+const terminalDashboards = { login: "ada", q: "terminal dashboards" };
 
 describe("search", () => {
   it("answers over REST with ranked repos, reason lines, and a server timing", async () => {
-    const { status, body, timing } = await rest(search);
+    const { status, body, timing } = await searchRest(terminalDashboards);
     expect(status).toBe(200);
     expect(body.planSource).toBe("fallback");
     expect(body.results.map((result: { reason: string }) => result.reason)).toEqual([
@@ -67,21 +75,25 @@ describe("search", () => {
   });
 
   it("answers the same over typed RPC and as the MCP tool's structured content", async () => {
-    const { body } = await rest(search);
+    const { body } = await searchRest(terminalDashboards);
     expect(await rpc.search({ login: "ada", q: "terminal dashboards" })).toEqual(body);
     const result = await tool("search", { login: "ada", q: "terminal dashboards" });
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toEqual(body);
   });
 
+  it("never takes the query in a URL", async () => {
+    expect((await call("/api/search?login=ada&q=terminal%20dashboards")).status).toBe(404);
+  });
+
   it("rejects an empty query with 400 over REST and isError over MCP", async () => {
-    const { status, body } = await rest("/search?login=ada&q=");
+    const { status, body } = await searchRest({ login: "ada", q: "" });
     expect([status, body.code]).toEqual([400, "BAD_REQUEST"]);
     expect((await tool("search", { login: "ada", q: "" })).isError).toBe(true);
   });
 
   it("maps domain errors to a stable code and a trace ID, without internal detail", async () => {
-    const unsynced = await rest("/search?login=grace&q=dashboards");
+    const unsynced = await searchRest({ login: "grace", q: "dashboards" });
     expect(unsynced.status).toBe(404);
     expect(unsynced.body).toEqual({
       defined: true,
@@ -90,10 +102,10 @@ describe("search", () => {
       data: { traceId: expect.stringMatching(/^[0-9a-f]{32}$/) },
     });
 
-    const network = await rest("/search?login=ada&q=dashboards&scope=network");
+    const network = await searchRest({ login: "ada", q: "dashboards", scope: "network" });
     expect([network.status, network.body.code]).toEqual([422, "SCOPE_UNAVAILABLE"]);
 
-    const down = await rest("/search?login=ada&q=database%20down");
+    const down = await searchRest({ login: "ada", q: "database down" });
     expect([down.status, down.body.code]).toEqual([503, "SERVICE_UNAVAILABLE"]);
     expect(JSON.stringify(down.body)).not.toContain("search.hybrid");
 
@@ -118,8 +130,8 @@ describe("when the services cannot start", () => {
   };
 
   it("still validates input and lists tools, and fails a search with service unavailable", async () => {
-    expect((await send("/api/search?login=ada&q=")).status).toBe(400);
-    const down = await send("/api/search?login=ada&q=dashboards");
+    expect((await send("/api/search", post({ login: "ada", q: "" }))).status).toBe(400);
+    const down = await send("/api/search", post({ login: "ada", q: "dashboards" }));
     expect([down.status, down.body.code]).toEqual([503, "SERVICE_UNAVAILABLE"]);
     expect(down.body.data.traceId).toMatch(/^[0-9a-f]{32}$/);
     const listed = await send("/mcp", {
