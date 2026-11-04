@@ -94,7 +94,7 @@ const stars = Command.make(
       const names = new Map<number, string>(repos.map((entry) => [entry.id, `${entry.owner}/${entry.name}`]));
       const ids = yield* Runtime.storeRefs(repos);
       const started = yield* Clock.currentTimeMillis;
-      const outcomes = yield* enricher.enrichRepos(ids);
+      const outcomes = yield* enricher.enrichRepos(ids, "batch");
       const elapsed = (yield* Clock.currentTimeMillis) - started;
       const counts = new Map<string, number>();
       for (const outcome of outcomes) {
