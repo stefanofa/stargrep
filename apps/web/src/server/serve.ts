@@ -107,16 +107,28 @@ const restError = (error: ServerError) => Response.json(error.toJSON(), { status
 const rpcError = (error: ServerError) =>
   Response.json(rpcSerializer.serialize(error.toJSON()), { status: statusOf(error) });
 
-// The MCP SDK reports transport errors as JSON-RPC errors with code -32000, and -32603 is JSON-RPC's internal error.
-const mcpError = (error: ServerError) =>
+type JsonRpcId = { readonly id?: string | number };
+
+const jsonRpcIdOf = (message: unknown): JsonRpcId => {
+  if (!Predicate.isObject(message)) return {};
+  const { id } = message;
+  return Predicate.isString(id) || (Predicate.isNumber(id) && Number.isInteger(id)) ? { id } : {};
+};
+
+// -32000 is in JSON-RPC's range for server-defined errors and -32603 is its internal error. A reply to a request whose
+// ID is unknown leaves out id, because the pinned MCP JSONRPCMessageSchema accepts that and rejects a null ID.
+const mcpError = (error: ServerError, id: JsonRpcId = {}) =>
   Response.json(
     {
       jsonrpc: "2.0",
+      ...id,
       error: { code: error.code === "NOT_FOUND" ? -32000 : -32603, message: error.message, data: error.data },
-      id: null,
     },
     { status: statusOf(error) },
   );
+
+const mcpNoRoute = async (request: Request, traceId: string) =>
+  mcpError(noRoute(traceId), jsonRpcIdOf(await request.json().catch(() => undefined)));
 
 interface Route {
   readonly transport: Transport;
@@ -149,9 +161,11 @@ const routes: ReadonlyArray<Route> = [
   {
     transport: "mcp",
     matches: under("/mcp"),
-    answer: async (request, context) =>
-      new URL(request.url).pathname === "/mcp" ? answerMcp(request, context) : undefined,
-    fail: mcpError,
+    answer: (request, context) =>
+      new URL(request.url).pathname === "/mcp"
+        ? answerMcp(request, context)
+        : mcpNoRoute(request, context.requestTraceId),
+    fail: (error) => mcpError(error),
   },
 ];
 

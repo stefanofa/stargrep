@@ -39,6 +39,7 @@
         "@cloudflare/vitest-plugin": "1.5.1",
         "@cloudflare/workers-types": "5.20261103.1",
         "@effect/tsgo": "catalog:",
+        "@modelcontextprotocol/core": "2.4.0",
         "@orpc/client": "2.0.0-beta.48",
         "@orpc/contract": "2.0.0-beta.48",
         "@stargrep/config": "workspace:*",

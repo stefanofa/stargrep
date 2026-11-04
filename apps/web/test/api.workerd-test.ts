@@ -1,4 +1,5 @@
 import { env, exports } from "cloudflare:workers";
+import { JSONRPCMessageSchema } from "@modelcontextprotocol/core";
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { ContractRouterClient } from "@orpc/contract";
@@ -182,6 +183,7 @@ describe("when the server fails outside the API", () => {
       status: 500,
       body: { error: { code: -32603, data: { traceId: viaMcp.traceHeader } } },
     });
+    expect(JSONRPCMessageSchema.safeParse(viaMcp.body).success).toBe(true);
     expect(JSON.stringify([viaRest, viaRpc, viaMcp])).not.toContain("request layer defect");
   });
 });
@@ -332,9 +334,15 @@ describe("getRepo and the spec", () => {
     expect(viaRpc).toMatchObject({ status: 404, header: traceId, body: { json: { code: "NOT_FOUND" } } });
     expect(viaRpc.body.json.data.traceId).toBe(viaRpc.header);
 
-    const viaMcp = await unmatched("/mcp/no-such-route", mcpCall("tools/list", {}));
-    expect(viaMcp).toMatchObject({ status: 404, header: traceId, body: { jsonrpc: "2.0", error: { code: -32000 } } });
+    const viaMcp = await unmatched("/mcp/no-such-route", post({ jsonrpc: "2.0", id: 7, method: "tools/list" }));
+    expect(viaMcp).toMatchObject({ status: 404, header: traceId, body: { id: 7, error: { code: -32000 } } });
     expect(viaMcp.body.error.data.traceId).toBe(viaMcp.header);
+    expect(JSONRPCMessageSchema.safeParse(viaMcp.body).success).toBe(true);
+
+    const withoutId = await unmatched("/mcp/no-such-route", { method: "POST", body: "not json" });
+    expect(withoutId).toMatchObject({ status: 404, header: traceId, body: { error: { code: -32000 } } });
+    expect("id" in withoutId.body).toBe(false);
+    expect(JSONRPCMessageSchema.safeParse(withoutId.body).success).toBe(true);
   });
 
   it("lists every procedure in the OpenAPI document with only finite numbers", async () => {
