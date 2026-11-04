@@ -5,6 +5,7 @@ import * as it from "@stargrep/testing";
 import { APICallError } from "ai";
 import { MockEmbeddingModelV4, MockLanguageModelV4 } from "ai/test";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -39,8 +40,12 @@ const unused = () => {
   throw new Error("not used in this test");
 };
 
-const textLayer = (doGenerate: (options: CallOptions) => PromiseLike<GenerateResult>, model = "test/model") =>
-  Gateway.layerTextGeneration(model).pipe(
+const textLayer = (
+  doGenerate: (options: CallOptions) => PromiseLike<GenerateResult>,
+  model = "test/model",
+  options: Partial<Gateway.TextOptions> = {},
+) =>
+  Gateway.layerTextGeneration(model, options).pipe(
     Layer.provide(
       Layer.succeed(
         Gateway.AiProvider,
@@ -90,6 +95,19 @@ describe("gateway text generation", () => {
       Effect.provide(textLayer(async () => textResult(JSON.stringify(validSummary)))),
     ),
   );
+
+  it.effect("asks for no reasoning only when the layer is built with reasoning none", () => {
+    const seen: Array<CallOptions["reasoning"]> = [];
+    const answer = async (options: CallOptions) => {
+      seen.push(options.reasoning);
+      return textResult(JSON.stringify(validSummary));
+    };
+    return Effect.gen(function* () {
+      yield* Summarize.summarize(repo).pipe(Effect.provide(textLayer(answer)));
+      yield* Summarize.summarize(repo).pipe(Effect.provide(textLayer(answer, "test/model", { reasoning: "none" })));
+      expect(seen).toEqual(["provider-default", "none"]);
+    });
+  });
 
   it.effect("fails with AiOutputInvalid when the model returns text that is not JSON", () =>
     Effect.gen(function* () {
@@ -186,6 +204,45 @@ describe("gateway text generation", () => {
         }),
       ),
     );
+  });
+
+  it.effect("tries once and gives up on a retryable error when the layer has no retries", () => {
+    let attempts = 0;
+    const layer = textLayer(
+      async () => {
+        attempts++;
+        throw new APICallError({
+          message: "upstream failed",
+          url: "https://ai-gateway.vercel.sh/v1",
+          requestBodyValues: {},
+          statusCode: 502,
+        });
+      },
+      "test/model",
+      { retry: Port.noRetry },
+    );
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(Summarize.summarize(repo));
+      expect([error._tag, attempts]).toEqual(["AiUnavailable", 1]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails with AiTimeout at the timeout the layer sets", () => {
+    const layer = textLayer(
+      (options) =>
+        new Promise((_, reject) =>
+          options.abortSignal?.addEventListener("abort", () => reject(options.abortSignal?.reason)),
+        ),
+      "test/model",
+      { timeout: Duration.seconds(4), retry: Port.noRetry },
+    );
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(Effect.flip(Summarize.summarize(repo)));
+      yield* TestClock.adjust("3999 millis");
+      expect(fiber.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust("1 millis");
+      expect(yield* Fiber.join(fiber)).toMatchObject({ _tag: "AiTimeout", timeoutMillis: 4000 });
+    }).pipe(Effect.provide(layer));
   });
 
   it.effect("fails with AiUnavailable on the gateway's internal server error", () =>

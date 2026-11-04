@@ -4,7 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import { type AiError, AiOutputInvalid, AiTimeout } from "./errors.ts";
-import { countTokens, unavailableRetry } from "./port.ts";
+import { countTokens, type Retry, unavailableRetry } from "./port.ts";
 import type { AiSchema } from "./schema-bridge.ts";
 
 export interface GenerateRequest<A> {
@@ -49,6 +49,7 @@ export const make = (options: {
   readonly provider: string;
   readonly model: string;
   readonly timeout: Duration.Duration;
+  readonly retry?: Retry;
   readonly run: (request: RunRequest) => Effect.Effect<RunResult, AiError>;
   readonly batch?: {
     readonly timeout: Duration.Duration;
@@ -57,7 +58,7 @@ export const make = (options: {
     ) => Effect.Effect<ReadonlyArray<Result.Result<RunResult, AiError> | undefined>, AiError>;
   };
 }) => {
-  const { provider, model, timeout, run, batch } = options;
+  const { provider, model, timeout, retry = unavailableRetry, run, batch } = options;
   const timedOut = (after: Duration.Duration) =>
     new AiTimeout({ operation: "generate", model, timeoutMillis: Duration.toMillis(after) });
   const invalid = new AiOutputInvalid({
@@ -77,7 +78,7 @@ export const make = (options: {
   const generateOne = <A>(request: GenerateRequest<A>) =>
     run({ jsonSchema: request.schema.jsonSchema, system: request.system, prompt: request.prompt }).pipe(
       Effect.timeoutOrElse({ duration: timeout, orElse: () => Effect.fail(timedOut(timeout)) }),
-      Effect.retry(unavailableRetry),
+      Effect.retry(retry),
       Effect.flatMap(accept(request.schema)),
     );
 

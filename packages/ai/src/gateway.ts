@@ -27,7 +27,7 @@ import {
   type Operation,
 } from "./errors.ts";
 import * as Models from "./models.ts";
-import { unavailableRetry } from "./port.ts";
+import { noRetry, type Retry, unavailableRetry } from "./port.ts";
 import * as TextGeneration from "./text-generation.ts";
 
 type BatchApi = ReturnType<GatewayProvider["experimental_batch"]>;
@@ -177,8 +177,21 @@ const runBatch = (provider: AiProvider["Service"], model: string) =>
     });
   });
 
-export const layerTextGeneration = (model: string) =>
-  Layer.effect(
+export interface TextOptions {
+  readonly reasoning: "none" | "provider-default";
+  readonly timeout: Duration.Duration;
+  readonly retry: Retry;
+}
+
+const defaultTextOptions: TextOptions = {
+  reasoning: "provider-default",
+  timeout: textTimeout,
+  retry: unavailableRetry,
+};
+
+export const layerTextGeneration = (model: string, options: Partial<TextOptions> = {}) => {
+  const { reasoning, timeout, retry } = { ...defaultTextOptions, ...options };
+  return Layer.effect(
     TextGeneration.TextGeneration,
     Effect.andThen(
       Effect.sync(silenceSdkWarnings),
@@ -186,7 +199,8 @@ export const layerTextGeneration = (model: string) =>
         TextGeneration.make({
           provider: "gateway",
           model,
-          timeout: textTimeout,
+          timeout,
+          retry,
           run: (request) =>
             Effect.tryPromise({
               try: (abortSignal) =>
@@ -197,6 +211,7 @@ export const layerTextGeneration = (model: string) =>
                   prompt: request.prompt,
                   maxRetries: 0,
                   abortSignal,
+                  reasoning,
                 }),
               catch: fromSdkError("generate", model),
             }).pipe(
@@ -210,6 +225,7 @@ export const layerTextGeneration = (model: string) =>
       ),
     ),
   );
+};
 
 export const layerEmbeddings = (model: Models.EmbeddingModel) =>
   Layer.effect(
@@ -244,6 +260,12 @@ export const layerProvider = (config: { readonly apiKey: Redacted.Redacted<strin
 export const layerProviderConfig = Layer.unwrap(
   Config.Redacted("AI_GATEWAY_API_KEY").pipe(Effect.map((apiKey) => layerProvider({ apiKey }))),
 );
+
+export const layerPlannerTextGeneration = layerTextGeneration(Models.plannerModel, {
+  reasoning: "none",
+  timeout: Duration.seconds(4),
+  retry: noRetry,
+}).pipe(Layer.provide(layerProviderConfig));
 
 export const layer = Layer.merge(layerTextGeneration(Models.summaryModel), layerEmbeddings(Models.embeddingModel)).pipe(
   Layer.provide(layerProviderConfig),
