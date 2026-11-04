@@ -93,6 +93,10 @@ The ranking rule changed during the work, and the record above shows it.
 
 The choice of `voyage/voyage-4` does not depend on the tie rule. It follows from two facts that hold in both runs: Gemini is over the latency budget, and Voyage 4 has the best recall of the models under it.
 
+### Model changes
+
+**2026-11-04. Summaries move to `anthropic/claude-haiku-5.5`.** The tie rule above puts all three summary models level on recall. In run 3, `claude-haiku-5.5` scored 0.988 and `gpt-6-luna` scored 0.990, which is within one query. The bakeoff broke the tie by cost and picked `gpt-6-luna`. Repo enrichment then measured what the bakeoff did not. A 2-request AI Gateway batch on `claude-haiku-5.5` finished in 3.7 minutes, while a 200-request `gpt-6-luna` batch sat at 0 of 200 for more than 79 minutes. Single summaries are faster on Haiku too, a 2.1 s median against 3.7 s in run 3. Single and batch summaries both use `claude-haiku-5.5`, so every stored summary comes from one model. At catalog prices it costs about $0.76 per 1,000 repos against $0.53. `evals/rank.ts` still breaks summary ties by cost, so a new bakeoff run prints `gpt-6-luna` on its `Chosen:` line.
+
 ## Recall bar
 
 Search must reach **recall@10 of 0.97** on this query set over this 736-repo corpus, loaded as one account's stars and enriched by the production pipeline. P8 adds `evals/recall.ts`, which enforces it in CI.

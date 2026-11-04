@@ -163,7 +163,7 @@ Plain keyword queries skip the planner. KV caches plans and query embeddings by 
 
 ## AI providers
 
-`packages/ai` has two ports, because they have different providers. Production summarizes with `openai/gpt-6-luna` and embeds with `voyage/voyage-4` at 1,024 dimensions. `docs/evals.md` records the bakeoff that chose them. `TextGeneration` turns a prompt into a value of an Effect Schema, for summaries, query plans, and later reranking. `Embeddings` turns texts into vectors. Core code imports only the ports.
+`packages/ai` has two ports, because they have different providers. Production summarizes with `anthropic/claude-haiku-5.5` and embeds with `voyage/voyage-4` at 1,024 dimensions. `docs/evals.md` records the bakeoff that chose them. `TextGeneration` turns a prompt into a value of an Effect Schema, for summaries, query plans, and later reranking. `Embeddings` turns texts into vectors. Core code imports only the ports.
 
 | Port | Adapters | Where it runs |
 |---|---|---|
