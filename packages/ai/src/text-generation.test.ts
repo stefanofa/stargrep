@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test";
 import * as it from "@stargrep/testing";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -7,6 +8,7 @@ import * as Metric from "effect/Metric";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import { AiRequestFailed, AiUnavailable } from "./errors.ts";
 import { toAiSchema } from "./schema-bridge.ts";
 import * as TextGeneration from "./text-generation.ts";
 
@@ -65,15 +67,74 @@ describe("TextGeneration.make", () => {
       const results = yield* generation.generateBatch({
         schema: Answer,
         system: "s",
-        prompts: [
-          { id: "a", prompt: "one" },
-          { id: "b", prompt: "bad" },
-        ],
+        prompts: ["one", "bad"],
       });
       expect(prompts.toSorted()).toEqual(["bad", "one"]);
       const [ok, failed] = results;
       expect(ok).toEqual(Result.succeed({ answer: 3 }));
       expect(failed && Result.isFailure(failed) && failed.failure._tag).toBe("AiOutputInvalid");
+    }),
+  );
+
+  it.effect("retries a model that is briefly unavailable", () =>
+    Effect.gen(function* () {
+      const attempted = yield* Deferred.make<void>();
+      let attempts = 0;
+      const generation = TextGeneration.make({
+        provider: "test",
+        model: "seam/model",
+        timeout: Duration.seconds(10),
+        run: () =>
+          Effect.suspend(() => {
+            attempts++;
+            return attempts === 1
+              ? Deferred.succeed(attempted, undefined).pipe(
+                  Effect.andThen(
+                    Effect.fail(new AiUnavailable({ operation: "generate", model: "seam/model", detail: "503" })),
+                  ),
+                )
+              : Effect.succeed({ output: { answer: 1 }, usage });
+          }),
+      });
+      const fiber = yield* Effect.forkChild(generation.generate({ schema: Answer, system: "s", prompt: "p" }));
+      yield* Deferred.await(attempted);
+      yield* TestClock.adjust("10 seconds");
+      expect(yield* Fiber.join(fiber)).toEqual({ answer: 1 });
+      expect(attempts).toBe(2);
+    }),
+  );
+
+  it.effect("answers a failed batch item with a direct call each time the batch replays the failure", () =>
+    Effect.gen(function* () {
+      let direct = 0;
+      const generation = TextGeneration.make({
+        provider: "test",
+        model: "seam/model",
+        timeout: Duration.seconds(10),
+        run: () =>
+          Effect.sync(() => {
+            direct++;
+            return { output: { answer: 2 }, usage };
+          }),
+        batch: {
+          timeout: Duration.hours(1),
+          run: () =>
+            Effect.succeed([
+              Result.succeed({ output: { answer: 1 }, usage }),
+              Result.fail(
+                new AiRequestFailed({ operation: "generate", model: "seam/model", detail: "batch item failed" }),
+              ),
+            ]),
+        },
+      });
+      const request = { schema: Answer, system: "s", prompts: ["one", "two"] };
+      for (const _ of [1, 2]) {
+        expect(yield* generation.generateBatch(request)).toEqual([
+          Result.succeed({ answer: 1 }),
+          Result.succeed({ answer: 2 }),
+        ]);
+      }
+      expect(direct).toBe(2);
     }),
   );
 

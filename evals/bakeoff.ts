@@ -15,6 +15,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
+import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Corpus from "./corpus.ts";
@@ -39,7 +40,7 @@ const retryTransient = <A, R>(effect: Effect.Effect<A, AiError, R>) =>
   Effect.retry(effect, {
     times: 3,
     schedule: Schedule.exponential("2 seconds"),
-    while: (error) => error._tag === "AiUnavailable" || error._tag === "AiRequestFailed" || error._tag === "AiTimeout",
+    while: (error) => error._tag === "AiRequestFailed" || error._tag === "AiTimeout",
   });
 
 const Catalog = Schema.Struct({
@@ -246,6 +247,40 @@ const runBakeoff = Effect.fn("Bakeoff.run")(function* (limit: number | undefined
   yield* Console.log(`Total model cost: $${totalCost.toFixed(4)}`);
 });
 
+const emptySummary: Summarize.RepoSummary = { summary: "", keywords: [], kind: "other" };
+
+const scoreSummaryModel = Effect.fn("Bakeoff.scoreSummaryModel")(function* (model: string, providers: Providers) {
+  const queries = yield* Corpus.loadQueries;
+  const repos = new Set([...Corpus.expectedRepos(queries), ...(yield* Corpus.loadDistractors)]);
+  const corpus = (yield* Corpus.loadCorpus).filter((repo) => repos.has(repo.fullName));
+  const pricing = yield* loadPricing;
+  yield* Console.log(`Summary model ${model}: ${queries.length} queries over ${corpus.length} repos, one batch job`);
+  const { result: summaries, cost } = yield* withCost(
+    pricing,
+    model,
+    Summarize.summarizeBatch(corpus).pipe(Effect.provide(providers.text(model))),
+  );
+  const texts = corpus.map((repo, index) =>
+    Summarize.embeddingText(
+      repo,
+      Result.getOrElse(summaries[index] ?? Result.succeed(emptySummary), () => emptySummary),
+    ),
+  );
+  const score = yield* scoreRetrieval(corpus, texts, queries).pipe(
+    Effect.provide(providers.embeddings(Models.embeddingModel)),
+  );
+  yield* Console.log(
+    formatRow({
+      stage: "summary",
+      model,
+      recall: score.recall,
+      medianMillis: Number.NaN,
+      cost,
+      failures: summaries.filter(Result.isFailure).length,
+    }),
+  );
+});
+
 const gatewayProviders: Providers = {
   text: (model) => Gateway.layerTextGeneration(model).pipe(Layer.provide(Gateway.layerProviderConfig)),
   embeddings: (model) => Gateway.layerEmbeddings(model).pipe(Layer.provide(Gateway.layerProviderConfig)),
@@ -257,11 +292,17 @@ const fakeProviders: Providers = {
 };
 
 const args = Bun.argv.slice(2);
-const limitIndex = args.indexOf("--limit");
-const limit = limitIndex === -1 ? undefined : Number(args[limitIndex + 1]);
+const option = (name: string) => {
+  const index = args.indexOf(name);
+  return index === -1 ? undefined : args[index + 1];
+};
+const limit = option("--limit");
+const summaryModel = option("--summary");
+const providers = args.includes("--fake") ? fakeProviders : gatewayProviders;
 
 await Effect.runPromise(
-  runBakeoff(limit, args.includes("--fake") ? fakeProviders : gatewayProviders).pipe(
-    Effect.provide(FetchHttpClient.layer),
-  ),
+  (summaryModel === undefined
+    ? runBakeoff(limit === undefined ? undefined : Number(limit), providers)
+    : scoreSummaryModel(summaryModel, providers)
+  ).pipe(Effect.provide(FetchHttpClient.layer)),
 );

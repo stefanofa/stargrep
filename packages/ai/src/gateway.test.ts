@@ -3,7 +3,9 @@ import { GatewayInternalServerError, GatewayModelNotFoundError } from "@ai-sdk/g
 import * as it from "@stargrep/testing";
 import { APICallError } from "ai";
 import { MockEmbeddingModelV4, MockLanguageModelV4 } from "ai/test";
+import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -47,6 +49,18 @@ const textLayer = (doGenerate: (options: CallOptions) => PromiseLike<GenerateRes
       ),
     ),
   );
+
+// TestClock cannot run these retries, because each attempt rejects a promise before its backoff sleep
+// starts, so backoff sleeps return at once and the timeout's sleep never ends.
+const retryClock: Clock.Clock = {
+  currentTimeMillisUnsafe: () => 0,
+  currentTimeMillis: Effect.succeed(0),
+  currentTimeNanosUnsafe: () => 0n,
+  currentTimeNanos: Effect.succeed(0n),
+  monotonicTimeNanosUnsafe: () => 0n,
+  monotonicTimeNanos: Effect.succeed(0n),
+  sleep: (duration) => (Duration.isLessThan(duration, Gateway.textTimeout) ? Effect.void : Effect.never),
+};
 
 const repo: Summarize.RepoFacts = {
   fullName: "ratatui/ratatui",
@@ -142,16 +156,20 @@ describe("gateway text generation", () => {
     ),
   );
 
-  it.effect("fails with AiUnavailable when the error says a retry may succeed", () =>
-    Effect.gen(function* () {
+  it.effect("retries an error the SDK marks as retryable three times, then fails with AiUnavailable", () => {
+    let attempts = 0;
+    return Effect.gen(function* () {
       const upstream = yield* Effect.flip(Summarize.summarize(repo));
+      expect(attempts).toBe(4);
       expect(upstream.message).toBe(
         "Model 'test/model' is unavailable for 'generate' and may answer a retry: AI_APICallError with status 502",
       );
       expect(JSON.stringify(upstream)).not.toContain("SECRET");
     }).pipe(
+      Effect.provideService(Clock.Clock, retryClock),
       Effect.provide(
         textLayer(async () => {
+          attempts++;
           throw new APICallError({
             message: "upstream failed",
             url: "https://ai-gateway.vercel.sh/v1",
@@ -160,8 +178,8 @@ describe("gateway text generation", () => {
           });
         }),
       ),
-    ),
-  );
+    );
+  });
 
   it.effect("fails with AiUnavailable on the gateway's internal server error", () =>
     Effect.gen(function* () {
@@ -169,6 +187,7 @@ describe("gateway text generation", () => {
       expect(error._tag).toBe("AiUnavailable");
       expect(error.message).toContain("GatewayInternalServerError with status 500");
     }).pipe(
+      Effect.provideService(Clock.Clock, retryClock),
       Effect.provide(
         textLayer(async () => {
           throw new GatewayInternalServerError({ message: "Internal server error" });
@@ -201,6 +220,14 @@ const succeeded = (id: string, text: string): BatchItem => ({
 
 const fakeBatch = (options: { readonly items: ReadonlyArray<BatchItem>; readonly fails?: boolean }) => {
   const starts: Array<StartOptions> = [];
+  const direct = { calls: 0 };
+  const languageModel = () =>
+    new MockLanguageModelV4({
+      doGenerate: async () => {
+        direct.calls++;
+        return textResult(JSON.stringify(validSummary));
+      },
+    });
   const api: BatchApi = {
     specificationVersion: "v4",
     provider: "gateway.batch",
@@ -225,17 +252,17 @@ const fakeBatch = (options: { readonly items: ReadonlyArray<BatchItem>; readonly
     Layer.provide(
       Layer.succeed(
         Gateway.AiProvider,
-        Gateway.AiProvider.of({ languageModel: unused, embeddingModel: unused, experimental_batch: () => api }),
+        Gateway.AiProvider.of({ languageModel, embeddingModel: unused, experimental_batch: () => api }),
       ),
     ),
   );
-  return { starts, layer };
+  return { starts, direct, layer };
 };
 
 const batchRepos = [repo, { ...repo, fullName: "junegunn/fzf" }, { ...repo, fullName: "sharkdp/bat" }];
 
 describe("gateway batch", () => {
-  it.effect("submits one job with the JSON schema and decodes each item on its own", () => {
+  it.effect("submits one job with the JSON schema and answers failed or invalid items with a direct call", () => {
     const fake = fakeBatch({
       items: [
         succeeded("2", "Sure! Here is the summary."),
@@ -249,12 +276,23 @@ describe("gateway batch", () => {
       const request = fake.starts[0]?.requests[0];
       expect(request?.modelId).toBe("test/model");
       expect(request?.type === "text" && request.options.responseFormat?.type).toBe("json");
-      const [ok, failed, invalid] = results;
-      expect(ok).toEqual(Result.succeed(validSummary));
-      expect(invalid && Result.isFailure(invalid) && invalid.failure._tag).toBe("AiOutputInvalid");
-      expect(failed && Result.isFailure(failed) && failed.failure.message).toBe(
-        "Model 'test/model' request failed in 'generate': batch item failed with server_error",
-      );
+      expect(request?.id).toBe("0");
+      expect(results).toEqual([
+        Result.succeed(validSummary),
+        Result.succeed(validSummary),
+        Result.succeed(validSummary),
+      ]);
+      expect(fake.direct.calls).toBe(2);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  it.effect("answers an item the batch left out with a direct call, in prompt order", () => {
+    const other = { ...validSummary, summary: "A command-line fuzzy finder." };
+    const fake = fakeBatch({ items: [succeeded("1", JSON.stringify(other))] });
+    return Effect.gen(function* () {
+      const results = yield* Summarize.summarizeBatch([repo, repo]);
+      expect(results).toEqual([Result.succeed(validSummary), Result.succeed(other)]);
+      expect(fake.direct.calls).toBe(1);
     }).pipe(Effect.provide(fake.layer));
   });
 

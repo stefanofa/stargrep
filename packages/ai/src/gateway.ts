@@ -15,7 +15,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import type * as Result from "effect/Result";
+import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -27,6 +27,7 @@ import {
   AiRequestFailed,
   AiUnavailable,
   type Operation,
+  unavailableRetry,
 } from "./errors.ts";
 import * as Models from "./models.ts";
 import * as TextGeneration from "./text-generation.ts";
@@ -43,6 +44,7 @@ export class AiProvider extends Context.Service<
   }
 >()("@stargrep/ai/gateway/AiProvider") {}
 
+export const textTimeout = Duration.seconds(60);
 const batchTimeout = Duration.hours(24);
 const batchPollInterval = Duration.seconds(10);
 
@@ -123,8 +125,8 @@ const runBatch = (provider: AiProvider["Service"], model: string) =>
     const started = yield* Effect.tryPromise({
       try: (abortSignal) =>
         api.doStartBatch({
-          requests: request.prompts.map(({ id, prompt }) => ({
-            id,
+          requests: request.prompts.map((prompt, index) => ({
+            id: String(index),
             type: "text" as const,
             modelId: model,
             options: {
@@ -139,7 +141,7 @@ const runBatch = (provider: AiProvider["Service"], model: string) =>
           abortSignal,
         }),
       catch: failed,
-    });
+    }).pipe(Effect.retry(unavailableRetry));
     yield* Effect.annotateCurrentSpan({ "ai.batch.id": started.batchId, "ai.batch.size": request.prompts.length });
     yield* Effect.logInfo("Gateway batch started", {
       batchId: started.batchId,
@@ -153,6 +155,7 @@ const runBatch = (provider: AiProvider["Service"], model: string) =>
             try: (abortSignal) => api.doGetBatchStatus({ batchId: started.batchId, abortSignal }),
             catch: failed,
           }).pipe(
+            Effect.retry(unavailableRetry),
             Effect.repeat({
               schedule: Schedule.spaced(batchPollInterval),
               until: (status) => status.status !== "pending",
@@ -175,11 +178,16 @@ const runBatch = (provider: AiProvider["Service"], model: string) =>
       Effect.flatMap((stream) =>
         Stream.runCollect(Stream.fromReadableStream({ evaluate: () => stream, onError: failed })),
       ),
+      Effect.retry(unavailableRetry),
     );
-    const results = yield* Effect.forEach(items, (item) =>
-      Effect.map(Effect.result(batchItemResult(model, item)), (result) => [item.id, result] as const),
-    );
-    return new Map<string, Result.Result<TextGeneration.RunResult, AiError>>(results);
+    const byId = new Map<string, BatchItem>(items.map((item) => [item.id, item]));
+    const missing = new AiRequestFailed({ operation: "generate", model, detail: "the batch returned no result" });
+    return yield* Effect.forEach(request.prompts, (_, index) => {
+      const item = byId.get(String(index));
+      return item === undefined
+        ? Effect.succeed(Result.fail<AiError>(missing))
+        : Effect.result(batchItemResult(model, item));
+    });
   });
 
 export const layerTextGeneration = (model: string) =>
@@ -191,7 +199,7 @@ export const layerTextGeneration = (model: string) =>
         TextGeneration.make({
           provider: "gateway",
           model,
-          timeout: Duration.seconds(60),
+          timeout: textTimeout,
           run: (request) =>
             Effect.tryPromise({
               try: (abortSignal) =>

@@ -136,7 +136,7 @@ Each step is a queue message type. Each consumer is idempotent.
 4. `snapshot-repos` is a daily cron. It fetches facts events no longer carry, such as the commit history count, for tracked repos through batched GraphQL queries.
 5. `rollup-metrics` is a daily job. It turns events and snapshots into weekly series per repo and writes current values and changes into `repo_metrics`. DuckDB does not run in Workers, so the rollup runs in a container or a scheduled CI job.
 
-Bulk enrichment, such as a backfill of popular repos, uses the Gateway batch API for summaries and `embedMany` for embeddings.
+Bulk enrichment, such as a backfill of popular repos, uses the Gateway batch API for summaries and `embedMany` for embeddings. The batch path serves the CLI and backfills only. The queue consumers enrich one repo per message through the single path, because a batch job can take minutes.
 
 ## Search
 
@@ -170,9 +170,9 @@ Plain keyword queries skip the planner. KV caches plans and query embeddings by 
 | `TextGeneration` | AI Gateway, Claude Code CLI, fake | Gateway everywhere. Claude Code and the fake only on a developer's machine |
 | `Embeddings` | AI Gateway, fake | Gateway everywhere. The fake only on a developer's machine |
 
-An adapter only sends the request and returns the raw output and token counts. The port's `make` does the rest for every adapter: it applies the adapter's timeout, decodes the output with the request's Effect Schema, counts tokens in `stargrep_ai_tokens`, and opens the span. So every adapter fails with the same typed errors: `AiOutputInvalid`, `AiRequestFailed`, `AiUnavailable`, `AiTimeout`, and `AiModelNotFound`. `AiUnavailable` is a failure the provider marks as worth a retry, such as a rate limit or a 5xx, and it is the only one enrichment retries in process. Error fields hold short facts such as an exit code or an HTTP status, never a prompt, README text, model output, or key.
+An adapter only sends the request and returns the raw output and token counts. The port's `make` does the rest for every adapter: it applies the adapter's timeout, decodes the output with the request's Effect Schema, counts tokens in `stargrep_ai_tokens`, and opens the span. So every adapter fails with the same typed errors: `AiOutputInvalid`, `AiRequestFailed`, `AiUnavailable`, `AiTimeout`, and `AiModelNotFound`. `AiUnavailable` is a failure the provider marks as worth a retry, such as a rate limit or a 5xx. The port retries it three times with jittered backoff from one second, around each model call, so no caller retries it again. Error fields hold short facts such as an exit code or an HTTP status, never a prompt, README text, model output, or key.
 
-`TextGeneration.generateBatch` answers many prompts with one schema and returns one result per prompt, so one bad answer fails only its own repo. The gateway adapter submits one AI Gateway batch job through the AI SDK's experimental batch API, which accepts text requests only. The job's idempotency key is a hash of the requests, so a run that stops while it waits finds the same job again instead of paying for a second one. Adapters without a batch API answer the prompts one at a time.
+`TextGeneration.generateBatch` answers many prompts with one schema and returns one result per prompt, so one bad answer fails only its own repo. The gateway adapter submits one AI Gateway batch job through the AI SDK's experimental batch API, which accepts text requests only. The job's idempotency key is a hash of the requests, so a run that stops while it waits finds the same job again instead of paying for a second one. A replayed job returns its stored failures too, so a failed item gets one direct call. Adapters without a batch API answer the prompts one at a time.
 
 Deployed code uses `layer` from `@stargrep/ai/gateway`. It serves both ports with the models in `models.ts` and reads `AI_GATEWAY_API_KEY` through `layerProviderConfig`. Local tools use `layer` from `@stargrep/ai/local` instead. It reads `AI_TEXT_PROVIDER` (`gateway`, `claude-code`, or `fake`) and `AI_EMBEDDINGS_PROVIDER` (`gateway` or `fake`), both `gateway` by default, and needs Bun to spawn the CLI.
 

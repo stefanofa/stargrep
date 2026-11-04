@@ -116,7 +116,7 @@ AI_GATEWAY_API_KEY=... bun run evals/bakeoff.ts
 bun run evals/bakeoff.ts --fake
 ```
 
-`--limit N` scores only the first N queries against their own expected repos, without distractors, as a cheap smoke test. `--fake` runs the whole pipeline on the fake layers from `@stargrep/ai/fake` and needs no key. No run edits code. To adopt a result, copy the models from the `Chosen:` line into `packages/ai/src/models.ts` by hand.
+`--limit N` scores only the first N queries against their own expected repos, without distractors, as a cheap smoke test. `--summary <model>` scores one summary model on the full corpus through one AI Gateway batch job, using the embedding model in `models.ts`. `--fake` runs the whole pipeline on the fake layers from `@stargrep/ai/fake` and needs no key. No run edits code. To adopt a result, copy the models from the `Chosen:` line into `packages/ai/src/models.ts` by hand.
 
 To compare summary samples locally without the gateway, run `evals/summarize.ts` through the Claude Code CLI, as `docs/architecture.md` describes under "AI providers".
 

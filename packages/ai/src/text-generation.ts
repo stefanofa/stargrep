@@ -1,4 +1,5 @@
 import type { JSONSchema7 } from "ai";
+import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -6,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Metric from "effect/Metric";
 import * as Result from "effect/Result";
-import { type AiError, AiOutputInvalid, AiRequestFailed, AiTimeout } from "./errors.ts";
+import { type AiError, AiOutputInvalid, AiTimeout, unavailableRetry } from "./errors.ts";
 import type { AiSchema } from "./schema-bridge.ts";
 
 export interface GenerateRequest<A> {
@@ -15,15 +16,8 @@ export interface GenerateRequest<A> {
   readonly prompt: string;
 }
 
-export interface BatchPrompt {
-  readonly id: string;
-  readonly prompt: string;
-}
-
-export interface GenerateBatchRequest<A> {
-  readonly schema: AiSchema<A>;
-  readonly system: string;
-  readonly prompts: ReadonlyArray<BatchPrompt>;
+export interface GenerateBatchRequest<A> extends Omit<GenerateRequest<A>, "prompt"> {
+  readonly prompts: ReadonlyArray<string>;
 }
 
 export type BatchResults<A> = ReadonlyArray<Result.Result<A, AiError>>;
@@ -34,10 +28,8 @@ export interface RunRequest {
   readonly prompt: string;
 }
 
-export interface RunBatchRequest {
-  readonly jsonSchema: JSONSchema7;
-  readonly system: string;
-  readonly prompts: ReadonlyArray<BatchPrompt>;
+export interface RunBatchRequest extends Omit<RunRequest, "prompt"> {
+  readonly prompts: ReadonlyArray<string>;
 }
 
 export interface RunResult {
@@ -84,7 +76,7 @@ export const make = (options: {
     readonly timeout: Duration.Duration;
     readonly run: (
       request: RunBatchRequest,
-    ) => Effect.Effect<ReadonlyMap<string, Result.Result<RunResult, AiError>>, AiError>;
+    ) => Effect.Effect<ReadonlyArray<Result.Result<RunResult, AiError>>, AiError>;
   };
 }) => {
   const { provider, model, timeout, run, batch } = options;
@@ -95,7 +87,6 @@ export const make = (options: {
     model,
     detail: "structured output does not match the schema",
   });
-  const missing = new AiRequestFailed({ operation: "generate", model, detail: "the batch returned no result" });
 
   const accept =
     <A>(schema: AiSchema<A>) =>
@@ -108,6 +99,7 @@ export const make = (options: {
   const generateOne = <A>(request: GenerateRequest<A>) =>
     run({ jsonSchema: request.schema.jsonSchema, system: request.system, prompt: request.prompt }).pipe(
       Effect.timeoutOrElse({ duration: timeout, orElse: () => Effect.fail(timedOut(timeout)) }),
+      Effect.retry(unavailableRetry),
       Effect.flatMap(accept(request.schema)),
     );
 
@@ -117,17 +109,22 @@ export const make = (options: {
   const generateEach = <A>(request: GenerateBatchRequest<A>) =>
     Effect.forEach(
       request.prompts,
-      ({ prompt }) => Effect.result(generateOne({ schema: request.schema, system: request.system, prompt })),
+      (prompt) => Effect.result(generateOne({ schema: request.schema, system: request.system, prompt })),
       { concurrency: fallbackConcurrency },
     );
 
   const acceptItem = <A>(
-    schema: AiSchema<A>,
-    item: Result.Result<RunResult, AiError> | undefined,
+    request: GenerateBatchRequest<A>,
+    prompt: string,
+    item: Result.Result<RunResult, AiError>,
   ): Effect.Effect<Result.Result<A, AiError>> => {
-    if (item === undefined) return Effect.succeed(Result.fail(missing));
-    if (Result.isFailure(item)) return Effect.succeed(Result.fail(item.failure));
-    return Effect.result(accept(schema)(item.success));
+    const decoded: Effect.Effect<A, AiError> = Result.isFailure(item)
+      ? Effect.fail(item.failure)
+      : accept(request.schema)(item.success);
+    return decoded.pipe(
+      Effect.catch(() => generateOne({ schema: request.schema, system: request.system, prompt })),
+      Effect.result,
+    );
   };
 
   const generateBatch = <A>(request: GenerateBatchRequest<A>): Effect.Effect<BatchResults<A>, AiError> =>
@@ -135,8 +132,8 @@ export const make = (options: {
       ? generateEach(request)
       : batch.run({ jsonSchema: request.schema.jsonSchema, system: request.system, prompts: request.prompts }).pipe(
           Effect.timeoutOrElse({ duration: batch.timeout, orElse: () => Effect.fail(timedOut(batch.timeout)) }),
-          Effect.flatMap((results) =>
-            Effect.forEach(request.prompts, ({ id }) => acceptItem(request.schema, results.get(id))),
+          Effect.flatMap((items) =>
+            Effect.forEach(Arr.zip(request.prompts, items), ([prompt, item]) => acceptItem(request, prompt, item)),
           ),
         )
     ).pipe(portSpan("TextGeneration.generateBatch", { provider, model }));

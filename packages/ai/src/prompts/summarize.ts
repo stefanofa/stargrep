@@ -49,6 +49,83 @@ Return JSON with these fields:
 export const trimReadme = (readme: string): string =>
   readme.length <= readmeLimit ? readme : `${readme.slice(0, readmeLimit)}\n[README truncated]`;
 
+const htmlTagNames =
+  "a|abbr|b|blockquote|br|center|code|dd|del|details|div|dl|dt|em|figcaption|figure|font|g|h[1-6]|hr|i|img|ins|kbd|li|ol|p|path|picture|pre|s|section|small|source|span|strong|sub|summary|sup|svg|table|tbody|td|tfoot|th|thead|tr|tt|u|ul|video";
+
+const imageLinks = /!\[[^[\]\n]*\](?:\([^()\n]*\)|\[[^[\]\n]*\])?/g;
+const emptyLinks = /\[[ \t]*\](?:\([^()\n]*\)|\[[^[\]\n]*\])/g;
+const linkDefinitions = /^[ \t]*\[[^[\]\n]+\]:[ \t]*\S.*$/gm;
+const htmlTags = new RegExp(`</?(?:${htmlTagNames})(?=[\\s/>])[^<>]*>`, "gi");
+const emailAutolinks = /<([^<>\s@]+@[^<>\s@]+)>/g;
+const inlineCode = /(`[^`\n]+`)/;
+const fenceOpening = /^ {0,3}(`{3,}|~{3,})/;
+const blankRuns = /\n[ \t]*(\n[ \t]*)+/g;
+const trailingSpace = /[ \t]+$/gm;
+const wordCharacter = /[\p{L}\p{N}]/u;
+const replacementCharacters = /�/g;
+const binaryShare = 0.01;
+
+const withoutComments = (text: string) => {
+  const kept: Array<string> = [];
+  let at = 0;
+  for (let open = text.indexOf("<!--"); open !== -1; open = text.indexOf("<!--", at)) {
+    const close = text.indexOf("-->", open + 4);
+    if (close === -1) break;
+    kept.push(text.slice(at, open));
+    at = close + 3;
+  }
+  kept.push(text.slice(at));
+  return kept.join("");
+};
+
+const cleanProse = (prose: string) =>
+  withoutComments(prose)
+    .split(inlineCode)
+    .map((part, index) =>
+      index % 2 === 1
+        ? part
+        : part
+            .replace(imageLinks, "")
+            .replace(emptyLinks, "")
+            .replace(linkDefinitions, "")
+            .replace(htmlTags, "")
+            .replace(emailAutolinks, "$1"),
+    )
+    .join("");
+
+const isBinary = (readme: string) =>
+  readme.includes("\u0000") || (readme.match(replacementCharacters)?.length ?? 0) > readme.length * binaryShare;
+
+export const readmeText = (readme: string): string | null => {
+  if (isBinary(readme)) return null;
+  const blocks: Array<string> = [];
+  let prose: Array<string> = [];
+  let fence: string | null = null;
+  for (const line of readme.replace(replacementCharacters, "").split("\n")) {
+    if (fence !== null) {
+      blocks.push(line);
+      if (line.trimStart().startsWith(fence) && line.trim().replaceAll(fence[0] ?? "", "") === "") fence = null;
+      continue;
+    }
+    const opening = fenceOpening.exec(line)?.[1];
+    if (opening === undefined) {
+      prose.push(line);
+      continue;
+    }
+    blocks.push(cleanProse(prose.join("\n")), line);
+    prose = [];
+    fence = opening;
+  }
+  blocks.push(cleanProse(prose.join("\n")));
+  const text = blocks.join("\n").replace(trailingSpace, "").replace(blankRuns, "\n\n").trim();
+  return wordCharacter.test(text) ? text : null;
+};
+
+const readmeSection = (readme: string | null) => {
+  const text = readme === null ? null : readmeText(readme);
+  return text === null ? "none" : trimReadme(text);
+};
+
 export const prompt = (repo: RepoFacts): string =>
   [
     `Repository: ${repo.fullName}`,
@@ -56,7 +133,7 @@ export const prompt = (repo: RepoFacts): string =>
     `Topics: ${repo.topics.length > 0 ? repo.topics.join(", ") : "none"}`,
     `Language: ${repo.language ?? "unknown"}`,
     "README:",
-    repo.readme === null ? "none" : trimReadme(repo.readme),
+    readmeSection(repo.readme),
   ].join("\n");
 
 export const summarize = Effect.fnUntraced(function* (repo: RepoFacts) {
@@ -69,7 +146,7 @@ export const summarizeBatch = Effect.fnUntraced(function* (repos: ReadonlyArray<
   return yield* textGeneration.generateBatch({
     schema: repoSummarySchema,
     system,
-    prompts: repos.map((repo, index) => ({ id: String(index), prompt: prompt(repo) })),
+    prompts: repos.map(prompt),
   });
 });
 
