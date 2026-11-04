@@ -1,0 +1,13 @@
+language js
+
+or {
+  `$receiver.Telemetry($arguments)`,
+  `$receiver.Telemetry.layer($arguments)`,
+  `$receiver.layerOtlp($arguments)`,
+  `import { $names } from $package` where {
+    $package <: r"[\"']@alchemy\.run/cloudflare[\"']",
+    $names <: contains `Telemetry`
+  }
+} as $match where {
+  register_diagnostic(span=$match, message="This installs a tracer that keeps span results. Use the layers from @stargrep/telemetry.")
+}

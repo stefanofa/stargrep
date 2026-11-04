@@ -11,7 +11,10 @@
       "dependsOn": ["transit"]
     },
     "check": {
-      "dependsOn": ["//#lint", "typecheck"]
+      "dependsOn": ["//#lint", "//#lint:fixtures", "typecheck"]
+    },
+    "//#lint:fixtures": {
+      "inputs": ["packages/config/**"]
     }
   }
 }

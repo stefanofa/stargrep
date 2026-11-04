@@ -50,6 +50,6 @@ describe("tracer layers", () => {
     Effect.gen(function* () {
       const span = yield* endedSpan;
       expect(span?.status._tag === "Ended" && span.status.exit).toEqual(Exit.void);
-    }).pipe(Effect.provide(Cloudflare.layer)),
+    }).pipe(Effect.provide(Cloudflare.tracer)),
   );
 });

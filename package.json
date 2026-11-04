@@ -22,7 +22,8 @@
     "postinstall": "if [ -x node_modules/.bin/effect-tsgo ]; then effect-tsgo patch --typescript --no-oxlint; fi",
     "check": "turbo run check",
     "lint": "biome check .",
-    "test": "bun test --parallel"
+    "test": "bun test --parallel",
+    "lint:fixtures": "bun packages/config/scripts/lint-fixtures.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.4",

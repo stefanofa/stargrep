@@ -148,6 +148,7 @@
       "name": "@stargrep/telemetry",
       "dependencies": {
         "@alchemy.run/cloudflare": "2.0.0-beta.85",
+        "alchemy": "2.0.0-beta.85",
         "effect": "catalog:",
       },
       "devDependencies": {
