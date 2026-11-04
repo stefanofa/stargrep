@@ -59,6 +59,10 @@
     {
       "includes": ["apps/**", "!apps/**/*.test.ts", "!apps/**/*.test.tsx", "!apps/**/*.workerd-test.ts"],
       "plugins": ["./packages/config/no-local-ai-import.grit"]
+    },
+    {
+      "includes": ["**", "!packages/telemetry/**"],
+      "plugins": ["./packages/config/no-raw-tracer.grit"]
     }
   ]
 }

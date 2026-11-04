@@ -9,6 +9,7 @@
     "typecheck": "effect-tsgo tsc -p ."
   },
   "dependencies": {
+    "@alchemy.run/cloudflare": "2.0.0-beta.85",
     "effect": "catalog:"
   },
   "devDependencies": {

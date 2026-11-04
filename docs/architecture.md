@@ -74,7 +74,7 @@ packages/
   auth/             Better Auth config
   ui/               design tokens and components
   testing/          bun test helpers that stand in for it.effect and it.layer
-  telemetry/        the tracer wrapper that drops span results, and a span collector for tests and scripts
+  telemetry/        the tracer wrapper that drops span results, the OTLP and Workers tracers built with it, and a span collector for tests and scripts
   config/           shared tsconfig and Biome plugins
 infra/              Alchemy stacks, providers, state store, and which Workers each stage deploys
 repos/              read-only source of effect, orpc, and alchemy at the pinned versions, for reference

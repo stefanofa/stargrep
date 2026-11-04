@@ -652,7 +652,7 @@ Lint rule `t3code/prefer-effect-fn` reports functions that return `Effect.gen`. 
 
 This rule is Stargrep's own. Every tracer is installed through `withoutResults` from `@stargrep/telemetry/tracer`, which ends a successful span with no value and keeps a failed span's cause. Effect's OTLP exporter already sends only a status code for a successful span. The exposure is in process: a custom tracer, a collector that holds spans, or any span object that is still referenced (such as the parent of a child that outlives it) keeps the span's exit, and a successful exit holds whatever the function returned, such as README text, a prompt, or model output.
 
-**For Stargrep.** Adopt. `collectSpans` from `@stargrep/telemetry/collector` installs its tracer this way, and tests in `packages/ai` and `packages/core` use it to check that no span holds a canary from a key, a README, or model output.
+**For Stargrep.** Adopt. `@stargrep/telemetry` builds every tracer this way. `collectSpans` from `@stargrep/telemetry/collector` serves tests and scripts, `layer` from `@stargrep/telemetry/otlp` exports over OTLP, and `layer` from `@stargrep/telemetry/cloudflare` sends Worker spans to Workers Observability. Tests in `packages/ai` and `packages/core` use `collectSpans` to check that no span holds a canary from a key, a README, or model output. The Biome rule `packages/config/no-raw-tracer.grit` stops code outside `packages/telemetry` from importing `effect/observability/OtlpTracer` or Alchemy's `CloudflareTracer`, or calling `Cloudflare.Telemetry()`.
 
 ### Rule: transports instrument in middleware, and handlers add only per-call attributes
 
