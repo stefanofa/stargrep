@@ -17,7 +17,8 @@ import { Readmes } from "./readmes.ts";
 import { requireStageSecrets } from "./secrets.ts";
 
 // The stargrep.com zone already exists in the account, so the domain only references it and never creates or deletes it.
-const prodDomain = { name: "stargrep.com", zoneName: "stargrep.com", redirects: ["www.stargrep.com"] };
+const zone = "stargrep.com";
+const prodDomain = { name: zone, zoneName: zone, redirects: [`www.${zone}`] };
 
 export default class Worker extends Cloudflare.Worker<Worker>()(
   "Worker",
