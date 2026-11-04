@@ -9,27 +9,20 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import * as SyncQueue from "./sync-queue.ts";
-import * as SyncRequestLog from "./sync-request-log.ts";
 import * as SyncRequests from "./sync-requests.ts";
 
 const embeddingModel = "test/model" as EmbeddingModelId;
 const start = Date.parse("2026-11-04T12:00:00Z");
 const queue = SyncQueue.layerMemory();
-const log = SyncRequestLog.layerMemory();
 
-const layerWith = (log: Layer.Layer<SyncRequestLog.SyncRequestLog>) =>
-  SyncRequests.layer.pipe(
-    Layer.provideMerge(TestDatabase.layerMemory({ embeddingModel })),
-    Layer.provideMerge(queue.layer),
-    Layer.provideMerge(log),
-  );
+const layerWith = (sender: Layer.Layer<SyncQueue.SyncQueue>) =>
+  SyncRequests.layer.pipe(Layer.provideMerge(TestDatabase.layerMemory({ embeddingModel })), Layer.provideMerge(sender));
 
 const at = (millis: number) => DateTime.makeUnsafe(millis);
 
 const reset = Effect.gen(function* () {
   queue.sent.length = 0;
-  log.stored.clear();
-  yield* (yield* TestDatabase.TestDatabase).query("truncate github_accounts cascade");
+  yield* (yield* TestDatabase.TestDatabase).query("truncate github_accounts, sync_requests cascade");
   yield* TestClock.setTime(start);
 });
 
@@ -50,13 +43,14 @@ const synced = (login: string, syncedAt: number) =>
   });
 
 const markFailed = (login: string) =>
-  Effect.flatMap(Effect.service(SyncRequestLog.SyncRequestLog), (service) => service.markFailed(login as Login));
+  Effect.gen(function* () {
+    yield* (yield* Db.Db).syncRequests.markFailed(login as Login, yield* DateTime.now);
+  });
 
-const requests = Effect.service(SyncRequests.SyncRequests);
-const request = (login: string) => Effect.flatMap(requests, (service) => service.request(login as Login));
-const status = (login: string) => Effect.flatMap(requests, (service) => service.status(login as Login));
+const request = (login: string) => SyncRequests.SyncRequests.use((service) => service.request(login as Login));
+const status = (login: string) => SyncRequests.SyncRequests.use((service) => service.status(login as Login));
 
-it.layer(layerWith(log.layer), { timeout: 30_000 })("SyncRequests", (it) => {
+it.layer(layerWith(queue.layer), { timeout: 30_000 })("SyncRequests", (it) => {
   it.effect("queues an unknown login once and reports it done after a later sync", () =>
     Effect.gen(function* () {
       yield* reset;
@@ -68,6 +62,18 @@ it.layer(layerWith(log.layer), { timeout: 30_000 })("SyncRequests", (it) => {
 
       yield* synced("octocat", start + 30_000);
       expect(yield* status("Octocat")).toEqual({ state: "done", syncedAt: at(start + 30_000) });
+    }),
+  );
+
+  it.effect("queues one job when the same login is triggered many times at once", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      const answers = yield* Effect.all(
+        Array.from({ length: 6 }, () => request("swarm")),
+        { concurrency: "unbounded" },
+      );
+      expect(queue.sent).toHaveLength(1);
+      expect(answers.every((answer) => answer.state === "queued")).toBe(true);
     }),
   );
 
@@ -116,14 +122,6 @@ it.layer(layerWith(log.layer), { timeout: 30_000 })("SyncRequests", (it) => {
     }),
   );
 
-  it.effect("records a failure for a login that was never requested at the time it failed", () =>
-    Effect.gen(function* () {
-      yield* reset;
-      yield* markFailed("octocat");
-      expect(yield* status("octocat")).toEqual({ state: "failed", requestedAt: at(start), syncedAt: null });
-    }),
-  );
-
   it.effect("forgets a request after a day", () =>
     Effect.gen(function* () {
       yield* reset;
@@ -134,24 +132,17 @@ it.layer(layerWith(log.layer), { timeout: 30_000 })("SyncRequests", (it) => {
   );
 });
 
-const down = new SyncRequestLog.SyncRequestLogFailed({ operation: "read", cause: "down" });
-const failing = Layer.succeed(
-  SyncRequestLog.SyncRequestLog,
-  SyncRequestLog.SyncRequestLog.of({
-    lastRequest: () => Effect.fail(down),
-    markPending: () => Effect.fail(new SyncRequestLog.SyncRequestLogFailed({ operation: "write", cause: "down" })),
-    markFailed: () => Effect.fail(down),
-  }),
+const brokenQueue = Layer.succeed(
+  SyncQueue.SyncQueue,
+  SyncQueue.SyncQueue.of({ send: () => Effect.fail(new SyncQueue.SyncQueueFailed({ cause: "down" })) }),
 );
 
-it.layer(layerWith(failing), { timeout: 30_000 })("SyncRequests with a failing log", (it) => {
-  it.effect("still queues the sync and reads status from the database", () =>
+it.layer(layerWith(brokenQueue), { timeout: 30_000 })("SyncRequests with a failing queue", (it) => {
+  it.effect("reports the request failed instead of queued", () =>
     Effect.gen(function* () {
       yield* reset;
-      expect(yield* request("octocat")).toEqual({ state: "queued", requestedAt: at(start), syncedAt: null });
-      expect(queue.sent).toHaveLength(1);
-      yield* synced("octocat", start + 1_000);
-      expect(yield* status("octocat")).toEqual({ state: "done", syncedAt: at(start + 1_000) });
+      expect((yield* Effect.flip(request("octocat")))._tag).toBe("SyncQueueFailed");
+      expect(yield* status("octocat")).toEqual({ state: "failed", requestedAt: at(start), syncedAt: null });
     }),
   );
 });

@@ -1,4 +1,5 @@
 import { ORPCError } from "@orpc/server";
+import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
@@ -23,3 +24,10 @@ export const errorStatus = Record.map(wire, ({ status }) => status);
 
 export const wireError = (code: WireCode, traceId: string) =>
   new ORPCError(code, { message: wire[code].message, data: { traceId } });
+
+export const withTraceId = (error: ORPCError<string, unknown>, traceId: string) => {
+  const data = Predicate.isObject(error.data) ? error.data : {};
+  return "traceId" in data
+    ? error
+    : new ORPCError(error.code, { message: error.message, data: { ...data, traceId }, cause: error.cause });
+};

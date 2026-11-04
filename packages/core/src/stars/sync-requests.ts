@@ -9,7 +9,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SyncQueue from "./sync-queue.ts";
-import * as SyncRequestLog from "./sync-request-log.ts";
 
 export const SyncState = Schema.Literals(["unknown", "queued", "failed", "done"]);
 export type SyncState = typeof SyncState.Type;
@@ -37,36 +36,24 @@ export class SyncRequests extends Context.Service<
 
 export const cooldown = Duration.minutes(10);
 
+export const requestLifetime = Duration.days(1);
+
 const within = (window: Duration.Duration, now: DateTime.Utc) => (at: DateTime.Utc) =>
   Duration.isLessThan(DateTime.distance(at, now), window);
-
-const lastActivity = (status: SyncStatus) =>
-  status.state === "unknown" ? null : status.state === "done" ? status.syncedAt : status.requestedAt;
 
 const make = Effect.gen(function* () {
   const db = yield* Db.Db;
   const queue = yield* SyncQueue.SyncQueue;
-  const log = yield* SyncRequestLog.SyncRequestLog;
-
-  const lastRequest = (login: Login, now: DateTime.Utc) =>
-    log.lastRequest(login).pipe(
-      Effect.map(Option.filter((request) => within(SyncRequestLog.requestLifetime, now)(request.requestedAt))),
-      Effect.catchTags({
-        SyncRequestLogFailed: (error) =>
-          Effect.logWarning("Sync request log read failed", { operation: error.operation }).pipe(
-            Effect.as(Option.none<SyncRequestLog.SyncRequest>()),
-          ),
-      }),
-    );
 
   const statusAt = Effect.fn("SyncRequests.statusAt")(function* (
     login: Login,
     now: DateTime.Utc,
   ): Effect.fn.Return<SyncStatus, SyncStatusError> {
-    const [account, request] = yield* Effect.all([db.accounts.byLogin(login), lastRequest(login, now)], {
+    const [account, stored] = yield* Effect.all([db.accounts.byLogin(login), db.syncRequests.get(login)], {
       concurrency: 2,
     });
     const syncedAt = Option.getOrNull(Option.flatMapNullishOr(account, (found) => found.starsSyncedAt));
+    const request = Option.filter(stored, (found) => within(requestLifetime, now)(found.requestedAt));
     if (Option.isSome(request) && (syncedAt === null || DateTime.isLessThan(syncedAt, request.value.requestedAt))) {
       const state = request.value.outcome === "failed" ? "failed" : "queued";
       return { state, requestedAt: request.value.requestedAt, syncedAt };
@@ -81,15 +68,11 @@ const make = Effect.gen(function* () {
   const request = Effect.fn("SyncRequests.request")(function* (login: Login) {
     const now = yield* DateTime.now;
     const current = yield* statusAt(login, now);
-    const since = lastActivity(current);
-    if (since !== null && within(cooldown, now)(since)) return current;
-    yield* queue.send({ login, mode: "incremental" });
-    yield* log.markPending(login, now).pipe(
-      Effect.catchTags({
-        SyncRequestLogFailed: (error) =>
-          Effect.logWarning("Sync request log write failed", { operation: error.operation }),
-      }),
-    );
+    if (current.state === "done" && within(cooldown, now)(current.syncedAt)) return current;
+    if (!(yield* db.syncRequests.claim({ login, at: now, cooldown }))) return yield* statusAt(login, now);
+    yield* queue
+      .send({ login, mode: "incremental" })
+      .pipe(Effect.tapError(() => db.syncRequests.markFailed(login, now).pipe(Effect.ignore)));
     return {
       state: "queued",
       requestedAt: now,

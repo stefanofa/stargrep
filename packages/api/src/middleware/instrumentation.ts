@@ -8,7 +8,7 @@ import * as Exit from "effect/Exit";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import { wireError } from "../errors.ts";
+import { wireError, withTraceId } from "../errors.ts";
 
 export type Transport = "rpc" | "rest" | "mcp";
 
@@ -52,7 +52,9 @@ export const instrumentation = middlewareGen<
               }),
         ),
         Effect.mapError((error) =>
-          error instanceof ORPCError ? error : wireError("INTERNAL_SERVER_ERROR", span.traceId),
+          error instanceof ORPCError
+            ? withTraceId(error, span.traceId)
+            : wireError("INTERNAL_SERVER_ERROR", span.traceId),
         ),
       );
     }).pipe(

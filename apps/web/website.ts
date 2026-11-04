@@ -3,7 +3,6 @@ import { apiKeyName } from "@stargrep/ai/gateway";
 import { aiGatewayKey } from "@stargrep/runtime/config";
 import { Database, DatabaseMigrations } from "@stargrep/worker/database";
 import { SyncStars } from "@stargrep/worker/queues";
-import { SyncRequests } from "@stargrep/worker/sync-requests";
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -32,7 +31,6 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
         DATABASE: Database,
         DATABASE_MIGRATIONS: yield* DatabaseMigrations,
         SEARCH_CACHE: SearchCache,
-        SYNC_REQUESTS: SyncRequests,
         SYNC_STARS: SyncStars,
         SYNC_PER_CALLER: Cloudflare.RateLimit("SYNC_PER_CALLER", {
           namespaceId: namespaceId(stage, "sync-per-caller"),

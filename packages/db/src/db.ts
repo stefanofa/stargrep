@@ -12,6 +12,7 @@ import * as Repos from "./queries/repos.ts";
 import * as Search from "./queries/search.ts";
 import * as Settings from "./queries/settings.ts";
 import * as Stars from "./queries/stars.ts";
+import * as SyncRequests from "./queries/sync-requests.ts";
 import * as Usage from "./queries/usage.ts";
 
 export type { Account, AccountFacts, OwnedRepoStars, StarSync } from "./queries/accounts.ts";
@@ -27,6 +28,7 @@ export type {
 } from "./queries/search.ts";
 export { MetricFamily, MetricVariant, noFilters } from "./queries/search.ts";
 export type { SnapshotChanges, Star, StarEvent, StarredRepo, StarsSnapshot, StarsUpsert } from "./queries/stars.ts";
+export type { SyncClaim, SyncRequest } from "./queries/sync-requests.ts";
 export type { UsageCall, UsageCounts, UsageDay } from "./queries/usage.ts";
 
 export class Db extends Context.Service<
@@ -36,6 +38,7 @@ export class Db extends Context.Service<
     readonly repos: Repos.Queries;
     readonly stars: Stars.Queries;
     readonly search: Search.Queries;
+    readonly syncRequests: SyncRequests.Queries;
     readonly usage: Usage.Queries;
   }
 >()("@stargrep/db/db") {}
@@ -78,6 +81,7 @@ export const layer = (options: Options) =>
           repos: yield* Repos.make(embeddingModel),
           stars: yield* Stars.make,
           search: yield* Search.make(embeddingModel),
+          syncRequests: yield* SyncRequests.make,
           usage: yield* Usage.make,
         });
       }),

@@ -7,9 +7,7 @@
     "./debug": "./src/debug-worker.ts",
     "./database": "./src/database.ts",
     "./queues": "./src/queues.ts",
-    "./readmes": "./src/readmes.ts",
-    "./kv": "./src/kv.ts",
-    "./sync-requests": "./src/sync-requests.ts"
+    "./readmes": "./src/readmes.ts"
   },
   "scripts": {
     "test": "vitest run",

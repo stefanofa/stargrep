@@ -33,6 +33,8 @@ const socketErrors = new Set([
   "ENOTFOUND",
   "EPIPE",
   "ETIMEDOUT",
+  "ERR_SOCKET_CLOSED",
+  "ERR_SOCKET_CLOSED_BEFORE_CONNECTION",
 ]);
 
 // Postgres aborts one side of a deadlock or a serialization failure so the other can commit, and a retry can pass.

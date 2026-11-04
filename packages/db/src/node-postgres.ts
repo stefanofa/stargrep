@@ -11,13 +11,19 @@ export const ignoreError = () => {};
 // pg 8.23.1 reports a lost connection with these plain errors, which carry no code. In
 // pg/lib/client.js, the con.once('end') handler in Client._connect raises "Connection terminated"
 // and "Connection terminated unexpectedly", and Client.query raises "not queryable" once
-// Client._handleErrorEvent has marked the client broken. Check this set again when upgrading pg.
+// Client._handleErrorEvent has marked the client broken. On workerd, pg-cloudflare passes on the
+// runtime's socket errors, which are plain errors too: a refused or unreachable address fails
+// `opened` with "connection attempt failed" or "proxy request failed, ...", and a dropped socket
+// fails with "Network connection lost.". Check this set again when upgrading pg or workerd.
 // A server FATAL such as 57P01 arrives as a DatabaseError with its SQLSTATE, and a socket failure
-// carries its errno code.
+// on Node or Bun carries its errno code.
 const connectionErrors = new Set([
   "Client has encountered a connection error and is not queryable",
   "Connection terminated",
   "Connection terminated unexpectedly",
+  "connection attempt failed",
+  "Network connection lost.",
+  "proxy request failed, cannot connect to the specified address",
 ]);
 
 const isConnectionError = (error: unknown) => error instanceof Error && connectionErrors.has(error.message);

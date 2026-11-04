@@ -4,7 +4,6 @@ import { SyncQueue, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import { DbQueryFailed, RepoNotFound } from "@stargrep/db/errors";
 import type { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
-import { layerSyncRequestLog } from "@stargrep/worker/kv";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -52,11 +51,32 @@ const search = Search.Search.of({
   }),
 });
 
+const requests = new Map<string, Db.SyncRequest>();
+
+export const syncRequests: Db.Db["Service"]["syncRequests"] = {
+  get: (login) => Effect.sync(() => Option.fromUndefinedOr(requests.get(login.toLowerCase()))),
+  claim: ({ login, at, cooldown }) =>
+    Effect.sync(() => {
+      const current = requests.get(login.toLowerCase());
+      const claimed =
+        current === undefined || DateTime.isLessThanOrEqualTo(DateTime.addDuration(current.requestedAt, cooldown), at);
+      if (claimed)
+        requests.set(login.toLowerCase(), { login: login.toLowerCase(), requestedAt: at, outcome: "pending" });
+      return claimed;
+    }),
+  markFailed: (login, at) =>
+    Effect.sync(() => {
+      const requestedAt = requests.get(login.toLowerCase())?.requestedAt ?? at;
+      requests.set(login.toLowerCase(), { login: login.toLowerCase(), requestedAt, outcome: "failed" });
+    }),
+};
+
 const db = {
   accounts: { byLogin: (login: Login) => Effect.succeed(login === ada.login ? Option.some(ada) : Option.none()) },
   repos: {
     require: (id: RepoId) => (id === repo.id ? Effect.succeed(repo) : Effect.fail(new RepoNotFound({ repoId: id }))),
   },
+  syncRequests,
 } as unknown as Db.Db["Service"];
 
 const serve = makeServer(
@@ -68,10 +88,7 @@ const serve = makeServer(
         { perCaller: env.SYNC_PER_CALLER, overall: env.SYNC_OVERALL },
         request.headers.get("cf-connecting-ip") ?? "unknown",
       ),
-    ).pipe(
-      Layer.provideMerge(Layer.succeed(Db.Db, db)),
-      Layer.provide(Layer.merge(queue.layer, layerSyncRequestLog(env.SYNC_REQUESTS))),
-    ),
+    ).pipe(Layer.provideMerge(Layer.succeed(Db.Db, db)), Layer.provide(queue.layer)),
   Layer.empty,
 );
 

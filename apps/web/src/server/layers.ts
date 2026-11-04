@@ -2,7 +2,6 @@ import * as Gateway from "@stargrep/ai/gateway";
 import { QueryPlanner, Search } from "@stargrep/core/search";
 import { SyncRequests } from "@stargrep/core/stars";
 import * as DbRuntime from "@stargrep/runtime/db";
-import { layerSyncRequestLog } from "@stargrep/worker/kv";
 import * as Layer from "effect/Layer";
 import type * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -24,13 +23,7 @@ export const layerRequest = (env: WebEnv, aiKey: Option.Option<Redacted.Redacted
     ),
   ).pipe(
     Layer.provideMerge(QueryPlanner.layer),
-    Layer.provideMerge(
-      Layer.mergeAll(
-        layerSearchCache(env.SEARCH_CACHE),
-        layerSyncQueue(env.SYNC_STARS),
-        layerSyncRequestLog(env.SYNC_REQUESTS),
-      ),
-    ),
+    Layer.provideMerge(Layer.merge(layerSearchCache(env.SEARCH_CACHE), layerSyncQueue(env.SYNC_STARS))),
     Layer.provideMerge(
       DbRuntime.layerDb({
         connectionString: Redacted.make(env.DATABASE.connectionString),

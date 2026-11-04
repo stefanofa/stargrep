@@ -144,7 +144,10 @@ const traffic = Effect.gen(function* () {
 
 const Spec = Schema.Struct({ paths: Schema.Record(Schema.String, Schema.Unknown) });
 const SyncState = Schema.Struct({ state: Schema.String });
-const WireError = Schema.Struct({ code: Schema.String });
+const WireError = Schema.Struct({
+  code: Schema.String,
+  data: Schema.optional(Schema.Struct({ traceId: Schema.optional(Schema.String) })),
+});
 
 const web = Effect.gen(function* () {
   const get = (path: string) => HttpClient.get(new URL(path, webUrl));
@@ -155,6 +158,7 @@ const web = Effect.gen(function* () {
   const spec = yield* get("/openapi.json");
   const paths = Object.keys((yield* decode(Spec, yield* spec.text)).paths).sort();
   const emptyQuery = yield* search({ login: "octocat", q: "" });
+  const emptyQueryBody = yield* decode(WireError, yield* emptyQuery.text);
   const stranger = `smoke-${yield* Clock.currentTimeMillis}`;
   const status = yield* get(`/api/sync/${stranger}`);
   const statusBody = yield* decode(SyncState, yield* status.text);
@@ -172,8 +176,12 @@ const web = Effect.gen(function* () {
       status: spec.status,
       paths,
     }),
-    check("an empty search query answers 400", emptyQuery.status === 400, { status: emptyQuery.status }),
-    check("a login never seen reads as unknown through Postgres and KV", statusBody.state === "unknown", {
+    check(
+      "an empty search query answers 400 with a trace ID",
+      emptyQuery.status === 400 && emptyQueryBody.data?.traceId !== undefined,
+      { status: emptyQuery.status, code: emptyQueryBody.code },
+    ),
+    check("a login never seen reads as unknown through Postgres", statusBody.state === "unknown", {
       status: status.status,
       state: statusBody.state,
     }),

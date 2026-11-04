@@ -1,6 +1,7 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import type { EnrichRepo } from "@stargrep/core/repos";
-import type { StarSync, SyncRequestLog } from "@stargrep/core/stars";
+import type { StarSync } from "@stargrep/core/stars";
+import type * as Db from "@stargrep/db";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
@@ -44,8 +45,7 @@ const consume = Effect.fn("Queues.consume")(function* <A, R, E>(
 });
 
 export const consumeAll = <E>(
-  runtime: Layer.Layer<StarSync.StarSync | EnrichRepo.EnrichRepo, E, RuntimeContext>,
-  syncRequestLog: Layer.Layer<SyncRequestLog.SyncRequestLog, never, RuntimeContext>,
+  runtime: Layer.Layer<StarSync.StarSync | EnrichRepo.EnrichRepo | Db.Db, E, RuntimeContext>,
 ) =>
   Effect.all([
     consume(
@@ -54,7 +54,7 @@ export const consumeAll = <E>(
       { batchSize: 5, maxWaitTime: "1 second", ...retries },
       SyncStarsConsumer.pipeline,
       runtime,
-      (body) => SyncStarsConsumer.markFailed(body).pipe(Effect.provide(syncRequestLog)),
+      SyncStarsConsumer.markFailed(runtime),
     ),
     consume(
       queueNames.enrichRepo,

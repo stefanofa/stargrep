@@ -27,6 +27,7 @@ export const starSource = pgEnum("star_source", ["gharchive", "api"]);
 export const followSource = pgEnum("follow_source", ["github", "stargrep"]);
 export const collectionKind = pgEnum("collection_kind", ["user", "editorial"]);
 export const searchScope = pgEnum("search_scope", ["stars", "network", "global"]);
+export const syncRequestOutcome = pgEnum("sync_request_outcome", ["pending", "failed"]);
 
 export const embeddingSettings = pgTable(
   "embedding_settings",
@@ -179,6 +180,12 @@ export const collectionItems = pgTable(
   },
   (table) => [primaryKey({ columns: [table.collectionId, table.repoId] })],
 );
+
+export const syncRequests = pgTable("sync_requests", {
+  login: text("login").primaryKey(),
+  requestedAt: time("requested_at").notNull(),
+  outcome: syncRequestOutcome("outcome").notNull(),
+});
 
 export const searchEvents = pgTable("search_events", {
   id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),

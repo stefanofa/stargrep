@@ -3,6 +3,7 @@ import { type RepoId, RepoNodeId } from "@stargrep/github/schemas";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -87,6 +88,38 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       expect(Option.getOrThrow(yield* db.repos.get(id)).nodeId).toBe(RepoNodeId.make(`R_${id}`));
       yield* db.repos.upsertRefs([ref(id, `repo-${id}`, "R_moved")]);
       expect(Option.getOrThrow(yield* db.repos.get(id)).nodeId).toBe(RepoNodeId.make("R_moved"));
+    }),
+  );
+
+  test.effect("lets one of many parallel claims for a login win, and claims again after the cooldown", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const cooldown = Duration.minutes(10);
+      const first = at("2026-11-04T12:00:00Z");
+      const claims = yield* Effect.all(
+        Array.from({ length: 8 }, (_, i) =>
+          db.syncRequests.claim({ login: login(i % 2 === 0 ? "Racer" : "racer"), at: first, cooldown }),
+        ),
+        { concurrency: "unbounded" },
+      );
+      expect(claims.filter(Boolean)).toHaveLength(1);
+      expect(yield* db.syncRequests.get(login("RACER"))).toEqual(
+        Option.some({ login: "racer", requestedAt: first, outcome: "pending" }),
+      );
+
+      expect(yield* db.syncRequests.claim({ login: login("racer"), at: at("2026-11-04T12:09:59Z"), cooldown })).toBe(
+        false,
+      );
+      const later = at("2026-11-04T12:10:00Z");
+      expect(yield* db.syncRequests.claim({ login: login("racer"), at: later, cooldown })).toBe(true);
+      yield* db.syncRequests.markFailed(login("Racer"), at("2026-11-04T12:11:00Z"));
+      expect(yield* db.syncRequests.get(login("racer"))).toEqual(
+        Option.some({ login: "racer", requestedAt: later, outcome: "failed" }),
+      );
+      yield* db.syncRequests.markFailed(login("never-requested"), first);
+      expect(yield* db.syncRequests.get(login("never-requested"))).toEqual(
+        Option.some({ login: "never-requested", requestedAt: first, outcome: "failed" }),
+      );
     }),
   );
 

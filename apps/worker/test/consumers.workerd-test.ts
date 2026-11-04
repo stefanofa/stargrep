@@ -11,7 +11,7 @@ import {
 } from "@stargrep/ai/errors";
 import * as Summarize from "@stargrep/ai/summarize";
 import { BlobStore, EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
-import { StarSync, SyncRequestLog } from "@stargrep/core/stars";
+import { StarSync } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import { EmbeddingModelId, EmbeddingModelMismatch } from "@stargrep/db/embedding";
 import { AccountNotFound, DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
@@ -512,7 +512,13 @@ describe("dead letters", () => {
   });
 
   it("marks a dead-lettered login sync as failed and leaves an account sync alone", async () => {
-    const log = SyncRequestLog.layerMemory();
+    const failed: Array<string> = [];
+    const db = Layer.succeed(
+      Db.Db,
+      Db.Db.of({
+        syncRequests: { markFailed: (login: string) => Effect.sync(() => void failed.push(login)) },
+      } as unknown as Db.Db["Service"]),
+    );
     const batch = batchOf("sync-stars-dead-letters", [
       { login: "No-Such-Login", mode: "incremental" },
       { accountId: 5, mode: "full" },
@@ -521,12 +527,9 @@ describe("dead letters", () => {
       Settle.logDeadLetters(
         "sync-stars",
         SyncStarsConsumer.pipeline,
-        SyncStarsConsumer.markFailed,
-      )(Stream.fromIterable(batch.messages)).pipe(
-        Effect.provide(Layer.merge(log.layer, Logger.layer([Logger.make(() => undefined)]))),
-      ),
+        SyncStarsConsumer.markFailed(db),
+      )(Stream.fromIterable(batch.messages)).pipe(Effect.provide(Logger.layer([Logger.make(() => undefined)]))),
     );
-    expect([...log.stored.keys()]).toEqual(["no-such-login"]);
-    expect(JSON.parse(log.stored.get("no-such-login") ?? "{}")).toMatchObject({ outcome: "failed" });
+    expect(failed).toEqual(["No-Such-Login"]);
   });
 });

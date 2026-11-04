@@ -162,14 +162,16 @@ describe("search", () => {
     ]);
   });
 
-  test("rejects an empty query and a login GitHub would not issue", async () => {
+  test("rejects an empty query and a login GitHub would not issue, with the issues and a trace ID", async () => {
     const { api } = client();
-    for (const input of [
-      { login: "ada", q: "   " },
-      { login: "ada/../../repos", q: "dashboards" },
-      { login: "ada", q: "dashboards", limit: 500 },
-    ]) {
-      expect((await failure(api.search(input))).code).toBe("BAD_REQUEST");
+    for (const [input, field] of [
+      [{ login: "ada", q: "   " }, "q"],
+      [{ login: "ada/../../repos", q: "dashboards" }, "login"],
+      [{ login: "ada", q: "dashboards", limit: 500 }, "limit"],
+    ] as const) {
+      const error = await failure(api.search(input));
+      expect(error.code).toBe("BAD_REQUEST");
+      expect(error.data).toEqual({ issues: [expect.objectContaining({ path: [field] })], ...traceData });
     }
   });
 

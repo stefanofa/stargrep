@@ -15,7 +15,6 @@ import * as Layers from "./layers.ts";
 import * as Queues from "./queues.ts";
 import { Readmes } from "./readmes.ts";
 import { requireStageSecrets } from "./secrets.ts";
-import { SyncRequests } from "./sync-requests.ts";
 
 export default class Worker extends Cloudflare.Worker<Worker>()(
   "Worker",
@@ -45,10 +44,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
       ai: yield* Effect.orDie(Layers.aiModels),
       adopted: yield* Ref.make(false),
     });
-    yield* Queues.consumeAll(
-      runtime,
-      Layers.layerSyncRequestLog(yield* Cloudflare.KV.ReadWriteNamespace(SyncRequests)),
-    );
+    yield* Queues.consumeAll(runtime);
     return {
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest;
@@ -63,7 +59,6 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
       Layer.mergeAll(
         Cloudflare.Hyperdrive.ConnectBinding,
         Cloudflare.R2.ReadWriteBucketBinding,
-        Cloudflare.KV.ReadWriteNamespaceBinding,
         Cloudflare.Queues.WriteQueueBinding,
         Cloudflare.Queues.EventSourceLive,
         Tracing.layer,

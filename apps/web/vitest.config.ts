@@ -8,7 +8,8 @@ export default defineConfig({
       miniflare: {
         compatibilityDate: "2026-11-01",
         compatibilityFlags: ["nodejs_compat"],
-        kvNamespaces: ["SEARCH_CACHE", "SYNC_REQUESTS"],
+        kvNamespaces: ["SEARCH_CACHE"],
+        hyperdrives: { DATABASE: "postgres://stargrep:stargrep@127.0.0.1:1/stargrep" },
         queueProducers: { SYNC_STARS: "sync-stars" },
         ratelimits: {
           SYNC_PER_CALLER: { namespace_id: "1", simple: { limit: 5, period: 60 } },

@@ -1,11 +1,15 @@
 import { SyncLimiter, SyncLimiterUnavailable, SyncRateLimited } from "@stargrep/api/sync-limiter";
 import { SearchCache } from "@stargrep/core/search";
 import { type StarSync, SyncQueue } from "@stargrep/core/stars";
-import { expirationTtl } from "@stargrep/worker/kv";
 import * as Digest from "effect/crypto/Digest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+
+const kvMinimumTtl = Duration.seconds(60);
+
+const expirationTtl = (ttl: Duration.Duration) => Math.ceil(Duration.toSeconds(Duration.max(ttl, kvMinimumTtl)));
 
 export const layerSearchCache = (namespace: KVNamespace) =>
   Layer.effect(

@@ -15,7 +15,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
 import type * as Ref from "effect/Ref";
-import * as Kv from "./kv.ts";
 
 const queueBatchLimit = 100;
 // A Worker invocation holds at most six connections, and R2 and the queue need some of them.
@@ -71,9 +70,6 @@ export const layerEnrichQueue = (queue: Cloudflare.Queues.WriteQueueClient) =>
       });
     }),
   );
-
-export const layerSyncRequestLog = (namespace: Cloudflare.KV.ReadWriteNamespaceClient) =>
-  Layer.unwrap(Effect.flatMap(inRuntime, (run) => Effect.map(run(namespace.raw), Kv.layerSyncRequestLog)));
 
 export const aiModels = Effect.map(aiGatewayKey, (key) => Gateway.layerModelsForKey(key, { batch: false }));
 

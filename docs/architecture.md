@@ -99,6 +99,7 @@ Better Auth owns `user`, `session`, and `account`. Stargrep adds these tables.
 | `collection_items` | collection ID and repo ID | note, position |
 | `search_events` | ID | time, scope, query, result count, clicked repo, with no user identity |
 | `api_usage` | key and day | request counts per procedure |
+| `sync_requests` | lowercase login | when a sync was last requested, and its outcome (`pending` or `failed`) |
 
 Sponsor tables come with the sponsors phase.
 
@@ -222,7 +223,8 @@ The procedures are `search`, `triggerSync`, `syncStatus`, and `getRepo`. All of 
 - **Errors.** Every outcome other than success is a tagged error, such as `AccountNotSynced` from search, `RepoNotFound` from `Db`, or `SyncRateLimited` from the limiter. The router catches once per procedure and maps each tag to a wire error through one table, so a new tag fails typecheck until it has a row. A wire error has a stable `code`, such as `ACCOUNT_NOT_SYNCED` or `SERVICE_UNAVAILABLE`, a fixed message, and the call's `traceId` in `data`. `packages/api/src/errors.ts` holds each code's status and message. A failure outside the table becomes `INTERNAL_SERVER_ERROR` with the trace ID and no detail.
 - **Services per request.** A Hyperdrive socket cannot outlive its request, so the web Worker builds `Db`, search, and sync services for each request, and only once a procedure has validated its input. A database outage then fails a search with `SERVICE_UNAVAILABLE`, while validation, the tool list, and the OpenAPI document keep working.
 - **Tracing.** The middleware opens `Api.<procedure>` under the request's `Web.<transport>` span and sets `api.transport` and `stargrep.trace_id`. No span holds the query, the plan, or results. Cloudflare's own request span and invocation log record the full URL, so search takes its query in a POST body. Each response carries a `Server-Timing` header with the handler's total time and the procedure's time, so a stage measures transport overhead apart from the work.
-- **Sync.** `triggerSync` queues an incremental `sync-stars` message for a login and records the request in KV under the lowercase login. When the main Worker dead-letters a login's `sync-stars` message, it marks that request failed. `syncStatus` reads the request and the account's star sync time and says `queued`, `failed`, `done`, or `unknown`. A login queued, failed, or synced in the last 10 minutes is not queued again, and a request older than a day is forgotten. Each caller IP may trigger 5 syncs a minute and all callers together 60, through Workers rate limiting. The web Worker has no GitHub token and no `GitHubGate` binding, so every GitHub request a trigger causes goes through the gate's budget share in the main Worker.
+- **Sync.** `triggerSync` claims the login's row in `sync_requests` and queues an incremental `sync-stars` message only when the claim wins. The claim is one `insert … on conflict do update … where` statement, which takes the row only when the login has no request or its request is at least 10 minutes old, so of many triggers at once exactly one queues a job. A login synced in the last 10 minutes is not queued again either, and a request older than a day is forgotten. When the queue refuses the message, or the main Worker dead-letters it, the row is marked `failed`. `syncStatus` reads the row and the account's star sync time and says `queued`, `failed`, `done`, or `unknown`.
+- **Limits.** Workers rate limiting lets each caller IP trigger 5 syncs a minute and all callers together 60. Cloudflare counts these per location and only approximately, so they turn away most of a burst but are not a cap. Two bounds hold: the per-login claim above, and the GitHub budget. The web Worker has no GitHub token and no `GitHubGate` binding, so every GitHub request a trigger causes spends the gate's budget share in the main Worker. Zone-level WAF rate limiting arrives with the stargrep.com zone. A limiter that fails answers `SERVICE_UNAVAILABLE`.
 
 `@orpc/mcp` registers tools and does no auth. The MCP SDK checks bearer tokens with a verifier the app supplies, serves protected resource metadata, and answers with the `WWW-Authenticate` challenge, but it is not an authorization server. So MCP sign-in needs Better Auth's OAuth provider plugin as the authorization server, and `/mcp` verifies the token and passes `authInfo` to the MCP handler.
 
@@ -232,7 +234,7 @@ The procedures are `search`, `triggerSync`, `syncStatus`, and `getRepo`. All of 
 |---|---|
 | Browser | The user's library in TanStack DB |
 | Workers cache | Public profile pages, discovery pages, and OG images, with stale-while-revalidate |
-| KV | Query plans and query embeddings, through the `SearchCache` port, and the time each login's sync was last requested |
+| KV | Query plans and query embeddings, through the `SearchCache` port |
 | Postgres | Summaries and embeddings, shared across accounts |
 | R2 | README text by object ID, so GitHub serves each README once |
 
@@ -260,7 +262,7 @@ Some things stay outside the repo. Secret values live in Cloudflare secrets and 
 
 The Alchemy program has two stacks, so no app stage's state holds a Neon project. `infra/database.run.ts` owns the projects in its only stage, `shared`. `infra/alchemy.run.ts` is the app stack, deployed once per stage: `pr-<number>` for each pull request and `prod` for `main`. Each app stage references one project and owns one branch of it, so destroying a stage deletes its branch and never the project. `prod` uses `stargrep-us-east`, and every preview stage uses `stargrep-previews-us-east`, both in `aws-us-east-1`, so a Neon key scoped to the previews project can't reach prod's branch. The first project, `stargrep` in `aws-eu-central-1`, stays declared and retained, and no stage uses it. Only the deploy from `main` deploys `shared`. A pull request stage fails with a missing reference until `main` has deployed once.
 
-`prod` deploys only the Worker, its database, the queues, R2 bucket, and Durable Object the pipeline needs, and the web Worker with its two KV namespaces. Every other stage also deploys a debug Worker with a queue and consumer, KV, R2, two Durable Objects, and an hourly cron, so the checks in `docs/setup.md` can drive them. Its routes take a bearer token that the stack generates per stage, and a Durable Object caps them at 300 units of work a minute.
+`prod` deploys only the Worker, its database, the queues, R2 bucket, and Durable Object the pipeline needs, and the web Worker with its KV namespace. Every other stage also deploys a debug Worker with a queue and consumer, KV, R2, two Durable Objects, and an hourly cron, so the checks in `docs/setup.md` can drive them. Its routes take a bearer token that the stack generates per stage, and a Durable Object caps them at 300 units of work a minute.
 
 Deployed stages keep Alchemy state in the Cloudflare account through `Cloudflare.state()`. Under `alchemy dev`, state stays in `infra/.alchemy/` and the stage declares no Neon resources, so a local stage needs no credentials.
 
