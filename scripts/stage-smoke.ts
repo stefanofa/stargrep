@@ -1,4 +1,5 @@
 import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
@@ -19,6 +20,11 @@ const Transaction = Schema.Struct({ pid: Schema.Int, sum: Schema.Int });
 
 type Check = { readonly check: string; readonly ok: boolean; readonly detail: unknown };
 const check = (name: string, ok: boolean, detail: unknown): Check => ({ check: name, ok, detail });
+
+// A fresh stage settles within about a minute, so its waits retry once a second for up to that long.
+const freshStageWait = Duration.seconds(60);
+const freshStageSchedule = Schedule.max([Schedule.spaced("1 second"), Schedule.during(freshStageWait)]);
+const requestTimeout = Duration.seconds(30);
 
 // Until a new workers.dev URL reaches every edge machine, some requests get Cloudflare's own HTML 404 page instead of
 // the Worker, for over a minute under this load. The Worker never answers with HTML, so those requests are sent again.
@@ -41,13 +47,22 @@ const call = Effect.fn("StageSmoke.call")(function* (
       return yield* new NotRoutedYet();
     }
     return { status: response.status, body: yield* response.text };
-  });
-  return yield* send.pipe(
-    Effect.retry({ while: (error) => error._tag === "NotRoutedYet", schedule: Schedule.spaced("1 second") }),
+  }).pipe(
     Effect.timeoutOrElse({
-      duration: "60 seconds",
-      orElse: () => Effect.die(new Error(`${method} ${url} got Cloudflare's 404 page for 60 s, not the Worker`)),
+      duration: requestTimeout,
+      orElse: () =>
+        Effect.die(new Error(`${method} ${url} sent no answer within ${Duration.toSeconds(requestTimeout)} s`)),
     }),
+  );
+  return yield* send.pipe(
+    Effect.retry({ while: (error) => error._tag === "NotRoutedYet", schedule: freshStageSchedule }),
+    Effect.catchTag("NotRoutedYet", () =>
+      Effect.die(
+        new Error(
+          `${method} ${url} got Cloudflare's 404 page for ${Duration.toSeconds(freshStageWait)} s, not the Worker`,
+        ),
+      ),
+    ),
   );
 });
 
@@ -79,9 +94,13 @@ const answers = (path: string) =>
   );
 
 const ready = Effect.all([answers("/budget"), answers("/counter/ready")]).pipe(
-  Effect.retry({ schedule: Schedule.max([Schedule.spaced("1 second"), Schedule.during("60 seconds")]) }),
+  Effect.retry({ schedule: freshStageSchedule }),
   Effect.catchTag("NotReady", (error) =>
-    Effect.die(new Error(`${debugUrl} was not ready within 60 s, last answer: ${error.answer}`)),
+    Effect.die(
+      new Error(
+        `${debugUrl} was not ready within ${Duration.toSeconds(freshStageWait)} s, last answer: ${error.answer}`,
+      ),
+    ),
   ),
 );
 
