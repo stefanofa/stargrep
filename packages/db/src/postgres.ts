@@ -94,8 +94,8 @@ export const make = (driver: Driver) => {
     (effect, operation) => Effect.withSpan(effect, `Db.${operation}`),
   );
 
-  // A driver cannot cancel a pending connect, so a client that arrives after a timeout or an
-  // interrupt goes straight back to the pool.
+  // A driver cannot cancel a pending connect, so a client that arrives after the connect timed out
+  // goes straight back to the pool. Effect.promise passes a signal only because this declares one.
   const connect = (signal: AbortSignal) => {
     const client = Promise.resolve(driver.connect());
     const returnLate = () =>
