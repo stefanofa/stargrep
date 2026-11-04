@@ -20,6 +20,12 @@ const answer = {
   ranking: { _tag: "metric", metric: "stars", direction: "highest" },
 };
 
+const kept = (query: string, language: string, said: string) =>
+  QueryPlan.fromPlannerOutput(
+    query,
+    decode({ ...answer, filters: { ...answer.filters, languages: [{ language, said }] } }),
+  ).filters.languages;
+
 describe("QueryPlan", () => {
   test("decodes a planner answer with filters, dates, and a metric ranking, and full-texts the typed words", () => {
     const plan = QueryPlan.fromPlannerOutput("typescript orm starred last year", decode(answer));
@@ -54,11 +60,6 @@ describe("QueryPlan", () => {
   });
 
   test("keeps a language whose quoted words are its name, an alias, or a translation in another script", () => {
-    const kept = (query: string, language: string, said: string) =>
-      QueryPlan.fromPlannerOutput(
-        query,
-        decode({ ...answer, filters: { ...answer.filters, languages: [{ language, said }] } }),
-      ).filters.languages;
     for (const [query, language, said] of [
       ["GDScript game engine", "GDScript", "GDScript"],
       ["SCSS component library", "SCSS", "scss"],
@@ -78,12 +79,12 @@ describe("QueryPlan", () => {
     }
   });
 
+  test("ends a word at a digit, so python3 keeps Python and a quoted d in d3 charts would keep D", () => {
+    expect(kept("python3 scripts", "Python", "python")).toEqual(["Python"]);
+    expect(kept("d3 charts", "D", "d")).toEqual(["D"]);
+  });
+
   test("drops a language quoted from a framework, a runtime, or part of a longer name", () => {
-    const kept = (query: string, language: string, said: string) =>
-      QueryPlan.fromPlannerOutput(
-        query,
-        decode({ ...answer, filters: { ...answer.filters, languages: [{ language, said }] } }),
-      ).filters.languages;
     for (const [query, language, said] of [
       ["spring boot starter", "Java", "spring boot"],
       ["nextjs auth", "JavaScript", "js"],
