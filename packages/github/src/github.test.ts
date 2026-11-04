@@ -435,6 +435,54 @@ describe("repoFacts", () => {
     }).pipe(Effect.provide(fake.layer));
   });
 
+  effect("leaves out a repo the token may not read and keeps the rest of its batch", () => {
+    const fake = Fake.layer((sent) => {
+      const ids = graphqlIds(sent);
+      return {
+        headers: Fake.rateLimitHeaders(4000, 3600, "graphql"),
+        body: {
+          data: {
+            nodes: ids.map((id) => (id === "R_5" ? null : node(Number(id.slice(2))))),
+          },
+          errors: [
+            { type: "FORBIDDEN", path: ["nodes", 4], message: "Resource not accessible by personal access token" },
+            {
+              type: "FORBIDDEN",
+              path: ["nodes", 8, "root"],
+              message: "Resource not accessible by personal access token",
+            },
+          ],
+        },
+      };
+    });
+    const logs: Array<unknown> = [];
+    const capture = Logger.layer([Logger.make(({ message }) => logs.push(message))]);
+    return Effect.gen(function* () {
+      const github = yield* GitHub.GitHub;
+      const facts = yield* github.repoFacts(Array.from({ length: 25 }, (_, i) => `R_${i + 1}` as RepoNodeId));
+      expect(facts.map((fact): number => fact.id)).toEqual(
+        Array.from({ length: 25 }, (_, i) => i + 1).filter((n) => n !== 5 && n !== 9),
+      );
+      expect(fake.sent).toHaveLength(1);
+      expect(logs).toEqual([["GitHub forbade repos to the token", { nodeIds: ["R_5", "R_9"] }]]);
+    }).pipe(Effect.provide(Layer.merge(fake.layer, capture)));
+  });
+
+  effect("fails the batch on a FORBIDDEN error that names no repo", () => {
+    const fake = Fake.layer((sent) => ({
+      headers: Fake.rateLimitHeaders(4000, 3600, "graphql"),
+      body: {
+        data: { nodes: graphqlIds(sent).map((id) => node(Number(id.slice(2)))) },
+        errors: [{ type: "FORBIDDEN", message: "Resource not accessible by personal access token" }],
+      },
+    }));
+    return Effect.gen(function* () {
+      const github = yield* GitHub.GitHub;
+      const error = yield* Effect.flip(github.repoFacts(["R_1" as RepoNodeId, "R_2" as RepoNodeId]));
+      expect(error).toMatchObject({ _tag: "GitHubRequestFailed", reason: "graphql-errors" });
+    }).pipe(Effect.provide(fake.layer));
+  });
+
   effect("retries a RATE_LIMITED GraphQL error", () => {
     const fake = Fake.layer((sent, index) =>
       index === 0

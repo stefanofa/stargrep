@@ -37,6 +37,7 @@ interface Remote {
   readonly readme?: { readonly oid: ObjectId; readonly text: string };
   readonly stars?: number;
   readonly forks?: number;
+  readonly forbidden?: boolean;
 }
 
 const remotes = new Map<number, Remote>();
@@ -64,12 +65,17 @@ const node = (n: number, remote: Remote) => ({
 const github = GitHubFake.layer((sent) => {
   if (sent.url.pathname === "/graphql") {
     const ids: ReadonlyArray<string> = JSON.parse(sent.body ?? "{}").variables.ids;
-    const nodes = ids.map((nodeId) => {
-      const n = Number(nodeId.slice(2));
+    const asked = ids.map((nodeId) => Number(nodeId.slice(2)));
+    const nodes = asked.map((n) => {
       const remote = remotes.get(n);
-      return remote === undefined ? null : node(n, remote);
+      return remote === undefined || remote.forbidden ? null : node(n, remote);
     });
-    return { body: { data: { nodes } } };
+    const errors = asked.flatMap((n, index) =>
+      remotes.get(n)?.forbidden
+        ? [{ type: "FORBIDDEN", path: ["nodes", index], message: "Resource not accessible" }]
+        : [],
+    );
+    return { body: { data: { nodes }, errors } };
   }
   const blob = sent.url.pathname.split("/").at(-1);
   const remote = [...remotes.values()].find((entry) => entry.readme?.oid === blob);
@@ -513,6 +519,17 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
         "NotFound",
       ]);
       expect(prompts.slice(calls).map((prompt) => prompt.split("\n")[0])).toEqual(["Repository: owner/repo-34"]);
+    }),
+  );
+
+  it.effect("enriches the rest of a batch when GitHub forbids one of its repos", () =>
+    Effect.gen(function* () {
+      const numbers = Array.from({ length: 100 }, (_, i) => 100 + i);
+      for (const n of numbers) remotes.set(n, { description: `Starred ${n}`, forbidden: n === 130 });
+      const outcomes = yield* (yield* EnrichRepo.EnrichRepo).enrichRepos(yield* store(numbers));
+      expect(outcomes.map((outcome): [number, string] => [outcome.id, outcome._tag])).toEqual(
+        numbers.map((n): [number, string] => [n, n === 130 ? "Gone" : "Summarized"]),
+      );
     }),
   );
 
