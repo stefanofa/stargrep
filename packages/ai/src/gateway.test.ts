@@ -1,15 +1,19 @@
 import { describe, expect, spyOn } from "bun:test";
 import { GatewayInternalServerError, GatewayModelNotFoundError } from "@ai-sdk/gateway";
+import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
 import { APICallError } from "ai";
 import { MockEmbeddingModelV4, MockLanguageModelV4 } from "ai/test";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Metric from "effect/Metric";
+import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
+import type * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 import * as Embeddings from "./embeddings.ts";
 import * as Gateway from "./gateway.ts";
@@ -457,4 +461,84 @@ describe("gateway privacy", () => {
       ),
     );
   });
+
+  const keyCanary = "sk-PRIVATE-GATEWAY-KEY-CANARY";
+  const rejected = JSON.stringify({ summary: keyCanary, keywords: "not a list", kind: "cli" });
+  const gatewayUsage = { inputTokens: { total: 1 }, outputTokens: { total: 1 } };
+
+  const gatewayFetch = (direct: string) => {
+    const authorized: Array<boolean> = [];
+    const answer = async (input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(String(input), init);
+      authorized.push(request.headers.get("authorization")?.includes(keyCanary) ?? false);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith("/batch/start")) {
+        return Response.json({ batchId: "job_private", status: "completed", warnings: [] });
+      }
+      if (path.endsWith("/batch/results")) {
+        const content = [{ type: "text", text: rejected }];
+        const item = { type: "text", id: "0", status: "succeeded", result: { content, usage: gatewayUsage } };
+        return new Response(`${JSON.stringify(item)}\n`, { headers: { "content-type": "application/x-ndjson" } });
+      }
+      const content = [{ type: "text", text: direct }];
+      return Response.json({ content, finishReason: { unified: "stop" }, usage: gatewayUsage, warnings: [] });
+    };
+    const spy = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(answer, { preconnect: globalThis.fetch.preconnect }),
+    );
+    return { authorized, spy };
+  };
+
+  const throughGateway = <E>(
+    direct: string,
+    check: (seen: {
+      readonly authorized: ReadonlyArray<boolean>;
+      readonly spans: ReadonlyArray<Tracer.NativeSpan>;
+    }) => Effect.Effect<void, E, TextGeneration.TextGeneration>,
+  ) => {
+    const fetch = gatewayFetch(direct);
+    const collected = collectSpans();
+    const logs: Array<string> = [];
+    const logger = Logger.make((options) => {
+      logs.push(Logger.formatJson.log(options));
+    });
+    const layer = Gateway.layerTextGeneration("anthropic/claude-haiku-5.5").pipe(
+      Layer.provide(Gateway.layerProvider({ apiKey: Redacted.make(keyCanary) })),
+    );
+    return check({ authorized: fetch.authorized, spans: collected.spans }).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(collected.spans.map((span) => span.name)).toContain("Gateway.runBatch");
+          expect(collected.text()).not.toContain(keyCanary);
+          expect(logs.join("\n")).not.toContain(keyCanary);
+        }),
+      ),
+      Effect.withTracer(collected.tracer),
+      Effect.provide(Layer.merge(layer, Logger.layer([logger]))),
+      Effect.ensuring(Effect.sync(() => fetch.spy.mockRestore())),
+    );
+  };
+
+  it.effect("keeps rejected batch output out of every span when the direct fallback recovers", () =>
+    throughGateway(JSON.stringify(validSummary), ({ authorized }) =>
+      Effect.gen(function* () {
+        expect(yield* Summarize.summarizeBatch([{ ...repo, readme: keyCanary }])).toEqual([
+          Result.succeed(validSummary),
+        ]);
+        expect(authorized).toEqual([true, true, true]);
+      }),
+    ),
+  );
+
+  it.effect("keeps rejected output out of every span when the direct fallback fails too", () =>
+    throughGateway(rejected, ({ spans }) =>
+      Effect.gen(function* () {
+        const [answer] = yield* Summarize.summarizeBatch([{ ...repo, readme: keyCanary }]);
+        expect(answer !== undefined && Result.isFailure(answer) && answer.failure._tag).toBe("AiOutputInvalid");
+        expect((yield* Effect.flip(Summarize.summarize({ ...repo, readme: keyCanary })))._tag).toBe("AiOutputInvalid");
+        const failed = spans.filter((span) => span.status._tag === "Ended" && Exit.isFailure(span.status.exit));
+        expect(failed.map((span) => span.name)).toEqual(["TextGeneration.generate"]);
+      }),
+    ),
+  );
 });

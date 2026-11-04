@@ -4,7 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import { type AiError, AiOutputInvalid, AiTimeout } from "./errors.ts";
-import { countTokens, portSpan, unavailableRetry } from "./port.ts";
+import { countTokens, unavailableRetry } from "./port.ts";
 import type { AiSchema } from "./schema-bridge.ts";
 
 export interface GenerateRequest<A> {
@@ -82,7 +82,7 @@ export const make = (options: {
     );
 
   const generate = <A>(request: GenerateRequest<A>) =>
-    generateOne(request).pipe(portSpan("TextGeneration.generate", { provider, model }));
+    generateOne(request).pipe(Effect.withSpan("TextGeneration.generate", { attributes: { provider, model } }));
 
   const answer = <A>(
     request: GenerateBatchRequest<A>,
@@ -116,7 +116,7 @@ export const make = (options: {
           concurrency: fallbackConcurrency,
         }),
       ),
-      portSpan("TextGeneration.generateBatch", { provider, model }),
+      Effect.withSpan("TextGeneration.generateBatch", { attributes: { provider, model } }),
     );
 
   return TextGeneration.of({ model, generate, generateBatch });

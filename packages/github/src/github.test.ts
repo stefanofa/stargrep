@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { withoutResults } from "@stargrep/telemetry/tracer";
 import { effect } from "@stargrep/testing";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -13,6 +14,7 @@ import * as OtlpExporter from "effect/observability/OtlpExporter";
 import * as OtlpSerialization from "effect/observability/OtlpSerialization";
 import * as OtlpTracer from "effect/observability/OtlpTracer";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 import * as Fake from "./github.fixture.ts";
 import * as GitHub from "./github.ts";
@@ -467,11 +469,17 @@ describe("telemetry", () => {
         return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
       }),
     );
-    const otlp = OtlpTracer.layer({
+    const otlp = OtlpTracer.make({
       url: "https://collector.invalid/v1/traces",
       resource: { serviceName: "github-test" },
       exportInterval: "1 hour",
-    }).pipe(Layer.provide(OtlpSerialization.layerJson), Layer.provide(Layer.succeed(HttpClient.HttpClient, collector)));
+    }).pipe(
+      Effect.map(withoutResults),
+      Layer.effect(Tracer.Tracer),
+      Layer.provideMerge(OtlpExporter.layerFlusher),
+      Layer.provide(OtlpSerialization.layerJson),
+      Layer.provide(Layer.succeed(HttpClient.HttpClient, collector)),
+    );
     const fake = Fake.layer(() => ({ transportError: `${Fake.token} ${marker}` }));
     return Effect.gen(function* () {
       const fiber = yield* Effect.forkChild(Effect.flip(collectStars));

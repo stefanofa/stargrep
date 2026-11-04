@@ -3,7 +3,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import { type AiError, AiOutputInvalid, AiTimeout } from "./errors.ts";
 import type { EmbeddingModel } from "./models.ts";
-import { countTokens, portSpan, unavailableRetry } from "./port.ts";
+import { countTokens, unavailableRetry } from "./port.ts";
 
 export interface Embedding {
   readonly model: string;
@@ -48,7 +48,7 @@ export const make = (options: {
       }
       return vectors.map((vector): Embedding => ({ model: model.id, vector }));
     },
-    portSpan("Embeddings.embed", { provider, model: model.id }),
+    Effect.withSpan("Embeddings.embed", { attributes: { provider, model: model.id } }),
   );
   return Embeddings.of({ model, embed });
 };

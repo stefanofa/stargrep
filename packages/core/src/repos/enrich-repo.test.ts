@@ -9,10 +9,13 @@ import { EmbeddingModelId } from "@stargrep/db/embedding";
 import * as TestDatabase from "@stargrep/db/test-database";
 import * as GitHubFake from "@stargrep/github/github.fixture";
 import { ObjectId, Repo } from "@stargrep/github/schemas";
+import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -226,6 +229,23 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
     }),
   );
 
+  it.effect("keeps README text and the summary made from it out of every span", () => {
+    const collected = collectSpans();
+    return Effect.gen(function* () {
+      const canary = "PRIVATE_README_CANARY";
+      remotes.set(13, { description: "Notes app", readme: { oid: oid("0"), text: `# Notes\n\n${canary} sync.` } });
+      expect(yield* enrich(13)).toMatchObject({ _tag: "Summarized" });
+      expect(yield* enrich(13)).toEqual({ _tag: "Unchanged", id: id(13) });
+      expect((yield* get(13)).summary).toContain(canary);
+
+      const names = new Set(collected.spans.map((span) => span.name));
+      for (const name of ["EnrichRepo.enrichRepo", "GitHub.readme", "TokenGate.execute", "Db.repos.getMany"]) {
+        expect(names).toContain(name);
+      }
+      expect(collected.text()).not.toContain(canary);
+    }).pipe(Effect.withTracer(collected.tracer));
+  });
+
   it.effect("summarizes a repo with no README from its description", () =>
     Effect.gen(function* () {
       remotes.set(4, { description: "Dotfiles for macOS" });
@@ -242,7 +262,11 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       const db = yield* Db.Db;
       remotes.set(5, { description: "Image viewer", readme: { oid: oid("e"), text: "# Viewer" } });
       const invalid = textGeneration(() => Effect.succeed({ output: { summary: "" }, usage }));
-      expect((yield* Effect.flip(enrich(5).pipe(using(invalid))))._tag).toBe("AiOutputInvalid");
+      const failed = yield* Effect.exit(enrich(5).pipe(using(invalid)));
+      expect(Exit.findErrorOption(failed).pipe(Option.map((error) => error._tag))).toEqual(
+        Option.some("AiOutputInvalid"),
+      );
+      expect(Exit.isFailure(failed) && Cause.pretty(failed.cause)).toContain("at EnrichRepo.enrichRepo (definition)");
       expect(yield* get(5)).toMatchObject({ license: "MIT", readmeOid: oid("e"), summary: null, embeddingModel: null });
       expect(yield* db.repos.pendingEnrichment([id(5)])).toEqual([id(5)]);
 

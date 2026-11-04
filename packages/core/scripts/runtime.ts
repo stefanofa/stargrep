@@ -5,6 +5,7 @@ import { EmbeddingModelId } from "@stargrep/db/embedding";
 import * as GitHub from "@stargrep/github/github";
 import { BudgetShare, Login, Repo, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
 import * as TokenGate from "@stargrep/github/token-gate";
+import { collectSpans } from "@stargrep/telemetry/collector";
 import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -16,19 +17,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as Schema from "effect/Schema";
-import * as Tracer from "effect/Tracer";
 import * as BlobStore from "../src/repos/blob-store.ts";
 import * as EnrichRepo from "../src/repos/enrich-repo.ts";
 
-export const spans: Array<Tracer.NativeSpan> = [];
-
-export const tracer = Tracer.make({
-  span(options) {
-    const span = new Tracer.NativeSpan(options);
-    spans.push(span);
-    return span;
-  },
-});
+export const { spans, tracer } = collectSpans();
 
 export const millis = (nanos: bigint) => Number(nanos / 1_000_000n);
 
