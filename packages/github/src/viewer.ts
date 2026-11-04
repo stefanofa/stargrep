@@ -7,7 +7,7 @@ const query = `query Viewer {
   viewer {
     databaseId login name avatarUrl
     followers { totalCount }
-    repositories(privacy: PUBLIC) { totalCount }
+    repositories(privacy: PUBLIC, ownerAffiliations: OWNER) { totalCount }
     starredRepositories { totalCount }
   }
 }`;
