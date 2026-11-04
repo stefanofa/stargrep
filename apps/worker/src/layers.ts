@@ -1,13 +1,12 @@
 import type * as Cloudflare from "@alchemy.run/cloudflare";
-import * as Embeddings from "@stargrep/ai/embeddings";
-import * as Gateway from "@stargrep/ai/gateway";
+import type * as Embeddings from "@stargrep/ai/embeddings";
 import type * as TextGeneration from "@stargrep/ai/text-generation";
 import { BlobStore, EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
 import { StarSync } from "@stargrep/core/stars";
-import * as Db from "@stargrep/db";
-import { EmbeddingModelId } from "@stargrep/db/embedding";
 import * as GitHub from "@stargrep/github/github";
 import type * as TokenGate from "@stargrep/github/token-gate";
+import * as AiRuntime from "@stargrep/runtime/ai";
+import * as DbRuntime from "@stargrep/runtime/db";
 import { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
@@ -15,8 +14,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
 import type * as Ref from "effect/Ref";
-import * as Schema from "effect/Schema";
-import { aiGatewayKey } from "./secrets.ts";
 
 const queueBatchLimit = 100;
 // A Worker invocation holds at most six connections, and R2 and the queue need some of them.
@@ -73,13 +70,7 @@ export const layerEnrichQueue = (queue: Cloudflare.Queues.WriteQueueClient) =>
     }),
   );
 
-export const aiModels = Effect.map(
-  aiGatewayKey,
-  Option.match({
-    onNone: () => Gateway.layerKeyMissing,
-    onSome: (apiKey) => Gateway.layerModels(Gateway.layerProvider({ apiKey }), { batch: false }),
-  }),
-);
+export const aiModels = Effect.map(AiRuntime.aiGatewayKey, AiRuntime.layerSummaries);
 
 interface Bindings {
   readonly database: Effect.Effect<Redacted.Redacted<string>, never, RuntimeContext>;
@@ -89,8 +80,6 @@ interface Bindings {
   readonly ai: Layer.Layer<TextGeneration.TextGeneration | Embeddings.Embeddings>;
   readonly adopted: Ref.Ref<boolean>;
 }
-
-const decodeModelId = Schema.decodeEffect(EmbeddingModelId);
 
 // Built again for every invocation, because a socket opened in one request cannot serve another.
 export const layerRuntime = (bindings: Bindings) =>
@@ -105,15 +94,9 @@ export const layerRuntime = (bindings: Bindings) =>
     ),
     Layer.provideMerge(
       Layer.unwrap(
-        Effect.gen(function* () {
-          const { model } = yield* Embeddings.Embeddings;
-          return Db.layerNodePostgres({
-            connectionString: yield* bindings.database,
-            embeddingModel: yield* Effect.orDie(decodeModelId(model.id)),
-            adopted: bindings.adopted,
-            maxConnections: maxDatabaseConnections,
-          });
-        }),
+        Effect.map(bindings.database, (connectionString) =>
+          DbRuntime.layerDb({ connectionString, adopted: bindings.adopted, maxConnections: maxDatabaseConnections }),
+        ),
       ),
     ),
     Layer.provideMerge(bindings.ai),

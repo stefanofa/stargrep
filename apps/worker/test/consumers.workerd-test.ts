@@ -28,6 +28,7 @@ import * as GitHub from "@stargrep/github/github";
 import * as GitHubFake from "@stargrep/github/github.fixture";
 import { GitHubAccountId, RepoId } from "@stargrep/github/schemas";
 import * as TokenGate from "@stargrep/github/token-gate";
+import * as AiRuntime from "@stargrep/runtime/ai";
 import { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -428,7 +429,7 @@ describe("stage secrets", () => {
 
   it("treats an empty secret as missing", async () => {
     const read = await Effect.runPromise(
-      Effect.all([Secrets.githubToken, Secrets.aiGatewayKey]).pipe(
+      Effect.all([Secrets.githubToken, AiRuntime.aiGatewayKey]).pipe(
         withEnv({ STARGREP_GITHUB_TOKEN: "", AI_GATEWAY_API_KEY: "" }),
       ),
     );

@@ -20,6 +20,7 @@
         "@stargrep/core": "workspace:*",
         "@stargrep/db": "workspace:*",
         "@stargrep/github": "workspace:*",
+        "@stargrep/runtime": "workspace:*",
         "@stargrep/telemetry": "workspace:*",
         "alchemy": "2.0.0-beta.85",
         "effect": "catalog:",
@@ -160,6 +161,21 @@
         "@effect/tsgo": "catalog:",
         "@stargrep/config": "workspace:*",
         "@stargrep/telemetry": "workspace:*",
+        "@stargrep/testing": "workspace:*",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
+    "packages/runtime": {
+      "name": "@stargrep/runtime",
+      "dependencies": {
+        "@stargrep/ai": "workspace:*",
+        "@stargrep/db": "workspace:*",
+        "effect": "catalog:",
+      },
+      "devDependencies": {
+        "@effect/tsgo": "catalog:",
+        "@stargrep/config": "workspace:*",
         "@stargrep/testing": "workspace:*",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
@@ -603,6 +619,8 @@
     "@stargrep/github": ["@stargrep/github@workspace:packages/github"],
 
     "@stargrep/infra": ["@stargrep/infra@workspace:infra"],
+
+    "@stargrep/runtime": ["@stargrep/runtime@workspace:packages/runtime"],
 
     "@stargrep/scripts": ["@stargrep/scripts@workspace:scripts"],
 
