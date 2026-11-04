@@ -84,10 +84,16 @@ describe("timeout", () => {
     [stdout, stderr, code] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
   });
 
+  // Each hanging test fails with its own timeout, not a hook timeout, however
+  // long its finalizers take.
+  const failure = (name: string) =>
+    new RegExp(`\\(fail\\) ${name} \\[[^\\n]*\\n\\s*\\^ this test timed out after 50ms`);
+
   test("fails the test past its timeout", () => {
     expect(code).toBe(1);
-    expect(stderr).toContain("(fail) hangs past its timeout [");
-    expect(stderr).toContain("timed out after 50ms");
+    expect(stderr).toMatch(failure("hangs past its timeout"));
+    expect(stderr).toMatch(failure("hangs past its timeout, then its finalizer fails"));
+    expect(stderr).toMatch(failure("hangs past its timeout, then its finalizer outlasts the timeout"));
   });
 
   test("interrupts the fiber and runs its finalizers", () => {
@@ -96,6 +102,18 @@ describe("timeout", () => {
 
   test("reports a finalizer that fails after the timeout", () => {
     expect(stderr).toContain("error: finalizer broke after timeout");
+  });
+
+  test("holds the next test until a finalizer slower than the timeout finishes", () => {
+    expect(stdout).toContain("released:slow");
+    expect(stdout).toContain("next:started");
+    expect(stdout.indexOf("released:slow")).toBeLessThan(stdout.indexOf("next:started"));
+  });
+
+  test("interrupts a layer build that outlives its timeout before releasing what it acquired", () => {
+    expect(stderr).toContain("(fail) builds past its timeout");
+    expect(stdout).not.toContain("build:");
+    expect(stderr).not.toContain("Unhandled error");
   });
 });
 
