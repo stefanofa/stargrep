@@ -4,8 +4,8 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 export const names = {
-  clientId: "GITHUB_APP_CLIENT_ID",
-  clientSecret: "GITHUB_APP_CLIENT_SECRET",
+  clientId: "STARGREP_GITHUB_APP_CLIENT_ID",
+  clientSecret: "STARGREP_GITHUB_APP_CLIENT_SECRET",
   proxyOrigin: "AUTH_PROXY_ORIGIN",
   proxySecret: "AUTH_PROXY_SECRET",
   secret: "BETTER_AUTH_SECRET",

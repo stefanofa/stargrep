@@ -42,9 +42,9 @@ const convert = (code: string) =>
   );
 
 const store = async ({ client_id, client_secret }: Conversion) => {
-  await $`gh variable set GITHUB_APP_CLIENT_ID --body ${client_id}`.quiet();
+  await $`gh variable set STARGREP_GITHUB_APP_CLIENT_ID --body ${client_id}`.quiet();
   for (const env of values.env) {
-    await $`gh secret set GITHUB_APP_CLIENT_SECRET --env ${env} < ${new Response(client_secret)}`.quiet();
+    await $`gh secret set STARGREP_GITHUB_APP_CLIENT_SECRET --env ${env} < ${new Response(client_secret)}`.quiet();
   }
 };
 
@@ -75,6 +75,6 @@ console.log(`Open http://127.0.0.1:${server.port}/ and press the button.`);
 const appUrl = await done.promise;
 console.log(`Created ${appUrl}`);
 console.log(
-  `Set GITHUB_APP_CLIENT_ID as a repository variable and GITHUB_APP_CLIENT_SECRET in: ${values.env.join(", ")}`,
+  `Set STARGREP_GITHUB_APP_CLIENT_ID as a repository variable and STARGREP_GITHUB_APP_CLIENT_SECRET in: ${values.env.join(", ")}`,
 );
 await server.stop();

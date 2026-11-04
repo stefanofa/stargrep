@@ -36,15 +36,15 @@ jobs:
             echo "Prod needs STARGREP_GITHUB_TOKEN and AI_GATEWAY_API_KEY. The prod deploy would fail on them later."
             exit 1
           fi
-          if [ -z "$GITHUB_APP_CLIENT_ID" ] || [ -z "$GITHUB_APP_CLIENT_SECRET" ] || [ -z "$BETTER_AUTH_SECRET" ]; then
-            echo "Prod needs GITHUB_APP_CLIENT_ID, GITHUB_APP_CLIENT_SECRET, and BETTER_AUTH_SECRET. The prod deploy would fail on them later."
+          if [ -z "$STARGREP_GITHUB_APP_CLIENT_ID" ] || [ -z "$STARGREP_GITHUB_APP_CLIENT_SECRET" ] || [ -z "$BETTER_AUTH_SECRET" ]; then
+            echo "Prod needs STARGREP_GITHUB_APP_CLIENT_ID, STARGREP_GITHUB_APP_CLIENT_SECRET, and BETTER_AUTH_SECRET. The prod deploy would fail on them later."
             exit 1
           fi
         env:
           AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
           STARGREP_GITHUB_TOKEN: ${{ secrets.STARGREP_GITHUB_TOKEN }}
-          GITHUB_APP_CLIENT_ID: ${{ vars.GITHUB_APP_CLIENT_ID }}
-          GITHUB_APP_CLIENT_SECRET: ${{ secrets.GITHUB_APP_CLIENT_SECRET }}
+          STARGREP_GITHUB_APP_CLIENT_ID: ${{ vars.STARGREP_GITHUB_APP_CLIENT_ID }}
+          STARGREP_GITHUB_APP_CLIENT_SECRET: ${{ secrets.STARGREP_GITHUB_APP_CLIENT_SECRET }}
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
       - run: |
           head=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
@@ -56,7 +56,7 @@ jobs:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
           STARGREP_GITHUB_TOKEN: ${{ secrets.STARGREP_GITHUB_TOKEN }}
-          GITHUB_APP_CLIENT_ID: ${{ vars.GITHUB_APP_CLIENT_ID }}
-          GITHUB_APP_CLIENT_SECRET: ${{ secrets.GITHUB_APP_CLIENT_SECRET }}
+          STARGREP_GITHUB_APP_CLIENT_ID: ${{ vars.STARGREP_GITHUB_APP_CLIENT_ID }}
+          STARGREP_GITHUB_APP_CLIENT_SECRET: ${{ secrets.STARGREP_GITHUB_APP_CLIENT_SECRET }}
           AUTH_PROXY_SECRET: ${{ secrets.AUTH_PROXY_SECRET }}
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
