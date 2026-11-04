@@ -3,8 +3,9 @@ import { createRouterClient, ORPCError } from "@orpc/server";
 import { QueryPlan, Search } from "@stargrep/core/search";
 import { SyncQueue, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
+import { UserId } from "@stargrep/db/auth-schema";
 import { DbQueryFailed, RepoNotFound } from "@stargrep/db/errors";
-import type { Login, RepoId, RepoName } from "@stargrep/github/schemas";
+import type { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -16,6 +17,7 @@ import * as Tracer from "effect/Tracer";
 import type { Transport } from "./middleware/instrumentation.ts";
 import { type ApiContext, type ApiServices, ApiServicesUnavailable, router } from "./router.ts";
 import { SyncLimiter, SyncLimiterUnavailable, SyncRateLimited } from "./sync-limiter.ts";
+import { NotSignedIn, type Viewer, type ViewerError, Viewers, ViewerUnavailable } from "./viewers.ts";
 
 const canary = "PRIVATE_QUERY_CANARY";
 const pushedAt = DateTime.makeUnsafe("2026-10-01T08:00:00Z");
@@ -46,7 +48,29 @@ interface Fakes {
   readonly limiter?: Effect.Effect<void, SyncRateLimited | SyncLimiterUnavailable>;
   readonly requests?: SyncRequests.SyncRequests["Service"];
   readonly sent?: Array<Login>;
+  readonly viewer?: Effect.Effect<Viewer, ViewerError>;
 }
+
+const ada: Viewer = {
+  userId: UserId.make("user-ada"),
+  account: {
+    id: 7 as GitHubAccountId,
+    type: "user",
+    login: "ada" as Login,
+    name: "Ada",
+    avatarUrl: "https://avatars.githubusercontent.com/u/7",
+    followers: null,
+    publicRepos: null,
+    ownedRepoStars: null,
+    claimedBy: UserId.make("user-ada"),
+    starredCount: 2431,
+    starsEtag: null,
+    starsSyncedAt: null,
+    starsFullSyncedAt: null,
+  },
+};
+
+const starredAt = DateTime.makeUnsafe("2025-03-14T10:00:00Z");
 
 const searchOutcome = (request: Search.SearchRequest): Search.SearchOutcome => ({
   plan: QueryPlan.asTyped(request.query, "sentence"),
@@ -65,6 +89,10 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
   const db = {
     repos: {
       require: (id: RepoId) => (id === repo.id ? Effect.succeed(repo) : Effect.fail(new RepoNotFound({ repoId: id }))),
+    },
+    stars: {
+      library: (accountId: GitHubAccountId) =>
+        Effect.succeed(accountId === ada.account.id ? [{ repo, starredAt, stars: 16_400 }] : []),
     },
   } as unknown as Db.Db["Service"];
   const requests =
@@ -86,6 +114,7 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
     ),
     Context.add(SyncRequests.SyncRequests, requests),
     Context.add(SyncLimiter, SyncLimiter.of({ acquire: fakes.limiter ?? Effect.void })),
+    Context.add(Viewers, Viewers.of({ current: fakes.viewer ?? Effect.fail(new NotSignedIn()) })),
   );
 };
 
@@ -264,6 +293,43 @@ describe("getRepo", () => {
       pushedAt: "2026-10-01T08:00:00.000Z",
     });
     expect((await failure(api.getRepo({ id: 43 as RepoId }))).code).toBe("REPO_NOT_FOUND");
+  });
+});
+
+describe("signed-in procedures", () => {
+  test("refuse a caller with no session", async () => {
+    const { api } = client();
+    for (const call of [api.viewer(), api.library()]) {
+      const error = await failure(call);
+      expect([error.code, error.data]).toEqual(["UNAUTHORIZED", traceData]);
+    }
+  });
+
+  test("return the signed-in account and its stars, newest first", async () => {
+    const { api } = client({ viewer: Effect.succeed(ada) });
+    expect(await api.viewer()).toEqual({
+      login: "ada",
+      name: "Ada",
+      avatarUrl: "https://avatars.githubusercontent.com/u/7",
+      starredCount: 2431,
+    });
+    expect(await api.library()).toEqual({
+      repos: [
+        expect.objectContaining({
+          id: 42,
+          owner: "ratatui",
+          name: "ratatui",
+          keywords: ["tui"],
+          starredAt: "2025-03-14T10:00:00.000Z",
+          stars: 16_400,
+        }),
+      ],
+    });
+  });
+
+  test("map an unreadable session to service unavailable", async () => {
+    const { api } = client({ viewer: Effect.fail(new ViewerUnavailable({ step: "session" })) });
+    expect((await failure(api.library())).code).toBe("SERVICE_UNAVAILABLE");
   });
 });
 

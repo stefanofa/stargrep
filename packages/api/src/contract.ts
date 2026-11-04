@@ -80,6 +80,27 @@ export const RepoDetail = Schema.Struct({
   createdAt: Schema.NullOr(Timestamp),
 });
 
+export const Viewer = Schema.Struct({
+  login: Schema.String,
+  name: Schema.NullOr(Schema.String),
+  avatarUrl: Schema.NullOr(Schema.String),
+  starredCount: Schema.NullOr(Schema.Int).annotate({
+    description: "How many repos the account had starred on GitHub when it last signed in.",
+  }),
+});
+
+export const LibraryRepo = Schema.Struct({
+  ...RepoFields.fields,
+  keywords: Schema.Array(Schema.String),
+  starredAt: Timestamp,
+  stars: Schema.NullOr(Schema.Int).annotate({ description: "The repo's star count, when Stargrep has read it." }),
+});
+
+export const Library = Schema.Struct({ repos: Schema.Array(LibraryRepo) });
+
+// The signed-in procedures read the session cookie, which MCP clients do not send.
+export const signedIn = new Set(["viewer", "library"]);
+
 const procedure = oc.errors(errors);
 
 export const contract = {
@@ -129,4 +150,22 @@ export const contract = {
     })
     .input(RepoInput)
     .output(RepoDetail),
+  viewer: procedure
+    .route({
+      method: "GET",
+      path: "/viewer",
+      operationId: "viewer",
+      summary: "Read the signed-in account",
+      description: "Returns the GitHub account of the person signed in with the session cookie.",
+    })
+    .output(Viewer),
+  library: procedure
+    .route({
+      method: "GET",
+      path: "/library",
+      operationId: "library",
+      summary: "List the signed-in account's stars",
+      description: "Returns every repo the signed-in account starred, newest star first.",
+    })
+    .output(Library),
 };

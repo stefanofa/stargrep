@@ -14,8 +14,9 @@ import { contract, type RepoInput, type SearchInput, type SyncInput } from "./co
 import { errorStatus, type WireCode, wireError } from "./errors.ts";
 import { instrumentation, type ProcedureTime, type Transport } from "./middleware/instrumentation.ts";
 import { SyncLimiter, type SyncLimiterUnavailable, type SyncRateLimited } from "./sync-limiter.ts";
+import { type ViewerError, Viewers } from "./viewers.ts";
 
-export type ApiServices = Db.Db | Search.Search | SyncRequests.SyncRequests | SyncLimiter;
+export type ApiServices = Db.Db | Search.Search | SyncRequests.SyncRequests | SyncLimiter | Viewers;
 
 export class ApiServicesUnavailable extends Schema.TaggedError<
   ApiServicesUnavailable,
@@ -42,9 +43,11 @@ type ApiFailure =
   | DbRowInvalid
   | SyncRateLimited
   | SyncLimiterUnavailable
+  | ViewerError
   | ApiServicesUnavailable;
 
 const wireCodes = {
+  NotSignedIn: "UNAUTHORIZED",
   AccountNotSynced: "ACCOUNT_NOT_SYNCED",
   RepoNotFound: "REPO_NOT_FOUND",
   SearchScopeUnavailable: "SCOPE_UNAVAILABLE",
@@ -57,6 +60,7 @@ const wireCodes = {
   DbQueryFailed: "SERVICE_UNAVAILABLE",
   SyncLimiterUnavailable: "SERVICE_UNAVAILABLE",
   SyncQueueFailed: "SERVICE_UNAVAILABLE",
+  ViewerUnavailable: "SERVICE_UNAVAILABLE",
   AiModelNotFound: "INTERNAL_SERVER_ERROR",
   AiOutputInvalid: "INTERNAL_SERVER_ERROR",
   DbRowInvalid: "INTERNAL_SERVER_ERROR",
@@ -152,6 +156,36 @@ export const router = implementer.router({
         ),
       ),
     ),
+
+  viewer: os.viewer.use(provideServices).effect(
+    handle(() =>
+      Viewers.use((viewers) => viewers.current).pipe(
+        Effect.map(({ account }) => ({
+          login: account.login,
+          name: account.name,
+          avatarUrl: account.avatarUrl,
+          starredCount: account.starredCount,
+        })),
+      ),
+    ),
+  ),
+
+  library: os.library.use(provideServices).effect(
+    handle(() =>
+      Effect.gen(function* () {
+        const { account } = yield* (yield* Viewers).current;
+        const entries = yield* (yield* Db.Db).stars.library(account.id);
+        return {
+          repos: entries.map((entry) => ({
+            ...repoFields(entry.repo),
+            keywords: entry.repo.keywords,
+            starredAt: DateTime.formatIso(entry.starredAt),
+            stars: entry.stars,
+          })),
+        };
+      }),
+    ),
+  ),
 
   getRepo: os.getRepo.use(provideServices).effect(
     handle((input: typeof RepoInput.Type) =>
