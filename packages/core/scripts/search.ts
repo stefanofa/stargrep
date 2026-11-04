@@ -2,7 +2,7 @@ import * as BunRuntime from "@effect/platform-bun/BunRuntime";
 import * as BunServices from "@effect/platform-bun/BunServices";
 import * as Gateway from "@stargrep/ai/gateway";
 import * as Models from "@stargrep/ai/models";
-import { tokensUsed } from "@stargrep/ai/port";
+import { tokensSpent } from "@stargrep/ai/port";
 import * as Db from "@stargrep/db";
 import { Login } from "@stargrep/github/schemas";
 import * as Console from "effect/Console";
@@ -12,7 +12,6 @@ import * as Flag from "effect/cli/Flag";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as Schema from "effect/Schema";
@@ -35,10 +34,7 @@ const timings = (name: string) => {
 };
 
 const tokens = (model: string) =>
-  Effect.all([
-    Metric.value(Metric.withAttributes(tokensUsed, { model, direction: "input" })),
-    Metric.value(Metric.withAttributes(tokensUsed, { model, direction: "output" })),
-  ]).pipe(Effect.map(([input, output]) => `${model} ${input.count} in, ${output.count} out`));
+  tokensSpent(model).pipe(Effect.map(({ input, output }) => `${model} ${input} in, ${output} out`));
 
 const describeFilters = ({ filters }: Search.SearchOutcome["plan"]) =>
   [

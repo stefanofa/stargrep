@@ -3,7 +3,7 @@ import * as Embeddings from "@stargrep/ai/embeddings";
 import { AiRequestFailed } from "@stargrep/ai/errors";
 import * as Gateway from "@stargrep/ai/gateway";
 import * as Models from "@stargrep/ai/models";
-import { tokensUsed } from "@stargrep/ai/port";
+import { tokensSpent } from "@stargrep/ai/port";
 import * as TextGeneration from "@stargrep/ai/text-generation";
 import { QueryPlanner, Search, SearchCache } from "@stargrep/core/search";
 import * as Db from "@stargrep/db";
@@ -16,7 +16,6 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as Redacted from "effect/Redacted";
@@ -178,10 +177,7 @@ const layerSearch = <E1, R1, E2, R2>(
 ) => Search.layer.pipe(Layer.provideMerge(QueryPlanner.layer.pipe(Layer.provide(text))), Layer.provideMerge(cache));
 
 const tokenCounts = Effect.forEach([Models.plannerModel, Models.embeddingModel.id], (model) =>
-  Effect.all([
-    Metric.value(Metric.withAttributes(tokensUsed, { model, direction: "input" })),
-    Metric.value(Metric.withAttributes(tokensUsed, { model, direction: "output" })),
-  ]).pipe(Effect.map(([input, output]) => `${model} ${input.count} in, ${output.count} out`)),
+  tokensSpent(model).pipe(Effect.map(({ input, output }) => `${model} ${input} in, ${output} out`)),
 );
 
 const recording = <E, R>(inner: Layer.Layer<SearchCache.SearchCache, E, R>, seen: Array<Answer>) =>

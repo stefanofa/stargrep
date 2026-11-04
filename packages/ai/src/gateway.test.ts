@@ -11,7 +11,6 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
-import * as Metric from "effect/Metric";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import type * as Tracer from "effect/Tracer";
@@ -260,15 +259,13 @@ describe("gateway text generation", () => {
     ),
   );
 
-  it.effect("counts the gateway's reported tokens per model", () => {
-    const tokens = (direction: string) =>
-      Metric.value(Metric.withAttributes(Port.tokensUsed, { model: "metered/model", direction }));
-    return Effect.gen(function* () {
-      const before = yield* tokens("output");
+  it.effect("counts the gateway's reported tokens per model", () =>
+    Effect.gen(function* () {
+      const before = yield* Port.tokensSpent("metered/model");
       yield* Summarize.summarize(repo);
-      expect((yield* tokens("output")).count - before.count).toBe(20);
-    }).pipe(Effect.provide(textLayer(async () => textResult(JSON.stringify(validSummary)), "metered/model")));
-  });
+      expect((yield* Port.tokensSpent("metered/model")).output - before.output).toBe(20);
+    }).pipe(Effect.provide(textLayer(async () => textResult(JSON.stringify(validSummary)), "metered/model"))),
+  );
 });
 
 type BatchApi = ReturnType<Gateway.AiProvider["Service"]["experimental_batch"]>;

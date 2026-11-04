@@ -3,7 +3,7 @@ import * as BunServices from "@effect/platform-bun/BunServices";
 import * as Fake from "@stargrep/ai/fake";
 import * as Gateway from "@stargrep/ai/gateway";
 import * as Models from "@stargrep/ai/models";
-import { tokensUsed } from "@stargrep/ai/port";
+import { tokensSpent } from "@stargrep/ai/port";
 import { QueryPlan, QueryPlanner, Search, SearchCache } from "@stargrep/core/search";
 import * as Db from "@stargrep/db";
 import { Login } from "@stargrep/github/schemas";
@@ -17,7 +17,6 @@ import * as Digest from "effect/crypto/Digest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -98,10 +97,9 @@ const searchWith = (cache: Layer.Layer<SearchCache.SearchCache>) =>
     ),
   );
 
-const plannerTokens = Effect.all([
-  Metric.value(Metric.withAttributes(tokensUsed, { model: Models.plannerModel, direction: "input" })),
-  Metric.value(Metric.withAttributes(tokensUsed, { model: Models.plannerModel, direction: "output" })),
-]).pipe(Effect.map(([input, output]) => `planner tokens: ${input.count} in, ${output.count} out`));
+const plannerTokens = tokensSpent(Models.plannerModel).pipe(
+  Effect.map(({ input, output }) => `planner tokens: ${input} in, ${output} out`),
+);
 
 const bench = Command.make(
   "search-bench",
