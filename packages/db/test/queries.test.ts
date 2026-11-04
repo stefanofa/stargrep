@@ -68,7 +68,12 @@ const facts = (id: RepoId): Db.RepoFacts => ({
 
 const stars = (accountId: GitHubAccountId): Db.SearchScope => ({ kind: "stars", accountId });
 
-const starred = (id: RepoId, starredAt: string) => ({ repoId: id, starredAt: at(starredAt), source: "api" as const });
+const starred = (id: RepoId, starredAt: string, observedAt = starredAt): Db.StarEvent => ({
+  repoId: id,
+  starredAt: at(starredAt),
+  observedAt: at(observedAt),
+  source: "api",
+});
 
 const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | TestDatabase.TestDatabase> }) => {
   test.effect("upserts an account and reads the latest facts back", () =>
@@ -89,9 +94,15 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       const db = yield* Db.Db;
       const id = accountId(102);
       yield* db.accounts.upsert(account(id));
-      expect(yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-02T00:00:00Z") })).toBe(0);
+      expect(yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-02T00:00:00Z") })).toEqual({
+        starred: [],
+        unstarred: [],
+      });
       yield* db.accounts.recordStarSync({ accountId: id, etag: "next", at: at("2026-10-03T00:00:00Z") });
-      expect(yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-01T00:00:00Z") })).toBe(0);
+      expect(yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-01T00:00:00Z") })).toEqual({
+        starred: [],
+        unstarred: [],
+      });
 
       const stored = Option.getOrThrow(yield* db.accounts.get(id));
       expect(stored.starsEtag).toBe("next");
@@ -315,8 +326,9 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         stars: [starred(kept, "2026-01-01T00:00:00Z")],
         at: at("2026-02-01T00:00:00Z"),
       };
-      expect(yield* db.stars.applySnapshot(snapshot)).toBe(2);
-      expect(yield* db.stars.applySnapshot(snapshot)).toBe(0);
+      const changes = yield* db.stars.applySnapshot(snapshot);
+      expect([changes.starred, changes.unstarred.toSorted()]).toEqual([[], [gone, alsoGone]]);
+      expect(yield* db.stars.applySnapshot(snapshot)).toEqual({ starred: [], unstarred: [] });
       expect((yield* db.stars.list(id)).map((star) => star.repoId)).toEqual([kept]);
     }),
   );
@@ -580,6 +592,74 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     }),
   );
 
+  test.effect("accepts a star starred before the latest snapshot when it is observed after it", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const id = accountId(9211);
+      const [late, restarred] = [repoId(9211), repoId(9212)];
+      yield* db.accounts.upsert(account(id));
+      yield* db.repos.upsertRefs([ref(late), ref(restarred)]);
+      yield* db.stars.applySnapshot({
+        accountId: id,
+        stars: [starred(restarred, "2026-10-01T00:00:00Z")],
+        at: at("2026-10-05T00:00:00Z"),
+      });
+
+      const changed = yield* db.stars.upsert({
+        accountId: id,
+        stars: [
+          starred(late, "2026-10-03T00:00:00Z", "2026-10-06T00:00:00Z"),
+          starred(restarred, "2026-09-01T00:00:00Z", "2026-10-06T00:00:00Z"),
+        ],
+      });
+
+      expect(changed.toSorted()).toEqual([late, restarred]);
+      expect((yield* db.stars.list(id)).map((star) => [star.repoId, iso(star.starredAt)])).toEqual([
+        [late, "2026-10-03T00:00:00.000Z"],
+        [restarred, "2026-09-01T00:00:00.000Z"],
+      ]);
+    }),
+  );
+
+  test.effect("drops a star event observed at or before the latest snapshot and reports no change", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const id = accountId(9221);
+      const repo = repoId(9221);
+      yield* db.accounts.upsert(account(id));
+      yield* db.repos.upsertRefs([ref(repo)]);
+      yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-05T00:00:00Z") });
+
+      expect(
+        yield* db.stars.upsert({
+          accountId: id,
+          stars: [starred(repo, "2026-10-06T00:00:00Z", "2026-10-05T00:00:00Z")],
+        }),
+      ).toEqual([]);
+      expect(yield* db.stars.list(id)).toEqual([]);
+    }),
+  );
+
+  test.effect("reports only repos whose star changed, not a newer observation of the same star", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const id = accountId(9231);
+      const [repo, other] = [repoId(9231), repoId(9232)];
+      yield* db.accounts.upsert(account(id));
+      yield* db.repos.upsertRefs([ref(repo), ref(other)]);
+      expect(yield* db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-10-01T00:00:00Z")] })).toEqual([repo]);
+
+      const changed = yield* db.stars.upsert({
+        accountId: id,
+        stars: [
+          starred(repo, "2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z"),
+          starred(other, "2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z"),
+        ],
+      });
+      expect(changed).toEqual([other]);
+    }),
+  );
+
   test.effect("ignores a snapshot older than a star", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
@@ -589,7 +669,10 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.repos.upsertRefs([ref(repo)]);
       yield* db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-10-05T00:00:00Z")] });
 
-      expect(yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-02T00:00:00Z") })).toBe(0);
+      expect(yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-02T00:00:00Z") })).toEqual({
+        starred: [],
+        unstarred: [],
+      });
       expect((yield* db.stars.list(id)).map((star) => star.repoId)).toEqual([repo]);
     }),
   );
@@ -602,14 +685,14 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.accounts.upsert(account(id));
       yield* db.repos.upsertRefs([ref(older), ref(newer), ref(replayed)]);
 
-      const unstarred = yield* db.stars.applySnapshot({
+      const changes = yield* db.stars.applySnapshot({
         accountId: id,
         stars: [starred(older, "2020-01-01T00:00:00Z"), starred(newer, "2026-09-01T00:00:00Z")],
         at: at("2026-10-05T00:00:00Z"),
       });
       yield* db.stars.upsert({ accountId: id, stars: [starred(replayed, "2026-10-01T00:00:00Z")] });
 
-      expect(unstarred).toBe(0);
+      expect([changes.starred.toSorted(), changes.unstarred]).toEqual([[older, newer], []]);
       expect((yield* db.stars.list(id)).map((star) => star.repoId)).toEqual([newer, older]);
     }),
   );
@@ -646,13 +729,13 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.accounts.upsert(account(id));
       yield* db.repos.upsertRefs([ref(repeated)]);
 
-      const unstarred = yield* db.stars.applySnapshot({
+      const changes = yield* db.stars.applySnapshot({
         accountId: id,
         stars: [starred(repeated, "2026-10-03T00:00:00Z"), starred(repeated, "2026-10-04T00:00:00Z")],
         at: at("2026-10-05T00:00:00Z"),
       });
 
-      expect(unstarred).toBe(0);
+      expect(changes).toEqual({ starred: [repeated], unstarred: [] });
       expect((yield* db.stars.list(id)).map((star) => [star.repoId, iso(star.starredAt)])).toEqual([
         [repeated, "2026-10-04T00:00:00.000Z"],
       ]);
@@ -666,8 +749,8 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       const [apiFirst, archiveFirst] = [repoId(9381), repoId(9382)];
       const sameTime = at("2026-10-03T00:00:00Z");
       const both = (repo: RepoId, first: "api" | "gharchive", second: "api" | "gharchive") => [
-        { repoId: repo, starredAt: sameTime, source: first },
-        { repoId: repo, starredAt: sameTime, source: second },
+        { repoId: repo, starredAt: sameTime, observedAt: sameTime, source: first },
+        { repoId: repo, starredAt: sameTime, observedAt: sameTime, source: second },
       ];
       const repeated = [...both(apiFirst, "api", "gharchive"), ...both(archiveFirst, "gharchive", "api")];
       yield* db.accounts.upsert(account(viaUpsert));

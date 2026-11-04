@@ -89,7 +89,7 @@ Better Auth owns `user`, `session`, and `account`. Stargrep adds these tables.
 | `github_accounts` | GitHub account ID | type (`user` or `org`), login, name, avatar, followers, public repos, total stars across owned repos, `claimed_by` user, star sync state, including the time of the latest full star snapshot |
 | `repos` | GitHub repo ID | owner, name, GitHub node ID, description, topics, language, license, homepage, kind (`app`, `library`, `cli`, `framework`, `list`, and so on), created time, `pushed_at`, archived, README object ID from the latest facts fetch, summary and the README object ID it describes, keywords, `embedding halfvec`, embedding model, full-text column |
 | `repo_metrics` | GitHub repo ID | current totals and 30-day and 90-day changes for stars, forks, commits, active contributors, new contributors, merged pull requests, closed issues, and releases, refreshed daily |
-| `stars` | account ID and repo ID | `starred_at`, `unstarred_at`, the time of the latest observation, source (`gharchive` or `api`). A star event or snapshot older than that observation, or than the account's latest full snapshot, changes nothing |
+| `stars` | account ID and repo ID | `starred_at`, `unstarred_at`, the time of the latest observation, source (`gharchive` or `api`). Every star event carries the time it was observed: an API sync's start, or an archive event's own time. An event or snapshot observed at or before the row's latest observation, or at or before the account's latest full snapshot, changes nothing |
 | `follows` | follower ID and followee ID | source (`github` or `stargrep`), created time |
 | `collections` | ID | owner, slug, title, description, kind (`user` or `editorial`) |
 | `collection_items` | collection ID and repo ID | note, position |
@@ -130,7 +130,7 @@ Since October 2025 push events carry no commit list or count, so commit metrics 
 
 Each step is a queue message type. Each consumer is idempotent.
 
-1. `sync-stars` fetches an account's star list newest first and stops at the first star it already has. A full sync runs on claim and weekly after that. Stars that are gone mark `unstarred_at`.
+1. `sync-stars` fetches an account's star list newest first. It stops at the first star older than a star the last completed sync saw unchanged, so it reads every star that shares that star's `starred_at`. A full sync runs on claim and weekly after that. Stars that are gone mark `unstarred_at`. The list pages by offset, so a full read counts the stars through GraphQL before and after. When the counts differ, the read shifted, and the sync writes what it read but skips the unstars and does not record the run.
 2. `enrich-repo` runs for repos that are new or whose README object ID changed. It stores the README in R2, writes the summary, keywords, and kind, and computes the embedding. It also fetches the facts events do not carry, such as license and homepage.
 3. `import-events` is an hourly cron. It streams the hour's archive file, keeps star, fork, pull request, issue, and release events, writes them to R2 as Parquet, and loads new stars for served accounts into `stars`. A streaming parse of a full OpenDigger hour measured under 15 MB of heap and about 12 seconds of CPU, inside a Worker's 128 MB and the 15-minute limit for hourly crons. Writing Parquet needs a JavaScript Parquet writer in the Worker or a hand-off to a container.
 4. `snapshot-repos` is a daily cron. It fetches facts events no longer carry, such as the commit history count, for tracked repos through batched GraphQL queries.

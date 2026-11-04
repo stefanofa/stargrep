@@ -17,7 +17,7 @@ import * as Usage from "./queries/usage.ts";
 export type { Account, AccountFacts, OwnedRepoStars, StarSync } from "./queries/accounts.ts";
 export type { Repo, RepoEmbedding, RepoFacts, RepoRef, RepoSummary } from "./queries/repos.ts";
 export type { HybridSearch, SearchHit, SearchScope } from "./queries/search.ts";
-export type { Star, StarredRepo, StarsSnapshot, StarsUpsert } from "./queries/stars.ts";
+export type { SnapshotChanges, Star, StarEvent, StarredRepo, StarsSnapshot, StarsUpsert } from "./queries/stars.ts";
 export type { UsageCall, UsageCounts, UsageDay } from "./queries/usage.ts";
 
 export class Db extends Context.Service<
