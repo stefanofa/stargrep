@@ -3,14 +3,15 @@ import * as Db from "@stargrep/db";
 import type { EmbeddingModelId } from "@stargrep/db/embedding";
 import * as Memory from "@stargrep/db/memory";
 import * as Fake from "@stargrep/github/github.fixture";
-import type { GitHubAccountId, Login, RepoId } from "@stargrep/github/schemas";
+import type { GitHubAccountId, Login } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
-import * as EnrichQueue from "./enrich-queue.ts";
+import * as EnrichQueue from "../repos/enrich-queue.ts";
+import type * as DiffPage from "./diff-page.ts";
 import * as StarSync from "./star-sync.ts";
 
 const embeddingModel = "test/model" as EmbeddingModelId;
@@ -27,27 +28,28 @@ type BeforePage = (page: number, list: Array<Starred>) => Fake.Reply | undefined
 class Sql extends Context.Service<Sql, Memory.Pglite["client"]>()("@stargrep/core/stars/star-sync.test/Sql") {}
 
 const lists = new Map<string, Array<Starred>>();
-const sent: Array<RepoId> = [];
+const users = new Map<string, { readonly id: number; readonly login: string }>();
+const queue = EnrichQueue.layerMemory();
+const sent = queue.sent;
 const hooks: { beforePage: BeforePage } = { beforePage: () => undefined };
 
 const github = Fake.layer((request) => {
-  const login = decodeURIComponent(request.url.pathname.split("/")[2] ?? "");
+  const [, , login = "", list] = request.url.pathname.split("/");
+  if (list === undefined) {
+    const user = users.get(login);
+    return user === undefined
+      ? { status: 404 }
+      : { body: { ...user, type: "User", name: null, avatar_url: null, followers: 1, public_repos: 2 } };
+  }
+  const stars = lists.get(login) ?? [];
   const page = Number(request.url.searchParams.get("page"));
-  const list = lists.get(login) ?? [];
-  const failure = hooks.beforePage(page, list);
-  if (failure !== undefined) return failure;
-  return {
-    body: list.slice((page - 1) * 100, page * 100).map((star) => ({
-      starred_at: DateTime.formatIso(DateTime.makeUnsafe(star.at)),
-      repo: { id: star.repo, node_id: `R_${star.repo}`, name: `repo-${star.repo}`, owner: { login: "owner" } },
-    })),
-    headers: {
-      ...Fake.rateLimitHeaders(4000),
-      ...(page * 100 < list.length
-        ? { link: `<https://api.github.com/user/1/starred?per_page=100&page=${page + 1}>; rel="next"` }
-        : {}),
-    },
-  };
+  return (
+    hooks.beforePage(page, stars) ??
+    Fake.starPage(
+      stars.map((star) => ({ repo: star.repo, starredAt: DateTime.formatIso(DateTime.makeUnsafe(star.at)) })),
+      request,
+    )
+  );
 });
 
 const layerTest = Layer.unwrap(
@@ -55,7 +57,7 @@ const layerTest = Layer.unwrap(
     StarSync.layer.pipe(
       Layer.provideMerge(Memory.layerPglite(pglite, { embeddingModel })),
       Layer.provideMerge(github.layer),
-      Layer.provideMerge(EnrichQueue.layerMemory(sent)),
+      Layer.provideMerge(queue.layer),
       Layer.provideMerge(Layer.succeed(Sql, pglite.client)),
     ),
   ),
@@ -69,6 +71,7 @@ const query = <A>(text: string, values: ReadonlyArray<unknown> = []) =>
 const reset = (beforePage: BeforePage = () => undefined) =>
   Effect.gen(function* () {
     lists.clear();
+    users.clear();
     sent.length = 0;
     github.sent.length = 0;
     hooks.beforePage = beforePage;
@@ -96,7 +99,6 @@ const account = (id: number, login: string, list: Array<Starred>) =>
       avatarUrl: null,
       followers: null,
       publicRepos: null,
-      ownedRepoStars: null,
     });
     return id as GitHubAccountId;
   });
@@ -121,9 +123,11 @@ const rows = (accountId: GitHubAccountId) =>
 const activeRepos = (accountId: GitHubAccountId) =>
   Effect.map(rows(accountId), (all) => all.filter((row) => row.unstarredAt === null).map((row) => row.repo));
 
-const report = (values: Partial<StarSync.SyncReport>) => expect.objectContaining(values);
+const report = (values: Partial<DiffPage.SyncReport>) => expect.objectContaining(values);
 
 const byNumber = (a: number, b: number) => a - b;
+
+const sentRepos = () => sent.map((message) => message.repoId as number);
 
 it.layer(layerTest, { timeout: 30_000 })("StarSync", (test) => {
   test.effect("writes every star on a first sync and enqueues each new repo once", () =>
@@ -134,7 +138,7 @@ it.layer(layerTest, { timeout: 30_000 })("StarSync", (test) => {
 
       expect(yield* sync(id)).toEqual({ listed: 250, added: 250, unchanged: 0, unstarred: 0, enqueued: 250 });
       expect(yield* activeRepos(id)).toEqual(list.map((star) => star.repo).toSorted(byNumber));
-      expect(sent.toSorted(byNumber)).toEqual(list.map((star) => star.repo as RepoId).toSorted(byNumber));
+      expect(sentRepos().toSorted(byNumber)).toEqual(list.map((star) => star.repo).toSorted(byNumber));
       expect(github.sent).toHaveLength(3);
     }),
   );
@@ -169,7 +173,7 @@ it.layer(layerTest, { timeout: 30_000 })("StarSync", (test) => {
       expect(yield* sync(id)).toEqual({ listed: 2, added: 2, unchanged: 250, unstarred: 0, enqueued: 2 });
       expect(github.sent.length - requests).toBe(1);
       expect(yield* activeRepos(id)).toContain(900);
-      expect(sent.slice(-2)).toEqual([900 as RepoId, 901 as RepoId]);
+      expect(sentRepos().slice(-2)).toEqual([900, 901]);
     }),
   );
 
@@ -245,7 +249,7 @@ it.layer(layerTest, { timeout: 30_000 })("StarSync", (test) => {
       failing.page = 0;
       expect(yield* sync(id)).toEqual(report({ listed: 450, added: 250, unchanged: 200 }));
       expect(yield* rows(id)).toEqual(expected);
-      expect(new Set(sent).size).toBe(450);
+      expect(new Set(sentRepos()).size).toBe(450);
     }),
   );
 
@@ -302,6 +306,47 @@ it.layer(layerTest, { timeout: 30_000 })("StarSync", (test) => {
       const error = yield* Effect.flip(sync(42 as GitHubAccountId));
       expect(error).toMatchObject({ _tag: "AccountNotFound", accountId: 42 });
       expect(github.sent).toHaveLength(0);
+    }),
+  );
+
+  test.effect("looks up a login, stores the account, and syncs it", () =>
+    Effect.gen(function* () {
+      yield* reset();
+      users.set("ada", { id: 7, login: "ada" });
+      lists.set("ada", newestFirst(120));
+      const starSync = yield* StarSync.StarSync;
+
+      expect(yield* starSync.syncLogin({ login: "ada" as Login, mode: "incremental" })).toEqual(
+        report({ listed: 120, added: 120 }),
+      );
+      expect(yield* activeRepos(7 as GitHubAccountId)).toHaveLength(120);
+      expect(github.sent.map((sent) => sent.url.pathname)).toEqual([
+        "/users/ada",
+        "/users/ada/starred",
+        "/users/ada/starred",
+      ]);
+    }),
+  );
+
+  test.effect("keeps rows and owned repo stars under the same account ID after a rename", () =>
+    Effect.gen(function* () {
+      yield* reset();
+      users.set("ada", { id: 7, login: "ada" });
+      lists.set("ada", newestFirst(120));
+      const starSync = yield* StarSync.StarSync;
+      const db = yield* Db.Db;
+      yield* starSync.syncLogin({ login: "ada" as Login, mode: "incremental" });
+      yield* db.accounts.setOwnedRepoStars({ accountId: 7 as GitHubAccountId, stars: 99 });
+
+      users.delete("ada");
+      users.set("lovelace", { id: 7, login: "lovelace" });
+      lists.set("lovelace", lists.get("ada") ?? []);
+      yield* TestClock.adjust("1 hour");
+      expect(yield* starSync.syncLogin({ login: "lovelace" as Login, mode: "incremental" })).toEqual(
+        report({ added: 0, unchanged: 120 }),
+      );
+      expect(yield* db.accounts.require(7 as GitHubAccountId)).toMatchObject({ login: "lovelace", ownedRepoStars: 99 });
+      expect(yield* activeRepos(7 as GitHubAccountId)).toHaveLength(120);
     }),
   );
 });

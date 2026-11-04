@@ -6,7 +6,7 @@ import * as Option from "effect/Option";
 
 export interface Stored {
   readonly starredAt: ReadonlyMap<RepoId, number>;
-  readonly lastCompletedRun: Option.Option<number>;
+  readonly stopLine: Option.Option<number>;
 }
 
 export interface PageDiff {
@@ -15,23 +15,47 @@ export interface PageDiff {
   readonly stopped: boolean;
 }
 
-export const stored = (stars: ReadonlyArray<Db.Star>, lastCompletedRun: Option.Option<DateTime.Utc>): Stored => ({
+export interface WrittenPage extends PageDiff {
+  readonly enqueued: number;
+}
+
+export interface SyncReport {
+  readonly listed: number;
+  readonly added: number;
+  readonly unchanged: number;
+  readonly unstarred: number;
+  readonly enqueued: number;
+}
+
+export const stored = (stars: ReadonlyArray<Db.Star>, stopLine: Option.Option<DateTime.Utc>): Stored => ({
   starredAt: new Map(stars.map((star) => [star.repoId, DateTime.toEpochMillis(star.starredAt)])),
-  lastCompletedRun: Option.map(lastCompletedRun, DateTime.toEpochMillis),
+  stopLine: Option.map(stopLine, DateTime.toEpochMillis),
 });
 
-const isStored = (stored: Stored, star: Star) =>
+const isUnchanged = (stored: Stored, star: Star) =>
   stored.starredAt.get(star.repo.id) === DateTime.toEpochMillis(star.starredAt);
 
-const sawInLastCompletedRun = (stored: Stored, star: Star) =>
-  Option.isSome(stored.lastCompletedRun) &&
-  DateTime.toEpochMillis(star.starredAt) <= stored.lastCompletedRun.value &&
-  isStored(stored, star);
+const isBehindStopLine = (stored: Stored, star: Star) =>
+  Option.isSome(stored.stopLine) &&
+  DateTime.toEpochMillis(star.starredAt) <= stored.stopLine.value &&
+  isUnchanged(stored, star);
 
 export const diffPage = (stored: Stored, seen: ReadonlySet<RepoId>, page: ReadonlyArray<Star>): PageDiff => {
-  const stop = page.findIndex((star) => sawInLastCompletedRun(stored, star));
+  const stop = page.findIndex((star) => isBehindStopLine(stored, star));
   const listed = Arr.dedupeWith(stop === -1 ? page : page.slice(0, stop), (a, b) => a.repo.id === b.repo.id).filter(
     (star) => !seen.has(star.repo.id),
   );
-  return { listed, fresh: listed.filter((star) => !isStored(stored, star)), stopped: stop !== -1 };
+  return { listed, fresh: listed.filter((star) => !isUnchanged(stored, star)), stopped: stop !== -1 };
+};
+
+export const report = (stored: Stored, pages: ReadonlyArray<WrittenPage>, unstarred: number): SyncReport => {
+  const fresh = pages.flatMap((page) => page.fresh);
+  const restarred = fresh.filter((star) => stored.starredAt.has(star.repo.id)).length;
+  return {
+    listed: pages.reduce((total, page) => total + page.listed.length, 0),
+    added: fresh.length,
+    unchanged: stored.starredAt.size - restarred - unstarred,
+    unstarred,
+    enqueued: pages.reduce((total, page) => total + page.enqueued, 0),
+  };
 };

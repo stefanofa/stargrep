@@ -1,8 +1,8 @@
 import * as Db from "@stargrep/db";
-import { AccountNotFound, type DbQueryFailed, type DbRowInvalid } from "@stargrep/db/errors";
+import type { AccountNotFound, DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
 import type { GitHubError } from "@stargrep/github/errors";
 import * as GitHub from "@stargrep/github/github";
-import type { GitHubAccountId, RepoId, Star } from "@stargrep/github/schemas";
+import { GitHubAccountId, Login, type RepoId, type Star } from "@stargrep/github/schemas";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -11,24 +11,17 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as DiffStars from "./diff-stars.ts";
-import * as EnrichQueue from "./enrich-queue.ts";
+import * as EnrichQueue from "../repos/enrich-queue.ts";
+import * as DiffPage from "./diff-page.ts";
 
 export const Mode = Schema.Literals(["incremental", "full"]);
 export type Mode = typeof Mode.Type;
 
-export interface SyncRequest {
-  readonly accountId: GitHubAccountId;
-  readonly mode: Mode;
-}
+export const SyncRequest = Schema.Struct({ accountId: GitHubAccountId, mode: Mode });
+export type SyncRequest = typeof SyncRequest.Type;
 
-export interface SyncReport {
-  readonly listed: number;
-  readonly added: number;
-  readonly unchanged: number;
-  readonly unstarred: number;
-  readonly enqueued: number;
-}
+export const LoginSyncRequest = Schema.Struct({ login: Login, mode: Mode });
+export type LoginSyncRequest = typeof LoginSyncRequest.Type;
 
 export type StarSyncError =
   | GitHubError
@@ -40,19 +33,10 @@ export type StarSyncError =
 export class StarSync extends Context.Service<
   StarSync,
   {
-    readonly sync: (request: SyncRequest) => Effect.Effect<SyncReport, StarSyncError>;
+    readonly sync: (request: SyncRequest) => Effect.Effect<DiffPage.SyncReport, StarSyncError>;
+    readonly syncLogin: (request: LoginSyncRequest) => Effect.Effect<DiffPage.SyncReport, StarSyncError>;
   }
 >()("@stargrep/core/stars/star-sync/StarSync") {}
-
-interface Progress {
-  readonly listed: ReadonlyArray<Star>;
-  readonly added: number;
-  readonly restarred: number;
-  readonly enqueued: number;
-  readonly stopped: boolean;
-}
-
-const started: Progress = { listed: [], added: 0, restarred: 0, enqueued: 0, stopped: false };
 
 const toStarred = (star: Star): Db.StarredRepo => ({ repoId: star.repo.id, starredAt: star.starredAt, source: "api" });
 
@@ -61,76 +45,56 @@ const make = Effect.gen(function* () {
   const github = yield* GitHub.GitHub;
   const queue = yield* EnrichQueue.EnrichQueue;
 
-  const writePage = Effect.fn("StarSync.writePage")(function* (
-    accountId: GitHubAccountId,
-    listed: Arr.NonEmptyReadonlyArray<Star>,
-    fresh: ReadonlyArray<Star>,
-  ) {
-    yield* db.repos.upsertRefs(listed.map(({ repo }) => ({ id: repo.id, owner: repo.owner, name: repo.name })));
-    yield* db.stars.upsert({ accountId, stars: fresh.map(toStarred) });
-    const pending = yield* db.repos.pendingEnrichment(listed.map((star) => star.repo.id));
-    if (Arr.isReadonlyArrayNonEmpty(pending)) yield* queue.send(pending);
-    return pending.length;
+  const writePage = Effect.fn("StarSync.writePage")(function* (accountId: GitHubAccountId, page: DiffPage.PageDiff) {
+    if (!Arr.isReadonlyArrayNonEmpty(page.listed)) return { ...page, enqueued: 0 };
+    yield* db.repos.upsertRefs(page.listed.map((star) => star.repo));
+    yield* db.stars.upsert({ accountId, stars: page.fresh.map(toStarred) });
+    const pending = yield* db.repos.pendingEnrichment(page.listed.map((star) => star.repo.id));
+    if (Arr.isReadonlyArrayNonEmpty(pending)) yield* queue.send(pending.map((repoId) => ({ repoId })));
+    return { ...page, enqueued: pending.length };
   });
 
   const sync = Effect.fn("StarSync.sync")(function* (request: SyncRequest) {
-    const { accountId } = request;
-    const account = yield* db.accounts
-      .get(accountId)
-      .pipe(
-        Effect.flatMap(
-          Option.match({ onNone: () => Effect.fail(new AccountNotFound({ accountId })), onSome: Effect.succeed }),
-        ),
-      );
+    const account = yield* db.accounts.require(request.accountId);
+    // The run's start, not its end: the snapshot unstars rows observed before it, and the next run's
+    // stop line is this time, so a star added while the pages are read must land after it.
     const at = yield* DateTime.now;
-    const stored = DiffStars.stored(
-      yield* db.stars.list(accountId),
+    const stored = DiffPage.stored(
+      yield* db.stars.list(account.id),
       request.mode === "full" ? Option.none() : Option.fromNullishOr(account.starsSyncedAt),
     );
 
-    const progress = yield* github.stars(account.login).pipe(
-      Stream.chunks,
+    const pages = yield* github.starPages(account.login).pipe(
       Stream.mapAccum(
         (): ReadonlySet<RepoId> => new Set(),
         (seen, page) => {
-          const diff = DiffStars.diffPage(stored, seen, page);
+          const diff = DiffPage.diffPage(stored, seen, page);
           return [new Set([...seen, ...diff.listed.map((star) => star.repo.id)]), [diff]];
         },
       ),
-      Stream.takeUntil((diff) => diff.stopped),
-      Stream.runFoldEffect(
-        () => started,
-        (progress, diff) =>
-          Effect.map(
-            Arr.isReadonlyArrayNonEmpty(diff.listed)
-              ? writePage(accountId, diff.listed, diff.fresh)
-              : Effect.succeed(0),
-            (enqueued): Progress => ({
-              listed: [...progress.listed, ...diff.listed],
-              added: progress.added + diff.fresh.length,
-              restarred: progress.restarred + diff.fresh.filter((star) => stored.starredAt.has(star.repo.id)).length,
-              enqueued: progress.enqueued + enqueued,
-              stopped: diff.stopped,
-            }),
-          ),
-      ),
+      Stream.takeUntil((page) => page.stopped),
+      Stream.mapEffect((page) => writePage(account.id, page)),
+      Stream.runCollect,
     );
 
-    const unstarred = progress.stopped
+    const unstarred = pages.some((page) => page.stopped)
       ? 0
-      : yield* db.stars.applySnapshot({ accountId, stars: progress.listed.map(toStarred), at });
-    yield* db.accounts.recordStarSync({ accountId, etag: null, at });
-
-    return {
-      listed: progress.listed.length,
-      added: progress.added,
-      unchanged: stored.starredAt.size - progress.restarred - unstarred,
-      unstarred,
-      enqueued: progress.enqueued,
-    } satisfies SyncReport;
+      : yield* db.stars.applySnapshot({
+          accountId: account.id,
+          stars: pages.flatMap((page) => page.listed).map(toStarred),
+          at,
+        });
+    yield* db.accounts.recordStarSync({ accountId: account.id, etag: null, at });
+    return DiffPage.report(stored, pages, unstarred);
   });
 
-  return StarSync.of({ sync });
+  const syncLogin = Effect.fn("StarSync.syncLogin")(function* (request: LoginSyncRequest) {
+    const account = yield* github.account(request.login);
+    yield* db.accounts.upsert(account);
+    return yield* sync({ accountId: account.id, mode: request.mode });
+  });
+
+  return StarSync.of({ sync, syncLogin });
 });
 
 export const layer = Layer.effect(StarSync, make);

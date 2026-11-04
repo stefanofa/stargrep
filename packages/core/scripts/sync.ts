@@ -4,98 +4,81 @@ import { embeddingModel } from "@stargrep/ai/models";
 import * as Db from "@stargrep/db";
 import { EmbeddingModelId } from "@stargrep/db/embedding";
 import * as GitHub from "@stargrep/github/github";
-import { BudgetShare, Login, type RepoId } from "@stargrep/github/schemas";
+import { BudgetShare, Login } from "@stargrep/github/schemas";
 import * as TokenGate from "@stargrep/github/token-gate";
-import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Argument from "effect/cli/Argument";
 import * as Command from "effect/cli/Command";
 import * as Flag from "effect/cli/Flag";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
-import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as EnrichQueue from "../src/stars/enrich-queue.ts";
+import * as Tracer from "effect/Tracer";
+import * as EnrichQueue from "../src/repos/enrich-queue.ts";
 import * as StarSync from "../src/stars/star-sync.ts";
 
-const counts = { requests: 0, writes: 0 };
-const marks: { syncStarted?: number; firstFetched?: number; firstPage?: number } = {};
-const enqueued: Array<RepoId> = [];
+const decodeModelId = Schema.decodeEffect(EmbeddingModelId);
+
+const writeSpans = [
+  "Db.accounts.upsert",
+  "Db.accounts.recordStarSync",
+  "Db.repos.upsertRefs",
+  "Db.stars.upsert",
+  "Db.stars.applySnapshot",
+];
+
+const spans: Array<Tracer.NativeSpan> = [];
+const tracer = Tracer.make({
+  span(options) {
+    const span = new Tracer.NativeSpan(options);
+    spans.push(span);
+    return span;
+  },
+});
+
+const requests = { count: 0 };
+const queue = EnrichQueue.layerMemory();
+
+const millis = (nanos: bigint) => Number(nanos / 1_000_000n);
+
+const ended = (name: string) =>
+  spans.flatMap((span) =>
+    span.name === name && span.status._tag === "Ended" && Exit.isSuccess(span.status.exit) ? [span.status] : [],
+  );
+
+const sinceSync = (name: string) => {
+  const [start] = ended("StarSync.sync");
+  const [first] = ended(name);
+  return start === undefined || first === undefined ? "none" : `${millis(first.endTime - start.startTime)}ms`;
+};
+
+const layerDb = Layer.unwrap(
+  Effect.gen(function* () {
+    return Db.layerNodePostgres({
+      connectionString: yield* Config.Redacted("DATABASE_URL"),
+      embeddingModel: yield* decodeModelId(embeddingModel.id),
+    });
+  }),
+);
 
 const layerCountedFetch = Layer.effect(
   HttpClient.HttpClient,
   Effect.map(HttpClient.HttpClient, (client) =>
-    HttpClient.transformResponse(client, (response) =>
-      Effect.sync(() => counts.requests++).pipe(
-        Effect.andThen(response),
-        Effect.tap((result) =>
-          marks.firstFetched === undefined && result.request.url.endsWith("/starred")
-            ? Effect.map(Clock.currentTimeMillis, (now) => {
-                marks.firstFetched = now;
-              })
-            : Effect.void,
-        ),
-      ),
-    ),
+    HttpClient.tapRequest(client, () => Effect.sync(() => requests.count++)),
   ),
 ).pipe(Layer.provide(FetchHttpClient.layer));
 
-const counted = <A, E>(effect: Effect.Effect<A, E>) => Effect.tap(effect, () => Effect.sync(() => counts.writes++));
-
-const layerCountedDb = Layer.effect(
-  Db.Db,
-  Effect.map(Db.Db, (db) =>
-    Db.Db.of({
-      ...db,
-      accounts: {
-        ...db.accounts,
-        upsert: (facts) => counted(db.accounts.upsert(facts)),
-        recordStarSync: (sync) => counted(db.accounts.recordStarSync(sync)),
-      },
-      repos: { ...db.repos, upsertRefs: (refs) => counted(db.repos.upsertRefs(refs)) },
-      stars: {
-        ...db.stars,
-        upsert: (input) =>
-          (input.stars.length === 0 ? db.stars.upsert(input) : counted(db.stars.upsert(input))).pipe(
-            Effect.tap(() =>
-              marks.firstPage === undefined
-                ? Effect.map(Clock.currentTimeMillis, (now) => {
-                    marks.firstPage = now;
-                  })
-                : Effect.void,
-            ),
-          ),
-        applySnapshot: (snapshot) => counted(db.stars.applySnapshot(snapshot)),
-      },
-    }),
-  ),
-);
-
-const layerDb = Layer.unwrap(
-  Effect.gen(function* () {
-    const connectionString = yield* Config.Redacted("DATABASE_URL").pipe(
-      Config.withDefault(Redacted.make("postgres://stargrep:stargrep@127.0.0.1:54317/stargrep")),
-    );
-    return layerCountedDb.pipe(
-      Layer.provideMerge(
-        Db.layerNodePostgres({
-          connectionString,
-          embeddingModel: yield* Schema.decodeEffect(EmbeddingModelId)(embeddingModel.id),
-        }),
-      ),
-    );
-  }),
-);
-
 const layerGitHub = Layer.unwrap(
   Effect.gen(function* () {
-    const token = yield* Config.Redacted("GITHUB_TOKEN");
     return GitHub.layer.pipe(
-      Layer.provide(TokenGate.layerMemory({ token, share: BudgetShare.make(0.5) })),
+      Layer.provide(
+        TokenGate.layerMemory({ token: yield* Config.Redacted("GITHUB_TOKEN"), share: BudgetShare.make(0.5) }),
+      ),
       Layer.provide(layerCountedFetch),
       Layer.provide(KeyValueStore.layerMemory),
     );
@@ -113,41 +96,29 @@ const sync = Command.make(
   },
   Effect.fn("sync")(
     function* (input) {
-      const started = yield* Clock.currentTimeMillis;
-      const github = yield* GitHub.GitHub;
-      const db = yield* Db.Db;
-      const account = yield* github.account(input.login);
-      yield* db.accounts.upsert({ ...account, ownedRepoStars: null });
-      marks.syncStarted = yield* Clock.currentTimeMillis;
-      const report = yield* (yield* StarSync.StarSync).sync({
-        accountId: account.id,
-        mode: input.full ? "full" : "incremental",
-      });
-      const finished = yield* Clock.currentTimeMillis;
-      yield* Console.log(`account: ${account.login} (${account.id})`);
+      const report = yield* (yield* StarSync.StarSync)
+        .syncLogin({ login: input.login, mode: input.full ? "full" : "incremental" })
+        .pipe(Effect.withTracer(tracer));
+      const [syncSpan] = ended("StarSync.sync");
+      yield* Console.log(`account: ${input.login}`);
       yield* Console.log(`added: ${report.added}`);
       yield* Console.log(`unchanged: ${report.unchanged}`);
       yield* Console.log(`unstarred: ${report.unstarred}`);
       yield* Console.log(`listed: ${report.listed}`);
-      yield* Console.log(`enqueued: ${report.enqueued} (${new Set(enqueued).size} distinct repos)`);
-      yield* Console.log(`github requests: ${counts.requests}`);
-      yield* Console.log(`db writes: ${counts.writes}`);
       yield* Console.log(
-        `first page fetched: ${marks.firstFetched === undefined ? "none" : `${marks.firstFetched - marks.syncStarted}ms after the sync started`}`,
+        `enqueued: ${report.enqueued} (${new Set(queue.sent.map((message) => message.repoId)).size} distinct repos)`,
       );
+      yield* Console.log(`github requests: ${requests.count}`);
+      yield* Console.log(`db writes: ${writeSpans.reduce((total, name) => total + ended(name).length, 0)}`);
+      yield* Console.log(`first page fetched: ${sinceSync("GitHub.starPage")} after the sync started`);
+      yield* Console.log(`first page written: ${sinceSync("Db.stars.upsert")} after the sync started`);
       yield* Console.log(
-        `first page written: ${marks.firstPage === undefined ? "none" : `${marks.firstPage - marks.syncStarted}ms after the sync started`}`,
+        `sync: ${syncSpan === undefined ? "none" : `${millis(syncSpan.endTime - syncSpan.startTime)}ms`}`,
       );
-      yield* Console.log(`sync: ${finished - marks.syncStarted}ms`);
-      yield* Console.log(`wall: ${finished - started}ms`);
     },
     Effect.tapError((error) => Console.error(`failed: ${error._tag}: ${error.message}`)),
     Effect.provide(
-      StarSync.layer.pipe(
-        Layer.provideMerge(layerDb),
-        Layer.provideMerge(layerGitHub),
-        Layer.provide(EnrichQueue.layerMemory(enqueued)),
-      ),
+      StarSync.layer.pipe(Layer.provideMerge(layerDb), Layer.provideMerge(layerGitHub), Layer.provide(queue.layer)),
     ),
   ),
 );
