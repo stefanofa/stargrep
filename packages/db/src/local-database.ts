@@ -40,11 +40,10 @@ export const createMigratedDatabase = (adminUrl: string, name: string) =>
 // Drops the database even when connections remain, then fails, because each one is a leak.
 export const dropDatabase = (adminUrl: string, name: string) =>
   withClient(adminUrl, async (client) => {
-    const { rows } = await client.query<{ open: number }>(
-      "select count(*)::int as open from pg_stat_activity where datname = $1",
-      [name],
-    );
+    const { rows } = await client.query("select count(*)::int as open from pg_stat_activity where datname = $1", [
+      name,
+    ]);
+    const [{ open }] = rows as [{ open: number }];
     await client.query(`drop database if exists ${client.escapeIdentifier(name)} with (force)`);
-    const open = rows[0]?.open ?? 0;
     if (open > 0) throw new Error(`${open} connections were still open on ${name} when it was dropped`);
   });

@@ -3,12 +3,16 @@ import { type RepoId, RepoNodeId } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
+import * as TestClock from "effect/testing/TestClock";
 import * as Db from "../src/db.ts";
 import type { Embedding, EmbeddingModelId } from "../src/embedding.ts";
+import * as NodePostgres from "../src/node-postgres.ts";
+import * as Postgres from "../src/postgres.ts";
 import * as TestDatabase from "./database.ts";
 import {
   account,
@@ -672,14 +676,69 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgr
       const error = yield* withTransaction(
         Effect.gen(function* () {
           yield* db.accounts.get(accountId(9501));
-          yield* database.query(`select pg_terminate_backend(pid) ${held}`);
-          yield* database
-            .query(`select pid ${held}`)
-            .pipe(Effect.repeat({ until: (rows) => rows.length === 0, times: 5000 }));
+          // With a timeout, pg_terminate_backend returns once the backend has exited.
+          expect(yield* database.query(`select pg_terminate_backend(pid, 5000) as terminated ${held}`)).toEqual([
+            { terminated: true },
+          ]);
           return yield* db.accounts.get(accountId(9501));
         }),
       ).pipe(Effect.flip);
       expect(error).toMatchObject({ _tag: "DbQueryFailed", operation: "accounts.get", reason: "transport" });
+    }),
+  );
+
+  test.effect("returns a pool slot whose connect resolves after the transaction timed out", () =>
+    Effect.gen(function* () {
+      const database = yield* TestDatabase.TestDatabase;
+      const pool = yield* NodePostgres.acquirePool(Option.getOrThrow(database.url));
+      const size = pool.options.max;
+      const connecting = yield* Deferred.make<void>();
+      const nodePostgres = NodePostgres.driver(pool);
+      // A leaked client would hold the pool's release open and hide the assertion below, so return
+      // any client still out before the pool ends.
+      const out = new Set<Postgres.TransactionClient>();
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          for (const client of out) client.release(true);
+        }),
+      );
+      const { withTransaction } = Postgres.make({
+        ...nodePostgres,
+        connect: async () => {
+          Deferred.doneUnsafe(connecting, Exit.void);
+          const client = await nodePostgres.connect();
+          const tracked: Postgres.TransactionClient = {
+            ...client,
+            release: (broken) => {
+              out.delete(tracked);
+              client.release(broken);
+            },
+          };
+          out.add(tracked);
+          return tracked;
+        },
+      });
+      const held = yield* Effect.promise(() => Promise.all(Array.from({ length: size }, () => pool.connect())));
+
+      const transaction = yield* Effect.forkChild(withTransaction(Effect.void).pipe(Effect.flip));
+      yield* Deferred.await(connecting);
+      yield* TestClock.adjust("10 seconds");
+      expect(yield* Fiber.join(transaction)).toMatchObject({
+        _tag: "DbQueryFailed",
+        operation: "transaction",
+        reason: "timeout",
+      });
+      expect(pool.waitingCount).toBe(1);
+
+      for (const client of held) client.release();
+      // The pool hands a released client to the abandoned connect, and its abort handler returns it.
+      // Both steps run in callbacks and microtasks, which drain before the next setImmediate.
+      yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
+      expect({ total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount }).toEqual({
+        total: size,
+        idle: size,
+        waiting: 0,
+      });
     }),
   );
 });

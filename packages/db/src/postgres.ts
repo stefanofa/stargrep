@@ -69,7 +69,7 @@ export class Postgres extends Context.Service<
 >()("@stargrep/db/postgres") {}
 
 export const make = (driver: Driver) => {
-  const attempt = <A>(operation: Operation, evaluate: () => PromiseLike<A>) =>
+  const attempt = <A>(operation: Operation, evaluate: (signal: AbortSignal) => PromiseLike<A>) =>
     Effect.promise(evaluate).pipe(
       Effect.catchDefect((defect) =>
         Option.match(classify(driver, operation, defect), {
@@ -94,7 +94,20 @@ export const make = (driver: Driver) => {
     (effect, operation) => Effect.withSpan(effect, `Db.${operation}`),
   );
 
-  const begin = attempt("transaction", driver.connect).pipe(
+  // A driver cannot cancel a pending connect, so a client that arrives after a timeout or an
+  // interrupt goes straight back to the pool.
+  const connect = (signal: AbortSignal) => {
+    const client = Promise.resolve(driver.connect());
+    const returnLate = () =>
+      void client.then(
+        (late) => late.release(false),
+        () => undefined,
+      );
+    signal.addEventListener("abort", returnLate, { once: true });
+    return client;
+  };
+
+  const begin = attempt("transaction", connect).pipe(
     Effect.tap((client) =>
       attempt("transaction", () => client.query("begin")).pipe(
         Effect.onError(() => Effect.sync(() => client.release(true))),

@@ -1,9 +1,7 @@
-import { drizzle } from "drizzle-orm/node-postgres";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import pg from "pg";
 import type { EmbeddingModelId } from "./embedding.ts";
 import type { DbQueryFailed } from "./errors.ts";
 import * as NodePostgres from "./node-postgres.ts";
@@ -84,27 +82,7 @@ const nodePostgres = (connectionString: Redacted.Redacted<string>) =>
   Layer.effect(
     Postgres.Postgres,
     NodePostgres.acquirePool(Redacted.value(connectionString)).pipe(
-      Effect.map((pool) =>
-        Postgres.make({
-          database: drizzle({ client: pool }),
-          connect: async () => {
-            const client = await pool.connect();
-            // The pool listens for errors only on idle clients, and a transaction holds this one between statements.
-            client.on("error", NodePostgres.ignoreError);
-            return {
-              database: drizzle({ client }),
-              query: (statement) => client.query(statement),
-              release: (broken) => {
-                client.off("error", NodePostgres.ignoreError);
-                client.release(broken);
-              },
-            };
-          },
-          isDatabaseError: (error) => error instanceof pg.DatabaseError,
-          isConnectionError: NodePostgres.isConnectionError,
-          exclusive: (effect) => effect,
-        }),
-      ),
+      Effect.map((pool) => Postgres.make(NodePostgres.driver(pool))),
     ),
   );
 
