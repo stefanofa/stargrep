@@ -106,11 +106,7 @@ const fullName = (facts: RepoFacts) => `${facts.owner}/${facts.name}`;
 
 const answerAt = <A>(answers: ReadonlyArray<A>, index: number) => Effect.orDie(Effect.fromNullishOr(answers[index]));
 
-const guarded = <A>(
-  id: RepoId,
-  save: Effect.Effect<boolean, DbQueryFailed | RepoNotFound | EmbeddingModelMismatch>,
-  saved: A,
-) =>
+const guarded = <A, E>(id: RepoId, save: Effect.Effect<boolean, E | RepoNotFound>, saved: A) =>
   save.pipe(
     Effect.map((applied): Step<A> => (applied ? Result.succeed(saved) : Result.fail(Enrichment.Stale({ id })))),
     Effect.catchTags({ RepoNotFound: () => Effect.succeed(Result.fail(Enrichment.NotFound({ id }))) }),
@@ -154,7 +150,8 @@ const make = Effect.gen(function* () {
   ): Effect.fn.Return<Step<Job>, DbQueryFailed | DbRowInvalid> {
     const id = row.id;
     if (facts === undefined) return Result.fail(Enrichment.Gone({ id }));
-    if (!(yield* db.repos.saveFacts(storedFacts(facts)))) return Result.fail(Enrichment.Unchanged({ id }));
+    const { pending } = yield* db.repos.saveFacts(storedFacts(facts));
+    if (!pending) return Result.fail(Enrichment.Unchanged({ id }));
     const work = yield* Option.match(summaryOf(row, readmeOidOf(facts)), {
       onSome: (summary) => Effect.succeed(Result.succeed<Work>({ _tag: "Embed", summary })),
       onNone: () => Effect.result(summarizeWork(facts)),
@@ -203,15 +200,12 @@ const make = Effect.gen(function* () {
         ? []
         : yield* summarizer(asked).pipe(Effect.provideService(TextGeneration.TextGeneration, textGeneration));
     let next = 0;
-    return yield* Effect.forEach(
-      steps,
-      (step): Effect.Effect<Step<Embeddable>, DbQueryFailed | EmbeddingModelMismatch> => {
-        if (Result.isFailure(step)) return Effect.succeed(Result.fail(step.failure));
-        const job = step.success;
-        if (job.work._tag === "Embed") return Effect.succeed(Result.succeed({ job, summary: job.work.summary }));
-        return Effect.flatMap(answerAt(answers, next++), (answer) => keepSummary(job, answer));
-      },
-    );
+    return yield* Effect.forEach(steps, (step): Effect.Effect<Step<Embeddable>, DbQueryFailed> => {
+      if (Result.isFailure(step)) return Effect.succeed(Result.fail(step.failure));
+      const job = step.success;
+      if (job.work._tag === "Embed") return Effect.succeed(Result.succeed({ job, summary: job.work.summary }));
+      return Effect.flatMap(answerAt(answers, next++), (answer) => keepSummary(job, answer));
+    });
   });
 
   const keepEmbedding = (item: Embeddable, vector: Result.Result<Embedding, AiError>) => {

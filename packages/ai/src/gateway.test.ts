@@ -49,11 +49,19 @@ const textLayer = (doGenerate: (options: CallOptions) => PromiseLike<GenerateRes
     ),
   );
 
-// Each attempt rejects a promise before its backoff sleep starts, so one adjustment can land too early.
-// Stepping the clock until the fiber finishes waits out every retry.
+const settleSteps = 120;
+
+// Each attempt settles a promise before its backoff sleep starts, and TestClock.adjust never yields to the
+// event loop. So each step yields first, letting the fake's promises settle, then moves the clock.
 const settle = <A, E>(fiber: Fiber.Fiber<A, E>) =>
   Effect.gen(function* () {
-    while (fiber.pollUnsafe() === undefined) yield* TestClock.adjust("1 second");
+    for (let step = 0; step < settleSteps && fiber.pollUnsafe() === undefined; step++) {
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("1 second");
+    }
+    if (fiber.pollUnsafe() === undefined) {
+      return yield* Effect.die(`the retried call was still running after ${settleSteps} virtual seconds`);
+    }
     return yield* Fiber.join(fiber);
   });
 
@@ -223,6 +231,7 @@ const fakeBatch = (options: {
   const starts: Array<StartOptions> = [];
   const direct = { calls: 0 };
   const calls: Record<BatchCall, number> = { start: 0, status: 0, results: 0 };
+  const firstStart = Promise.withResolvers<void>();
   const attempt = (call: BatchCall) => {
     calls[call]++;
     if (calls[call] === 1 && options.throwOnce?.includes(call)) {
@@ -241,6 +250,7 @@ const fakeBatch = (options: {
     provider: "gateway.batch",
     supportedUrls: {},
     doStartBatch: async (start) => {
+      firstStart.resolve();
       attempt("start");
       starts.push(start);
       return { batchId: `job_${starts.length}`, status: "pending", warnings: [] };
@@ -269,7 +279,7 @@ const fakeBatch = (options: {
       ),
     ),
   );
-  return { starts, direct, calls, layer };
+  return { starts, direct, calls, layer, firstStart: firstStart.promise };
 };
 
 const batchRepos = [repo, { ...repo, fullName: "junegunn/fzf" }, { ...repo, fullName: "sharkdp/bat" }];
@@ -340,6 +350,8 @@ describe("gateway batch", () => {
     });
     return Effect.gen(function* () {
       const fiber = yield* Effect.forkChild(Summarize.summarizeBatch([repo]));
+      // The idempotency key's SHA-256 runs on real time, so the clock steps start once the job is first sent.
+      yield* Effect.promise(() => fake.firstStart);
       expect(yield* settle(fiber)).toEqual([Result.succeed(validSummary)]);
       expect(fake.calls).toEqual({ start: 2, status: 2, results: 2 });
       expect(fake.starts).toHaveLength(1);

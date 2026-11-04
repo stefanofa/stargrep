@@ -75,7 +75,7 @@ export interface Queries {
   readonly pendingEnrichment: (
     ids: ReadonlyArray<RepoId>,
   ) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
-  readonly saveFacts: (facts: RepoFacts) => Effect.Effect<boolean, DbQueryFailed | DbRowInvalid>;
+  readonly saveFacts: (facts: RepoFacts) => Effect.Effect<{ readonly pending: boolean }, DbQueryFailed | DbRowInvalid>;
   readonly saveSummary: (summary: RepoSummary) => Effect.Effect<boolean, DbQueryFailed | RepoNotFound>;
   readonly saveEmbedding: (
     input: RepoEmbedding,
@@ -161,7 +161,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           );
         }),
         Effect.flatMap(decodePending("repos.saveFacts")),
-        Effect.map((rows) => rows.some((row) => row.pending)),
+        Effect.map((rows) => ({ pending: rows.some((row) => row.pending) })),
       ),
     saveSummary: (summary) =>
       encodeSummary(summary).pipe(

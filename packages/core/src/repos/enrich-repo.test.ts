@@ -211,6 +211,21 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
     }),
   );
 
+  it.effect("skips a repo when GitHub reports the README its summary came from, whatever oid was stored", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      remotes.set(6, { description: "Backup tool", readme: { oid: oid("c"), text: "# Backup" } });
+      yield* enrich(6);
+      yield* db.repos.saveFacts({ ...(yield* get(6)), readmeOid: oid("d") });
+      expect(yield* db.repos.pendingEnrichment([id(6)])).toEqual([id(6)]);
+
+      const [readmes, calls] = [readmeRequests(), prompts.length];
+      expect(yield* enrich(6)).toEqual({ _tag: "Unchanged", id: id(6) });
+      expect([readmeRequests(), prompts.length]).toEqual([readmes, calls]);
+      expect(yield* get(6)).toMatchObject({ readmeOid: oid("c"), summaryReadmeOid: oid("c"), embeddingModel });
+    }),
+  );
+
   it.effect("summarizes a repo with no README from its description", () =>
     Effect.gen(function* () {
       remotes.set(4, { description: "Dotfiles for macOS" });

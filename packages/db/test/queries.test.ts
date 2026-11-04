@@ -468,6 +468,9 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       expect(rows.map((row) => row.id).toSorted()).toEqual([fresh, done, unembedded, outdated]);
       for (const row of rows) expect(row.pending).toBe(pending.has(row.id));
       expect([...pending].toSorted()).toEqual([fresh, unembedded, outdated]);
+
+      const stored = (id: RepoId) => (id === outdated ? { ...facts(id), readmeOid: readme("e") } : facts(id));
+      for (const row of rows) expect((yield* db.repos.saveFacts(stored(row.id))).pending).toBe(pending.has(row.id));
     }),
   );
 
