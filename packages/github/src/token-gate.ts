@@ -33,7 +33,7 @@ const rateLimitHeaders = (headers: Headers.Headers): RateLimitHeaders => ({
   resetAt: Option.map(decodeInt(headers["x-ratelimit-reset"]), (seconds) => seconds * 1000),
 });
 
-export const hasBody = (status: number) => (status >= 200 && status < 300) || status === 304;
+export const hasBody = (status: number) => status >= 200 && status < 300;
 
 export interface Reply {
   readonly status: number;

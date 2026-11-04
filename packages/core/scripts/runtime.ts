@@ -71,17 +71,15 @@ const layerCountedFetch = Layer.effect(
   ),
 ).pipe(Layer.provide(FetchHttpClient.layer));
 
-export const layerGitHub = <E, R>(cache: Layer.Layer<KeyValueStore.KeyValueStore, E, R>) =>
-  Layer.unwrap(
-    Effect.gen(function* () {
-      const token = yield* Config.Redacted("GITHUB_TOKEN");
-      return GitHub.layer.pipe(
-        Layer.provideMerge(TokenGate.layerMemory({ token, share: BudgetShare.make(0.5) })),
-        Layer.provide(layerCountedFetch),
-        Layer.provide(cache),
-      );
-    }),
-  );
+export const layerGitHub = Layer.unwrap(
+  Effect.gen(function* () {
+    const token = yield* Config.Redacted("GITHUB_TOKEN");
+    return GitHub.layer.pipe(
+      Layer.provideMerge(TokenGate.layerMemory({ token, share: BudgetShare.make(0.5) })),
+      Layer.provide(layerCountedFetch),
+    );
+  }),
+);
 
 const decodeModelId = Schema.decodeEffect(EmbeddingModelId);
 
@@ -98,7 +96,7 @@ export const layerDb = (embeddingModel: string) =>
 export const layerEnrich = EnrichRepo.layer.pipe(
   Layer.provideMerge(Layer.unwrap(Effect.map(Embeddings.Embeddings, (embeddings) => layerDb(embeddings.model.id)))),
   Layer.provideMerge(Local.layer),
-  Layer.provideMerge(layerGitHub(KeyValueStore.layerFileSystem(".cache/github"))),
+  Layer.provideMerge(layerGitHub),
   Layer.provideMerge(BlobStore.layerKeyValueStore.pipe(Layer.provide(KeyValueStore.layerFileSystem(".cache/blobs")))),
 );
 

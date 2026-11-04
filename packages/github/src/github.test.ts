@@ -411,24 +411,15 @@ describe("repoFacts", () => {
 });
 
 describe("readme", () => {
-  effect("serves the second fetch from the ETag", () => {
+  effect("fetches the blob by object id as raw text, with no conditional header", () => {
     const oid = "a".repeat(40) as ObjectId;
-    const fake = Fake.layer((sent) =>
-      sent.headers["if-none-match"] === `"blob"`
-        ? { status: 304, headers: Fake.rateLimitHeaders(4000) }
-        : { body: "# Hello", headers: { ...Fake.rateLimitHeaders(3999), etag: `"blob"` } },
-    );
+    const fake = Fake.layer(() => ({ body: "# Hello", headers: { ...Fake.rateLimitHeaders(3999), etag: `"blob"` } }));
     return Effect.gen(function* () {
       const github = yield* GitHub.GitHub;
-      const input = { owner: "owner" as Login, name: "repo" as RepoName, oid };
-      expect(yield* github.readme(input)).toBe("# Hello");
-      expect(yield* github.readme(input)).toBe("# Hello");
-      expect(fake.sent.map((sent) => sent.url.pathname)).toEqual([
-        `/repos/owner/repo/git/blobs/${oid}`,
-        `/repos/owner/repo/git/blobs/${oid}`,
-      ]);
+      expect(yield* github.readme({ owner: "owner" as Login, name: "repo" as RepoName, oid })).toBe("# Hello");
+      expect(fake.sent.map((sent) => sent.url.pathname)).toEqual([`/repos/owner/repo/git/blobs/${oid}`]);
       expect(fake.sent[0]?.headers.accept).toBe("application/vnd.github.raw+json");
-      expect(fake.sent[1]?.headers["if-none-match"]).toBe(`"blob"`);
+      expect(fake.sent[0]?.headers["if-none-match"]).toBeUndefined();
     }).pipe(Effect.provide(fake.layer));
   });
 });

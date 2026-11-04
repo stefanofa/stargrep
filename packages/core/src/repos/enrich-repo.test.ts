@@ -71,7 +71,7 @@ const github = GitHubFake.layer((sent) => {
   const remote = [...remotes.values()].find((entry) => entry.readme?.oid === blob);
   return remote?.readme === undefined || remote.readme.text === missingBlob
     ? { status: 404 }
-    : { body: remote.readme.text, headers: { etag: `"${blob}"` } };
+    : { body: remote.readme.text };
 });
 
 const readmeRequests = () => github.sent.filter((sent) => sent.url.pathname.includes("/git/blobs/")).length;

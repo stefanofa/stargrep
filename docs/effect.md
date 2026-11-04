@@ -688,7 +688,7 @@ export const rpcRequestDuration = Metric.timer("t3_rpc_request_duration", {
 });
 ```
 
-**For Stargrep.** Adopt, with a `stargrep_` prefix. Useful early ones are GitHub requests by source and status, `304` hits, queue step outcomes, and model tokens.
+**For Stargrep.** Adopt, with a `stargrep_` prefix. Useful early ones are GitHub requests by source and status, queue step outcomes, and model tokens.
 
 ### Rule: logs are structured, with bounded fields
 

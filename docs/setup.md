@@ -97,7 +97,7 @@ To time the search queries, run `bun run --cwd packages/db bench`. It seeds 100,
 
 ## Enrich repos locally
 
-`bun run --cwd packages/core enrich` runs the enrichment pipeline on your machine against a migrated database. It needs a GitHub token, the AI Gateway key, and `STARGREP_MODE=local`. READMEs go to `packages/core/.cache/blobs`, and GitHub ETags to `packages/core/.cache/github`.
+`bun run --cwd packages/core enrich` runs the enrichment pipeline on your machine against a migrated database. It needs a GitHub token, the AI Gateway key, and `STARGREP_MODE=local`. READMEs go to `packages/core/.cache/blobs`.
 
 ```sh
 export DATABASE_URL=postgres://stargrep:stargrep@127.0.0.1:54317/stargrep

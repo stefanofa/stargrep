@@ -5,7 +5,6 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Layer from "effect/Layer";
-import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as Redacted from "effect/Redacted";
 import * as GitHub from "./github.ts";
 import type { BudgetShare } from "./schemas.ts";
@@ -128,7 +127,6 @@ export const layer = (handler: Handler, share = 1 as BudgetShare) => {
   const fake = make(handler);
   const layer = GitHub.layer.pipe(
     Layer.provideMerge(TokenGate.layerMemory({ token: Redacted.make(token), share })),
-    Layer.provideMerge(KeyValueStore.layerMemory),
     Layer.provide(fake.client),
   );
   return { sent: fake.sent, reads: fake.reads, layer };

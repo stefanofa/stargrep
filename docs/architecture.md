@@ -107,7 +107,7 @@ GitHub limits each user token to 5,000 requests per hour. That budget is shared 
 
 1. **Event archives.** Public star history with account, repo, and time, loaded without API calls. "Event sources" below explains which archive covers which period.
 2. **Incremental sync.** A sync reads the star list newest first and stops at the first star it already has, so an unchanged account costs one request. ETags do not help here. Each star list page embeds live repo stats such as `pushed_at`, so its ETag changes when any of its 100 repos changes, even when no star changed.
-3. **README object IDs.** GraphQL returns the README's object ID with the repo. Stargrep fetches and summarizes a README again only when that ID changes. A README fetch by object ID sends its stored ETag, and a `304` response does not count against the rate limit.
+3. **README object IDs.** GraphQL returns the README's object ID with the repo. Stargrep fetches and summarizes a README again only when that ID changes. An object ID names fixed content, so R2 keeps each README under its ID, and a README already in R2 costs no request.
 4. **The user's own token.** A signed-in user's sync uses their token, capped at a share of their remaining budget read from `x-ratelimit-remaining`.
 5. **The app's credentials.** Signed-out lookups of accounts that GH Archive does not cover yet.
 
@@ -212,7 +212,7 @@ The web app loads the signed-in user's whole library into a TanStack DB collecti
 | Workers cache | Public profile pages, discovery pages, and OG images, with stale-while-revalidate |
 | KV | Query plans and query embeddings, through the `SearchCache` port |
 | Postgres | Summaries and embeddings, shared across accounts |
-| GitHub | README ETags, so an unchanged README returns `304` |
+| R2 | README text by object ID, so GitHub serves each README once |
 
 ## Everything as code
 

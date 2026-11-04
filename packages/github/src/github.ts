@@ -6,7 +6,6 @@ import * as Effect from "effect/Effect";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -41,8 +40,6 @@ import * as TokenGate from "./token-gate.ts";
 
 const MAX_RETRY_WAIT = Duration.minutes(1);
 const MAX_RETRIES = 3;
-
-const ReadmeEntry = Schema.Struct({ etag: Schema.String, value: Schema.String });
 
 const graphQLErrorType = /^[A-Z_]{1,40}$/;
 
@@ -144,10 +141,6 @@ const graphQLFailure = (
 
 const make = Effect.gen(function* () {
   const gate = yield* TokenGate.TokenGate;
-  const readmes = KeyValueStore.toSchemaStore(
-    KeyValueStore.prefix(yield* KeyValueStore.KeyValueStore, "github/readme/"),
-    ReadmeEntry,
-  );
 
   const exchange = <A>(
     operation: Operation,
@@ -240,27 +233,7 @@ const make = Effect.gen(function* () {
     readonly name: RepoName;
     readonly oid: ObjectId;
   }) {
-    const request = Readme.request(input);
-    const cached = yield* readmes
-      .get(request.url)
-      .pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("GitHub ETag cache read failed", { error: error.message }).pipe(Effect.as(Option.none())),
-        ),
-      );
-    const [body, reply] = yield* exchange(
-      "readme",
-      Option.isSome(cached) ? HttpClientRequest.setHeader(request, "if-none-match", cached.value.etag) : request,
-      (body, reply) => Effect.succeed([body, reply] as const),
-    );
-    if (reply.status === 304 && Option.isSome(cached)) return cached.value.value;
-    const etag = reply.headers.etag;
-    if (etag !== undefined) {
-      yield* readmes
-        .set(request.url, { etag, value: body })
-        .pipe(Effect.catch((error) => Effect.logWarning("GitHub ETag cache write failed", { error: error.message })));
-    }
-    return body;
+    return yield* exchange("readme", Readme.request(input), (body) => Effect.succeed(body));
   });
 
   return GitHub.of({ account, starPages, stars, starCount, repoFacts, readme });
