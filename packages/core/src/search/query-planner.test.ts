@@ -2,12 +2,14 @@ import { expect } from "bun:test";
 import * as Fake from "@stargrep/ai/fake";
 import { noRetry } from "@stargrep/ai/port";
 import * as TextGeneration from "@stargrep/ai/text-generation";
+import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
 import * as Digest from "effect/crypto/Digest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Metric from "effect/Metric";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as PlannerPrompt from "./planner-prompt.ts";
@@ -131,7 +133,7 @@ it.effect("plans a dated query again on a later day and keeps undated plans", ()
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("searches the query as typed when the planner stalls past its timeout", () => {
+it.effect("searches the query as typed when the planner stalls past its timeout, and marks the fallback", () => {
   const stalled = Layer.succeed(
     TextGeneration.TextGeneration,
     TextGeneration.make({
@@ -143,12 +145,23 @@ it.effect("searches the query as typed when the planner stalls past its timeout"
     }),
   );
   const layer = QueryPlanner.layer.pipe(Layer.provide(stalled), Layer.provide(SearchCache.layerMemory));
+  const collected = collectSpans();
+  const timeouts = Metric.withAttributes(QueryPlanner.plansMade, { source: "fallback", failure: "AiTimeout" });
   return Effect.gen(function* () {
+    const before = (yield* Metric.value(timeouts)).count;
     const query = "go library for parsing yaml";
     const fiber = yield* Effect.forkChild(plan(query));
     yield* TestClock.adjust("4 seconds");
     expect(yield* Fiber.join(fiber)).toEqual({ plan: QueryPlan.asTyped(query, "sentence"), source: "fallback" });
-  }).pipe(Effect.provide(layer));
+    expect(collected.named("QueryPlanner.plan")?.attributes).toEqual(
+      new Map([
+        ["search.plan_source", "fallback"],
+        ["search.planner_failure", "AiTimeout"],
+      ]),
+    );
+    expect((yield* Metric.value(timeouts)).count).toBe(before + 1);
+    expect(collected.text()).not.toContain("yaml");
+  }).pipe(Effect.provide(layer), Effect.withTracer(collected.tracer));
 });
 
 it.effect("still plans when the cache fails", () => {

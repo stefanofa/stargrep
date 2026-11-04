@@ -3,6 +3,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as PlannerPrompt from "./planner-prompt.ts";
@@ -23,6 +24,24 @@ export class QueryPlanner extends Context.Service<
   }
 >()("@stargrep/core/search/query-planner/QueryPlanner") {}
 
+export const plansMade = Metric.counter("stargrep_search_plans", {
+  description: "Query plans, by source, and by the planner failure that made search fall back to the typed text.",
+});
+
+const recordPlan = (planned: Planned, failure?: string) =>
+  Effect.annotateCurrentSpan({
+    "search.plan_source": planned.source,
+    ...(failure === undefined ? {} : { "search.planner_failure": failure }),
+  }).pipe(
+    Effect.andThen(
+      Metric.update(
+        Metric.withAttributes(plansMade, { source: planned.source, ...(failure === undefined ? {} : { failure }) }),
+        1,
+      ),
+    ),
+    Effect.as(planned),
+  );
+
 const CachedPlan = Schema.Struct({ plannedOn: Schema.String, output: QueryPlan.PlannerOutput });
 
 const hasDates = ({ filters }: QueryPlan.PlannerOutput) =>
@@ -40,7 +59,7 @@ const make = Effect.gen(function* () {
   const plan = Effect.fn("QueryPlanner.plan")(function* (typed: string) {
     const query = QueryPlan.normalize(typed);
     const kind = QueryPlan.queryKind(query);
-    if (kind !== "sentence") return { plan: QueryPlan.asTyped(query, kind), source: "keyword" } satisfies Planned;
+    if (kind !== "sentence") return yield* recordPlan({ plan: QueryPlan.asTyped(query, kind), source: "keyword" });
 
     const now = yield* DateTime.now;
     const today = DateTime.formatIsoDate(now);
@@ -50,7 +69,7 @@ const make = Effect.gen(function* () {
       (hit) => hit.plannedOn === today || !hasDates(hit.output),
     );
     if (Option.isSome(cached)) {
-      return { plan: QueryPlan.fromPlannerOutput(query, cached.value.output), source: "cache" } satisfies Planned;
+      return yield* recordPlan({ plan: QueryPlan.fromPlannerOutput(query, cached.value.output), source: "cache" });
     }
 
     return yield* textGeneration
@@ -61,10 +80,10 @@ const make = Effect.gen(function* () {
       })
       .pipe(
         Effect.tap((output) => cache.store(plans, key, { plannedOn: today, output })),
-        Effect.map((output): Planned => ({ plan: QueryPlan.fromPlannerOutput(query, output), source: "model" })),
+        Effect.flatMap((output) => recordPlan({ plan: QueryPlan.fromPlannerOutput(query, output), source: "model" })),
         Effect.catch((error) =>
           Effect.logWarning("Query planner failed, searching the query as typed", { error: error._tag }).pipe(
-            Effect.as<Planned>({ plan: QueryPlan.asTyped(query, kind), source: "fallback" }),
+            Effect.andThen(recordPlan({ plan: QueryPlan.asTyped(query, kind), source: "fallback" }, error._tag)),
           ),
         ),
       );
