@@ -15,7 +15,7 @@ import * as Stars from "./queries/stars.ts";
 import * as SyncRequests from "./queries/sync-requests.ts";
 import * as Usage from "./queries/usage.ts";
 
-export type { Account, AccountFacts, OwnedRepoStars, StarSync } from "./queries/accounts.ts";
+export type { Account, AccountClaim, AccountFacts, OwnedRepoStars, StarSync } from "./queries/accounts.ts";
 export type {
   Repo,
   RepoCounts,
@@ -35,7 +35,15 @@ export type {
   SearchScope,
 } from "./queries/search.ts";
 export { MetricFamily, MetricVariant, noFilters } from "./queries/search.ts";
-export type { SnapshotChanges, Star, StarEvent, StarredRepo, StarsSnapshot, StarsUpsert } from "./queries/stars.ts";
+export type {
+  LibraryEntry,
+  SnapshotChanges,
+  Star,
+  StarEvent,
+  StarredRepo,
+  StarsSnapshot,
+  StarsUpsert,
+} from "./queries/stars.ts";
 export type { SyncClaim, SyncRequest } from "./queries/sync-requests.ts";
 export type { UsageCall, UsageCounts, UsageDay } from "./queries/usage.ts";
 

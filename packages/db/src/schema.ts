@@ -16,6 +16,7 @@ import {
   timestamp,
   unique,
 } from "drizzle-orm/pg-core";
+import { user } from "./auth-schema.ts";
 import { embeddingDimensions } from "./embedding.ts";
 
 const githubId = (name: string) => bigint(name, { mode: "number" });
@@ -48,7 +49,8 @@ export const githubAccounts = pgTable("github_accounts", {
   followers: integer("followers"),
   publicRepos: integer("public_repos"),
   ownedRepoStars: integer("owned_repo_stars"),
-  claimedBy: text("claimed_by"),
+  claimedBy: text("claimed_by").references(() => user.id, { onDelete: "set null" }),
+  starredCount: integer("starred_count"),
   starsEtag: text("stars_etag"),
   starsSyncedAt: time("stars_synced_at"),
   starsFullSyncedAt: time("stars_full_synced_at"),
