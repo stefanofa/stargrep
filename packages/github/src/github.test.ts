@@ -176,6 +176,50 @@ describe("stars", () => {
   });
 });
 
+describe("account", () => {
+  const user = {
+    login: "octocat",
+    id: 583231,
+    type: "User",
+    name: "The Octocat",
+    avatar_url: null,
+    followers: 9,
+    public_repos: 8,
+  };
+
+  effect("reads an account by login", () => {
+    const fake = Fake.layer(() => ({ body: { ...user, site_admin: false } }));
+    return Effect.gen(function* () {
+      const account = yield* (yield* GitHub.GitHub).account(login);
+      expect(account).toEqual({
+        id: 583231,
+        login: "octocat",
+        type: "user",
+        name: "The Octocat",
+        avatarUrl: null,
+        followers: 9,
+        publicRepos: 8,
+      } as never);
+      expect(fake.sent.map((sent) => sent.url.pathname)).toEqual(["/users/octocat"]);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("reads an organization as an org", () => {
+    const fake = Fake.layer(() => ({ body: { ...user, type: "Organization" } }));
+    return Effect.gen(function* () {
+      expect((yield* (yield* GitHub.GitHub).account(login)).type).toBe("org");
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("fails with NotFound for an unknown login", () => {
+    const fake = Fake.layer(() => ({ status: 404, body: { message: "Not Found" } }));
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip((yield* GitHub.GitHub).account(login));
+      expect(error).toMatchObject({ _tag: "NotFound", operation: "account", path: "/users/octocat" });
+    }).pipe(Effect.provide(fake.layer));
+  });
+});
+
 describe("rate limits", () => {
   effect("waits until x-ratelimit-reset on a primary rate limit, then retries", () => {
     const fake = Fake.layer((sent, index) =>

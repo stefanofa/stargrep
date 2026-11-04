@@ -38,6 +38,17 @@ export const Repo = Schema.Struct({
 });
 export type Repo = typeof Repo.Type;
 
+export const Account = Schema.Struct({
+  id: GitHubAccountId,
+  login: Login,
+  type: Schema.Literals(["user", "org"]),
+  name: Schema.NullOr(Schema.String),
+  avatarUrl: Schema.NullOr(Schema.String),
+  followers: Schema.Int,
+  publicRepos: Schema.Int,
+});
+export type Account = typeof Account.Type;
+
 export const Star = Schema.Struct({
   starredAt: Schema.DateTimeUtcFromString,
   repo: Repo,

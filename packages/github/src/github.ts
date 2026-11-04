@@ -11,6 +11,7 @@ import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as AccountLookup from "./account.ts";
 import {
   type GitHubError,
   GitHubRequestFailed,
@@ -23,6 +24,7 @@ import {
 import * as Readme from "./readme.ts";
 import * as Facts from "./repo-facts.ts";
 import {
+  type Account,
   IntFromString,
   type Login,
   type ObjectId,
@@ -68,6 +70,7 @@ const isRetryable = (error: GitHubError) => {
 export class GitHub extends Context.Service<
   GitHub,
   {
+    readonly account: (login: Login) => Effect.Effect<Account, GitHubError>;
     readonly stars: (login: Login) => Stream.Stream<Star, GitHubError>;
     readonly repoFacts: (ids: ReadonlyArray<RepoNodeId>) => Effect.Effect<ReadonlyArray<RepoFacts>, GitHubError>;
     readonly readme: (input: {
@@ -157,6 +160,12 @@ const make = Effect.gen(function* () {
       );
   };
 
+  const account = Effect.fn("GitHub.account")(function* (login: Login) {
+    return yield* exchange("account", AccountLookup.request(login), (body) =>
+      Effect.map(AccountLookup.decodeUser(body), AccountLookup.toAccount),
+    );
+  });
+
   const starPage = Effect.fn("GitHub.starPage")(function* (login: Login, page: number) {
     return yield* exchange("list-stars", StarList.request(login, page), (body, reply, endpoint) =>
       Effect.gen(function* () {
@@ -223,7 +232,7 @@ const make = Effect.gen(function* () {
     return body;
   });
 
-  return GitHub.of({ stars, repoFacts, readme });
+  return GitHub.of({ account, stars, repoFacts, readme });
 });
 
 export const layer = Layer.effect(GitHub, make);

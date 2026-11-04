@@ -1,7 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
-const Operation = Schema.Literals(["list-stars", "repo-facts", "readme"]);
+const Operation = Schema.Literals(["account", "list-stars", "repo-facts", "readme"]);
 export type Operation = typeof Operation.Type;
 
 export class NotFound extends Schema.TaggedError<NotFound, { readonly brand: unique symbol }>()("NotFound", {
