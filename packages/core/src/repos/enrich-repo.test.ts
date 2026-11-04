@@ -34,6 +34,8 @@ interface Remote {
   readonly description: string | null;
   readonly archived?: boolean;
   readonly readme?: { readonly oid: ObjectId; readonly text: string };
+  readonly stars?: number;
+  readonly forks?: number;
 }
 
 const remotes = new Map<number, Remote>();
@@ -53,8 +55,8 @@ const node = (n: number, remote: Remote) => ({
   pushedAt: "2026-10-01T00:00:00Z",
   isArchived: remote.archived ?? false,
   isFork: false,
-  stargazerCount: 10,
-  forkCount: 1,
+  stargazerCount: remote.stars ?? 10,
+  forkCount: remote.forks ?? 1,
   root: { entries: remote.readme === undefined ? [] : [{ name: "README.md", type: "blob", oid: remote.readme.oid }] },
 });
 
@@ -186,6 +188,22 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       const blobs = yield* BlobStore.BlobStore;
       expect(Option.getOrThrow(yield* blobs.get(EnrichRepo.readmeKey(oid("a"))))).toContain("![logo](logo.png)");
       expect(yield* db.repos.pendingEnrichment([id(1)])).toEqual([]);
+    }),
+  );
+
+  it.effect("keeps the star and fork counts from the facts and updates them on the next fetch", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const countsOf = (n: number) => database.query("select stars, forks from repo_metrics where repo_id = $1", [n]);
+      remotes.set(40, { description: "Counter", stars: 1200, forks: 30, readme: { oid: oid("a"), text: "# A" } });
+      yield* enrich(40);
+      expect(yield* countsOf(40)).toEqual([{ stars: 1200, forks: 30 }]);
+
+      remotes.set(40, { description: "Counter", stars: 1250, forks: 31, readme: { oid: oid("b"), text: "# B" } });
+      yield* db.repos.saveFacts({ ...(yield* get(40)), readmeOid: oid("b") });
+      yield* enrich(40);
+      expect(yield* countsOf(40)).toEqual([{ stars: 1250, forks: 31 }]);
     }),
   );
 

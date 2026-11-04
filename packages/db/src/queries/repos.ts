@@ -10,7 +10,7 @@ import { type Embedding, EmbeddingModelId, type EmbeddingModelMismatch, requireM
 import { type DbQueryFailed, type DbRowInvalid, RepoNotFound } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
 import { excluded, NullableTime, requireRow, rowsDecoder, writeEncoder } from "../rows.ts";
-import { repos } from "../schema.ts";
+import { repoMetrics, repos } from "../schema.ts";
 
 const RepoRow = createSelectSchema(repos, {
   id: RepoId,
@@ -53,6 +53,12 @@ const RepoFacts = Schema.Struct(
 );
 export type RepoFacts = typeof RepoFacts.Type;
 
+export interface RepoCounts {
+  readonly id: RepoId;
+  readonly stars: number;
+  readonly forks: number;
+}
+
 const RepoSummary = Schema.Struct({
   ...Struct.pick(Repo.fields, ["id", "readmeOid", "keywords"]),
   summary: Schema.String,
@@ -76,6 +82,7 @@ export interface Queries {
     ids: ReadonlyArray<RepoId>,
   ) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
   readonly saveFacts: (facts: RepoFacts) => Effect.Effect<{ readonly pending: boolean }, DbQueryFailed | DbRowInvalid>;
+  readonly saveCounts: (counts: RepoCounts) => Effect.Effect<void, DbQueryFailed>;
   readonly saveSummary: (summary: RepoSummary) => Effect.Effect<boolean, DbQueryFailed | RepoNotFound>;
   readonly saveEmbedding: (
     input: RepoEmbedding,
@@ -164,6 +171,15 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
         Effect.flatMap(decodePending("repos.saveFacts")),
         Effect.map((rows) => ({ pending: rows.some((row) => row.pending) })),
       ),
+    saveCounts: ({ id, stars, forks }) => {
+      const counts = { stars, forks, refreshedAt: sql`now()` };
+      return run("repos.saveCounts", (db) =>
+        db
+          .insert(repoMetrics)
+          .values({ repoId: id, ...counts })
+          .onConflictDoUpdate({ target: repoMetrics.repoId, set: counts }),
+      );
+    },
     saveSummary: (summary) =>
       encodeSummary(summary).pipe(
         Effect.flatMap(({ id, readmeOid, ...values }) =>
