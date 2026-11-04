@@ -180,6 +180,36 @@ describe("sync-stars consumer", () => {
     expect(retried[0]?.delaySeconds ?? 0).toBeGreaterThanOrEqual(60);
     expect(JSON.stringify(logs)).toContain('"sendError":"QueueSendFailed"');
   });
+
+  it("retries a message whose dead-letter send failed and logs the send error", async () => {
+    const { queues } = recordingQueues(true);
+    const logs: Array<unknown> = [];
+    const batch = batchOf("sync-stars", ["not a request"]);
+    const retried: Array<QueueRetryOptions | undefined> = [];
+    for (const message of batch.messages) {
+      const retry = message.retry.bind(message);
+      message.retry = (options) => {
+        retried.push(options);
+        retry(options);
+      };
+    }
+    const ctx = createExecutionContext();
+    await Effect.runPromise(
+      Settle.processBatch(SyncStarsConsumer.pipeline, queues, batch.messages).pipe(
+        Effect.provide(
+          Layer.merge(
+            Layer.mock(StarSync.StarSync, {}),
+            Logger.layer([Logger.make(({ message }) => logs.push(message))]),
+          ),
+        ),
+      ),
+    );
+    const result = await getQueueResult(batch, ctx);
+    expect(result.explicitAcks).toEqual([]);
+    expect(result.retryMessages).toEqual([{ msgId: "m0" }]);
+    expect(retried).toEqual([undefined]);
+    expect(JSON.stringify(logs)).toContain('"sendError":"QueueSendFailed"');
+  });
 });
 
 describe("enrich-repo consumer", () => {

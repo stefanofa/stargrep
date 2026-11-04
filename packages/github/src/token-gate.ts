@@ -174,7 +174,7 @@ const fromRemoteRequest = (request: RemoteRequest) => {
   return request.body === null ? sent : HttpClientRequest.bodyText(sent, request.body.text, request.body.contentType);
 };
 
-export const serve = (gate: Pick<TokenGate["Service"], "execute">) =>
+export const serve = (gate: TokenGate["Service"]) =>
   Effect.fn("TokenGate.serve")(function* (input: unknown) {
     const request = yield* Effect.orDie(decodeRemoteRequest(input));
     const result = yield* gate.execute(request.operation, fromRemoteRequest(request)).pipe(

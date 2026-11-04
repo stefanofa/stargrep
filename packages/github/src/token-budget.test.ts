@@ -16,9 +16,8 @@ describe("TokenBudget", () => {
 
   test("stops once the remaining budget reaches the unspent part", () => {
     let budget = TokenBudget.observe(TokenBudget.make(0.01 as BudgetShare), rateLimit(4900));
-    expect(
-      TokenBudget.reserveOf(budget.windows.core ?? { limit: 0, remaining: 0, resetAt: 0, openedWith: 0 }, budget.share),
-    ).toBe(4851);
+    const core = budget.windows.core;
+    expect(core && TokenBudget.reserveOf(core, budget.share)).toBe(4851);
     budget = TokenBudget.observe(budget, rateLimit(4852));
     expect(TokenBudget.check(budget, "core", 0)._tag).toBe("Allowed");
     budget = TokenBudget.observe(budget, rateLimit(4851));

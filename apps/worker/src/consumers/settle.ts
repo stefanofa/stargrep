@@ -169,19 +169,23 @@ export const processBatch = Effect.fn("Consumer.processBatch")(function* <A, R>(
   queues: Queues,
   messages: ReadonlyArray<Message>,
 ) {
-  const decoded = messages.map((message) => pipeline.decode(message.body));
-  const outcomes = yield* pipeline.run(decoded.flatMap((result) => (Result.isSuccess(result) ? [result.success] : [])));
-  const now = yield* Clock.currentTimeMillis;
-  let next = 0;
-  const settlements = yield* Effect.forEach(decoded, (result) =>
-    Result.isFailure(result)
-      ? Effect.succeed(Settlement.DeadLetter({ error: "SchemaError" }))
-      : Effect.map(
-          Effect.orDie(Effect.fromNullishOr(outcomes[next++])),
-          Result.match({ onSuccess: (settlement) => settlement, onFailure: (error) => afterFailure(error, now) }),
-        ),
+  const decoded = messages.map((message) => ({ message, body: pipeline.decode(message.body) }));
+  const valid = decoded.flatMap(({ message, body }) =>
+    Result.isSuccess(body) ? [{ message, body: body.success }] : [],
   );
-  yield* Effect.forEach(Arr.zip(messages, settlements), ([message, settlement]) =>
+  const outcomes = yield* pipeline.run(valid.map(({ body }) => body));
+  if (outcomes.length !== valid.length) {
+    return yield* Effect.die(`A pipeline returned ${outcomes.length} outcomes for ${valid.length} bodies`);
+  }
+  const now = yield* Clock.currentTimeMillis;
+  const undecodable = decoded.flatMap(({ message, body }) =>
+    Result.isFailure(body) ? [{ message, settlement: Settlement.DeadLetter({ error: "SchemaError" }) }] : [],
+  );
+  const settled = Arr.zipWith(valid, outcomes, ({ message }, outcome) => ({
+    message,
+    settlement: Result.match(outcome, { onSuccess: (done) => done, onFailure: (error) => afterFailure(error, now) }),
+  }));
+  yield* Effect.forEach([...undecodable, ...settled], ({ message, settlement }) =>
     settle(queues, message, settlement, now),
   );
 });

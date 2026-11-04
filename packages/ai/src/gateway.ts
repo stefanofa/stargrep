@@ -184,7 +184,6 @@ export interface TextOptions {
   readonly timeout: Duration.Duration;
   readonly retry: Retry;
   readonly batch: boolean;
-  readonly fallbackConcurrency: number | undefined;
 }
 
 const defaultTextOptions: TextOptions = {
@@ -192,11 +191,10 @@ const defaultTextOptions: TextOptions = {
   timeout: textTimeout,
   retry: unavailableRetry,
   batch: true,
-  fallbackConcurrency: undefined,
 };
 
 export const layerTextGeneration = (model: string, options: Partial<TextOptions> = {}) => {
-  const { reasoning, timeout, retry, batch, fallbackConcurrency } = { ...defaultTextOptions, ...options };
+  const { reasoning, timeout, retry, batch } = { ...defaultTextOptions, ...options };
   return Layer.effect(
     TextGeneration.TextGeneration,
     Effect.andThen(
@@ -207,7 +205,6 @@ export const layerTextGeneration = (model: string, options: Partial<TextOptions>
           model,
           timeout,
           retry,
-          ...(fallbackConcurrency === undefined ? {} : { fallbackConcurrency }),
           run: (request) =>
             Effect.tryPromise({
               try: (abortSignal) =>
@@ -261,29 +258,35 @@ export const layerEmbeddings = (model: Models.EmbeddingModel) =>
     ),
   );
 
-export const layerKeyMissing = Layer.merge(
+export const keyMissingText = (model: string) =>
   Layer.succeed(
     TextGeneration.TextGeneration,
     TextGeneration.make({
       provider: "gateway",
-      model: Models.summaryModel,
+      model,
       timeout: textTimeout,
       run: Effect.fn("Gateway.keyMissing")(function* () {
-        return yield* new AiKeyMissing({ operation: "generate", model: Models.summaryModel });
+        return yield* new AiKeyMissing({ operation: "generate", model });
       }),
     }),
-  ),
+  );
+
+export const keyMissingEmbeddings = (model: Models.EmbeddingModel) =>
   Layer.succeed(
     Embeddings.Embeddings,
     Embeddings.make({
       provider: "gateway",
-      model: Models.embeddingModel,
+      model,
       timeout: embedTimeout,
       run: Effect.fn("Gateway.keyMissing")(function* () {
-        return yield* new AiKeyMissing({ operation: "embed", model: Models.embeddingModel.id });
+        return yield* new AiKeyMissing({ operation: "embed", model: model.id });
       }),
     }),
-  ),
+  );
+
+export const layerKeyMissing = Layer.merge(
+  keyMissingText(Models.summaryModel),
+  keyMissingEmbeddings(Models.embeddingModel),
 );
 
 export const layerProvider = (config: { readonly apiKey: Redacted.Redacted<string> }) =>
