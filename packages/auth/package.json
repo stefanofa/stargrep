@@ -1,0 +1,26 @@
+{
+  "name": "@stargrep/auth",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "effect-tsgo tsc -p ."
+  },
+  "dependencies": {
+    "@stargrep/db": "workspace:*",
+    "better-auth": "1.7.17",
+    "drizzle-orm": "1.0.0-rc.5",
+    "effect": "catalog:",
+    "pg": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "catalog:",
+    "@stargrep/config": "workspace:*",
+    "@stargrep/testing": "workspace:*",
+    "@types/bun": "catalog:",
+    "@types/pg": "catalog:",
+    "typescript": "catalog:"
+  }
+}
