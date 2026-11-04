@@ -45,8 +45,9 @@ export type Resends = { cloudflare404: number; dropped: number };
 // the Worker, for over a minute under load. The Worker never answers with HTML, so those requests are sent again.
 const isCloudflare404 = (answer: Answer) => answer.status === 404 && answer.contentType.startsWith("text/html");
 
-// A connection can also drop before any answer arrives, which leaves no status to judge, so that call is sent once more.
-// Every HTTP answer is judged as it is.
+// In CI, a run has lost a single call of the 1000-call burst to ECONNRESET between the runner and Cloudflare, before any
+// answer arrived. A reset carries no status to judge and each run lost only one call, so the call is sent once more. A
+// second drop of the same call fails the run, because a path that keeps dropping is a real fault.
 export const untilRouted = <R>(
   what: string,
   send: Effect.Effect<Answer, HttpClientError.HttpClientError, R>,
