@@ -23,6 +23,7 @@ export type SyncRequest = typeof SyncRequest.Type;
 export const LoginSyncRequest = Schema.Struct({
   login: Login,
   mode: Mode,
+  // The debug Worker's queue route and messages queued before triggers recorded a request time carry none.
   requestedAt: Schema.optionalKey(Schema.DateTimeUtcFromMillis),
 });
 export type LoginSyncRequest = typeof LoginSyncRequest.Type;

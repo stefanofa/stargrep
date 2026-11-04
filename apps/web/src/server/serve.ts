@@ -4,10 +4,10 @@ import { SmartCoercionHandlerPlugin } from "@orpc/json-schema";
 import { McpRegistrar } from "@orpc/mcp";
 import { OpenAPIGenerator } from "@orpc/openapi";
 import { OpenAPIHandler } from "@orpc/openapi/fetch";
-import { COMMON_ERROR_STATUS_MAP, ORPCError } from "@orpc/server";
+import { COMMON_ERROR_STATUS_MAP, ORPCError, RPCSerializer } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
 import type { StandardHandlerInterceptor } from "@orpc/server/standard";
-import { errorStatus, withTraceId } from "@stargrep/api/errors";
+import { errorStatus, wireError, withTraceId } from "@stargrep/api/errors";
 import type { Transport } from "@stargrep/api/middleware/instrumentation";
 import { type ApiContext, type ApiServices, ApiServicesUnavailable, router } from "@stargrep/api/router";
 import * as Cause from "effect/Cause";
@@ -52,7 +52,7 @@ const registrar = new McpRegistrar(router, { converters, plugins });
 
 let spec: Promise<string> | undefined;
 
-const specResponse = async () => {
+const specResponse = async (): Promise<Response> => {
   spec ??= new OpenAPIGenerator({ converters })
     .generate(router, {
       base: { info: { title: "Stargrep", version: "1.0.0" }, servers: [{ url: "/api" }], security: [] },
@@ -62,8 +62,7 @@ const specResponse = async () => {
   return new Response(await spec, { headers: { "content-type": "application/json" } });
 };
 
-const orNotFound = ({ response }: { readonly response?: Response | undefined }) =>
-  response ?? new Response("Not found", { status: 404 });
+const matched = ({ response }: { readonly response?: Response | undefined }) => response;
 
 // JSON-RPC lets an error carry data, so a protocol error from the MCP transport, such as a parse error, gets the trace ID.
 const withJsonRpcTraceId = (body: string, traceId: string) => {
@@ -94,26 +93,66 @@ const answerMcp = async (request: Request, context: WebContext) => {
   return new Response(withJsonRpcTraceId(body, context.requestTraceId), { status, statusText, headers });
 };
 
+type ServerError = ORPCError<string, { readonly traceId: string }>;
+
+const noRoute = (traceId: string): ServerError =>
+  new ORPCError("NOT_FOUND", { message: "Stargrep has no route for this method and path.", data: { traceId } });
+
+const statusOf = (error: ServerError) => (error.code === "NOT_FOUND" ? 404 : 500);
+
+const rpcSerializer = new RPCSerializer();
+
+const restError = (error: ServerError) => Response.json(error.toJSON(), { status: statusOf(error) });
+
+const rpcError = (error: ServerError) =>
+  Response.json(rpcSerializer.serialize(error.toJSON()), { status: statusOf(error) });
+
+// The MCP SDK reports transport errors as JSON-RPC errors with code -32000, and -32603 is JSON-RPC's internal error.
+const mcpError = (error: ServerError) =>
+  Response.json(
+    {
+      jsonrpc: "2.0",
+      error: { code: error.code === "NOT_FOUND" ? -32000 : -32603, message: error.message, data: error.data },
+      id: null,
+    },
+    { status: statusOf(error) },
+  );
+
 interface Route {
   readonly transport: Transport;
   readonly matches: (pathname: string) => boolean;
-  readonly answer: (request: Request, context: WebContext) => Promise<Response>;
+  readonly answer: (request: Request, context: WebContext) => Promise<Response | undefined>;
+  readonly fail: (error: ServerError) => Response;
 }
 
 const under = (prefix: string) => (pathname: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
 
 const routes: ReadonlyArray<Route> = [
   {
+    transport: "rest",
+    matches: (pathname) => pathname === "/openapi.json",
+    answer: specResponse,
+    fail: restError,
+  },
+  {
     transport: "rpc",
     matches: under("/rpc"),
-    answer: (request, context) => rpc.handle(request, { prefix: "/rpc", context }).then(orNotFound),
+    answer: (request, context) => rpc.handle(request, { prefix: "/rpc", context }).then(matched),
+    fail: rpcError,
   },
   {
     transport: "rest",
     matches: under("/api"),
-    answer: (request, context) => rest.handle(request, { prefix: "/api", context }).then(orNotFound),
+    answer: (request, context) => rest.handle(request, { prefix: "/api", context }).then(matched),
+    fail: restError,
   },
-  { transport: "mcp", matches: (pathname) => pathname === "/mcp", answer: answerMcp },
+  {
+    transport: "mcp",
+    matches: under("/mcp"),
+    answer: async (request, context) =>
+      new URL(request.url).pathname === "/mcp" ? answerMcp(request, context) : undefined,
+    fail: mcpError,
+  },
 ];
 
 export const requestContext = Effect.fn("Web.requestContext")(function* (
@@ -160,7 +199,8 @@ const respond = (route: Route, request: Request, layerFor: RequestLayer) =>
     Effect.gen(function* () {
       const started = yield* Clock.currentTimeMillis;
       const context = yield* requestContext(route.transport, layerFor(request), span.traceId);
-      const response = yield* Effect.promise(() => route.answer(request, context));
+      const response =
+        (yield* Effect.promise(() => route.answer(request, context))) ?? route.fail(noRoute(span.traceId));
       const total = (yield* Clock.currentTimeMillis) - started;
       return withTiming(response, span.traceId, total, yield* Ref.get(context.procedureTime));
     }).pipe(
@@ -172,7 +212,8 @@ const respond = (route: Route, request: Request, layerFor: RequestLayer) =>
           traceId: span.traceId,
           failure: Cause.hasDies(cause) ? "defect" : "interrupt",
         }).pipe(
-          Effect.as(new Response("Internal Server Error", { status: 500, headers: { "x-trace-id": span.traceId } })),
+          Effect.as(route.fail(wireError("INTERNAL_SERVER_ERROR", span.traceId))),
+          Effect.tap((response) => Effect.sync(() => response.headers.set("x-trace-id", span.traceId))),
         ),
       ),
     ),
@@ -182,7 +223,6 @@ export const makeServer =
   (layerFor: RequestLayer, tracer: Layer.Layer<never>) =>
   (request: Request): Promise<Response> | undefined => {
     const pathname = new URL(request.url).pathname;
-    if (pathname === "/openapi.json") return specResponse();
     const route = routes.find((candidate) => candidate.matches(pathname));
     if (route === undefined) return undefined;
     return Effect.runPromise(respond(route, request, layerFor).pipe(Effect.provide(tracer)));

@@ -162,6 +162,30 @@ describe("when the services cannot start", () => {
   });
 });
 
+describe("when the server fails outside the API", () => {
+  const send = sendTo(
+    makeServer(() => {
+      throw new Error("request layer defect");
+    }, Layer.empty),
+  );
+
+  it("answers 500 in each transport's error shape with the request's trace ID", async () => {
+    const viaRest = await send("/api/search", post({ login: "ada", q: "dashboards" }));
+    expect(viaRest).toMatchObject({ status: 500, traceHeader: traceId, body: { code: "INTERNAL_SERVER_ERROR" } });
+    expect(viaRest.body.data.traceId).toBe(viaRest.traceHeader);
+
+    const viaRpc = await send("/rpc/search", post({ json: { login: "ada", q: "dashboards" } }));
+    expect(viaRpc.body.json).toMatchObject({ code: "INTERNAL_SERVER_ERROR", data: { traceId: viaRpc.traceHeader } });
+
+    const viaMcp = await send("/mcp", mcpCall("tools/list", {}));
+    expect(viaMcp).toMatchObject({
+      status: 500,
+      body: { error: { code: -32603, data: { traceId: viaMcp.traceHeader } } },
+    });
+    expect(JSON.stringify([viaRest, viaRpc, viaMcp])).not.toContain("request layer defect");
+  });
+});
+
 describe("when the database is unreachable", () => {
   const send = sendTo(makeServer((request) => layerRequest(env, Option.none(), request), Layer.empty));
 
@@ -289,6 +313,28 @@ describe("getRepo and the spec", () => {
     expect((await rest("/repos/42")).body).toMatchObject({ id: 42, url: "https://github.com/ratatui/ratatui" });
     expect((await rest("/repos/43")).body.code).toBe("REPO_NOT_FOUND");
     expect((await rest("/repos/abc")).status).toBe(400);
+  });
+
+  it("puts a trace ID on the spec, and answers an unmatched path with each transport's error shape", async () => {
+    const spec = await call("/openapi.json");
+    expect([spec.status, spec.headers.get("x-trace-id")]).toEqual([200, traceId]);
+
+    const unmatched = async (path: string, init?: RequestInit) => {
+      const response = await call(path, init);
+      const body: Json = await response.json();
+      return { status: response.status, header: response.headers.get("x-trace-id"), body };
+    };
+    const viaRest = await unmatched("/api/no-such-route");
+    expect(viaRest).toMatchObject({ status: 404, header: traceId, body: { code: "NOT_FOUND" } });
+    expect(viaRest.body.data.traceId).toBe(viaRest.header);
+
+    const viaRpc = await unmatched("/rpc/no-such-route", post({ json: {} }));
+    expect(viaRpc).toMatchObject({ status: 404, header: traceId, body: { json: { code: "NOT_FOUND" } } });
+    expect(viaRpc.body.json.data.traceId).toBe(viaRpc.header);
+
+    const viaMcp = await unmatched("/mcp/no-such-route", mcpCall("tools/list", {}));
+    expect(viaMcp).toMatchObject({ status: 404, header: traceId, body: { jsonrpc: "2.0", error: { code: -32000 } } });
+    expect(viaMcp.body.error.data.traceId).toBe(viaMcp.header);
   });
 
   it("lists every procedure in the OpenAPI document with only finite numbers", async () => {

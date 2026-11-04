@@ -22,7 +22,9 @@ export type SyncStatus =
     }
   | { readonly state: "done"; readonly syncedAt: DateTime.Utc };
 
-true satisfies SyncState | SyncStatus["state"] extends SyncState & SyncStatus["state"] ? true : never;
+type Equals<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+
+true satisfies Equals<SyncState, SyncStatus["state"]>;
 
 export type SyncStatusError = DbQueryFailed | DbRowInvalid;
 

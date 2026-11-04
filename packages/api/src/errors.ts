@@ -25,9 +25,8 @@ export const errorStatus = Record.map(wire, ({ status }) => status);
 export const wireError = (code: WireCode, traceId: string) =>
   new ORPCError(code, { message: wire[code].message, data: { traceId } });
 
-export const withTraceId = (error: ORPCError<string, unknown>, traceId: string) => {
+export const withTraceId = <E extends ORPCError<string, unknown>>(error: E, traceId: string): E => {
   const data = Predicate.isObject(error.data) ? error.data : {};
-  return "traceId" in data
-    ? error
-    : new ORPCError(error.code, { message: error.message, data: { ...data, traceId }, cause: error.cause });
+  if (!("traceId" in data)) error.data = { ...data, traceId };
+  return error;
 };
