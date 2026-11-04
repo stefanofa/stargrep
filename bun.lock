@@ -22,6 +22,7 @@
         "@orpc/server": "2.0.0-beta.48",
         "@stargrep/ai": "workspace:*",
         "@stargrep/api": "workspace:*",
+        "@stargrep/auth": "workspace:*",
         "@stargrep/core": "workspace:*",
         "@stargrep/db": "workspace:*",
         "@stargrep/github": "workspace:*",

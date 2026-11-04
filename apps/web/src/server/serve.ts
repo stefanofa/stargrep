@@ -7,9 +7,11 @@ import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { COMMON_ERROR_STATUS_MAP, ORPCError, RPCSerializer } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
 import type { StandardHandlerInterceptor } from "@orpc/server/standard";
+import { signedIn } from "@stargrep/api/contract";
 import { errorStatus, wireError, withTraceId } from "@stargrep/api/errors";
 import type { Transport } from "@stargrep/api/middleware/instrumentation";
 import { type ApiContext, type ApiServices, ApiServicesUnavailable, router } from "@stargrep/api/router";
+import * as Auth from "@stargrep/auth/auth";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -48,7 +50,8 @@ const errorStatusMap = { ...COMMON_ERROR_STATUS_MAP, ...errorStatus };
 const interceptors = [traceErrors];
 const rpc = new RPCHandler<WebContext>(router, { errorStatusMap, interceptors });
 const rest = new OpenAPIHandler<WebContext>(router, { plugins, errorStatusMap, interceptors });
-const registrar = new McpRegistrar(router, { converters, plugins });
+const anyoneCanCall = (_: unknown, path: ReadonlyArray<string>) => !signedIn.has(path.join("."));
+const registrar = new McpRegistrar(router, { converters, plugins, filter: anyoneCanCall });
 
 let spec: Promise<string> | undefined;
 
@@ -57,6 +60,7 @@ const specResponse = async (): Promise<Response> => {
     .generate(router, {
       base: { info: { title: "Stargrep", version: "1.0.0" }, servers: [{ url: "/api" }], security: [] },
       errorStatusMap,
+      filter: anyoneCanCall,
     })
     .then((document) => JSON.stringify(document));
   return new Response(await spec, { headers: { "content-type": "application/json" } });
@@ -232,6 +236,49 @@ const respond = (route: Route, request: Request, layerFor: RequestLayer) =>
       ),
     ),
   );
+
+export type AuthLayer = (request: Request) => Option.Option<Layer.Layer<Auth.Auth, { readonly _tag: string }>>;
+
+const signInUnavailable = (traceId: string) =>
+  Response.json(
+    { code: "SIGN_IN_UNAVAILABLE", message: "This stage has no GitHub App to sign in with.", data: { traceId } },
+    { status: 503 },
+  );
+
+const respondAuth = (request: Request, layerFor: AuthLayer) =>
+  Effect.useSpan("Web.auth", { kind: "server" }, (span) =>
+    Option.match(layerFor(request), {
+      onNone: () => Effect.succeed(signInUnavailable(span.traceId)),
+      onSome: (layer) =>
+        Auth.Auth.use((auth) => auth.handle(request)).pipe(Effect.provide(layer), Effect.withParentSpan(span)),
+    }).pipe(
+      Effect.map((response) => {
+        const traced = new Response(response.body, response);
+        traced.headers.set("x-trace-id", span.traceId);
+        return traced;
+      }),
+      Effect.catchCause((cause) =>
+        Effect.logError("Sign-in request failed", {
+          traceId: span.traceId,
+          failure: Cause.hasDies(cause) ? "defect" : "failure",
+        }).pipe(
+          Effect.as(
+            Response.json(wireError("INTERNAL_SERVER_ERROR", span.traceId).toJSON(), {
+              status: 500,
+              headers: { "x-trace-id": span.traceId },
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+
+export const makeAuthServer =
+  (layerFor: AuthLayer, tracer: Layer.Layer<never>) =>
+  (request: Request): Promise<Response> | undefined =>
+    under(Auth.basePath)(new URL(request.url).pathname)
+      ? Effect.runPromise(respondAuth(request, layerFor).pipe(Effect.provide(tracer)))
+      : undefined;
 
 export const makeServer =
   (layerFor: RequestLayer, tracer: Layer.Layer<never>) =>

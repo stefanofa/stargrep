@@ -189,7 +189,7 @@ describe("when the server fails outside the API", () => {
 });
 
 describe("when the database is unreachable", () => {
-  const send = sendTo(makeServer((request) => layerRequest(env, Option.none(), request), Layer.empty));
+  const send = sendTo(makeServer((request) => layerRequest(env, Option.none(), Option.none(), request), Layer.empty));
 
   it("answers a body that is not JSON with 400 and the request's trace ID on every transport", async () => {
     const malformed: RequestInit = {

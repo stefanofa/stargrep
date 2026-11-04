@@ -62,6 +62,11 @@ export interface Options {
   readonly onSignIn: (signIn: SignIn) => Promise<void>;
 }
 
+export interface LayerOptions<R> extends Omit<Options, "onSignIn"> {
+  readonly connectionString: Redacted.Redacted<string>;
+  readonly onSignIn: (signIn: SignIn) => Effect.Effect<void, never, R>;
+}
+
 const github = ({ config, origin }: Options) => {
   const signIn = config.github;
   if (signIn._tag === "proxied") {
@@ -134,12 +139,13 @@ const callbackPrefix = `${basePath}/callback/`;
 
 const refused = (origin: string) => Response.redirect(new URL("/?error=redirect_refused", origin).href, 302);
 
-export const layer = (options: Options & { readonly connectionString: Redacted.Redacted<string> }) =>
+export const layer = <R>(options: LayerOptions<R>) =>
   Layer.effect(
     Auth,
     Effect.gen(function* () {
+      const run = Effect.runPromiseWith(yield* Effect.context<R>());
       const pool = yield* acquirePool(Redacted.value(options.connectionString), 2);
-      const auth = make(pool, options);
+      const auth = make(pool, { ...options, onSignIn: (signIn) => run(options.onSignIn(signIn)) });
       return Auth.of({
         handle: Effect.fn("Auth.handle")(function* (request: Request) {
           const response = yield* Effect.tryPromise({
