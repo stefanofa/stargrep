@@ -23,6 +23,7 @@ export interface Driver {
   readonly exclusive: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
 }
 
+// Changing this needs a new migration: 20261104172317_app_statement_timeout keeps the server's limit 1 s above it.
 const queryTimeout = "10 seconds";
 
 const errnoCodes = new Set([

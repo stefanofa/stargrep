@@ -66,6 +66,7 @@ For other editors, run `bunx effect-tsgo setup --help` to see the setup for Neov
    curl -X POST -H "authorization: Bearer $TOKEN" "http://localhost:1338/queue?count=10"
    curl -X POST -H "authorization: Bearer $TOKEN" http://localhost:1338/counter/demo
    curl -X POST -H "authorization: Bearer $TOKEN" http://localhost:1338/transaction
+   curl -X POST -H "authorization: Bearer $TOKEN" "http://localhost:1338/sleep?seconds=30"
    curl -H "authorization: Bearer $TOKEN" http://localhost:1338/budget
    curl -X POST -H "authorization: Bearer $TOKEN" -d '{"login":"octocat","mode":"full"}' http://localhost:1338/queue/sync-stars
    curl -X POST -H "authorization: Bearer $TOKEN" -d '{"repoId":1300192}' http://localhost:1338/queue/enrich-repo
@@ -73,7 +74,7 @@ For other editors, run `bunx effect-tsgo setup --help` to see the setup for Neov
    bun scripts/stage-smoke.ts "dev_$USER" --backend local
    ```
 
-   The routes spend from a budget of 300 units a minute: one per counter read, counter increment, or transaction, one per queued job, and one per message sent to `sync-stars` or `enrich-repo`. Those two routes send the request body as it is, so they also send malformed messages. `/budget` is free. `scripts/stage-smoke.ts` checks the token, the budget, the queue, the counter, and pooled transactions. On a new stage, it first waits up to 60 seconds for `/budget` and a counter to answer, because the Durable Objects can fail for a few seconds after the deploy. A new workers.dev URL also answers with Cloudflare's own 404 page on some machines for over a minute, so each call that gets that page is sent again, for up to 60 seconds. A call whose connection drops before any answer is sent once more within the same 60 seconds. It waits for the next minute and then spends that minute's budget.
+   The routes spend from a budget of 300 units a minute: one per counter read, counter increment, transaction, or sleep, one per queued job, and one per message sent to `sync-stars` or `enrich-repo`. Those two routes send the request body as it is, so they also send malformed messages. `/sleep` runs `pg_sleep` through Hyperdrive and gives up after 10 seconds like the app, so `pg_stat_activity` shows whether the server stops the query. `/budget` is free. `scripts/stage-smoke.ts` checks the token, the budget, the queue, the counter, and pooled transactions. On a new stage, it first waits up to 60 seconds for `/budget` and a counter to answer, because the Durable Objects can fail for a few seconds after the deploy. A new workers.dev URL also answers with Cloudflare's own 404 page on some machines for over a minute, so each call that gets that page is sent again, for up to 60 seconds. A call whose connection drops before any answer is sent once more within the same 60 seconds. It waits for the next minute and then spends that minute's budget.
 
 5. Run the Worker tests. They run on workerd and need the Postgres container from step 1.
 

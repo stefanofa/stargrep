@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 import { Client } from "pg";
 
 class PostgresFailed extends Schema.TaggedError<PostgresFailed, { readonly brand: unique symbol }>()("PostgresFailed", {
-  operation: Schema.Literals(["health check", "transaction"]),
+  operation: Schema.Literals(["health check", "transaction", "sleep"]),
   cause: Schema.Defect(),
 }) {
   override get message(): string {
@@ -32,6 +32,7 @@ export const withClient = <A, E, R>(
   connect(connectionString).pipe(
     Effect.flatMap(use),
     Effect.scoped,
+    // Changing this needs a new migration: 20261104172317_app_statement_timeout keeps the server's limit 1 s above it.
     Effect.timeout("10 seconds"),
     Effect.mapError((cause) => new PostgresFailed({ operation, cause })),
   );
