@@ -141,7 +141,7 @@ Bulk enrichment, such as a backfill of popular repos, uses the Gateway batch API
 
 ## Search
 
-Every search is hybrid. Full-text search and vector search run in one SQL query, and reciprocal rank fusion merges the two lists.
+Every search is hybrid. Full-text search and vector search run in one SQL query, and reciprocal rank fusion merges the two lists. Full text matches the words the user typed. The vector side embeds the planner's description of a matching repo, or the query itself when the planner is skipped. A repo whose name or `owner/name` equals a keyword query ranks first.
 
 - **Your stars.** The candidate set is one account's stars, at most tens of thousands of rows. An exact vector scan over that set takes milliseconds, so this path uses no vector index.
 - **Network.** The candidate set is the union of the stars of the accounts you follow. Results also rank by how many of those accounts starred each repo.
@@ -151,20 +151,22 @@ Every search is hybrid. Full-text search and vector search run in one SQL query,
 
 A query such as "open source apps like Wispr Flow with growing contributors" needs filters and a ranking, not only text matching. The planner turns each natural-language query into a typed `QueryPlan`.
 
-- **Scope.** Your stars, your network, or everything.
+- **Scope.** Your stars, your network, or everything. The caller sets it, never the model, so a plan cannot widen a search. Only your stars runs in the first milestone. The other scopes fail with `SearchScopeUnavailable`.
 - **Semantic text.** The text to embed. "Like Wispr Flow" becomes a description of what Wispr Flow does, because the product has no repo to compare against.
-- **Filters.** Kind, license, language, archived, and thresholds on any metric.
-- **Ranking.** Relevance alone, or relevance blended with a metric such as 90-day contributor growth.
+- **Filters.** Kind, license, language, archived, starred date, and bounds on any metric. A bound is strict or inclusive, so "more than 200 stars" leaves out a repo with exactly 200. A language filter matches a repo written in that language or tagged with it as a topic, because a Python package manager is often written in Rust. A JavaScript filter also matches TypeScript.
+- **Ranking.** Relevance alone, or the best matches reordered by a metric such as 90-day contributor growth. A metric never lifts a repo that did not match into the results.
 
-The planner is a small model with structured output. It chooses metrics from a registry in `packages/core/src/search`, where each metric has an ID, a description the model reads, and the SQL expression behind it. The model never writes SQL. The plan is parsed at the boundary, and a plan that names an unknown metric is rejected.
+The planner is `anthropic/claude-haiku-5.5` with structured output and reasoning turned off. With reasoning on, a plan took 2.1 to 4.6 seconds from a laptop, and with it off 1.2 to 2.1 seconds. It chooses metrics from a registry in `packages/core/src/search/metric-registry.ts`. Each entry holds an ID, the description the model reads, and a family and variant, such as stars and 90-day growth, that `packages/db` turns into SQL over `repo_metrics`. The model never writes SQL. The plan is parsed at the boundary, and a plan that names an unknown metric is rejected. When the planner fails or returns a plan that does not parse, search runs the query as typed.
+
+The planner sets only the filters a query states, and code holds it to that after decoding. A kind filter stays only when the query restricts the kind with a word such as "only" or "not". The model returns each language with the words from the query that named it, such as Python with "питоне". A language stays only when those words appear in the query and are the language's name, one of its aliases, or a word in a non-Latin script, such as "питоне" or "パイソン". In Chinese, Japanese, and Thai, which have no spaces between words, the words match anywhere in the text. So a language named in any script stays, and one quoted from a framework, such as Java from "spring boot", is dropped. `packages/core/src/search/vocabulary.ts` holds the languages and their topic names and the words that send a query to the planner. In the recall eval, filters the model inferred dropped relevant repos, such as Rich for "python framework for text user interfaces", because the summarizer called it a library. `docs/evals.md` has the numbers.
 
 Each result shows the values that ranked it, such as "+38% contributors in 90 days".
 
-Plain keyword queries skip the planner. KV caches plans and query embeddings by normalized query text.
+A repo name, an `owner/name`, or two plain words skip the planner. A query with a word that can name a filter, such as a language, a kind, a license, "only", "more", or a number, goes to the planner, so "only MIT libraries" keeps its filters. The `SearchCache` port caches plans and query embeddings under a SHA-256 of the normalized query text. Each entry records when it expires, 30 days after it was written, so an old entry is a miss on every backend. A corrupt entry is a miss too. A plan with a date filter is reused only on the day it was planned, because "starred last year" depends on today. Tests use the memory layer. The KV layer for deployed stages lands with the worker pipeline and the API, and until then nothing outside tests and local scripts caches searches.
 
 ## AI providers
 
-`packages/ai` has two ports, because they have different providers. Production summarizes with `anthropic/claude-haiku-5.5` and embeds with `voyage/voyage-4` at 1,024 dimensions. `docs/evals.md` records the bakeoff that chose them. `TextGeneration` turns a prompt into a value of an Effect Schema, for summaries, query plans, and later reranking. `Embeddings` turns texts into vectors. Core code imports only the ports.
+`packages/ai` has two ports, because they have different providers. Production summarizes with `anthropic/claude-haiku-5.5` and embeds with `voyage/voyage-4` at 1,024 dimensions. `docs/evals.md` records the bakeoff that chose them. The query planner uses `anthropic/claude-haiku-5.5` with reasoning off through its own `TextGeneration` layer, `layerPlannerTextGeneration`, with a 4-second timeout and no retries. `TextGeneration` turns a prompt into a value of an Effect Schema, for summaries, query plans, and later reranking. `Embeddings` turns texts into vectors. Core code imports only the ports.
 
 | Port | Adapters | Where it runs |
 |---|---|---|
@@ -206,7 +208,7 @@ The web app loads the signed-in user's whole library into a TanStack DB collecti
 |---|---|
 | Browser | The user's library in TanStack DB |
 | Workers cache | Public profile pages, discovery pages, and OG images, with stale-while-revalidate |
-| KV | Parsed queries and query embeddings |
+| KV | Query plans and query embeddings, through the `SearchCache` port |
 | Postgres | Summaries and embeddings, shared across accounts |
 | GitHub | README ETags, so an unchanged README returns `304` |
 
@@ -222,7 +224,7 @@ The repo is the source of truth. Each concern has one file or folder that define
 | API, REST, and MCP | oRPC contracts in `packages/api`. The OpenAPI spec and MCP tool list are generated from them |
 | Environment variables | Effect `Config` definitions, validated at startup |
 | Models and prompts | `packages/ai` |
-| Search metrics | The metric registry in `packages/core/src/search` |
+| Search metrics | `packages/core/src/search/metric-registry.ts` names each metric for the planner, and `packages/db/src/queries/search.ts` maps its family to `repo_metrics` columns. Both use `MetricFamily`, so the compiler keeps `MetricFamily`, `metricColumns`, and `nouns` in step |
 | Search quality | The query set and its expected results in the repo. CI fails a pull request that lowers recall |
 | GitHub App | Its manifest in the repo. Creating the app from it takes one click in the browser |
 | Design tokens | `packages/ui` |

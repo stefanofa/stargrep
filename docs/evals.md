@@ -99,9 +99,53 @@ The choice of `voyage/voyage-4` does not depend on the tie rule. It follows from
 
 ## Recall bar
 
-Search must reach **recall@10 of 0.97** on this query set over this 736-repo corpus, loaded as one account's stars and enriched by the production pipeline. P8 adds `evals/recall.ts`, which enforces it in CI.
+Search must reach **recall@10 of 0.97** on this query set over this 736-repo corpus, loaded as one account's stars and enriched by the production pipeline. `evals/recall.ts` enforces it, and CI runs it on a fixture.
 
 The chosen pair measured 0.988 and 0.990 with vector search alone. Hybrid search should not score lower. Run-to-run noise is about one query, 0.008. The bar is the measured recall minus two queries of noise, rounded down to 0.97. A result below it means search lost at least two queries' worth of results, which is a real regression and not noise.
+
+## Search recall
+
+`evals/recall.ts` runs the query set through real search. It summarizes the corpus with the summary model and embeds each repo's text, as enrichment does. It loads all 736 repos as the stars of one account, `recall-eval`, in a Postgres database named `stargrep_recall`. Then it sends each query through the `Search` service in `packages/core`, which calls the planner, embeds the query, and runs `search.hybrid`. It exits with an error when recall@10 is under the bar.
+
+Summaries, vectors, plans, and query embeddings are cached in `evals/.cache`, which git ignores. A rerun makes no model call unless the corpus, a model, or the planner prompt changes.
+
+### Results
+
+The run on 2026-11-04 used `anthropic/claude-haiku-5.5` for summaries and the planner and `voyage/voyage-4` for embeddings. Plans vary from run to run, so three independent sets of plans were scored. They reached 0.987, 0.991, and 0.991. Three queries took the keyword path and 126 went to the planner. All three missed these repos, and the first also missed `run-llama/llama_index`, which ranks at the edge of the top 10.
+
+- `EpicenterHQ/epicenter` for "open source apps like Wispr Flow". Before the kind rule, the plan's `app` filter left it out, because the summarizer calls it a framework. Without that filter it still ranks below 40th, because its summary describes a local-first sync framework and never mentions dictation.
+- `ollama/ollama` for "run large language models locally", which ranks just outside the top 10.
+- `d3/d3` for "javascript charting library". GitHub labels d3 as Shell and gives it no `javascript` topic, so the stated language filter leaves it out.
+
+The first run reached 0.933. These changes got it over the bar. Each row except the prompt changes was scored on the same cached plans, so only the named change moved.
+
+| Change | recall@10 |
+|---|---|
+| First run: filters as the model chose them, full text on keywords the model chose | 0.933 |
+| A language filter also matches the repo's topics | 0.951 |
+| Kind filters the model inferred are ignored | 0.973 |
+| License filters the model inferred are ignored | 0.981 |
+| Full text on the words the user typed instead of model keywords | 0.990 |
+| The prompt forbids inferred kinds and licenses and shows five examples, with new plans | 0.978 |
+| A JavaScript filter also matches TypeScript | 0.994 |
+| Code drops kind filters the query does not restrict and languages it does not name, with new plans | 0.994 |
+| Two plain words at most skip the planner, so 3 queries take the keyword path instead of 31, with new plans | 0.988 |
+| A language filter needs a real language, so "React" is dropped | 0.991 |
+| The model quotes the words that named each language, and code keeps a language only when they appear in the query, with new plans | 0.987 to 0.991 |
+
+Two baselines frame these numbers. The raw query with no planner reaches 0.988 with hybrid search and 0.990 with vector search alone. The planner still earns its place. On product queries the raw query reaches 0.964, because "like Wispr Flow" names a product that no repo describes. Full text on model keywords cost 0.009, and dropping full text for planned queries entirely reached 0.997, one query above typed words. Search keeps full text on the typed words, so every search stays hybrid.
+
+### In CI
+
+CI runs `bun run evals/recall.ts --fixture`. The fixture is three files in `evals/fixtures`, one entry per line, so a rewrite shows as a readable diff.
+
+- `recall.json` names the 11 queries, the first of each category, and the recall the fixture scored when it was written, 0.970. All 11 go through the planner.
+- `recall-repos.jsonl` holds 48 repos: the expected repos and the three highest-ranked wrong results for each query in the last full run. Each repo has its public metadata, summary, keywords, kind, and vector, and no README text.
+- `recall-answers.jsonl` holds the cached plan and query embedding for each query, under the cache namespace that names the model and the prompt version.
+
+The fixture run loads PGlite in the test process and fails any model or embedding call, so it needs no key and no Postgres. It fails when recall drops under the recorded recall. It also fails when a query is missing from the cache, which happens after a change to the planner prompt or a model. After such a change, run `--write-fixture` with a key and commit the new fixture.
+
+A fixture of real vectors and plans tests the ranking that production runs. A run on hash embeddings would only test the plumbing.
 
 ## Spend
 
@@ -117,6 +161,16 @@ bun run evals/bakeoff.ts --fake
 ```
 
 `--limit N` scores only the first N queries against their own expected repos, without distractors, as a cheap smoke test. `--summary <model>` scores one summary model on the full corpus through one AI Gateway batch job, using the embedding model in `models.ts`. `--fake` runs the whole pipeline on the fake layers from `@stargrep/ai/fake` and needs no key. No run edits code. To adopt a result, copy the models from the `Chosen:` line into `packages/ai/src/models.ts` by hand.
+
+The recall gate needs Postgres, from `docker compose up --detach --wait` or a `DATABASE_URL` that names an admin connection. It creates and migrates `stargrep_recall` on first use.
+
+```sh
+AI_GATEWAY_API_KEY=... bun run evals/recall.ts
+AI_GATEWAY_API_KEY=... bun run evals/recall.ts --write-fixture
+bun run evals/recall.ts --fixture
+```
+
+`--summary-model ID` summarizes with another model. A full run from an empty cache used 4.96 million input and 0.19 million output tokens of `anthropic/claude-haiku-5.5` and 0.11 million tokens of `voyage/voyage-4`, about $0.60 at catalog prices. A rerun with a new planner prompt costs about 0.44 million input tokens, for 126 plans.
 
 To compare summary samples locally without the gateway, run `evals/summarize.ts` through the Claude Code CLI, as `docs/architecture.md` describes under "AI providers".
 

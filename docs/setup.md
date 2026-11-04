@@ -108,6 +108,22 @@ bun run --cwd packages/core enrich stars <login> --limit 200
 
 The first command prints the summary, kind, and embedding size, and prints `unchanged` when you run it again. The second batch-enriches an account's newest stars through one AI Gateway batch job, which can take many minutes. Stop it and run it again, and it waits for the same job. `bun run --cwd packages/core bench <login>` times 20 single enrichments, each followed by an unchanged run, and splits each enrichment into model, embedding, GitHub, and local time.
 
+## Search
+
+`search` runs one query over an account's stars and prints the plan, the time spent in the planner, the embedding, and the database, and each result with the values that ranked it. It needs `AI_GATEWAY_API_KEY` and a `DATABASE_URL` that names a migrated database with the account in it. It caches plans and query embeddings in `packages/core/.cache/search`, so a repeated query makes no model call.
+
+```sh
+DATABASE_URL=postgres://stargrep:stargrep@127.0.0.1:54317/stargrep_recall \
+  bun run --cwd packages/core search recall-eval "rust library for terminal dashboards"
+```
+
+`bun run evals/recall.ts` creates `stargrep_recall` with the account `recall-eval`, as `docs/evals.md` describes. `bun run evals/search-bench.ts` times 50 interleaved searches of each kind, keyword and planned, each with a warm and a cold cache, and splits the time into local work, the database, the planner, and the embedding. It takes one or more logins, shares one warm cache across them, and times a `select 1` before each round, so a slow database shows up on its own. Against the `stargrep_bench` database, pass `--fake-embeddings bench/random-1024` so queries embed locally with the model ID that database stores.
+
+```sh
+DATABASE_URL=postgres://stargrep:stargrep@127.0.0.1:54317/stargrep_bench \
+  bun run evals/search-bench.ts bench-1 --fake-embeddings bench/random-1024
+```
+
 ## Cloudflare and Neon
 
 Four workflows run the stages, and their jobs skip until the steps below are done. `preview` deploys stage `pr-<number>` for each pull request and runs `scripts/stage-smoke.ts` against it. `preview-destroy` destroys the stage when the pull request closes. `preview-reconcile` runs daily, or by hand with a dry-run option, and destroys any `pr-<number>` stage whose pull request is closed or gone. `deploy` runs on each push to `main`, or by hand on `main`. It deploys the database stack's stage `shared` and then stage `prod`. Each deploy first checks that its commit is still the head of `main` or of the pull request, so an older run never replaces a newer deploy.
