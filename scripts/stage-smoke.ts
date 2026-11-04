@@ -4,8 +4,8 @@ import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import { freshStageSchedule, freshStageWait, NotReady, waitUntilReady } from "./fresh-stage.ts";
 import { readStageOutput } from "./stage-output.ts";
 
 const [stage, ...alchemyArgs] = process.argv.slice(2);
@@ -21,9 +21,6 @@ const Transaction = Schema.Struct({ pid: Schema.Int, sum: Schema.Int });
 type Check = { readonly check: string; readonly ok: boolean; readonly detail: unknown };
 const check = (name: string, ok: boolean, detail: unknown): Check => ({ check: name, ok, detail });
 
-// A fresh stage settles within about a minute, so its waits retry once a second for up to that long.
-const freshStageWait = Duration.seconds(60);
-const freshStageSchedule = Schedule.max([Schedule.spaced("1 second"), Schedule.during(freshStageWait)]);
 const requestTimeout = Duration.seconds(30);
 
 // Until a new workers.dev URL reaches every edge machine, some requests get Cloudflare's own HTML 404 page instead of
@@ -80,12 +77,11 @@ const read = Effect.fn("StageSmoke.read")(function* <S extends Schema.Top>(
   return yield* decode(schema, body);
 });
 
-class NotReady extends Schema.TaggedError<NotReady>()("NotReady", { answer: Schema.String }) {}
-
 // A fresh stage's Durable Objects can fail for a few seconds after the deploy, so the checks start once the budget and
 // a counter both answer.
 const answers = (path: string) =>
   call("GET", path).pipe(
+    Effect.catch((error) => Effect.succeed({ status: 0, body: String(error) })),
     Effect.flatMap(({ status, body }) =>
       status === 200
         ? Effect.void
@@ -93,16 +89,7 @@ const answers = (path: string) =>
     ),
   );
 
-const ready = Effect.all([answers("/budget"), answers("/counter/ready")]).pipe(
-  Effect.retry({ schedule: freshStageSchedule }),
-  Effect.catchTag("NotReady", (error) =>
-    Effect.die(
-      new Error(
-        `${debugUrl} was not ready within ${Duration.toSeconds(freshStageWait)} s, last answer: ${error.answer}`,
-      ),
-    ),
-  ),
-);
+const ready = waitUntilReady(debugUrl, Effect.all([answers("/budget"), answers("/counter/ready")]).pipe(Effect.asVoid));
 
 const unauthenticated = Effect.gen(function* () {
   const probe = `smoke-${yield* Clock.currentTimeMillis}`;
