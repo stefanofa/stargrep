@@ -1,5 +1,7 @@
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
+import { authHyperdrives } from "./test/auth-databases.ts";
+import { fakeGitHub } from "./test/fake-github.ts";
 
 export default defineConfig({
   plugins: [
@@ -9,7 +11,7 @@ export default defineConfig({
         compatibilityDate: "2026-11-01",
         compatibilityFlags: ["nodejs_compat"],
         kvNamespaces: ["SEARCH_CACHE"],
-        hyperdrives: { DATABASE: "postgres://stargrep:stargrep@127.0.0.1:1/stargrep" },
+        hyperdrives: { DATABASE: "postgres://stargrep:stargrep@127.0.0.1:1/stargrep", ...authHyperdrives },
         queueProducers: { SYNC_STARS: "sync-stars" },
         ratelimits: {
           SYNC_PER_CALLER: { namespace_id: "1", simple: { limit: 5, period: 60 } },
@@ -30,8 +32,9 @@ export default defineConfig({
             };`,
           },
         ],
+        outboundService: fakeGitHub,
       },
     }),
   ],
-  test: { include: ["test/**/*.workerd-test.ts"], testTimeout: 30_000 },
+  test: { include: ["test/**/*.workerd-test.ts"], testTimeout: 30_000, globalSetup: ["./test/auth-databases.ts"] },
 });
