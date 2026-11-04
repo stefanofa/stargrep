@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 import { type RepoId, RepoNodeId } from "@stargrep/github/schemas";
+import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -8,6 +9,7 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
+import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 import * as Db from "../src/db.ts";
 import type { Embedding, EmbeddingModelId } from "../src/embedding.ts";
@@ -602,6 +604,40 @@ const settingsCases = (test: { readonly effect: it.Tester<TestDatabase.TestDatab
           .pipe(Effect.andThen(embedSummarized(db, id, embedding({ 0: 1 }))), Effect.andThen(db.repos.get(id))),
       );
       expect(Option.getOrThrow(saved).embeddingModel).toBe(model);
+    }),
+  );
+
+  test.effect("reads embedding_settings once across builds that share an adoption Ref", () =>
+    Effect.gen(function* () {
+      const database = yield* TestDatabase.TestDatabase;
+      const adopted = yield* Ref.make(false);
+      const { tracer, spans } = collectSpans();
+      const build = Effect.service(Db.Db).pipe(
+        Effect.provide(database.connect({ embeddingModel: model, adopted })),
+        Effect.withTracer(tracer),
+      );
+      const settingsQueries = () => spans.filter((span) => span.name === "Db.settings.adopt").length;
+      yield* build;
+      const first = settingsQueries();
+      yield* build;
+      yield* build;
+      expect(first).toBeGreaterThan(0);
+      expect(settingsQueries()).toBe(first);
+      expect(yield* Ref.get(adopted)).toBe(true);
+    }),
+  );
+
+  test.effect("leaves the adoption Ref unset when the check fails", () =>
+    Effect.gen(function* () {
+      const database = yield* TestDatabase.TestDatabase;
+      const adopted = yield* Ref.make(false);
+      const conflict = Effect.service(Db.Db).pipe(
+        Effect.provide(database.connect({ embeddingModel: otherModel, adopted })),
+        Effect.flip,
+      );
+      expect((yield* conflict)._tag).toBe("EmbeddingModelConflict");
+      expect((yield* conflict)._tag).toBe("EmbeddingModelConflict");
+      expect(yield* Ref.get(adopted)).toBe(false);
     }),
   );
 

@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Ref from "effect/Ref";
 import type { EmbeddingModelId } from "./embedding.ts";
 import type { DbQueryFailed } from "./errors.ts";
 import * as NodePostgres from "./node-postgres.ts";
@@ -48,18 +49,31 @@ export class Transactions extends Context.Service<
 
 export interface Options {
   readonly embeddingModel: EmbeddingModelId;
+  // A Worker builds Db for each request, because a socket opened in one request cannot serve another.
+  // A Ref it keeps for the isolate's lifetime lets only the first build read embedding_settings.
+  readonly adopted?: Ref.Ref<boolean>;
 }
 
 export interface NodePostgresOptions extends Options {
   readonly connectionString: Redacted.Redacted<string>;
+  readonly maxConnections?: number;
 }
+
+const adopt = (options: Options) => {
+  const { adopted } = options;
+  const check = Settings.adopt(options.embeddingModel);
+  if (adopted === undefined) return check;
+  return Effect.flatMap(Ref.get(adopted), (done) =>
+    done ? Effect.succeed(options.embeddingModel) : Effect.tap(check, () => Ref.set(adopted, true)),
+  );
+};
 
 export const layer = (options: Options) =>
   Layer.mergeAll(
     Layer.effect(
       Db,
       Effect.gen(function* () {
-        const embeddingModel = yield* Settings.adopt(options.embeddingModel);
+        const embeddingModel = yield* adopt(options);
         return Db.of({
           accounts: yield* Accounts.make,
           repos: yield* Repos.make(embeddingModel),
@@ -78,13 +92,13 @@ export const layer = (options: Options) =>
     ),
   );
 
-const nodePostgres = (connectionString: Redacted.Redacted<string>) =>
+const nodePostgres = (options: NodePostgresOptions) =>
   Layer.effect(
     Postgres.Postgres,
-    NodePostgres.acquirePool(Redacted.value(connectionString)).pipe(
+    NodePostgres.acquirePool(Redacted.value(options.connectionString), options.maxConnections).pipe(
       Effect.map((pool) => Postgres.make(NodePostgres.driver(pool))),
     ),
   );
 
 export const layerNodePostgres = (options: NodePostgresOptions) =>
-  layer(options).pipe(Layer.provide(nodePostgres(options.connectionString)));
+  layer(options).pipe(Layer.provide(nodePostgres(options)));

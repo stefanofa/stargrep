@@ -22,8 +22,8 @@ const connectionErrors = new Set([
 
 const isConnectionError = (error: unknown) => error instanceof Error && connectionErrors.has(error.message);
 
-const makePool = (connectionString: string) => {
-  const pool = new pg.Pool({ connectionString });
+const makePool = (connectionString: string, max: number | undefined) => {
+  const pool = new pg.Pool({ connectionString, ...(max === undefined ? {} : { max }) });
   pool.on("error", ignoreError);
   const open = new Set<pg.PoolClient>();
   pool.on("connect", (client) => {
@@ -41,9 +41,9 @@ const makePool = (connectionString: string) => {
 
 // A pg pool that ignores errors on every pooled client, idle or checked out, and whose release waits
 // until every connection has closed.
-export const acquirePool = (connectionString: string) =>
+export const acquirePool = (connectionString: string, max?: number) =>
   Effect.acquireRelease(
-    Effect.sync(() => makePool(connectionString)),
+    Effect.sync(() => makePool(connectionString, max)),
     ({ end }) => Effect.promise(end),
   ).pipe(Effect.map(({ pool }) => pool));
 
