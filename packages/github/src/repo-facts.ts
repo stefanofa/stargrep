@@ -1,4 +1,5 @@
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { pickReadme, TreeEntry } from "./readme.ts";
 import { GraphQLError, Login, type RepoFacts, RepoId, RepoName, RepoNodeId } from "./schemas.ts";
@@ -60,6 +61,17 @@ export const decodeResponse = Schema.decodeEffect(
     }),
   ),
 );
+
+const unreadableTypes = new Set(["NOT_FOUND", "FORBIDDEN"]);
+
+export const unreadableNode = (
+  error: GraphQLError,
+): Result.Result<{ readonly index: number; readonly type: string }, GraphQLError> => {
+  const [field, index] = error.path ?? [];
+  return field === "nodes" && typeof index === "number" && error.type !== undefined && unreadableTypes.has(error.type)
+    ? Result.succeed({ index, type: error.type })
+    : Result.fail(error);
+};
 
 export const request = (ids: ReadonlyArray<RepoNodeId>) =>
   HttpClientRequest.post("https://api.github.com/graphql").pipe(

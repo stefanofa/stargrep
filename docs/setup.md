@@ -187,7 +187,7 @@ Four workflows run the stages, and their jobs skip until the steps below are don
 
 2. Create two Neon API keys in the Neon console. Prod's key is an organization key, because the deploy from `main` creates the projects. The preview key is scoped to the project `stargrep-previews-us-east`, so create it after that deploy.
 
-3. Create a fine-grained GitHub token with read access to public repositories and no other permission. Each stage's Worker syncs stars and fetches READMEs with it, and uses half of each hourly window.
+3. Create a fine-grained GitHub token with read access to public repositories and no other permission. Give it an expiration no longer than the organizations of its owner allow, which is 366 days by default. Each stage's Worker syncs stars and fetches READMEs with it, and uses half of each hourly window. GitHub lists only the stars a token can read. An organization can block a fine-grained token of one of its members, for example a token that outlives the organization's limit. That token then reads none of the organization's repos, public ones included, so the Worker misses those stars.
 
 4. Create the GitHub environments. Only `main` can deploy to `production`. `preview` has no rules.
 
