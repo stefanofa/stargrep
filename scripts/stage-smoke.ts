@@ -65,6 +65,26 @@ const read = Effect.fn("StageSmoke.read")(function* <S extends Schema.Top>(
   return yield* decode(schema, body);
 });
 
+class NotReady extends Schema.TaggedError<NotReady>()("NotReady", { answer: Schema.String }) {}
+
+// A fresh stage's Durable Objects can fail for a few seconds after the deploy, so the checks start once the budget and
+// a counter both answer.
+const answers = (path: string) =>
+  call("GET", path).pipe(
+    Effect.flatMap(({ status, body }) =>
+      status === 200
+        ? Effect.void
+        : Effect.fail(new NotReady({ answer: `GET ${path} ${status} ${body.slice(0, 120)}` })),
+    ),
+  );
+
+const ready = Effect.all([answers("/budget"), answers("/counter/ready")]).pipe(
+  Effect.retry({ schedule: Schedule.max([Schedule.spaced("1 second"), Schedule.during("60 seconds")]) }),
+  Effect.catchTag("NotReady", (error) =>
+    Effect.die(new Error(`${debugUrl} was not ready within 60 s, last answer: ${error.answer}`)),
+  ),
+);
+
 const unauthenticated = Effect.gen(function* () {
   const probe = `smoke-${yield* Clock.currentTimeMillis}`;
   const counterBefore = yield* read(Count, "GET", `/counter/${probe}`);
@@ -159,7 +179,9 @@ const flood = Effect.gen(function* () {
 });
 
 const checks = (
-  await Effect.runPromise(Effect.all([unauthenticated, traffic, flood]).pipe(Effect.provide(FetchHttpClient.layer)))
+  await Effect.runPromise(
+    ready.pipe(Effect.andThen(Effect.all([unauthenticated, traffic, flood])), Effect.provide(FetchHttpClient.layer)),
+  )
 ).flat();
 for (const result of checks) console.log(JSON.stringify(result));
 console.log(JSON.stringify({ resentAfterCloudflare404: resent }));
