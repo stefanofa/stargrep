@@ -1,0 +1,33 @@
+{
+  "name": "@stargrep/api",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./contract": "./src/contract.ts",
+    "./errors": "./src/errors.ts",
+    "./router": "./src/router.ts",
+    "./middleware/instrumentation": "./src/middleware/instrumentation.ts",
+    "./sync-limiter": "./src/sync-limiter.ts"
+  },
+  "scripts": {
+    "typecheck": "effect-tsgo tsc -p ."
+  },
+  "dependencies": {
+    "@orpc/contract": "2.0.0-beta.48",
+    "@orpc/effect": "2.0.0-beta.48",
+    "@orpc/openapi": "2.0.0-beta.48",
+    "@orpc/server": "2.0.0-beta.48",
+    "@stargrep/core": "workspace:*",
+    "@stargrep/db": "workspace:*",
+    "@stargrep/github": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "catalog:",
+    "@stargrep/config": "workspace:*",
+    "@stargrep/telemetry": "workspace:*",
+    "@stargrep/testing": "workspace:*",
+    "@types/bun": "catalog:",
+    "typescript": "catalog:"
+  }
+}
