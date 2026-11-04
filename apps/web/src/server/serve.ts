@@ -4,9 +4,10 @@ import { SmartCoercionHandlerPlugin } from "@orpc/json-schema";
 import { McpRegistrar } from "@orpc/mcp";
 import { OpenAPIGenerator } from "@orpc/openapi";
 import { OpenAPIHandler } from "@orpc/openapi/fetch";
-import { COMMON_ERROR_STATUS_MAP } from "@orpc/server";
+import { COMMON_ERROR_STATUS_MAP, ORPCError } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
-import { errorStatus } from "@stargrep/api/errors";
+import type { StandardHandlerInterceptor } from "@orpc/server/standard";
+import { errorStatus, withTraceId } from "@stargrep/api/errors";
 import type { Transport } from "@stargrep/api/middleware/instrumentation";
 import { type ApiContext, type ApiServices, ApiServicesUnavailable, router } from "@stargrep/api/router";
 import * as Cause from "effect/Cause";
@@ -15,16 +16,38 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 
 export type RequestLayer = (request: Request) => Layer.Layer<ApiServices, { readonly _tag: string }>;
 
+interface WebContext extends ApiContext {
+  readonly requestTraceId: string;
+}
+
+const malformed =
+  "Malformed request. Ensure the request body is properly formatted and the 'Content-Type' header is set correctly.";
+
+// oRPC decodes the body before any procedure middleware runs, so a body it cannot decode gets the request's trace ID here.
+const traceErrors: StandardHandlerInterceptor<WebContext> = async (options) => {
+  const decodeInput = () =>
+    options.decodeInput().catch((cause: unknown) => {
+      throw cause instanceof ORPCError ? cause : new ORPCError("BAD_REQUEST", { message: malformed, cause });
+    });
+  try {
+    return await options.next({ ...options, decodeInput });
+  } catch (error) {
+    throw error instanceof ORPCError ? withTraceId(error, options.context.requestTraceId) : error;
+  }
+};
+
 const converters = [new EffectSchemaToJsonSchemaConverter({ cache: true })];
 const plugins = [new SmartCoercionHandlerPlugin({ converters })];
 const errorStatusMap = { ...COMMON_ERROR_STATUS_MAP, ...errorStatus };
-const rpc = new RPCHandler(router, { errorStatusMap });
-const rest = new OpenAPIHandler(router, { plugins, errorStatusMap });
+const interceptors = [traceErrors];
+const rpc = new RPCHandler<WebContext>(router, { errorStatusMap, interceptors });
+const rest = new OpenAPIHandler<WebContext>(router, { plugins, errorStatusMap, interceptors });
 const registrar = new McpRegistrar(router, { converters, plugins });
 
 let spec: Promise<string> | undefined;
@@ -42,7 +65,17 @@ const specResponse = async () => {
 const orNotFound = ({ response }: { readonly response?: Response | undefined }) =>
   response ?? new Response("Not found", { status: 404 });
 
-const answerMcp = async (request: Request, context: ApiContext) => {
+// JSON-RPC lets an error carry data, so a protocol error from the MCP transport, such as a parse error, gets the trace ID.
+const withJsonRpcTraceId = (body: string, traceId: string) => {
+  const message: unknown = JSON.parse(body);
+  if (!Predicate.isObject(message) || !Predicate.isObject(message.error)) return body;
+  const data = Predicate.isObject(message.error.data) ? message.error.data : {};
+  return "traceId" in data
+    ? body
+    : JSON.stringify({ ...message, error: { ...message.error, data: { ...data, traceId } } });
+};
+
+const answerMcp = async (request: Request, context: WebContext) => {
   const mcp = createMcpHandler(
     async () => {
       const server = new McpServer({ name: "stargrep", version: "1.0.0" });
@@ -53,13 +86,18 @@ const answerMcp = async (request: Request, context: ApiContext) => {
   );
   const response = await mcp.fetch(request);
   // The request scope closes the database pool once this resolves, so a streamed body must be read first.
-  return new Response(await response.arrayBuffer(), response);
+  const body = await response.text();
+  if (!response.headers.get("content-type")?.startsWith("application/json")) return new Response(body, response);
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  const { status, statusText } = response;
+  return new Response(withJsonRpcTraceId(body, context.requestTraceId), { status, statusText, headers });
 };
 
 interface Route {
   readonly transport: Transport;
   readonly matches: (pathname: string) => boolean;
-  readonly answer: (request: Request, context: ApiContext) => Promise<Response>;
+  readonly answer: (request: Request, context: WebContext) => Promise<Response>;
 }
 
 const under = (prefix: string) => (pathname: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
@@ -81,6 +119,7 @@ const routes: ReadonlyArray<Route> = [
 export const requestContext = Effect.fn("Web.requestContext")(function* (
   transport: Transport,
   layer: Layer.Layer<ApiServices, { readonly _tag: string }>,
+  requestTraceId: string,
 ) {
   const scope = yield* Scope.Scope;
   const services = yield* Effect.cached(
@@ -94,11 +133,18 @@ export const requestContext = Effect.fn("Web.requestContext")(function* (
     transport,
     procedureTime: yield* Ref.make(Option.none<Duration.Duration>()),
     services,
-  } satisfies ApiContext;
+    requestTraceId,
+  } satisfies WebContext;
 });
 
-const withTiming = (response: Response, total: number, procedure: Option.Option<Duration.Duration>) => {
+const withTiming = (
+  response: Response,
+  traceId: string,
+  total: number,
+  procedure: Option.Option<Duration.Duration>,
+) => {
   const timed = new Response(response.body, response);
+  timed.headers.set("x-trace-id", traceId);
   timed.headers.set(
     "server-timing",
     [
@@ -113,10 +159,10 @@ const respond = (route: Route, request: Request, layerFor: RequestLayer) =>
   Effect.useSpan(`Web.${route.transport}`, { kind: "server" }, (span) =>
     Effect.gen(function* () {
       const started = yield* Clock.currentTimeMillis;
-      const context = yield* requestContext(route.transport, layerFor(request));
+      const context = yield* requestContext(route.transport, layerFor(request), span.traceId);
       const response = yield* Effect.promise(() => route.answer(request, context));
       const total = (yield* Clock.currentTimeMillis) - started;
-      return withTiming(response, total, yield* Ref.get(context.procedureTime));
+      return withTiming(response, span.traceId, total, yield* Ref.get(context.procedureTime));
     }).pipe(
       Effect.scoped,
       Effect.withParentSpan(span),

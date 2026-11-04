@@ -94,7 +94,7 @@ curl "$WEB/api/repos/1300192"
 curl "$WEB/openapi.json"
 ```
 
-Search takes its query in a JSON body, so the query never appears in a URL, a request log, or Cloudflare's request span. `triggerSync` answers `queued`, and `syncStatus` answers `done` once the sync has run or `failed` if it could not, such as for a login GitHub does not know. Triggers for a login already requested in the last 10 minutes answer with that request and queue nothing. Each caller may trigger about 5 syncs a minute, a soft limit that Cloudflare counts per location. Every error body has a `code` and a `traceId`, including a validation error. Each response's `Server-Timing` header gives the handler's total time and the procedure's time, in milliseconds.
+Search takes its query in a JSON body, so the query never appears in a URL, a request log, or Cloudflare's request span. `triggerSync` answers `queued`, and `syncStatus` answers `done` once the sync has run or `failed` if it could not, such as for a login GitHub does not know. Triggers for a login already requested in the last 10 minutes answer with that request and queue nothing. Each caller may trigger about 5 syncs a minute, a soft limit that Cloudflare counts per location. Every error body has a `code` and a `traceId`, including a validation error and a body that is not JSON, and every response has an `x-trace-id` header. Each response's `Server-Timing` header gives the handler's total time and the procedure's time, in milliseconds.
 
 To search from Claude Code, add the stage's MCP endpoint and ask it to search a synced login's stars:
 

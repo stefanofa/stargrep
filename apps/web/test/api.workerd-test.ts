@@ -62,7 +62,11 @@ const sendTo =
   (serve: (request: Request) => Promise<Response> | undefined) => async (path: string, init: RequestInit) => {
     const response = await serve(new Request(`http://web${path}`, init));
     if (response === undefined) throw new Error(`no route for ${path}`);
-    return { status: response.status, body: parseJsonOrEvent(await response.text()) };
+    return {
+      status: response.status,
+      traceHeader: response.headers.get("x-trace-id"),
+      body: parseJsonOrEvent(await response.text()),
+    };
   };
 
 const searchRest = (input: object) => rest("/search", post(input));
@@ -160,6 +164,25 @@ describe("when the services cannot start", () => {
 
 describe("when the database is unreachable", () => {
   const send = sendTo(makeServer((request) => layerRequest(env, Option.none(), request), Layer.empty));
+
+  it("answers a body that is not JSON with 400 and the request's trace ID on every transport", async () => {
+    const malformed: RequestInit = {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: '{"login":',
+    };
+    const viaRest = await send("/api/search", malformed);
+    expect(viaRest).toMatchObject({ status: 400, traceHeader: traceId, body: { code: "BAD_REQUEST" } });
+    expect(viaRest.body.data.traceId).toBe(viaRest.traceHeader);
+
+    const viaRpc = await send("/rpc/search", malformed);
+    expect(viaRpc).toMatchObject({ status: 400, traceHeader: traceId, body: { json: { code: "BAD_REQUEST" } } });
+    expect(viaRpc.body.json.data.traceId).toBe(viaRpc.traceHeader);
+
+    const viaMcp = await send("/mcp", malformed);
+    expect(viaMcp).toMatchObject({ status: 400, traceHeader: traceId, body: { error: { code: -32700 } } });
+    expect(viaMcp.body.error.data.traceId).toBe(viaMcp.traceHeader);
+  });
 
   it("answers service unavailable with a trace ID on every transport, and still lists tools", async () => {
     const viaRest = await send("/api/search", post({ login: "ada", q: "dashboards" }));
