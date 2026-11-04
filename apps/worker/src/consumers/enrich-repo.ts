@@ -1,5 +1,6 @@
 import { EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
 import type { RepoId } from "@stargrep/github/schemas";
+import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
@@ -26,16 +27,17 @@ export const handleBatch = Effect.fn("EnrichRepoConsumer.handleBatch")(function*
   const decoded = yield* Effect.forEach(messages, (message) => Effect.result(decodeMessage(message.body)));
   const ids = decoded.flatMap((result): Array<RepoId> => (Result.isSuccess(result) ? [result.success.repoId] : []));
   const enricher = yield* EnrichRepo.EnrichRepo;
-  const enriched = ids.length === 0 ? Result.succeed([]) : yield* Effect.result(enricher.enrichRepos(ids, "direct"));
+  const enriched = yield* Effect.result(enricher.enrichRepos(ids, "direct"));
   const now = yield* Clock.currentTimeMillis;
   const byId = new Map<number, EnrichRepo.Enrichment>(
     Result.isSuccess(enriched) ? enriched.success.map((outcome) => [outcome.id, outcome]) : [],
   );
-  return decoded.map((result): Settle.Settlement => {
-    if (Result.isFailure(result)) return Settle.Settlement.DeadLetter({ error: result.failure._tag });
-    if (Result.isFailure(enriched)) return Settle.afterFailure(enriched.failure, now);
-    const outcome = byId.get(result.success.repoId);
-    return outcome === undefined ? Settle.Settlement.Retry({ error: "Missing" }) : settlementOf(outcome, now);
+  return yield* Effect.forEach(decoded, (result) => {
+    if (Result.isFailure(result)) return Effect.succeed(Settle.Settlement.DeadLetter({ error: result.failure._tag }));
+    if (Result.isFailure(enriched)) return Effect.succeed(Settle.afterFailure(enriched.failure, now));
+    return Effect.map(Effect.orDie(Effect.fromNullishOr(byId.get(result.success.repoId))), (outcome) =>
+      settlementOf(outcome, now),
+    );
   });
 });
 
@@ -44,12 +46,9 @@ export const processBatch = Effect.fn("EnrichRepoConsumer.processBatch")(functio
   messages: ReadonlyArray<Settle.Message>,
 ) {
   const settlements = yield* handleBatch(messages);
-  yield* Effect.forEach(messages, (message, index) =>
-    Settle.settle(queues, message, settlements[index] ?? Settle.Settlement.Retry({ error: "Missing" })),
+  yield* Effect.forEach(Arr.zip(messages, settlements), ([message, settlement]) =>
+    Settle.settle(queues, message, settlement),
   );
 });
 
-export const describe = (body: unknown) =>
-  isMessage(body)
-    ? { repoId: body.repoId }
-    : { bodyType: body === null ? "null" : Array.isArray(body) ? "array" : typeof body };
+export const describe = (body: unknown) => (isMessage(body) ? { repoId: body.repoId } : Settle.bodyType(body));

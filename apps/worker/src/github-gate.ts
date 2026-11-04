@@ -8,7 +8,6 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import { githubToken } from "./github-token.ts";
 
-// The token belongs to the person who runs the stage, so half of each hourly window stays theirs.
 const share = BudgetShare.make(0.5);
 
 const budgetKey = "budget";

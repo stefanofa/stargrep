@@ -19,7 +19,6 @@ export const Settlement = Data.taggedEnum<Settlement>();
 
 export type Failure = StarSync.StarSyncError | EnrichRepo.EnrichRepoError | EnrichRepo.EnrichRepoAbort;
 
-// GitHub names the time a budget or rate limit lifts, so the message waits for it without spending a retry.
 export const afterFailure = (error: Failure, now: number): Settlement => {
   switch (error._tag) {
     case "TokenBudgetExhausted":
@@ -82,6 +81,10 @@ export const settle = Effect.fn("Consumer.settle")(function* (
       return yield* Effect.logWarning("Queue message dead-lettered", { ...fields, error: settlement.error });
     }
   }
+});
+
+export const bodyType = (body: unknown) => ({
+  bodyType: body === null ? "null" : Array.isArray(body) ? "array" : typeof body,
 });
 
 export const logDeadLetters = (name: string, describe: (body: unknown) => Record<string, unknown>) =>

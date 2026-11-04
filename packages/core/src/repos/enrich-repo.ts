@@ -41,8 +41,6 @@ export const Enrichment = Data.taggedEnum<Enrichment>();
 
 export type EnrichRepoAbort = DbQueryFailed | DbRowInvalid | EmbeddingModelMismatch | GitHubError;
 
-// A Gateway batch job answers in minutes to hours, so it suits the CLI and backfills. Queue consumers
-// summarize each repo with its own call.
 export type Summaries = "batch" | "direct";
 
 export class EnrichRepo extends Context.Service<

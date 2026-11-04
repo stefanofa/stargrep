@@ -49,8 +49,7 @@ export class Transactions extends Context.Service<
 
 export interface Options {
   readonly embeddingModel: EmbeddingModelId;
-  // A Worker builds Db for each request, because a socket opened in one request cannot serve another.
-  // A Ref it keeps for the isolate's lifetime lets only the first build read embedding_settings.
+  /** Skips the embedding_settings read once a build that shares this Ref has passed it. */
   readonly adopted?: Ref.Ref<boolean>;
 }
 

@@ -85,8 +85,6 @@ export const consumeAll = <E>(runtime: Layer.Layer<StarSync.StarSync | EnrichRep
       },
       runtime,
     ),
-    // One batch at a time: a repo several accounts starred arrives once per account, and a later batch
-    // finds it enriched instead of paying for a second summary.
     consume(
       {
         name: "enrich-repo",

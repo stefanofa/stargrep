@@ -126,8 +126,6 @@ export const layerMissing = Layer.succeed(
   }),
 );
 
-// A gate that runs elsewhere, such as in a Durable Object, receives requests and returns results as plain
-// data. The request carries no token, because the remote gate adds its own.
 const StringRecord = Schema.Record(Schema.String, Schema.String);
 
 export const RemoteRequest = Schema.Struct({

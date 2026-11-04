@@ -31,4 +31,4 @@ export const describe = (body: unknown) =>
     ? "accountId" in body
       ? { accountId: body.accountId, mode: body.mode }
       : { login: body.login, mode: body.mode }
-    : { bodyType: body === null ? "null" : Array.isArray(body) ? "array" : typeof body };
+    : Settle.bodyType(body);
