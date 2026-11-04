@@ -28,7 +28,7 @@ const at = (millis: number) => DateTime.makeUnsafe(millis);
 
 const reset = Effect.gen(function* () {
   queue.sent.length = 0;
-  log.requests.clear();
+  log.stored.clear();
   yield* (yield* TestDatabase.TestDatabase).query("truncate github_accounts cascade");
   yield* TestClock.setTime(start);
 });
@@ -48,6 +48,9 @@ const synced = (login: string, syncedAt: number) =>
     });
     yield* db.accounts.recordStarSync({ accountId, etag: null, at: at(syncedAt) });
   });
+
+const markFailed = (login: string) =>
+  Effect.flatMap(Effect.service(SyncRequestLog.SyncRequestLog), (service) => service.markFailed(login as Login));
 
 const requests = Effect.service(SyncRequests.SyncRequests);
 const request = (login: string) => Effect.flatMap(requests, (service) => service.request(login as Login));
@@ -96,6 +99,31 @@ it.layer(layerWith(log.layer), { timeout: 30_000 })("SyncRequests", (it) => {
     }),
   );
 
+  it.effect("reports a dead-lettered request as failed and queues it again only after the cooldown", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      yield* request("no-such-login");
+      yield* TestClock.adjust("1 minute");
+      yield* markFailed("No-Such-Login");
+      const failed = { state: "failed", requestedAt: at(start), syncedAt: null } as const;
+      expect(yield* status("no-such-login")).toEqual(failed);
+      expect(yield* request("no-such-login")).toEqual(failed);
+      expect(queue.sent).toHaveLength(1);
+
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* request("no-such-login")).toMatchObject({ state: "queued" });
+      expect(queue.sent).toHaveLength(2);
+    }),
+  );
+
+  it.effect("records a failure for a login that was never requested at the time it failed", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      yield* markFailed("octocat");
+      expect(yield* status("octocat")).toEqual({ state: "failed", requestedAt: at(start), syncedAt: null });
+    }),
+  );
+
   it.effect("forgets a request after a day", () =>
     Effect.gen(function* () {
       yield* reset;
@@ -106,11 +134,13 @@ it.layer(layerWith(log.layer), { timeout: 30_000 })("SyncRequests", (it) => {
   );
 });
 
+const down = new SyncRequestLog.SyncRequestLogFailed({ operation: "read", cause: "down" });
 const failing = Layer.succeed(
   SyncRequestLog.SyncRequestLog,
   SyncRequestLog.SyncRequestLog.of({
-    lastRequest: () => Effect.fail(new SyncRequestLog.SyncRequestLogFailed({ operation: "read", cause: "down" })),
-    record: () => Effect.fail(new SyncRequestLog.SyncRequestLogFailed({ operation: "write", cause: "down" })),
+    lastRequest: () => Effect.fail(down),
+    markPending: () => Effect.fail(new SyncRequestLog.SyncRequestLogFailed({ operation: "write", cause: "down" })),
+    markFailed: () => Effect.fail(down),
   }),
 );
 

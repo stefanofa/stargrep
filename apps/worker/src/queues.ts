@@ -1,6 +1,6 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import type { EnrichRepo } from "@stargrep/core/repos";
-import type { StarSync } from "@stargrep/core/stars";
+import type { StarSync, SyncRequestLog } from "@stargrep/core/stars";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
@@ -24,6 +24,7 @@ const consume = Effect.fn("Queues.consume")(function* <A, R, E>(
   settings: Omit<Cloudflare.Queues.MessagesProps, "deadLetterQueue">,
   pipeline: Settle.Pipeline<A, R>,
   runtime: Layer.Layer<NoInfer<R>, E, RuntimeContext>,
+  onDeadLetter?: (body: A) => Effect.Effect<void, never, RuntimeContext>,
 ) {
   const queue = yield* queues.queue;
   const deadLetters = yield* queues.deadLetters;
@@ -38,11 +39,14 @@ const consume = Effect.fn("Queues.consume")(function* <A, R, E>(
   yield* Cloudflare.Queues.consumeQueueMessages(
     deadLetters,
     { batchSize: 10, maxWaitTime: "1 second" },
-    Settle.logDeadLetters(name, pipeline),
+    Settle.logDeadLetters(name, pipeline, onDeadLetter),
   );
 });
 
-export const consumeAll = <E>(runtime: Layer.Layer<StarSync.StarSync | EnrichRepo.EnrichRepo, E, RuntimeContext>) =>
+export const consumeAll = <E>(
+  runtime: Layer.Layer<StarSync.StarSync | EnrichRepo.EnrichRepo, E, RuntimeContext>,
+  syncRequestLog: Layer.Layer<SyncRequestLog.SyncRequestLog, never, RuntimeContext>,
+) =>
   Effect.all([
     consume(
       queueNames.syncStars,
@@ -50,6 +54,7 @@ export const consumeAll = <E>(runtime: Layer.Layer<StarSync.StarSync | EnrichRep
       { batchSize: 5, maxWaitTime: "1 second", ...retries },
       SyncStarsConsumer.pipeline,
       runtime,
+      (body) => SyncStarsConsumer.markFailed(body).pipe(Effect.provide(syncRequestLog)),
     ),
     consume(
       queueNames.enrichRepo,

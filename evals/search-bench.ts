@@ -135,7 +135,7 @@ const bench = Command.make(
       for (const login of input.logins) {
         const account = yield* db.accounts.byLogin(login);
         if (Option.isNone(account)) return yield* new LoginNotFound({ login });
-        const scope: Search.Scope = { _tag: "stars", accountId: account.value.id };
+        const scope: Search.Scope = { _tag: "stars", login };
         const [{ count }] = yield* Effect.promise(
           () => sql`select count(*)::int as count from stars where account_id = ${account.value.id}`,
         );

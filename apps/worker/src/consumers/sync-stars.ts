@@ -1,4 +1,4 @@
-import { StarSync } from "@stargrep/core/stars";
+import { StarSync, SyncRequestLog } from "@stargrep/core/stars";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Settle from "./settle.ts";
@@ -16,4 +16,16 @@ export const pipeline = Settle.pipeline({
   }),
   describe: (body) =>
     "accountId" in body ? { accountId: body.accountId, mode: body.mode } : { login: body.login, mode: body.mode },
+});
+
+export const markFailed = Effect.fn("SyncStarsConsumer.markFailed")(function* (
+  body: StarSync.SyncRequest | StarSync.LoginSyncRequest,
+) {
+  if ("accountId" in body) return;
+  yield* (yield* SyncRequestLog.SyncRequestLog).markFailed(body.login).pipe(
+    Effect.catchTags({
+      SyncRequestLogFailed: (error) =>
+        Effect.logWarning("Sync request log failed to record a dead letter", { operation: error.operation }),
+    }),
+  );
 });

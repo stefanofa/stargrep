@@ -67,10 +67,11 @@ const seed = Effect.fn("seed")(function* (account: number, repos: ReadonlyArray<
   const database = yield* TestDatabase.TestDatabase;
   const embeddings = yield* Embeddings.Embeddings;
   const accountId = GitHubAccountId.make(account);
+  const login = Login.make(`user-${account}`);
   yield* db.accounts.upsert({
     id: accountId,
     type: "user",
-    login: Login.make(`user-${account}`),
+    login,
     name: null,
     avatarUrl: null,
     followers: null,
@@ -129,7 +130,7 @@ const seed = Effect.fn("seed")(function* (account: number, repos: ReadonlyArray<
   });
   calls.prompts.length = 0;
   calls.embedded.length = 0;
-  return { _tag: "stars", accountId } satisfies Search.Scope;
+  return { _tag: "stars", login } satisfies Search.Scope;
 });
 
 const orms = (base: number): ReadonlyArray<Seed> => [
@@ -255,10 +256,21 @@ const searchCases = (test: {
 
   test.effect("refuses network and global scopes until they exist", () =>
     Effect.gen(function* () {
-      for (const scope of [{ _tag: "network", accountId: GitHubAccountId.make(906) }, { _tag: "global" }] as const) {
+      for (const scope of [{ _tag: "network", login: Login.make("user-906") }, { _tag: "global" }] as const) {
         const error = yield* search({ scope, query: "ratatui", limit: 10 }).pipe(Effect.flip);
         expect(error).toMatchObject({ _tag: "SearchScopeUnavailable", scope: scope._tag });
       }
+    }),
+  );
+
+  test.effect("says a login without an account is not synced, before asking the planner", () =>
+    Effect.gen(function* () {
+      calls.prompts.length = 0;
+      calls.embedded.length = 0;
+      const scope = { _tag: "stars", login: Login.make("nobody-here") } as const;
+      const error = yield* search({ scope, query: "an orm for typescript projects", limit: 10 }).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "AccountNotSynced", login: "nobody-here" });
+      expect([calls.prompts, calls.embedded]).toEqual([[], []]);
     }),
   );
 
@@ -445,7 +457,7 @@ const searchCases = (test: {
 
   test.effect("runs every registry metric as a filter and a ranking in the database", () =>
     Effect.gen(function* () {
-      const scope = yield* seed(907, orms(9700));
+      yield* seed(907, orms(9700));
       const db = yield* Db.Db;
       const database = yield* TestDatabase.TestDatabase;
       const embeddings = yield* Embeddings.Embeddings;
@@ -459,7 +471,7 @@ const searchCases = (test: {
       const embedding = yield* decodeEmbedding({ model, vector: query?.vector });
       for (const metric of Object.values(registry)) {
         const hits = yield* db.search.hybrid({
-          scope: { kind: "stars", accountId: scope.accountId },
+          scope: { kind: "stars", accountId: GitHubAccountId.make(907) },
           text: "orm",
           embedding,
           limit: 10,

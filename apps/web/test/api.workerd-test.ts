@@ -5,7 +5,10 @@ import type { ContractRouterClient } from "@orpc/contract";
 import type { contract } from "@stargrep/api/contract";
 import type { ApiServices } from "@stargrep/api/router";
 import { SearchCache } from "@stargrep/core/search";
+import { SyncRequestLog } from "@stargrep/core/stars";
 import { DbQueryFailed } from "@stargrep/db/errors";
+import { Login } from "@stargrep/github/schemas";
+import { layerSyncRequestLog } from "@stargrep/worker/kv";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -71,7 +74,7 @@ describe("search", () => {
     expect(body.results.map((result: { reason: string }) => result.reason)).toEqual([
       "keyword match #1, meaning match #2, 18K stars",
     ]);
-    expect(timing).toMatch(/^total;dur=\d+/);
+    expect(timing).toMatch(/^total;dur=\d+, api;dur=\d+$/);
   });
 
   it("answers the same over typed RPC and as the MCP tool's structured content", async () => {
@@ -173,6 +176,23 @@ describe("sync", () => {
     expect(statuses).toEqual([202, 202, 202, 429]);
     expect((await rest("/sync/octocat", from("192.0.2.2"))).status).toBe(202);
     expect((await rest("/sync/octocat")).body).toMatchObject({ state: "queued" });
+  });
+
+  it("keeps the request under the lowercase login for a day, and reports a dead-lettered sync as failed", async () => {
+    expect((await rest("/sync/Hubot", { method: "POST", headers: { "cf-connecting-ip": "192.0.2.9" } })).status).toBe(
+      202,
+    );
+    const { keys } = await env.SYNC_REQUESTS.list({ prefix: "hubot" });
+    expect(keys.map((key) => key.name)).toEqual(["hubot"]);
+    const now = await Effect.runPromise(Clock.currentTimeMillis);
+    expect(keys[0]?.expiration ?? 0).toBeGreaterThanOrEqual(Math.floor(now / 1000) + 86_000);
+
+    await Effect.runPromise(
+      SyncRequestLog.SyncRequestLog.use((log) => log.markFailed(Login.make("hubot"))).pipe(
+        Effect.provide(layerSyncRequestLog(env.SYNC_REQUESTS)),
+      ),
+    );
+    expect((await rest("/sync/hubot")).body).toMatchObject({ login: "hubot", state: "failed", syncedAt: null });
   });
 
   it("rejects a login GitHub would not issue", async () => {

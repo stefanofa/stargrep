@@ -1,4 +1,5 @@
-import { aiGatewayKeyName, optionalSecret } from "@stargrep/runtime/ai";
+import { apiKeyName } from "@stargrep/ai/gateway";
+import { optionalSecret } from "@stargrep/runtime/config";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -10,4 +11,4 @@ const required = (name: string) => Config.schema(Schema.Redacted(Schema.NonEmpty
 export const githubToken = optionalSecret(githubTokenName);
 
 export const requireStageSecrets = (stage: string) =>
-  stage === "prod" ? Effect.asVoid(Effect.all([required(githubTokenName), required(aiGatewayKeyName)])) : Effect.void;
+  stage === "prod" ? Effect.asVoid(Effect.all([required(githubTokenName), required(apiKeyName)])) : Effect.void;

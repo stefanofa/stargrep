@@ -81,6 +81,7 @@ export interface Queries {
     input: RepoEmbedding,
   ) => Effect.Effect<boolean, DbQueryFailed | RepoNotFound | EmbeddingModelMismatch>;
   readonly get: (id: RepoId) => Effect.Effect<Option.Option<Repo>, DbQueryFailed | DbRowInvalid>;
+  readonly require: (id: RepoId) => Effect.Effect<Repo, DbQueryFailed | DbRowInvalid | RepoNotFound>;
   readonly getMany: (
     ids: ReadonlyArray<RepoId>,
   ) => Effect.Effect<ReadonlyArray<StoredRepo>, DbQueryFailed | DbRowInvalid>;
@@ -200,6 +201,13 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
       run("repos.get", (db) => db.select(repoColumns).from(repos).where(eq(repos.id, id))).pipe(
         Effect.flatMap(decodeRepos("repos.get")),
         Effect.map(Arr.head),
+      ),
+    require: (id) =>
+      run("repos.require", (db) => db.select(repoColumns).from(repos).where(eq(repos.id, id))).pipe(
+        Effect.flatMap(decodeRepos("repos.require")),
+        Effect.flatMap((rows) =>
+          Effect.fromOption(Arr.head(rows)).pipe(Effect.mapError(() => new RepoNotFound({ repoId: id }))),
+        ),
       ),
     getMany: (ids) =>
       run("repos.getMany", (db) =>

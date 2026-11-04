@@ -3,7 +3,6 @@ import * as BunServices from "@effect/platform-bun/BunServices";
 import * as Gateway from "@stargrep/ai/gateway";
 import * as Models from "@stargrep/ai/models";
 import { tokensSpent } from "@stargrep/ai/port";
-import * as Db from "@stargrep/db";
 import { Login } from "@stargrep/github/schemas";
 import * as Console from "effect/Console";
 import * as Argument from "effect/cli/Argument";
@@ -12,19 +11,11 @@ import * as Flag from "effect/cli/Flag";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
-import * as Schema from "effect/Schema";
 import * as QueryPlanner from "../src/search/query-planner.ts";
 import * as Search from "../src/search/search.ts";
 import * as SearchCache from "../src/search/search-cache.ts";
 import { ended, layerDb, millis, tracer } from "./runtime.ts";
-
-class LoginNotFound extends Schema.TaggedError<LoginNotFound>()("LoginNotFound", { login: Schema.String }) {
-  override get message(): string {
-    return `No account '${this.login}' in this database. Sync it first with \`bun run --cwd packages/core sync ${this.login}\``;
-  }
-}
 
 const timings = (name: string) => {
   const finished = ended(name);
@@ -65,11 +56,8 @@ const search = Command.make(
   },
   Effect.fn("search")(
     function* (input) {
-      const db = yield* Db.Db;
-      const account = yield* db.accounts.byLogin(input.login);
-      if (Option.isNone(account)) return yield* new LoginNotFound({ login: input.login });
       const outcome = yield* (yield* Search.Search)
-        .search({ scope: { _tag: "stars", accountId: account.value.id }, query: input.query, limit: input.limit })
+        .search({ scope: { _tag: "stars", login: input.login }, query: input.query, limit: input.limit })
         .pipe(Effect.withTracer(tracer));
       const { plan } = outcome;
       yield* Console.log(`query: ${input.query}`);

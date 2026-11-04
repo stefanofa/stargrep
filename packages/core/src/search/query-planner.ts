@@ -1,3 +1,4 @@
+import type { AiError } from "@stargrep/ai/errors";
 import * as TextGeneration from "@stargrep/ai/text-generation";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -5,17 +6,18 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
+import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import * as PlannerPrompt from "./planner-prompt.ts";
 import * as QueryPlan from "./query-plan.ts";
 import * as SearchCache from "./search-cache.ts";
 
-export type PlanSource = "keyword" | "cache" | "model" | "fallback";
+export const PlanSource = Schema.Literals(["keyword", "cache", "model", "fallback"]);
+export type PlanSource = typeof PlanSource.Type;
 
-export interface Planned {
-  readonly plan: QueryPlan.QueryPlan;
-  readonly source: PlanSource;
-}
+export type Planned =
+  | { readonly plan: QueryPlan.QueryPlan; readonly source: Exclude<PlanSource, "fallback"> }
+  | { readonly plan: QueryPlan.QueryPlan; readonly source: "fallback"; readonly failure: AiError["_tag"] };
 
 export class QueryPlanner extends Context.Service<
   QueryPlanner,
@@ -28,19 +30,12 @@ export const plansMade = Metric.counter("stargrep_search_plans", {
   description: "Query plans, by source, and by the planner failure that made search fall back to the typed text.",
 });
 
-const recordPlan = (planned: Planned, failure?: string) =>
-  Effect.annotateCurrentSpan({
-    "search.plan_source": planned.source,
-    ...(failure === undefined ? {} : { "search.planner_failure": failure }),
-  }).pipe(
-    Effect.andThen(
-      Metric.update(
-        Metric.withAttributes(plansMade, { source: planned.source, ...(failure === undefined ? {} : { failure }) }),
-        1,
-      ),
-    ),
-    Effect.as(planned),
+const recordPlan = ({ plan: _plan, ...outcome }: Planned) => {
+  const attributes: Readonly<Record<string, string>> = outcome;
+  return Effect.annotateCurrentSpan(Record.mapKeys(attributes, (key) => `search.plan.${key}`)).pipe(
+    Effect.andThen(Metric.update(Metric.withAttributes(plansMade, attributes), 1)),
   );
+};
 
 const CachedPlan = Schema.Struct({ plannedOn: Schema.String, output: QueryPlan.PlannerOutput });
 
@@ -59,7 +54,7 @@ const make = Effect.gen(function* () {
   const plan = Effect.fn("QueryPlanner.plan")(function* (typed: string) {
     const query = QueryPlan.normalize(typed);
     const kind = QueryPlan.queryKind(query);
-    if (kind !== "sentence") return yield* recordPlan({ plan: QueryPlan.asTyped(query, kind), source: "keyword" });
+    if (kind !== "sentence") return { plan: QueryPlan.asTyped(query, kind), source: "keyword" } satisfies Planned;
 
     const now = yield* DateTime.now;
     const today = DateTime.formatIsoDate(now);
@@ -69,7 +64,7 @@ const make = Effect.gen(function* () {
       (hit) => hit.plannedOn === today || !hasDates(hit.output),
     );
     if (Option.isSome(cached)) {
-      return yield* recordPlan({ plan: QueryPlan.fromPlannerOutput(query, cached.value.output), source: "cache" });
+      return { plan: QueryPlan.fromPlannerOutput(query, cached.value.output), source: "cache" } satisfies Planned;
     }
 
     return yield* textGeneration
@@ -80,14 +75,14 @@ const make = Effect.gen(function* () {
       })
       .pipe(
         Effect.tap((output) => cache.store(plans, key, { plannedOn: today, output })),
-        Effect.flatMap((output) => recordPlan({ plan: QueryPlan.fromPlannerOutput(query, output), source: "model" })),
+        Effect.map((output): Planned => ({ plan: QueryPlan.fromPlannerOutput(query, output), source: "model" })),
         Effect.catch((error) =>
           Effect.logWarning("Query planner failed, searching the query as typed", { error: error._tag }).pipe(
-            Effect.andThen(recordPlan({ plan: QueryPlan.asTyped(query, kind), source: "fallback" }, error._tag)),
+            Effect.as<Planned>({ plan: QueryPlan.asTyped(query, kind), source: "fallback", failure: error._tag }),
           ),
         ),
       );
-  });
+  }, Effect.tap(recordPlan));
 
   return QueryPlanner.of({ plan });
 });

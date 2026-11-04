@@ -195,7 +195,11 @@ const bodyType = (body: unknown) => ({
   bodyType: body === null ? "null" : Array.isArray(body) ? "array" : typeof body,
 });
 
-export const logDeadLetters = <A, R>(name: string, pipeline: Pipeline<A, R>) =>
+export const logDeadLetters = <A, R, D = never>(
+  name: string,
+  pipeline: Pipeline<A, R>,
+  onDecoded: (body: A) => Effect.Effect<void, never, D> = () => Effect.void,
+) =>
   Stream.runForEach(
     Effect.fn("DeadLetters.log")(function* (message: Message) {
       const decoded = pipeline.decode(message.body);
@@ -205,5 +209,6 @@ export const logDeadLetters = <A, R>(name: string, pipeline: Pipeline<A, R>) =>
         attempts: message.attempts,
         ...(Result.isSuccess(decoded) ? pipeline.describe(decoded.success) : bodyType(message.body)),
       });
+      if (Result.isSuccess(decoded)) yield* onDecoded(decoded.success);
     }),
   );

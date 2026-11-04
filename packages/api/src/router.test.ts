@@ -3,17 +3,19 @@ import { createRouterClient, ORPCError } from "@orpc/server";
 import { QueryPlan, Search } from "@stargrep/core/search";
 import { SyncQueue, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
-import { DbQueryFailed } from "@stargrep/db/errors";
-import type { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
+import { DbQueryFailed, RepoNotFound } from "@stargrep/db/errors";
+import type { Login, RepoId, RepoName } from "@stargrep/github/schemas";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Tracer from "effect/Tracer";
 import type { Transport } from "./middleware/instrumentation.ts";
-import { ApiServicesUnavailable, router } from "./router.ts";
-import { SyncLimiter } from "./sync-limiter.ts";
+import { type ApiContext, type ApiServices, ApiServicesUnavailable, router } from "./router.ts";
+import { SyncLimiter, SyncLimiterUnavailable, SyncRateLimited } from "./sync-limiter.ts";
 
 const canary = "PRIVATE_QUERY_CANARY";
 const pushedAt = DateTime.makeUnsafe("2026-10-01T08:00:00Z");
@@ -39,11 +41,10 @@ const repo: Db.Repo = {
   embeddingModel: null,
 };
 
-const account = { id: 7 as GitHubAccountId, login: "ada" as Login };
-
 interface Fakes {
   readonly search?: (request: Search.SearchRequest) => Effect.Effect<Search.SearchOutcome, Search.SearchError>;
-  readonly allow?: boolean;
+  readonly limiter?: Effect.Effect<void, SyncRateLimited | SyncLimiterUnavailable>;
+  readonly requests?: SyncRequests.SyncRequests["Service"];
   readonly sent?: Array<Login>;
 }
 
@@ -53,44 +54,56 @@ const searchOutcome = (request: Search.SearchRequest): Search.SearchOutcome => (
   results: [{ repo, nameMatch: false, textRank: 2, vectorRank: 1, metrics: [{ metric: "stars", value: 18_000 }] }],
 });
 
-const services = (fakes: Fakes) => {
+const searchAda = (request: Search.SearchRequest) =>
+  request.scope._tag !== "stars"
+    ? Effect.fail(new Search.SearchScopeUnavailable({ scope: request.scope._tag }))
+    : request.scope.login === "ada"
+      ? Effect.succeed(searchOutcome(request))
+      : Effect.fail(new Search.AccountNotSynced({ login: request.scope.login }));
+
+const services = (fakes: Fakes): Context.Context<ApiServices> => {
   const db = {
-    accounts: {
-      byLogin: (login: Login) =>
-        Effect.succeed(login === account.login ? Option.some({ ...account, starsSyncedAt: null }) : Option.none()),
+    repos: {
+      require: (id: RepoId) => (id === repo.id ? Effect.succeed(repo) : Effect.fail(new RepoNotFound({ repoId: id }))),
     },
-    repos: { get: (id: RepoId) => Effect.succeed(id === repo.id ? Option.some(repo) : Option.none()) },
   } as unknown as Db.Db["Service"];
-  const requests = SyncRequests.SyncRequests.of({
-    request: (login) =>
-      Effect.sync(() => {
-        fakes.sent?.push(login);
-        return { state: "queued", requestedAt: pushedAt, syncedAt: null };
-      }),
-    status: () => Effect.succeed({ state: "done", syncedAt: pushedAt }),
-  });
+  const requests =
+    fakes.requests ??
+    SyncRequests.SyncRequests.of({
+      request: (login) =>
+        Effect.sync(() => {
+          fakes.sent?.push(login);
+          return { state: "queued", requestedAt: pushedAt, syncedAt: null };
+        }),
+      status: () => Effect.succeed({ state: "failed", requestedAt: pushedAt, syncedAt: null }),
+    });
   return Context.make(Db.Db, db).pipe(
     Context.add(
       Search.Search,
       Search.Search.of({
-        search: (request) =>
-          (fakes.search ?? ((r) => Effect.succeed(searchOutcome(r))))(request).pipe(Effect.withSpan("Search.search")),
+        search: (request) => (fakes.search ?? searchAda)(request).pipe(Effect.withSpan("Search.search")),
       }),
     ),
     Context.add(SyncRequests.SyncRequests, requests),
-    Context.add(SyncLimiter, SyncLimiter.of({ allow: Effect.succeed(fakes.allow ?? true) })),
+    Context.add(SyncLimiter, SyncLimiter.of({ acquire: fakes.limiter ?? Effect.void })),
   );
 };
 
+const contextFor = (
+  transport: Transport,
+  servicesEffect: ApiContext["services"],
+  tracer: Tracer.Tracer = Tracer.make({ span: (options) => new Tracer.NativeSpan(options) }),
+): ApiContext => ({
+  "effect/context": Context.make(Tracer.Tracer, tracer),
+  transport,
+  procedureTime: Ref.makeUnsafe(Option.none()),
+  services: servicesEffect,
+});
+
 const client = (fakes: Fakes = {}, transport: Transport = "rpc") => {
   const collected = collectSpans();
-  const context = Context.make(Tracer.Tracer, collected.tracer);
-  return {
-    collected,
-    api: createRouterClient(router, {
-      context: { "effect/context": context, transport, services: Effect.succeed(services(fakes)) },
-    }),
-  };
+  const context = contextFor(transport, Effect.succeed(services(fakes)), collected.tracer);
+  return { collected, context, api: createRouterClient(router, { context }) };
 };
 
 const failure = (promise: Promise<unknown>) =>
@@ -104,9 +117,11 @@ const failure = (promise: Promise<unknown>) =>
     },
   );
 
+const traceData = { traceId: expect.stringMatching(/^[0-9a-f]{32}$/) };
+
 describe("search", () => {
-  test("returns ranked repos with reason lines and ISO times", async () => {
-    const { api } = client();
+  test("returns ranked repos with reason lines and ISO times, and records the call's time", async () => {
+    const { api, context } = client();
     expect(await api.search({ login: "ada", q: "terminal dashboards" })).toEqual({
       planSource: "fallback",
       results: [
@@ -128,6 +143,8 @@ describe("search", () => {
         },
       ],
     });
+    const recorded = Ref.getUnsafe(context.procedureTime);
+    expect(Option.map(recorded, Duration.isDuration)).toEqual(Option.some(true));
   });
 
   test("searches the login's own stars with the default limit", async () => {
@@ -141,7 +158,7 @@ describe("search", () => {
     });
     await api.search({ login: "ada", q: "terminal dashboards" });
     expect(requests).toEqual([
-      { scope: { _tag: "stars", accountId: account.id }, query: "terminal dashboards", limit: 20 },
+      { scope: { _tag: "stars", login: "ada" as Login }, query: "terminal dashboards", limit: 20 },
     ]);
   });
 
@@ -152,41 +169,26 @@ describe("search", () => {
       { login: "ada/../../repos", q: "dashboards" },
       { login: "ada", q: "dashboards", limit: 500 },
     ]) {
-      const error = await failure(api.search(input));
-      expect(error.code).toBe("BAD_REQUEST");
+      expect((await failure(api.search(input))).code).toBe("BAD_REQUEST");
     }
   });
 
-  test("says the login is not synced, with a trace ID", async () => {
+  test("maps every search failure through the error table with a trace ID and no detail", async () => {
     const { api } = client();
-    const error = await failure(api.search({ login: "grace", q: "dashboards" }));
-    expect(error.toJSON()).toEqual({
+    expect((await failure(api.search({ login: "grace", q: "dashboards" }))).toJSON()).toEqual({
       defined: true,
       code: "ACCOUNT_NOT_SYNCED",
       message: "Stargrep has not synced this login's stars yet. Trigger a sync first.",
-      data: { traceId: expect.stringMatching(/^[0-9a-f]{32}$/) },
+      data: traceData,
     });
-  });
-
-  test("maps an unavailable scope and a database failure to wire errors without their detail", async () => {
-    const unavailable = client({
-      search: (request) =>
-        Effect.fail(
-          new Search.SearchScopeUnavailable({ scope: request.scope._tag === "global" ? "global" : "network" }),
-        ),
-    });
-    expect((await failure(unavailable.api.search({ login: "ada", q: "x", scope: "network" }))).code).toBe(
-      "SCOPE_UNAVAILABLE",
-    );
-    expect((await failure(unavailable.api.search({ login: "nobody", q: "x", scope: "global" }))).code).toBe(
-      "SCOPE_UNAVAILABLE",
-    );
+    expect((await failure(api.search({ login: "ada", q: "x", scope: "network" }))).code).toBe("SCOPE_UNAVAILABLE");
+    expect((await failure(api.search({ login: "ada", q: "x", scope: "global" }))).code).toBe("SCOPE_UNAVAILABLE");
 
     const broken = client({
       search: () => Effect.fail(new DbQueryFailed({ operation: "search.hybrid", reason: "transport", sqlState: null })),
     });
     const error = await failure(broken.api.search({ login: "ada", q: "x" }));
-    expect(error.code).toBe("SERVICE_UNAVAILABLE");
+    expect(error.toJSON()).toMatchObject({ defined: true, code: "SERVICE_UNAVAILABLE", data: traceData });
     expect(JSON.stringify(error.toJSON())).not.toContain("search.hybrid");
   });
 
@@ -212,7 +214,7 @@ describe("search", () => {
 });
 
 describe("sync", () => {
-  test("queues a sync and reports its status", async () => {
+  test("queues a sync and reports a failed one", async () => {
     const sent: Array<Login> = [];
     const { api } = client({ sent });
     expect(await api.triggerSync({ login: "octocat" })).toEqual({
@@ -224,17 +226,29 @@ describe("sync", () => {
     expect(sent).toEqual(["octocat" as Login]);
     expect(await api.syncStatus({ login: "octocat" })).toEqual({
       login: "octocat",
-      state: "done",
-      requestedAt: null,
-      syncedAt: "2026-10-01T08:00:00.000Z",
+      state: "failed",
+      requestedAt: "2026-10-01T08:00:00.000Z",
+      syncedAt: null,
     });
   });
 
-  test("refuses a caller over the rate limit without queueing", async () => {
+  test("refuses a caller over the rate limit without queueing, and treats a limiter outage as unavailable", async () => {
     const sent: Array<Login> = [];
-    const { api } = client({ sent, allow: false });
-    expect((await failure(api.triggerSync({ login: "octocat" }))).code).toBe("TOO_MANY_REQUESTS");
+    const limited = client({ sent, limiter: Effect.fail(new SyncRateLimited({ limit: "caller" })) });
+    expect((await failure(limited.api.triggerSync({ login: "octocat" }))).code).toBe("TOO_MANY_REQUESTS");
+    const down = client({ sent, limiter: Effect.fail(new SyncLimiterUnavailable({ cause: "down" })) });
+    expect((await failure(down.api.triggerSync({ login: "octocat" }))).code).toBe("SERVICE_UNAVAILABLE");
     expect(sent).toEqual([]);
+  });
+
+  test("maps a sync queue failure to service unavailable", async () => {
+    const { api } = client({
+      requests: SyncRequests.SyncRequests.of({
+        request: () => Effect.fail(new SyncQueue.SyncQueueFailed({ cause: "down" })),
+        status: () => Effect.succeed({ state: "unknown" }),
+      }),
+    });
+    expect((await failure(api.triggerSync({ login: "octocat" }))).code).toBe("SERVICE_UNAVAILABLE");
   });
 });
 
@@ -244,6 +258,7 @@ describe("getRepo", () => {
     expect(await api.getRepo({ id: 42 as RepoId })).toMatchObject({
       id: 42,
       url: "https://github.com/ratatui/ratatui",
+      keywords: ["tui"],
       pushedAt: "2026-10-01T08:00:00.000Z",
     });
     expect((await failure(api.getRepo({ id: 43 as RepoId }))).code).toBe("REPO_NOT_FOUND");
@@ -253,34 +268,17 @@ describe("getRepo", () => {
 test("validates input without starting the services, and maps a failed start to service unavailable", async () => {
   let starts = 0;
   const api = createRouterClient(router, {
-    context: {
-      "effect/context": Context.empty(),
-      transport: "rest",
-      services: Effect.suspend(() => {
+    context: contextFor(
+      "rest",
+      Effect.suspend(() => {
         starts++;
         return Effect.fail(new ApiServicesUnavailable({ failure: "DbQueryFailed" }));
       }),
-    },
+    ),
   });
   expect((await failure(api.search({ login: "ada", q: " " }))).code).toBe("BAD_REQUEST");
   expect(starts).toBe(0);
   const error = await failure(api.search({ login: "ada", q: "dashboards" }));
-  expect(error.toJSON()).toMatchObject({ code: "SERVICE_UNAVAILABLE", data: { traceId: expect.any(String) } });
+  expect(error.toJSON()).toMatchObject({ code: "SERVICE_UNAVAILABLE", data: traceData });
   expect(starts).toBe(1);
-});
-
-test("sync queue failures surface as service unavailable", async () => {
-  const context = services({}).pipe(
-    Context.add(
-      SyncRequests.SyncRequests,
-      SyncRequests.SyncRequests.of({
-        request: () => Effect.fail(new SyncQueue.SyncQueueFailed({ cause: "down" })),
-        status: () => Effect.succeed({ state: "unknown" }),
-      }),
-    ),
-  );
-  const api = createRouterClient(router, {
-    context: { "effect/context": Context.empty(), transport: "rest", services: Effect.succeed(context) },
-  });
-  expect((await failure(api.triggerSync({ login: "octocat" }))).code).toBe("SERVICE_UNAVAILABLE");
 });

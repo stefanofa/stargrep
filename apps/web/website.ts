@@ -1,13 +1,14 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
-import { aiGatewayKey, aiGatewayKeyName } from "@stargrep/runtime/ai";
+import { apiKeyName } from "@stargrep/ai/gateway";
+import { aiGatewayKey } from "@stargrep/runtime/config";
 import { Database, DatabaseMigrations } from "@stargrep/worker/database";
 import { SyncStars } from "@stargrep/worker/queues";
+import { SyncRequests } from "@stargrep/worker/sync-requests";
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 const SearchCache = Cloudflare.KV.Namespace("SearchCache");
-const SyncRequests = Cloudflare.KV.Namespace("SyncRequests");
 
 // Cloudflare counts a rate limit per namespace ID across the whole account, so each stage gets its own IDs.
 const namespaceId = (stage: string, name: string) => {
@@ -41,7 +42,7 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
           namespaceId: namespaceId(stage, "sync-overall"),
           simple: { limit: 60, period: 60 },
         }),
-        ...Option.match(key, { onNone: () => ({}), onSome: (value) => ({ [aiGatewayKeyName]: value }) }),
+        ...Option.match(key, { onNone: () => ({}), onSome: (value) => ({ [apiKeyName]: value }) }),
       },
     };
   }).pipe(Effect.orDie),

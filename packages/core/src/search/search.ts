@@ -3,7 +3,7 @@ import { type AiError, AiOutputInvalid } from "@stargrep/ai/errors";
 import * as Db from "@stargrep/db";
 import { Embedding, type EmbeddingModelMismatch, Float32Vector } from "@stargrep/db/embedding";
 import type { DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
-import { GitHubAccountId } from "@stargrep/github/schemas";
+import type { Login } from "@stargrep/github/schemas";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -26,14 +26,31 @@ export class SearchScopeUnavailable extends Schema.TaggedError<
   }
 }
 
-export type SearchError = AiError | DbQueryFailed | DbRowInvalid | EmbeddingModelMismatch | SearchScopeUnavailable;
+export class AccountNotSynced extends Schema.TaggedError<AccountNotSynced, { readonly brand: unique symbol }>()(
+  "AccountNotSynced",
+  {
+    login: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Stargrep has no account for login '${this.login}'`;
+  }
+}
 
-export const Scope = Schema.Union([
-  Schema.TaggedStruct("stars", { accountId: GitHubAccountId }),
-  Schema.TaggedStruct("network", { accountId: GitHubAccountId }),
-  Schema.TaggedStruct("global", {}),
-]);
-export type Scope = typeof Scope.Type;
+export type SearchError =
+  | AccountNotSynced
+  | AiError
+  | DbQueryFailed
+  | DbRowInvalid
+  | EmbeddingModelMismatch
+  | SearchScopeUnavailable;
+
+export const ScopeKind = Schema.Literals(["stars", "network", "global"]);
+export type ScopeKind = typeof ScopeKind.Type;
+
+export type Scope =
+  | { readonly _tag: Exclude<ScopeKind, "global">; readonly login: Login }
+  | { readonly _tag: "global" };
 
 export interface SearchRequest {
   readonly scope: Scope;
@@ -68,11 +85,6 @@ export class Search extends Context.Service<
 >()("@stargrep/core/search/search") {}
 
 const decodeEmbedding = Schema.decodeUnknownEffect(Embedding);
-
-const dbScope = (scope: Scope): Effect.Effect<Db.SearchScope, SearchScopeUnavailable> =>
-  scope._tag === "stars"
-    ? Effect.succeed({ kind: "stars", accountId: scope.accountId })
-    : Effect.fail(new SearchScopeUnavailable({ scope: scope._tag }));
 
 const planMetrics = (plan: QueryPlan.QueryPlan): ReadonlyArray<MetricId> => [
   ...new Set([
@@ -120,6 +132,13 @@ export const make = Effect.gen(function* () {
         ),
     }),
   );
+
+  const dbScope = Effect.fn("Search.dbScope")(function* (scope: Scope) {
+    if (scope._tag !== "stars") return yield* new SearchScopeUnavailable({ scope: scope._tag });
+    const account = yield* db.accounts.byLogin(scope.login);
+    if (Option.isNone(account)) return yield* new AccountNotSynced({ login: scope.login });
+    return { kind: "stars", accountId: account.value.id } satisfies Db.SearchScope;
+  });
 
   const search = Effect.fn("Search.search")(function* (request: SearchRequest) {
     const scope = yield* dbScope(request.scope);

@@ -2,13 +2,14 @@ import { env } from "cloudflare:workers";
 import { QueryPlan, Search } from "@stargrep/core/search";
 import { SyncQueue, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
-import { DbQueryFailed } from "@stargrep/db/errors";
+import { DbQueryFailed, RepoNotFound } from "@stargrep/db/errors";
 import type { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
+import { layerSyncRequestLog } from "@stargrep/worker/kv";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { layerSyncLimiter, layerSyncRequestLog } from "../src/server/adapters.ts";
+import { layerSyncLimiter } from "../src/server/adapters.ts";
 import { makeServer } from "../src/server/serve.ts";
 
 export const repo: Db.Repo = {
@@ -42,6 +43,7 @@ const search = Search.Search.of({
       return yield* new DbQueryFailed({ operation: "search.hybrid", reason: "transport", sqlState: null });
     }
     if (request.scope._tag !== "stars") return yield* new Search.SearchScopeUnavailable({ scope: request.scope._tag });
+    if (request.scope.login !== ada.login) return yield* new Search.AccountNotSynced({ login: request.scope.login });
     return {
       plan: QueryPlan.asTyped(request.query, "sentence"),
       planSource: "fallback",
@@ -52,7 +54,9 @@ const search = Search.Search.of({
 
 const db = {
   accounts: { byLogin: (login: Login) => Effect.succeed(login === ada.login ? Option.some(ada) : Option.none()) },
-  repos: { get: (id: RepoId) => Effect.succeed(id === repo.id ? Option.some(repo) : Option.none()) },
+  repos: {
+    require: (id: RepoId) => (id === repo.id ? Effect.succeed(repo) : Effect.fail(new RepoNotFound({ repoId: id }))),
+  },
 } as unknown as Db.Db["Service"];
 
 const serve = makeServer(

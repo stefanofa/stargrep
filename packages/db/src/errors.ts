@@ -15,6 +15,7 @@ export const Operation = Schema.Literals([
   "repos.saveSummary",
   "repos.saveEmbedding",
   "repos.get",
+  "repos.require",
   "repos.getMany",
   "stars.upsert",
   "stars.applySnapshot",

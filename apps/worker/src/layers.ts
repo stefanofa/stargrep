@@ -1,11 +1,12 @@
 import type * as Cloudflare from "@alchemy.run/cloudflare";
 import type * as Embeddings from "@stargrep/ai/embeddings";
+import * as Gateway from "@stargrep/ai/gateway";
 import type * as TextGeneration from "@stargrep/ai/text-generation";
 import { BlobStore, EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
 import { StarSync } from "@stargrep/core/stars";
 import * as GitHub from "@stargrep/github/github";
 import type * as TokenGate from "@stargrep/github/token-gate";
-import * as AiRuntime from "@stargrep/runtime/ai";
+import { aiGatewayKey } from "@stargrep/runtime/config";
 import * as DbRuntime from "@stargrep/runtime/db";
 import { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Arr from "effect/Array";
@@ -14,6 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
 import type * as Ref from "effect/Ref";
+import * as Kv from "./kv.ts";
 
 const queueBatchLimit = 100;
 // A Worker invocation holds at most six connections, and R2 and the queue need some of them.
@@ -70,7 +72,10 @@ export const layerEnrichQueue = (queue: Cloudflare.Queues.WriteQueueClient) =>
     }),
   );
 
-export const aiModels = Effect.map(AiRuntime.aiGatewayKey, AiRuntime.layerSummaries);
+export const layerSyncRequestLog = (namespace: Cloudflare.KV.ReadWriteNamespaceClient) =>
+  Layer.unwrap(Effect.flatMap(inRuntime, (run) => Effect.map(run(namespace.raw), Kv.layerSyncRequestLog)));
+
+export const aiModels = Effect.map(aiGatewayKey, (key) => Gateway.layerModelsForKey(key, { batch: false }));
 
 interface Bindings {
   readonly database: Effect.Effect<Redacted.Redacted<string>, never, RuntimeContext>;

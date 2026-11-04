@@ -11,7 +11,7 @@ import {
 } from "@stargrep/ai/errors";
 import * as Summarize from "@stargrep/ai/summarize";
 import { BlobStore, EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
-import { StarSync } from "@stargrep/core/stars";
+import { StarSync, SyncRequestLog } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import { EmbeddingModelId, EmbeddingModelMismatch } from "@stargrep/db/embedding";
 import { AccountNotFound, DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
@@ -28,7 +28,7 @@ import * as GitHub from "@stargrep/github/github";
 import * as GitHubFake from "@stargrep/github/github.fixture";
 import { GitHubAccountId, RepoId } from "@stargrep/github/schemas";
 import * as TokenGate from "@stargrep/github/token-gate";
-import * as AiRuntime from "@stargrep/runtime/ai";
+import { aiGatewayKey } from "@stargrep/runtime/config";
 import { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -429,7 +429,7 @@ describe("stage secrets", () => {
 
   it("treats an empty secret as missing", async () => {
     const read = await Effect.runPromise(
-      Effect.all([Secrets.githubToken, AiRuntime.aiGatewayKey]).pipe(
+      Effect.all([Secrets.githubToken, aiGatewayKey]).pipe(
         withEnv({ STARGREP_GITHUB_TOKEN: "", AI_GATEWAY_API_KEY: "" }),
       ),
     );
@@ -509,5 +509,24 @@ describe("dead letters", () => {
       ["Dead letter", { queue: "sync-stars", messageId: "m0", attempts: 1, bodyType: "string" }],
       ["Dead letter", { queue: "sync-stars", messageId: "m1", attempts: 1, login: "octocat", mode: "full" }],
     ]);
+  });
+
+  it("marks a dead-lettered login sync as failed and leaves an account sync alone", async () => {
+    const log = SyncRequestLog.layerMemory();
+    const batch = batchOf("sync-stars-dead-letters", [
+      { login: "No-Such-Login", mode: "incremental" },
+      { accountId: 5, mode: "full" },
+    ]);
+    await Effect.runPromise(
+      Settle.logDeadLetters(
+        "sync-stars",
+        SyncStarsConsumer.pipeline,
+        SyncStarsConsumer.markFailed,
+      )(Stream.fromIterable(batch.messages)).pipe(
+        Effect.provide(Layer.merge(log.layer, Logger.layer([Logger.make(() => undefined)]))),
+      ),
+    );
+    expect([...log.stored.keys()]).toEqual(["no-such-login"]);
+    expect(JSON.parse(log.stored.get("no-such-login") ?? "{}")).toMatchObject({ outcome: "failed" });
   });
 });

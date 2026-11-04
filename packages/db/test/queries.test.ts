@@ -74,7 +74,8 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.repos.upsertRefs([ref(first, "renamed"), ref(second)]);
 
       expect(Option.getOrThrow(yield* db.repos.get(first)).name).toBe(repoName("renamed"));
-      expect(Option.getOrThrow(yield* db.repos.get(second)).name).toBe(repoName(`repo-${second}`));
+      expect((yield* db.repos.require(second)).name).toBe(repoName(`repo-${second}`));
+      expect(yield* Effect.flip(db.repos.require(repoId(2099)))).toMatchObject({ _tag: "RepoNotFound", repoId: 2099 });
     }),
   );
 

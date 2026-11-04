@@ -143,16 +143,23 @@ const traffic = Effect.gen(function* () {
 });
 
 const Spec = Schema.Struct({ paths: Schema.Record(Schema.String, Schema.Unknown) });
+const SyncState = Schema.Struct({ state: Schema.String });
+const WireError = Schema.Struct({ code: Schema.String });
 
 const web = Effect.gen(function* () {
   const get = (path: string) => HttpClient.get(new URL(path, webUrl));
+  const search = (body: { readonly login: string; readonly q: string }) =>
+    HttpClient.execute(
+      HttpClientRequest.post(new URL("/api/search", webUrl)).pipe(HttpClientRequest.bodyJsonUnsafe(body)),
+    );
   const spec = yield* get("/openapi.json");
   const paths = Object.keys((yield* decode(Spec, yield* spec.text)).paths).sort();
-  const emptyQuery = yield* HttpClient.execute(
-    HttpClientRequest.post(new URL("/api/search", webUrl)).pipe(
-      HttpClientRequest.bodyJsonUnsafe({ login: "octocat", q: "" }),
-    ),
-  );
+  const emptyQuery = yield* search({ login: "octocat", q: "" });
+  const stranger = `smoke-${yield* Clock.currentTimeMillis}`;
+  const status = yield* get(`/api/sync/${stranger}`);
+  const statusBody = yield* decode(SyncState, yield* status.text);
+  const unsynced = yield* search({ login: stranger, q: "terminal dashboards" });
+  const unsyncedBody = yield* decode(WireError, yield* unsynced.text);
   const tools = yield* HttpClient.execute(
     HttpClientRequest.post(new URL("/mcp", webUrl)).pipe(
       HttpClientRequest.setHeader("accept", "application/json, text/event-stream"),
@@ -166,6 +173,15 @@ const web = Effect.gen(function* () {
       paths,
     }),
     check("an empty search query answers 400", emptyQuery.status === 400, { status: emptyQuery.status }),
+    check("a login never seen reads as unknown through Postgres and KV", statusBody.state === "unknown", {
+      status: status.status,
+      state: statusBody.state,
+    }),
+    check(
+      "a search of that login answers ACCOUNT_NOT_SYNCED with every service built",
+      unsynced.status === 404 && unsyncedBody.code === "ACCOUNT_NOT_SYNCED",
+      { status: unsynced.status, code: unsyncedBody.code },
+    ),
     check(
       "MCP lists the four tools",
       ["search", "triggerSync", "syncStatus", "getRepo"].every((name) => toolList.includes(`"name":"${name}"`)),

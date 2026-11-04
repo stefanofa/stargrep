@@ -1,20 +1,19 @@
 import "@orpc/effect/extensions/effect";
 import { middlewareGen, type WithEffectContext } from "@orpc/effect";
-import type { ToStandardErrorMap } from "@orpc/effect/extensions/schema";
-import { implement, ORPCError, type ORPCErrorConstructorMap } from "@orpc/server";
+import { implement } from "@orpc/server";
 import { Search } from "@stargrep/core/search";
 import { SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
+import type { DbQueryFailed, DbRowInvalid, RepoNotFound } from "@stargrep/db/errors";
 import type { Login } from "@stargrep/github/schemas";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { contract } from "./contract.ts";
-import { errorStatus, type WireCode, errors as wireErrors } from "./errors.ts";
-import { instrumentation, type Transport } from "./middleware/instrumentation.ts";
-import { SyncLimiter } from "./sync-limiter.ts";
+import { contract, type RepoInput, type SearchInput, type SyncInput } from "./contract.ts";
+import { errorStatus, type WireCode, wireError } from "./errors.ts";
+import { instrumentation, type ProcedureTime, type Transport } from "./middleware/instrumentation.ts";
+import { SyncLimiter, type SyncLimiterUnavailable, type SyncRateLimited } from "./sync-limiter.ts";
 
 export type ApiServices = Db.Db | Search.Search | SyncRequests.SyncRequests | SyncLimiter;
 
@@ -31,149 +30,138 @@ export class ApiServicesUnavailable extends Schema.TaggedError<
 
 export interface ApiContext extends WithEffectContext<never> {
   readonly transport: Transport;
+  readonly procedureTime: ProcedureTime;
   readonly services: Effect.Effect<Context.Context<ApiServices>, ApiServicesUnavailable>;
 }
 
-type ServiceError = Search.SearchError | SyncRequests.SyncRequestError;
+type ApiFailure =
+  | Search.SearchError
+  | SyncRequests.SyncRequestError
+  | RepoNotFound
+  | DbQueryFailed
+  | DbRowInvalid
+  | SyncRateLimited
+  | SyncLimiterUnavailable
+  | ApiServicesUnavailable;
 
-const wireCodes: Record<ServiceError["_tag"], WireCode> = {
+const wireCodes = {
+  AccountNotSynced: "ACCOUNT_NOT_SYNCED",
+  RepoNotFound: "REPO_NOT_FOUND",
   SearchScopeUnavailable: "SCOPE_UNAVAILABLE",
+  SyncRateLimited: "TOO_MANY_REQUESTS",
   AiKeyMissing: "SERVICE_UNAVAILABLE",
   AiRequestFailed: "SERVICE_UNAVAILABLE",
   AiTimeout: "SERVICE_UNAVAILABLE",
   AiUnavailable: "SERVICE_UNAVAILABLE",
+  ApiServicesUnavailable: "SERVICE_UNAVAILABLE",
   DbQueryFailed: "SERVICE_UNAVAILABLE",
+  SyncLimiterUnavailable: "SERVICE_UNAVAILABLE",
   SyncQueueFailed: "SERVICE_UNAVAILABLE",
   AiModelNotFound: "INTERNAL_SERVER_ERROR",
   AiOutputInvalid: "INTERNAL_SERVER_ERROR",
   DbRowInvalid: "INTERNAL_SERVER_ERROR",
   EmbeddingModelMismatch: "INTERNAL_SERVER_ERROR",
+} satisfies Record<ApiFailure["_tag"], WireCode>;
+
+const toWire = (traceId: string) => (error: ApiFailure) => {
+  const code = wireCodes[error._tag];
+  const failure = Effect.fail(wireError(code, traceId));
+  return errorStatus[code] < 500
+    ? failure
+    : Effect.logError("API call failed", { error: error._tag, detail: error.message, traceId }).pipe(
+        Effect.andThen(failure),
+      );
 };
 
-const toWire =
-  (errors: ORPCErrorConstructorMap<ToStandardErrorMap<typeof wireErrors>>, traceId: string) =>
-  (error: ServiceError) => {
-    const code = wireCodes[error._tag];
-    const failure = Effect.fail(errors[code]({ data: { traceId } }));
-    return errorStatus[code] < 500
-      ? failure
-      : Effect.logError("API call failed", { error: error._tag, detail: error.message, traceId }).pipe(
-          Effect.andThen(failure),
-        );
+const handle = <I, O>(run: (input: I) => Effect.Effect<O, ApiFailure, ApiServices>) =>
+  function* ({ input, context }: { readonly input: I; readonly context: { readonly traceId: string } }) {
+    return yield* run(input).pipe(Effect.catch(toWire(context.traceId)));
   };
-
-const iso = (time: DateTime.Utc | null) => (time === null ? null : DateTime.formatIso(time));
-
-const githubUrl = (repo: { readonly owner: string; readonly name: string }) =>
-  `https://github.com/${repo.owner}/${repo.name}`;
-
-const syncStatus = (login: Login, status: SyncRequests.SyncStatus) => ({
-  login,
-  state: status.state,
-  requestedAt: status.state === "queued" ? iso(status.requestedAt) : null,
-  syncedAt: status.state === "unknown" ? null : iso(status.syncedAt),
-});
 
 const provideServices = middlewareGen<ApiContext & { readonly traceId: string }, WithEffectContext<ApiServices>>(
   function* ({ context, next }) {
-    const services = yield* context.services.pipe(
-      Effect.catchTags({
-        ApiServicesUnavailable: (error) =>
-          Effect.logError("API services failed to start", { failure: error.failure, traceId: context.traceId }).pipe(
-            Effect.andThen(
-              Effect.fail(
-                new ORPCError("SERVICE_UNAVAILABLE", {
-                  message: wireErrors.SERVICE_UNAVAILABLE.message,
-                  data: { traceId: context.traceId },
-                }),
-              ),
-            ),
-          ),
-      }),
-    );
+    const services = yield* context.services.pipe(Effect.catch(toWire(context.traceId)));
     // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC types every downstream failure as unknown.
     return yield* next({ context: { "effect/context": Context.merge(context["effect/context"], services) } });
   },
 );
 
+const iso = (time: DateTime.Utc | null) => (time === null ? null : DateTime.formatIso(time));
+
+const repoFields = (repo: Db.Repo) => ({
+  id: repo.id,
+  owner: repo.owner,
+  name: repo.name,
+  url: `https://github.com/${repo.owner}/${repo.name}`,
+  description: repo.description,
+  summary: repo.summary,
+  language: repo.language,
+  topics: repo.topics,
+  license: repo.license,
+  kind: repo.kind,
+  archived: repo.archived,
+  pushedAt: iso(repo.pushedAt),
+});
+
+const syncStatus = (login: Login, status: SyncRequests.SyncStatus) => ({
+  login,
+  state: status.state,
+  requestedAt: status.state === "queued" || status.state === "failed" ? iso(status.requestedAt) : null,
+  syncedAt: status.state === "unknown" ? null : iso(status.syncedAt),
+});
+
 const implementer = implement(contract).$context<ApiContext>();
+// Procedure-level middleware runs after input validation, so a bad request never builds the services.
 const os = implementer.use(instrumentation);
 
 export const router = implementer.router({
-  search: os.search.use(provideServices).effect(function* ({ input, context, errors }) {
-    const wire = toWire(errors, context.traceId);
-    const accountId = Db.Db.use((db) => db.accounts.byLogin(input.login)).pipe(
-      Effect.catch(wire),
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.fail(errors.ACCOUNT_NOT_SYNCED({ data: { traceId: context.traceId } })),
-          onSome: (account) => Effect.succeed(account.id),
-        }),
+  search: os.search.use(provideServices).effect(
+    handle((input: typeof SearchInput.Type) =>
+      Effect.gen(function* () {
+        const scope: Search.Scope =
+          input.scope === "global" ? { _tag: "global" } : { _tag: input.scope, login: input.login };
+        const outcome = yield* (yield* Search.Search).search({ scope, query: input.q, limit: input.limit });
+        return {
+          planSource: outcome.planSource,
+          results: outcome.results.map((result) => ({
+            ...repoFields(result.repo),
+            reason: Search.reasonLine(result),
+            metrics: result.metrics,
+          })),
+        };
+      }),
+    ),
+  ),
+
+  triggerSync: os.triggerSync.use(provideServices).effect(
+    handle((input: typeof SyncInput.Type) =>
+      Effect.gen(function* () {
+        yield* (yield* SyncLimiter).acquire;
+        return syncStatus(input.login, yield* (yield* SyncRequests.SyncRequests).request(input.login));
+      }),
+    ),
+  ),
+
+  syncStatus: os.syncStatus
+    .use(provideServices)
+    .effect(
+      handle((input: typeof SyncInput.Type) =>
+        SyncRequests.SyncRequests.use((requests) => requests.status(input.login)).pipe(
+          Effect.map((status) => syncStatus(input.login, status)),
+        ),
       ),
-    );
-    const scope: Search.Scope =
-      input.scope === "global" ? { _tag: "global" } : { _tag: input.scope, accountId: yield* accountId };
-    const outcome = yield* (yield* Search.Search)
-      .search({ scope, query: input.q, limit: input.limit })
-      .pipe(Effect.catch(wire));
-    return {
-      planSource: outcome.planSource,
-      results: outcome.results.map((result) => ({
-        id: result.repo.id,
-        owner: result.repo.owner,
-        name: result.repo.name,
-        url: githubUrl(result.repo),
-        description: result.repo.description,
-        summary: result.repo.summary,
-        language: result.repo.language,
-        topics: result.repo.topics,
-        license: result.repo.license,
-        kind: result.repo.kind,
-        archived: result.repo.archived,
-        pushedAt: iso(result.repo.pushedAt),
-        reason: Search.reasonLine(result),
-        metrics: result.metrics,
-      })),
-    };
-  }),
+    ),
 
-  triggerSync: os.triggerSync.use(provideServices).effect(function* ({ input, context, errors }) {
-    if (!(yield* (yield* SyncLimiter).allow)) {
-      return yield* Effect.fail(errors.TOO_MANY_REQUESTS({ data: { traceId: context.traceId } }));
-    }
-    const requests = yield* SyncRequests.SyncRequests;
-    const status = yield* requests.request(input.login).pipe(Effect.catch(toWire(errors, context.traceId)));
-    return syncStatus(input.login, status);
-  }),
-
-  syncStatus: os.syncStatus.use(provideServices).effect(function* ({ input, context, errors }) {
-    const requests = yield* SyncRequests.SyncRequests;
-    const status = yield* requests.status(input.login).pipe(Effect.catch(toWire(errors, context.traceId)));
-    return syncStatus(input.login, status);
-  }),
-
-  getRepo: os.getRepo.use(provideServices).effect(function* ({ input, context, errors }) {
-    const repo = yield* (yield* Db.Db).repos.get(input.id).pipe(Effect.catch(toWire(errors, context.traceId)));
-    if (Option.isNone(repo)) {
-      return yield* Effect.fail(errors.REPO_NOT_FOUND({ data: { traceId: context.traceId } }));
-    }
-    const { value } = repo;
-    return {
-      id: value.id,
-      owner: value.owner,
-      name: value.name,
-      url: githubUrl(value),
-      description: value.description,
-      summary: value.summary,
-      keywords: value.keywords,
-      language: value.language,
-      topics: value.topics,
-      license: value.license,
-      homepage: value.homepage,
-      kind: value.kind,
-      archived: value.archived,
-      createdAt: iso(value.createdAt),
-      pushedAt: iso(value.pushedAt),
-    };
-  }),
+  getRepo: os.getRepo.use(provideServices).effect(
+    handle((input: typeof RepoInput.Type) =>
+      Db.Db.use((db) => db.repos.require(input.id)).pipe(
+        Effect.map((repo) => ({
+          ...repoFields(repo),
+          keywords: repo.keywords,
+          homepage: repo.homepage,
+          createdAt: iso(repo.createdAt),
+        })),
+      ),
+    ),
+  ),
 });
