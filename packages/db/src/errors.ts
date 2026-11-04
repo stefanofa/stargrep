@@ -5,6 +5,8 @@ export const Operation = Schema.Literals([
   "transaction",
   "accounts.upsert",
   "accounts.get",
+  "accounts.require",
+  "accounts.setOwnedRepoStars",
   "accounts.recordStarSync",
   "repos.upsertRefs",
   "repos.pendingEnrichment",

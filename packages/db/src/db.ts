@@ -14,7 +14,7 @@ import * as Settings from "./queries/settings.ts";
 import * as Stars from "./queries/stars.ts";
 import * as Usage from "./queries/usage.ts";
 
-export type { Account, AccountFacts, StarSync } from "./queries/accounts.ts";
+export type { Account, AccountFacts, OwnedRepoStars, StarSync } from "./queries/accounts.ts";
 export type { Repo, RepoEmbedding, RepoFacts, RepoRef, RepoSummary } from "./queries/repos.ts";
 export type { HybridSearch, SearchHit, SearchScope } from "./queries/search.ts";
 export type { Star, StarredRepo, StarsSnapshot, StarsUpsert } from "./queries/stars.ts";

@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { GitHubAccountId, Login, ObjectId, RepoId, RepoName } from "@stargrep/github/schemas";
+import { GitHubAccountId, Login, ObjectId, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
 import { drizzle } from "drizzle-orm/node-postgres";
 import * as DateTime from "effect/DateTime";
@@ -43,11 +43,15 @@ const account = (id: GitHubAccountId, facts: Partial<Db.AccountFacts> = {}): Db.
   avatarUrl: null,
   followers: null,
   publicRepos: null,
-  ownedRepoStars: null,
   ...facts,
 });
 
-const ref = (id: RepoId, name = `repo-${id}`): Db.RepoRef => ({ id, owner: login("owner"), name: repoName(name) });
+const ref = (id: RepoId, name = `repo-${id}`, nodeId = `R_${id}`): Db.RepoRef => ({
+  id,
+  nodeId: RepoNodeId.make(nodeId),
+  owner: login("owner"),
+  name: repoName(name),
+});
 
 const facts = (id: RepoId): Db.RepoFacts => ({
   ...ref(id),
@@ -114,6 +118,33 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
 
       expect(Option.getOrThrow(yield* db.repos.get(first)).name).toBe(repoName("renamed"));
       expect(Option.getOrThrow(yield* db.repos.get(second)).name).toBe(repoName(`repo-${second}`));
+    }),
+  );
+
+  test.effect("stores the GitHub node ID with a repo ref and follows a new one", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const id = repoId(2003);
+      yield* db.repos.upsertRefs([ref(id)]);
+      expect(Option.getOrThrow(yield* db.repos.get(id)).nodeId).toBe(RepoNodeId.make(`R_${id}`));
+      yield* db.repos.upsertRefs([ref(id, `repo-${id}`, "R_moved")]);
+      expect(Option.getOrThrow(yield* db.repos.get(id)).nodeId).toBe(RepoNodeId.make("R_moved"));
+    }),
+  );
+
+  test.effect("requires an account row and keeps owned repo stars out of account facts", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const id = accountId(103);
+      expect((yield* Effect.flip(db.accounts.require(id)))._tag).toBe("AccountNotFound");
+      expect((yield* Effect.flip(db.accounts.setOwnedRepoStars({ accountId: id, stars: 5 })))._tag).toBe(
+        "AccountNotFound",
+      );
+
+      yield* db.accounts.upsert(account(id));
+      yield* db.accounts.setOwnedRepoStars({ accountId: id, stars: 42 });
+      yield* db.accounts.upsert(account(id, { followers: 3 }));
+      expect(yield* db.accounts.require(id)).toMatchObject({ id, followers: 3, ownedRepoStars: 42 });
     }),
   );
 
