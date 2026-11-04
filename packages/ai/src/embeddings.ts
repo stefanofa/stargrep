@@ -1,9 +1,9 @@
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import { type AiError, AiOutputInvalid, AiTimeout, unavailableRetry } from "./errors.ts";
+import { type AiError, AiOutputInvalid, AiTimeout } from "./errors.ts";
 import type { EmbeddingModel } from "./models.ts";
-import { countTokens, portSpan } from "./text-generation.ts";
+import { countTokens, portSpan, unavailableRetry } from "./port.ts";
 
 export interface Embedding {
   readonly model: string;

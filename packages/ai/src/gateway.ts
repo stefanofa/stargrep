@@ -15,10 +15,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import * as Embeddings from "./embeddings.ts";
 import {
   type AiError,
@@ -27,9 +25,9 @@ import {
   AiRequestFailed,
   AiUnavailable,
   type Operation,
-  unavailableRetry,
 } from "./errors.ts";
 import * as Models from "./models.ts";
+import { unavailableRetry } from "./port.ts";
 import * as TextGeneration from "./text-generation.ts";
 
 type BatchApi = ReturnType<GatewayProvider["experimental_batch"]>;
@@ -44,7 +42,7 @@ export class AiProvider extends Context.Service<
   }
 >()("@stargrep/ai/gateway/AiProvider") {}
 
-export const textTimeout = Duration.seconds(60);
+const textTimeout = Duration.seconds(60);
 const batchTimeout = Duration.hours(24);
 const batchPollInterval = Duration.seconds(10);
 
@@ -120,28 +118,27 @@ const batchItemResult = (model: string, item: BatchItem): Effect.Effect<TextGene
 const runBatch = (provider: AiProvider["Service"], model: string) =>
   Effect.fn("Gateway.runBatch")(function* (request: TextGeneration.RunBatchRequest) {
     const api = provider.experimental_batch();
-    const failed = fromSdkError("generate", model);
+    const call = <A>(run: (abortSignal: AbortSignal) => PromiseLike<A>) =>
+      Effect.tryPromise({ try: run, catch: fromSdkError("generate", model) }).pipe(Effect.retry(unavailableRetry));
     const key = yield* idempotencyKey(model, request);
-    const started = yield* Effect.tryPromise({
-      try: (abortSignal) =>
-        api.doStartBatch({
-          requests: request.prompts.map((prompt, index) => ({
-            id: String(index),
-            type: "text" as const,
-            modelId: model,
-            options: {
-              prompt: [
-                { role: "system" as const, content: request.system },
-                { role: "user" as const, content: [{ type: "text" as const, text: prompt }] },
-              ],
-              responseFormat: { type: "json" as const, schema: request.jsonSchema },
-            },
-          })),
-          providerOptions: { gateway: { idempotencyKey: key } },
-          abortSignal,
-        }),
-      catch: failed,
-    }).pipe(Effect.retry(unavailableRetry));
+    const started = yield* call((abortSignal) =>
+      api.doStartBatch({
+        requests: request.prompts.map((prompt, index) => ({
+          id: String(index),
+          type: "text" as const,
+          modelId: model,
+          options: {
+            prompt: [
+              { role: "system" as const, content: request.system },
+              { role: "user" as const, content: [{ type: "text" as const, text: prompt }] },
+            ],
+            responseFormat: { type: "json" as const, schema: request.jsonSchema },
+          },
+        })),
+        providerOptions: { gateway: { idempotencyKey: key } },
+        abortSignal,
+      }),
+    );
     yield* Effect.annotateCurrentSpan({ "ai.batch.id": started.batchId, "ai.batch.size": request.prompts.length });
     yield* Effect.logInfo("Gateway batch started", {
       batchId: started.batchId,
@@ -151,11 +148,7 @@ const runBatch = (provider: AiProvider["Service"], model: string) =>
     const finished =
       started.status !== "pending"
         ? started
-        : yield* Effect.tryPromise({
-            try: (abortSignal) => api.doGetBatchStatus({ batchId: started.batchId, abortSignal }),
-            catch: failed,
-          }).pipe(
-            Effect.retry(unavailableRetry),
+        : yield* call((abortSignal) => api.doGetBatchStatus({ batchId: started.batchId, abortSignal })).pipe(
             Effect.repeat({
               schedule: Schedule.spaced(batchPollInterval),
               until: (status) => status.status !== "pending",
@@ -171,22 +164,16 @@ const runBatch = (provider: AiProvider["Service"], model: string) =>
       const code = finished.error?.code ?? finished.error?.type ?? "no code";
       return yield* new AiRequestFailed({ operation: "generate", model, detail: `batch failed with ${code}` });
     }
-    const items = yield* Effect.tryPromise({
-      try: (abortSignal) => api.doGetBatchResults({ batchId: started.batchId, abortSignal }),
-      catch: failed,
-    }).pipe(
-      Effect.flatMap((stream) =>
-        Stream.runCollect(Stream.fromReadableStream({ evaluate: () => stream, onError: failed })),
-      ),
-      Effect.retry(unavailableRetry),
-    );
+    const items = yield* call(async (abortSignal) => {
+      const reader = (await api.doGetBatchResults({ batchId: started.batchId, abortSignal })).getReader();
+      const read: Array<BatchItem> = [];
+      for (let next = await reader.read(); !next.done; next = await reader.read()) read.push(next.value);
+      return read;
+    });
     const byId = new Map<string, BatchItem>(items.map((item) => [item.id, item]));
-    const missing = new AiRequestFailed({ operation: "generate", model, detail: "the batch returned no result" });
     return yield* Effect.forEach(request.prompts, (_, index) => {
       const item = byId.get(String(index));
-      return item === undefined
-        ? Effect.succeed(Result.fail<AiError>(missing))
-        : Effect.result(batchItemResult(model, item));
+      return item === undefined ? Effect.undefined : Effect.result(batchItemResult(model, item));
     });
   });
 

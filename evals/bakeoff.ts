@@ -3,9 +3,10 @@ import type { AiError } from "@stargrep/ai/errors";
 import * as Fake from "@stargrep/ai/fake";
 import * as Gateway from "@stargrep/ai/gateway";
 import * as Models from "@stargrep/ai/models";
+import * as Port from "@stargrep/ai/port";
 import * as Summarize from "@stargrep/ai/summarize";
 import * as SummarizeFake from "@stargrep/ai/summarize.fake";
-import * as TextGeneration from "@stargrep/ai/text-generation";
+import type * as TextGeneration from "@stargrep/ai/text-generation";
 import type * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
@@ -36,7 +37,7 @@ const summaryCandidates = ["anthropic/claude-haiku-5.5", "openai/gpt-6-luna", "g
 const topK = 10;
 const summaryConcurrency = 8;
 
-const retryTransient = <A, R>(effect: Effect.Effect<A, AiError, R>) =>
+const retryFailedOrTimedOut = <A, R>(effect: Effect.Effect<A, AiError, R>) =>
   Effect.retry(effect, {
     times: 3,
     schedule: Schedule.exponential("2 seconds"),
@@ -73,9 +74,7 @@ const loadPricing = Effect.gen(function* () {
 );
 
 const tokens = (model: string, direction: "input" | "output") =>
-  Metric.value(Metric.withAttributes(TextGeneration.tokensUsed, { model, direction })).pipe(
-    Effect.map((state) => state.count),
-  );
+  Metric.value(Metric.withAttributes(Port.tokensUsed, { model, direction })).pipe(Effect.map((state) => state.count));
 
 const withCost = Effect.fn("Bakeoff.withCost")(function* <A, E, R>(
   pricing: Pricing,
@@ -126,7 +125,7 @@ const summarizeCorpus = Effect.fn("Bakeoff.summarizeCorpus")(function* (
     corpus,
     (repo) =>
       Summarize.summarize(repo).pipe(
-        retryTransient,
+        retryFailedOrTimedOut,
         Effect.timed,
         Effect.map(([duration, summary]) => ({ millis: Duration.toMillis(duration), summary })),
         Effect.catch((error) =>
@@ -151,11 +150,11 @@ const scoreRetrieval = Effect.fn("Bakeoff.scoreRetrieval")(function* (
   queries: ReadonlyArray<Corpus.Query>,
 ) {
   const embeddings = yield* Embeddings.Embeddings;
-  const documents = yield* embeddings.embed(texts).pipe(retryTransient);
+  const documents = yield* embeddings.embed(texts).pipe(retryFailedOrTimedOut);
   const millis: Array<number> = [];
   const recalls: Array<number> = [];
   for (const query of queries) {
-    const [duration, [vector]] = yield* Effect.timed(embeddings.embed([query.query]).pipe(retryTransient));
+    const [duration, [vector]] = yield* Effect.timed(embeddings.embed([query.query]).pipe(retryFailedOrTimedOut));
     millis.push(Duration.toMillis(duration));
     const ranked = corpus
       .map((repo, index) => ({

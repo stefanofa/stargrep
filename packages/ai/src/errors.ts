@@ -1,4 +1,3 @@
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 export const Operation = Schema.Literals(["generate", "embed"]);
@@ -53,9 +52,3 @@ export class AiUnavailable extends Schema.TaggedError<AiUnavailable>()("AiUnavai
 }
 
 export type AiError = AiModelNotFound | AiOutputInvalid | AiTimeout | AiRequestFailed | AiUnavailable;
-
-export const unavailableRetry = {
-  schedule: Schedule.exponential("1 second").pipe(Schedule.jittered),
-  times: 3,
-  while: (error: AiError) => error._tag === "AiUnavailable",
-};

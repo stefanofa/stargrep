@@ -9,6 +9,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { AiRequestFailed, AiUnavailable } from "./errors.ts";
+import * as Port from "./port.ts";
 import { toAiSchema } from "./schema-bridge.ts";
 import * as TextGeneration from "./text-generation.ts";
 
@@ -138,9 +139,62 @@ describe("TextGeneration.make", () => {
     }),
   );
 
+  it.effect("answers prompts beyond a short batch result with direct calls", () =>
+    Effect.gen(function* () {
+      let direct = 0;
+      const generation = TextGeneration.make({
+        provider: "test",
+        model: "seam/model",
+        timeout: Duration.seconds(10),
+        run: () =>
+          Effect.sync(() => {
+            direct++;
+            return { output: { answer: 2 }, usage };
+          }),
+        batch: {
+          timeout: Duration.hours(1),
+          run: () => Effect.succeed([Result.succeed({ output: { answer: 1 }, usage })]),
+        },
+      });
+      expect(
+        yield* generation.generateBatch({ schema: Answer, system: "s", prompts: ["one", "two", "three"] }),
+      ).toEqual([Result.succeed({ answer: 1 }), Result.succeed({ answer: 2 }), Result.succeed({ answer: 2 })]);
+      expect(direct).toBe(2);
+    }),
+  );
+
+  it.effect("answers every prompt directly when the whole batch fails, each time the failed job replays", () =>
+    Effect.gen(function* () {
+      let direct = 0;
+      const generation = TextGeneration.make({
+        provider: "test",
+        model: "seam/model",
+        timeout: Duration.seconds(10),
+        run: () =>
+          Effect.sync(() => {
+            direct++;
+            return { output: { answer: 2 }, usage };
+          }),
+        batch: {
+          timeout: Duration.hours(1),
+          run: () =>
+            Effect.fail(new AiRequestFailed({ operation: "generate", model: "seam/model", detail: "batch failed" })),
+        },
+      });
+      const request = { schema: Answer, system: "s", prompts: ["one", "two"] };
+      for (const _ of [1, 2]) {
+        expect(yield* generation.generateBatch(request)).toEqual([
+          Result.succeed({ answer: 2 }),
+          Result.succeed({ answer: 2 }),
+        ]);
+      }
+      expect(direct).toBe(4);
+    }),
+  );
+
   it.effect("counts the adapter's reported tokens", () =>
     Effect.gen(function* () {
-      const input = Metric.withAttributes(TextGeneration.tokensUsed, { model: "seam/model", direction: "input" });
+      const input = Metric.withAttributes(Port.tokensUsed, { model: "seam/model", direction: "input" });
       const before = (yield* Metric.value(input)).count;
       yield* service(() => Effect.succeed({ output: { answer: 1 }, usage })).generate({
         schema: Answer,

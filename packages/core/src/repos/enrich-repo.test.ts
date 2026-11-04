@@ -33,6 +33,7 @@ interface Remote {
 }
 
 const remotes = new Map<number, Remote>();
+const missingBlob = "\u0000missing";
 
 const node = (n: number, remote: Remote) => ({
   databaseId: n,
@@ -65,7 +66,9 @@ const github = GitHubFake.layer((sent) => {
   }
   const blob = sent.url.pathname.split("/").at(-1);
   const remote = [...remotes.values()].find((entry) => entry.readme?.oid === blob);
-  return remote?.readme === undefined ? { status: 404 } : { body: remote.readme.text, headers: { etag: `"${blob}"` } };
+  return remote?.readme === undefined || remote.readme.text === missingBlob
+    ? { status: 404 }
+    : { body: remote.readme.text, headers: { etag: `"${blob}"` } };
 });
 
 const readmeRequests = () => github.sent.filter((sent) => sent.url.pathname.includes("/git/blobs/")).length;
@@ -290,6 +293,17 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
     }),
   );
 
+  it.effect("reports NotFound when the row is deleted while its embedding is made", () =>
+    Effect.gen(function* () {
+      const database = yield* TestDatabase.TestDatabase;
+      remotes.set(12, { description: "Clock app", readme: { oid: oid("4"), text: "# Clock" } });
+      const deleting = embeddingsWith((values) =>
+        database.query("delete from repos where id = $1", [id(12)]).pipe(Effect.as(vectors(values))),
+      );
+      expect(yield* enrich(12).pipe(using(deleting))).toEqual({ _tag: "NotFound", id: id(12) });
+    }),
+  );
+
   it.effect("reports NotFound when the row is deleted while the model runs", () =>
     Effect.gen(function* () {
       const database = yield* TestDatabase.TestDatabase;
@@ -361,6 +375,27 @@ for (const [adapter, database] of adapters) {
       }),
     );
 
+    it.effect("returns one outcome per input position, in input order, and enriches a duplicate once", () =>
+      Effect.gen(function* () {
+        for (const n of [1, 2, 3]) {
+          remotes.set(n, { description: `Ordered ${n}`, readme: { oid: oid(String(n)), text: `# Ordered ${n}` } });
+        }
+        yield* store([1, 2, 3]);
+        const calls = prompts.length;
+        const input = [id(3), id(999), id(2), id(1), id(3)];
+        const outcomes = yield* (yield* EnrichRepo.EnrichRepo).enrichRepos(input);
+        expect(outcomes.map((outcome): [number, string] => [outcome.id, outcome._tag])).toEqual([
+          [3, "Summarized"],
+          [999, "NotFound"],
+          [2, "Summarized"],
+          [1, "Summarized"],
+          [3, "Summarized"],
+        ]);
+        const asked = prompts.slice(calls).map((prompt) => prompt.split("\n")[0]);
+        expect(asked.filter((line) => line === "Repository: owner/repo-3")).toHaveLength(1);
+      }),
+    );
+
     it.effect("converges when a summary was saved without its embedding", () =>
       Effect.gen(function* () {
         remotes.set(23, { description: "Budget tracker", readme: { oid: oid("a"), text: "# Budget" } });
@@ -373,7 +408,7 @@ for (const [adapter, database] of adapters) {
 }
 
 it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30_000 })("enrichRepos", (it) => {
-  it.effect("enriches a batch in id order, reports each outcome, and summarizes nothing twice on a rerun", () =>
+  it.effect("enriches a batch, reports each outcome in input order, and summarizes nothing twice on a rerun", () =>
     Effect.gen(function* () {
       for (const n of [30, 31, 32, 34]) {
         remotes.set(n, { description: `Tool ${n}`, readme: { oid: oid(String(n % 10)), text: `# Tool ${n}` } });
@@ -383,24 +418,63 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       expect(
         (yield* enricher.enrichRepos(batch)).map((outcome): [number, string] => [outcome.id, outcome._tag]),
       ).toEqual([
-        [30, "Summarized"],
-        [31, "Summarized"],
-        [32, "Summarized"],
-        [33, "Gone"],
         [34, "Failed"],
+        [33, "Gone"],
+        [32, "Summarized"],
+        [31, "Summarized"],
+        [30, "Summarized"],
         [35, "NotFound"],
       ]);
 
       const calls = prompts.length;
       expect((yield* enricher.enrichRepos(batch)).map((outcome) => outcome._tag)).toEqual([
-        "Unchanged",
-        "Unchanged",
-        "Unchanged",
-        "Gone",
         "Failed",
+        "Gone",
+        "Unchanged",
+        "Unchanged",
+        "Unchanged",
         "NotFound",
       ]);
       expect(prompts.slice(calls).map((prompt) => prompt.split("\n")[0])).toEqual(["Repository: owner/repo-34"]);
+    }),
+  );
+
+  it.effect("marks a repo Failed when its README cannot be read", () =>
+    Effect.gen(function* () {
+      remotes.set(37, { description: "Lost README", readme: { oid: oid("7"), text: missingBlob } });
+      const outcomes = yield* (yield* EnrichRepo.EnrichRepo).enrichRepos(yield* store([37]));
+      expect(outcomes).toMatchObject([{ _tag: "Failed", id: id(37), error: { _tag: "NotFound" } }]);
+    }),
+  );
+
+  it.effect("answers every repo directly when the whole batch job fails", () =>
+    Effect.gen(function* () {
+      remotes.set(38, { description: "Recipe app", readme: { oid: oid("8"), text: "# Recipes" } });
+      let direct = 0;
+      const failingBatch = Layer.succeed(
+        TextGeneration.TextGeneration,
+        TextGeneration.make({
+          provider: "test",
+          model: "test/text",
+          timeout: Duration.seconds(5),
+          run: (request) =>
+            Effect.sync(() => {
+              direct++;
+              return { output: SummarizeFake.respond(request.prompt), usage };
+            }),
+          batch: {
+            timeout: Duration.hours(1),
+            run: () =>
+              Effect.fail(new AiRequestFailed({ operation: "generate", model: "test/text", detail: "failed" })),
+          },
+        }),
+      );
+      const ids = yield* store([38]);
+      const outcomes = yield* Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) => enricher.enrichRepos(ids)).pipe(
+        using(failingBatch),
+      );
+      expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Summarized"]);
+      expect(direct).toBe(1);
     }),
   );
 

@@ -55,7 +55,7 @@ const htmlTagNames =
 const imageLinks = /!\[[^[\]\n]*\](?:\([^()\n]*\)|\[[^[\]\n]*\])?/g;
 const emptyLinks = /\[[ \t]*\](?:\([^()\n]*\)|\[[^[\]\n]*\])/g;
 const linkDefinitions = /^[ \t]*\[[^[\]\n]+\]:[ \t]*\S.*$/gm;
-const htmlTags = new RegExp(`</?(?:${htmlTagNames})(?=[\\s/>])[^<>]*>`, "gi");
+const htmlTags = new RegExp(`</?(?:${htmlTagNames})(?=[\\s/>])[^<>]*>`, "g");
 const emailAutolinks = /<([^<>\s@]+@[^<>\s@]+)>/g;
 const inlineCode = /(`[^`\n]+`)/;
 const fenceOpening = /^ {0,3}(`{3,}|~{3,})/;

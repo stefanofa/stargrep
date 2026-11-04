@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { RepoNodeId } from "@stargrep/github/schemas";
+import { type RepoId, RepoNodeId } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Db from "../src/db.ts";
-import type { EmbeddingModelId } from "../src/embedding.ts";
+import type { Embedding, EmbeddingModelId } from "../src/embedding.ts";
 import * as TestDatabase from "./database.ts";
 import {
   account,
@@ -27,6 +27,13 @@ import {
   starred,
   stars,
 } from "./fixtures.ts";
+
+const summaryOf = (id: RepoId) => `summary of ${id}`;
+
+const embedSummarized = (db: Db.Db["Service"], id: RepoId, vector: Embedding) =>
+  db.repos
+    .saveSummary({ id, readmeOid: null, summary: summaryOf(id), keywords: [], kind: "app" })
+    .pipe(Effect.andThen(db.repos.saveEmbedding({ id, embedding: vector, summary: summaryOf(id), readmeOid: null })));
 
 const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | TestDatabase.TestDatabase> }) => {
   test.effect("upserts an account and reads the latest facts back", () =>
@@ -91,7 +98,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         id: enriched,
         embedding: embedding({ 0: 1 }),
         summary: "done",
-        summaryReadmeOid: null,
+        readmeOid: null,
       });
 
       expect(yield* db.repos.pendingEnrichment([alsoFresh, missing, enriched, fresh])).toEqual([alsoFresh, fresh]);
@@ -112,7 +119,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         id,
         embedding: embedding({ 0: 1 }),
         summary: "summarized",
-        summaryReadmeOid: null,
+        readmeOid: null,
       });
       expect(yield* db.repos.pendingEnrichment([id])).toEqual([]);
     }),
@@ -151,7 +158,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       const db = yield* Db.Db;
       const id = repoId(2201);
       yield* db.repos.upsertRefs([ref(id)]);
-      yield* db.repos.saveEmbedding({ id, embedding: embedding({ 0: 1 }), summary: null, summaryReadmeOid: null });
+      yield* embedSummarized(db, id, embedding({ 0: 1 }));
       expect(Option.getOrThrow(yield* db.repos.get(id)).embeddingModel).toBe(model);
 
       yield* db.repos.saveSummary({
@@ -177,7 +184,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.repos.upsertRefs([ref(id)]);
 
       const error = yield* db.repos
-        .saveEmbedding({ id, embedding: embedding({ 0: 1 }, otherModel), summary: null, summaryReadmeOid: null })
+        .saveEmbedding({ id, embedding: embedding({ 0: 1 }, otherModel), summary: summaryOf(id), readmeOid: null })
         .pipe(Effect.flip);
       expect(error).toMatchObject({ _tag: "EmbeddingModelMismatch", expected: model, received: otherModel });
       expect(Option.getOrThrow(yield* db.repos.get(id)).embeddingModel).toBeNull();
@@ -192,7 +199,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         .saveSummary({ id, readmeOid: null, summary: "", keywords: [], kind: "app" })
         .pipe(Effect.flip);
       const vector = yield* db.repos
-        .saveEmbedding({ id, embedding: embedding({ 0: 1 }), summary: null, summaryReadmeOid: null })
+        .saveEmbedding({ id, embedding: embedding({ 0: 1 }), summary: summaryOf(id), readmeOid: null })
         .pipe(Effect.flip);
       expect([summary._tag, vector._tag]).toEqual(["RepoNotFound", "RepoNotFound"]);
     }),
@@ -219,7 +226,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         [unstarred, { 0: 1 }],
         [notMine, { 0: 1 }],
       ] as const) {
-        yield* db.repos.saveEmbedding({ id, embedding: embedding(weights), summary: null, summaryReadmeOid: null });
+        yield* embedSummarized(db, id, embedding(weights));
       }
       yield* db.stars.upsert({
         accountId: owner,
@@ -262,7 +269,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         [neither, "photo editor", { 2: 1 }],
       ] as const) {
         yield* db.repos.saveSummary({ id: repo, readmeOid: null, summary, keywords: [], kind: "app" });
-        yield* db.repos.saveEmbedding({ id: repo, embedding: embedding(weights), summary, summaryReadmeOid: null });
+        yield* db.repos.saveEmbedding({ id: repo, embedding: embedding(weights), summary, readmeOid: null });
       }
       yield* db.stars.upsert({
         accountId: id,
@@ -364,18 +371,8 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       const [current, stale] = [repoId(7101), repoId(7102)];
       yield* db.accounts.upsert(account(id));
       yield* db.repos.upsertRefs([ref(current), ref(stale)]);
-      yield* db.repos.saveEmbedding({
-        id: current,
-        embedding: embedding({ 0: 1, 1: 1 }),
-        summary: null,
-        summaryReadmeOid: null,
-      });
-      yield* db.repos.saveEmbedding({
-        id: stale,
-        embedding: embedding({ 0: 1 }),
-        summary: null,
-        summaryReadmeOid: null,
-      });
+      yield* embedSummarized(db, current, embedding({ 0: 1, 1: 1 }));
+      yield* embedSummarized(db, stale, embedding({ 0: 1 }));
       yield* db.stars.upsert({
         accountId: id,
         stars: [starred(current, "2026-01-01T00:00:00Z"), starred(stale, "2026-01-01T00:00:00Z")],
@@ -397,7 +394,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         id,
         embedding: embedding({ 0: 1 }),
         summary: "NEW",
-        summaryReadmeOid: readme("b"),
+        readmeOid: readme("b"),
       });
       yield* db.repos.saveSummary({ id, readmeOid: readme("a"), summary: "STALE", keywords: ["old"], kind: "cli" });
 
@@ -436,26 +433,41 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.repos.saveFacts({ ...facts(id), readmeOid: readme("b") });
       yield* db.repos.saveSummary({ id, readmeOid: readme("b"), summary: "NEW", keywords: [], kind: "app" });
       const vector = { id, embedding: embedding({ 0: 1 }) };
-      expect(yield* db.repos.saveEmbedding({ ...vector, summary: "OLD", summaryReadmeOid: readme("b") })).toBe(false);
-      expect(yield* db.repos.saveEmbedding({ ...vector, summary: "NEW", summaryReadmeOid: readme("a") })).toBe(false);
+      expect(yield* db.repos.saveEmbedding({ ...vector, summary: "OLD", readmeOid: readme("b") })).toBe(false);
+      expect(yield* db.repos.saveEmbedding({ ...vector, summary: "NEW", readmeOid: readme("a") })).toBe(false);
 
       yield* db.repos.saveFacts({ ...facts(id), readmeOid: readme("c") });
-      expect(yield* db.repos.saveEmbedding({ ...vector, summary: "NEW", summaryReadmeOid: readme("b") })).toBe(false);
+      expect(yield* db.repos.saveEmbedding({ ...vector, summary: "NEW", readmeOid: readme("b") })).toBe(false);
       expect(Option.getOrThrow(yield* db.repos.get(id)).embeddingModel).toBeNull();
 
       yield* db.repos.saveFacts({ ...facts(id), readmeOid: readme("b") });
-      expect(yield* db.repos.saveEmbedding({ ...vector, summary: "NEW", summaryReadmeOid: readme("b") })).toBe(true);
+      expect(yield* db.repos.saveEmbedding({ ...vector, summary: "NEW", readmeOid: readme("b") })).toBe(true);
       expect(Option.getOrThrow(yield* db.repos.get(id)).embeddingModel).toBe(model);
     }),
   );
 
-  test.effect("reads many repos in one query and skips ids it does not store", () =>
+  test.effect("reads many repos in one query and flags each one pending by the rule pendingEnrichment uses", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
-      const [first, second, missing] = [repoId(9031), repoId(9032), repoId(9039)];
-      yield* db.repos.upsertRefs([ref(first), ref(second)]);
-      const rows = yield* db.repos.getMany([second, missing, first]);
-      expect(rows.map((row) => row.id).toSorted()).toEqual([first, second]);
+      const [fresh, done, unembedded, outdated, missing] = [
+        repoId(9031),
+        repoId(9032),
+        repoId(9033),
+        repoId(9034),
+        repoId(9039),
+      ];
+      yield* db.repos.upsertRefs([ref(fresh), ref(done), ref(unembedded), ref(outdated)]);
+      yield* embedSummarized(db, done, embedding({ 0: 1 }));
+      yield* db.repos.saveSummary({ id: unembedded, readmeOid: null, summary: "s", keywords: [], kind: "app" });
+      yield* embedSummarized(db, outdated, embedding({ 0: 1 }));
+      yield* db.repos.saveFacts({ ...facts(outdated), readmeOid: readme("e") });
+
+      const ids = [fresh, done, unembedded, outdated, missing];
+      const rows = yield* db.repos.getMany(ids);
+      const pending = new Set<number>(yield* db.repos.pendingEnrichment(ids));
+      expect(rows.map((row) => row.id).toSorted()).toEqual([fresh, done, unembedded, outdated]);
+      for (const row of rows) expect(row.pending).toBe(pending.has(row.id));
+      expect([...pending].toSorted()).toEqual([fresh, unembedded, outdated]);
     }),
   );
 
@@ -471,12 +483,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       expect(Option.getOrThrow(yield* db.repos.get(viaFacts)).embeddingModel).toBeNull();
       expect(Option.getOrThrow(yield* db.repos.get(viaRefs)).embeddingModel).toBeNull();
 
-      yield* db.repos.saveEmbedding({
-        id: viaFacts,
-        embedding: embedding({ 0: 1 }),
-        summary: null,
-        summaryReadmeOid: null,
-      });
+      yield* embedSummarized(db, viaFacts, embedding({ 0: 1 }));
       yield* db.repos.saveFacts(factsWithVector);
       expect(Option.getOrThrow(yield* db.repos.get(viaFacts)).embeddingModel).toBe(model);
     }),
@@ -565,12 +572,7 @@ const settingsCases = (test: { readonly effect: it.Tester<TestDatabase.TestDatab
       const saved = yield* withDb(model, (db) =>
         db.repos
           .upsertRefs([ref(id)])
-          .pipe(
-            Effect.andThen(
-              db.repos.saveEmbedding({ id, embedding: embedding({ 0: 1 }), summary: null, summaryReadmeOid: null }),
-            ),
-            Effect.andThen(db.repos.get(id)),
-          ),
+          .pipe(Effect.andThen(embedSummarized(db, id, embedding({ 0: 1 }))), Effect.andThen(db.repos.get(id))),
       );
       expect(Option.getOrThrow(saved).embeddingModel).toBe(model);
     }),
@@ -586,11 +588,11 @@ const settingsCases = (test: { readonly effect: it.Tester<TestDatabase.TestDatab
       const id = repoId(9701);
       const refused = yield* withDb(otherModel, (db) =>
         db.repos
-          .saveEmbedding({ id, embedding: embedding({ 0: 1 }, otherModel), summary: null, summaryReadmeOid: null })
+          .saveEmbedding({ id, embedding: embedding({ 0: 1 }, otherModel), summary: summaryOf(id), readmeOid: null })
           .pipe(
             Effect.andThen(
               db.repos
-                .saveEmbedding({ id, embedding: embedding({ 0: 1 }), summary: null, summaryReadmeOid: null })
+                .saveEmbedding({ id, embedding: embedding({ 0: 1 }), summary: summaryOf(id), readmeOid: null })
                 .pipe(Effect.flip),
             ),
           ),

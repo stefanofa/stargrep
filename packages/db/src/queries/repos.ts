@@ -63,27 +63,36 @@ export type RepoSummary = typeof RepoSummary.Type;
 export interface RepoEmbedding {
   readonly id: RepoId;
   readonly embedding: Embedding;
-  readonly summary: string | null;
-  readonly summaryReadmeOid: ObjectId | null;
+  readonly summary: string;
+  readonly readmeOid: ObjectId | null;
 }
+
+const StoredRepo = Schema.Struct({ ...Repo.fields, pending: Schema.Boolean });
+export type StoredRepo = typeof StoredRepo.Type;
 
 export interface Queries {
   readonly upsertRefs: (refs: ReadonlyArray<RepoRef>) => Effect.Effect<void, DbQueryFailed>;
   readonly pendingEnrichment: (
     ids: ReadonlyArray<RepoId>,
   ) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
-  readonly saveFacts: (facts: RepoFacts) => Effect.Effect<void, DbQueryFailed>;
+  readonly saveFacts: (facts: RepoFacts) => Effect.Effect<boolean, DbQueryFailed | DbRowInvalid>;
   readonly saveSummary: (summary: RepoSummary) => Effect.Effect<boolean, DbQueryFailed | RepoNotFound>;
   readonly saveEmbedding: (
     input: RepoEmbedding,
   ) => Effect.Effect<boolean, DbQueryFailed | RepoNotFound | EmbeddingModelMismatch>;
   readonly get: (id: RepoId) => Effect.Effect<Option.Option<Repo>, DbQueryFailed | DbRowInvalid>;
-  readonly getMany: (ids: ReadonlyArray<RepoId>) => Effect.Effect<ReadonlyArray<Repo>, DbQueryFailed | DbRowInvalid>;
+  readonly getMany: (
+    ids: ReadonlyArray<RepoId>,
+  ) => Effect.Effect<ReadonlyArray<StoredRepo>, DbQueryFailed | DbRowInvalid>;
 }
 
 const batchSize = 1000;
 const decodeRepos = rowsDecoder(Repo);
 const decodeIds = rowsDecoder(Schema.Struct({ id: RepoId }));
+const decodeStored = rowsDecoder(StoredRepo);
+const decodePending = rowsDecoder(Schema.Struct({ pending: Schema.Boolean }));
+
+const needsEnrichment = sql<boolean>`(${repos.summary} is null or ${repos.summaryReadmeOid} is distinct from ${repos.readmeOid} or ${repos.embeddingModel} is null)`;
 const encodeRefs = writeEncoder(Schema.Array(RepoRef));
 const encodeFacts = writeEncoder(RepoFacts);
 const encodeSummary = writeEncoder(RepoSummary);
@@ -131,9 +140,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
         db
           .select({ id: repos.id })
           .from(repos)
-          .where(
-            sql`${repos.id} = any(${sql.param([...ids])}::bigint[]) and (${repos.summary} is null or ${repos.summaryReadmeOid} is distinct from ${repos.readmeOid} or ${repos.embeddingModel} is null)`,
-          ),
+          .where(sql`${repos.id} = any(${sql.param([...ids])}::bigint[]) and ${needsEnrichment}`),
       ).pipe(
         Effect.flatMap(decodeIds("repos.pendingEnrichment")),
         Effect.map((rows) => {
@@ -146,9 +153,15 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
         Effect.flatMap((values) => {
           const { id: _, ...changes } = values;
           return run("repos.saveFacts", (db) =>
-            db.insert(repos).values(values).onConflictDoUpdate({ target: repos.id, set: changes }),
+            db
+              .insert(repos)
+              .values(values)
+              .onConflictDoUpdate({ target: repos.id, set: changes })
+              .returning({ pending: needsEnrichment }),
           );
         }),
+        Effect.flatMap(decodePending("repos.saveFacts")),
+        Effect.map((rows) => rows.some((row) => row.pending)),
       ),
     saveSummary: (summary) =>
       encodeSummary(summary).pipe(
@@ -174,8 +187,8 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
                 and(
                   eq(repos.id, input.id),
                   sql`${repos.summary} is not distinct from ${input.summary}`,
-                  sql`${repos.summaryReadmeOid} is not distinct from ${input.summaryReadmeOid}`,
-                  sql`${repos.readmeOid} is not distinct from ${input.summaryReadmeOid}`,
+                  sql`${repos.summaryReadmeOid} is not distinct from ${input.readmeOid}`,
+                  sql`${repos.readmeOid} is not distinct from ${input.readmeOid}`,
                 ),
               )
               .returning({ id: repos.id }),
@@ -191,9 +204,9 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
     getMany: (ids) =>
       run("repos.getMany", (db) =>
         db
-          .select(repoColumns)
+          .select({ ...repoColumns, pending: needsEnrichment })
           .from(repos)
           .where(sql`${repos.id} = any(${sql.param([...ids])}::bigint[])`),
-      ).pipe(Effect.flatMap(decodeRepos("repos.getMany"))),
+      ).pipe(Effect.flatMap(decodeStored("repos.getMany"))),
   } satisfies Queries;
 });

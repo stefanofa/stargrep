@@ -3,9 +3,7 @@ import { GatewayInternalServerError, GatewayModelNotFoundError } from "@ai-sdk/g
 import * as it from "@stargrep/testing";
 import { APICallError } from "ai";
 import { MockEmbeddingModelV4, MockLanguageModelV4 } from "ai/test";
-import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -16,6 +14,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Embeddings from "./embeddings.ts";
 import * as Gateway from "./gateway.ts";
 import * as Models from "./models.ts";
+import * as Port from "./port.ts";
 import * as Summarize from "./prompts/summarize.ts";
 import * as TextGeneration from "./text-generation.ts";
 
@@ -50,17 +49,13 @@ const textLayer = (doGenerate: (options: CallOptions) => PromiseLike<GenerateRes
     ),
   );
 
-// TestClock cannot run these retries, because each attempt rejects a promise before its backoff sleep
-// starts, so backoff sleeps return at once and the timeout's sleep never ends.
-const retryClock: Clock.Clock = {
-  currentTimeMillisUnsafe: () => 0,
-  currentTimeMillis: Effect.succeed(0),
-  currentTimeNanosUnsafe: () => 0n,
-  currentTimeNanos: Effect.succeed(0n),
-  monotonicTimeNanosUnsafe: () => 0n,
-  monotonicTimeNanos: Effect.succeed(0n),
-  sleep: (duration) => (Duration.isLessThan(duration, Gateway.textTimeout) ? Effect.void : Effect.never),
-};
+// Each attempt rejects a promise before its backoff sleep starts, so one adjustment can land too early.
+// Stepping the clock until the fiber finishes waits out every retry.
+const settle = <A, E>(fiber: Fiber.Fiber<A, E>) =>
+  Effect.gen(function* () {
+    while (fiber.pollUnsafe() === undefined) yield* TestClock.adjust("1 second");
+    return yield* Fiber.join(fiber);
+  });
 
 const repo: Summarize.RepoFacts = {
   fullName: "ratatui/ratatui",
@@ -159,14 +154,14 @@ describe("gateway text generation", () => {
   it.effect("retries an error the SDK marks as retryable three times, then fails with AiUnavailable", () => {
     let attempts = 0;
     return Effect.gen(function* () {
-      const upstream = yield* Effect.flip(Summarize.summarize(repo));
+      const fiber = yield* Effect.forkChild(Effect.flip(Summarize.summarize(repo)));
+      const upstream = yield* settle(fiber);
       expect(attempts).toBe(4);
       expect(upstream.message).toBe(
         "Model 'test/model' is unavailable for 'generate' and may answer a retry: AI_APICallError with status 502",
       );
       expect(JSON.stringify(upstream)).not.toContain("SECRET");
     }).pipe(
-      Effect.provideService(Clock.Clock, retryClock),
       Effect.provide(
         textLayer(async () => {
           attempts++;
@@ -183,11 +178,11 @@ describe("gateway text generation", () => {
 
   it.effect("fails with AiUnavailable on the gateway's internal server error", () =>
     Effect.gen(function* () {
-      const error = yield* Effect.flip(Summarize.summarize(repo));
+      const fiber = yield* Effect.forkChild(Effect.flip(Summarize.summarize(repo)));
+      const error = yield* settle(fiber);
       expect(error._tag).toBe("AiUnavailable");
       expect(error.message).toContain("GatewayInternalServerError with status 500");
     }).pipe(
-      Effect.provideService(Clock.Clock, retryClock),
       Effect.provide(
         textLayer(async () => {
           throw new GatewayInternalServerError({ message: "Internal server error" });
@@ -198,7 +193,7 @@ describe("gateway text generation", () => {
 
   it.effect("counts the gateway's reported tokens per model", () => {
     const tokens = (direction: string) =>
-      Metric.value(Metric.withAttributes(TextGeneration.tokensUsed, { model: "metered/model", direction }));
+      Metric.value(Metric.withAttributes(Port.tokensUsed, { model: "metered/model", direction }));
     return Effect.gen(function* () {
       const before = yield* tokens("output");
       yield* Summarize.summarize(repo);
@@ -218,9 +213,22 @@ const succeeded = (id: string, text: string): BatchItem => ({
   result: textResult(text),
 });
 
-const fakeBatch = (options: { readonly items: ReadonlyArray<BatchItem>; readonly fails?: boolean }) => {
+type BatchCall = "start" | "status" | "results";
+
+const fakeBatch = (options: {
+  readonly items: ReadonlyArray<BatchItem>;
+  readonly fails?: boolean;
+  readonly throwOnce?: ReadonlyArray<BatchCall>;
+}) => {
   const starts: Array<StartOptions> = [];
   const direct = { calls: 0 };
+  const calls: Record<BatchCall, number> = { start: 0, status: 0, results: 0 };
+  const attempt = (call: BatchCall) => {
+    calls[call]++;
+    if (calls[call] === 1 && options.throwOnce?.includes(call)) {
+      throw new GatewayInternalServerError({ message: "Internal server error" });
+    }
+  };
   const languageModel = () =>
     new MockLanguageModelV4({
       doGenerate: async () => {
@@ -233,20 +241,25 @@ const fakeBatch = (options: { readonly items: ReadonlyArray<BatchItem>; readonly
     provider: "gateway.batch",
     supportedUrls: {},
     doStartBatch: async (start) => {
+      attempt("start");
       starts.push(start);
       return { batchId: `job_${starts.length}`, status: "pending", warnings: [] };
     },
-    doGetBatchStatus: async () =>
-      options.fails
+    doGetBatchStatus: async () => {
+      attempt("status");
+      return options.fails
         ? { status: "failed", error: { message: "rejected", code: "invalid_batch" } }
-        : { status: "completed" },
-    doGetBatchResults: async () =>
-      new ReadableStream<BatchItem>({
+        : { status: "completed" };
+    },
+    doGetBatchResults: async () => {
+      attempt("results");
+      return new ReadableStream<BatchItem>({
         start: (controller) => {
           for (const item of options.items) controller.enqueue(item);
           controller.close();
         },
-      }),
+      });
+    },
   };
   const layer = Gateway.layerTextGeneration("test/model").pipe(
     Layer.provide(
@@ -256,7 +269,7 @@ const fakeBatch = (options: { readonly items: ReadonlyArray<BatchItem>; readonly
       ),
     ),
   );
-  return { starts, direct, layer };
+  return { starts, direct, calls, layer };
 };
 
 const batchRepos = [repo, { ...repo, fullName: "junegunn/fzf" }, { ...repo, fullName: "sharkdp/bat" }];
@@ -311,11 +324,26 @@ describe("gateway batch", () => {
     }).pipe(Effect.provide(fake.layer));
   });
 
-  it.effect("fails with AiRequestFailed when the gateway fails the whole batch", () => {
+  it.effect("answers every prompt directly when the gateway fails the whole batch", () => {
     const fake = fakeBatch({ items: [], fails: true });
     return Effect.gen(function* () {
-      const error = yield* Effect.flip(Summarize.summarizeBatch(batchRepos));
-      expect(error.message).toBe("Model 'test/model' request failed in 'generate': batch failed with invalid_batch");
+      const results = yield* Summarize.summarizeBatch(batchRepos);
+      expect(results).toEqual(batchRepos.map(() => Result.succeed(validSummary)));
+      expect(fake.direct.calls).toBe(3);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  it.effect("retries a failed start, status check, and result read without starting a second job", () => {
+    const fake = fakeBatch({
+      items: [succeeded("0", JSON.stringify(validSummary))],
+      throwOnce: ["start", "status", "results"],
+    });
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(Summarize.summarizeBatch([repo]));
+      expect(yield* settle(fiber)).toEqual([Result.succeed(validSummary)]);
+      expect(fake.calls).toEqual({ start: 2, status: 2, results: 2 });
+      expect(fake.starts).toHaveLength(1);
+      expect(fake.direct.calls).toBe(0);
     }).pipe(Effect.provide(fake.layer));
   });
 });
