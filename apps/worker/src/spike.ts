@@ -369,6 +369,44 @@ const runErrors = (connectionString: string) =>
     }),
   );
 
+// Proof for (a): one client connection reuses named statements; record which server backend served each.
+const runPrepared = (connectionString: string, count: number) =>
+  Effect.gen(function* () {
+    const client = yield* PgClient.PgClient;
+    const outside: Array<number> = [];
+    const inside: Array<number> = [];
+    const failures = new Map<string, number>();
+    const record = (cause: Cause.Cause<unknown>) =>
+      Effect.sync(() => {
+        const key = failureKey(cause);
+        failures.set(key, (failures.get(key) ?? 0) + 1);
+      });
+    for (let i = 0; i < count; i++) {
+      yield* client.unsafe<{ pid: number }>("select pg_backend_pid() as pid, $1::int as n", [i]).pipe(
+        Effect.tap((rows) => Effect.sync(() => outside.push(rows[0]?.pid ?? -1))),
+        Effect.catchCause(record),
+      );
+      yield* client
+        .withTransaction(client.unsafe<{ pid: number }>("select pg_backend_pid() as pid, $1::int as m", [i]))
+        .pipe(
+          Effect.tap((rows) => Effect.sync(() => inside.push(rows[0]?.pid ?? -1))),
+          Effect.catchCause(record),
+        );
+    }
+    const prepared = yield* client
+      .unsafe<{ name: string; statement: string }>("select name, statement from pg_prepared_statements")
+      .pipe(Effect.orElseSucceed(() => []));
+    return {
+      count,
+      failures: Object.fromEntries(failures),
+      distinctBackendsOutside: new Set(outside).size,
+      distinctBackendsInTransactions: new Set(inside).size,
+      outsidePids: outside.slice(0, 10),
+      insidePids: inside.slice(0, 10),
+      preparedOnFinalBackend: prepared.map((row) => `${row.name}: ${row.statement.slice(0, 60)}`),
+    };
+  }).pipe(Effect.provide(PgClient.layer({ url: Redacted.make(connectionString), maxConnections: 1, prepare: true })));
+
 const intParam = (url: URL, name: string, fallback: number, max: number) => {
   const value = Number(url.searchParams.get(name) ?? fallback);
   return Number.isInteger(value) && value > 0 && value <= max ? value : fallback;
@@ -413,6 +451,8 @@ export const spikeRoute = (method: string, url: URL, connectionString: string, p
       return respond(tagged(runLatency(connectionString, intParam(url, "rounds", 30, 100))));
     case "/spike/errors":
       return respond(tagged(runErrors(connectionString)));
+    case "/spike/prepared":
+      return respond(tagged(runPrepared(connectionString, intParam(url, "count", 40, 200))));
     default:
       return Effect.succeed(HttpServerResponse.empty({ status: 404 }));
   }
