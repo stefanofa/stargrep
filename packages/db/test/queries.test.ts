@@ -703,6 +703,65 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgr
     }),
   );
 
+  const twoClients = Effect.fn(function* (table: string) {
+    const database = yield* TestDatabase.TestDatabase;
+    const pool = yield* NodePostgres.acquirePool(Option.getOrThrow(database.url));
+    yield* database.query(`create table ${table} (id int primary key, value int)`);
+    yield* database.query(`insert into ${table} values (1, 0), (2, 0)`);
+    const clients = yield* Effect.acquireRelease(
+      Effect.promise(() => Promise.all([pool.connect(), pool.connect()])),
+      (held) =>
+        Effect.sync(() => {
+          for (const client of held) client.release();
+        }),
+    );
+    const { run } = Postgres.make(NodePostgres.driver(pool));
+    type Client = (typeof clients)[number];
+    const sql = (client: Client, text: string) => Effect.promise(() => client.query(text));
+    const attempt = (client: Client, text: string) =>
+      run("stars.upsert", () => client.query(text)).pipe(
+        Effect.match({ onFailure: Option.some, onSuccess: () => Option.none() }),
+        Effect.ensuring(sql(client, "rollback")),
+      );
+    return { clients, sql, attempt };
+  });
+
+  test.effect("fails a statement that deadlocks with another transaction as a conflict", () =>
+    Effect.gen(function* () {
+      const { clients, sql, attempt } = yield* twoClients("deadlock_probe");
+      const [first, second] = clients;
+      yield* sql(first, "begin");
+      yield* sql(second, "begin");
+      yield* sql(first, "update deadlock_probe set value = 1 where id = 1");
+      yield* sql(second, "update deadlock_probe set value = 1 where id = 2");
+      const failures = yield* Effect.all(
+        [
+          attempt(first, "update deadlock_probe set value = 2 where id = 2"),
+          attempt(second, "update deadlock_probe set value = 2 where id = 1"),
+        ],
+        { concurrency: 2 },
+      );
+      expect(failures.flatMap(Option.toArray)).toMatchObject([
+        { _tag: "DbQueryFailed", reason: "conflict", sqlState: "40P01" },
+      ]);
+    }),
+  );
+
+  test.effect("fails a serializable statement that loses to a concurrent commit as a conflict", () =>
+    Effect.gen(function* () {
+      const { clients, sql, attempt } = yield* twoClients("serialization_probe");
+      const [first, second] = clients;
+      yield* sql(first, "begin isolation level serializable");
+      yield* sql(second, "begin isolation level serializable");
+      yield* sql(first, "select value from serialization_probe where id = 1");
+      yield* sql(second, "select value from serialization_probe where id = 1");
+      yield* sql(first, "update serialization_probe set value = 1 where id = 1");
+      yield* sql(first, "commit");
+      const failure = yield* attempt(second, "update serialization_probe set value = 2 where id = 1");
+      expect(Option.getOrNull(failure)).toMatchObject({ _tag: "DbQueryFailed", reason: "conflict", sqlState: "40001" });
+    }),
+  );
+
   test.effect("fails a transaction whose connection the server ends as a transport failure", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
