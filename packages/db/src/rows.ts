@@ -25,3 +25,8 @@ export const writeEncoder = <S extends Schema.Encoder<unknown>>(schema: S) => {
   const encode = Schema.encodeEffect(schema);
   return (value: S["Type"]) => encode(value).pipe(Effect.orDie);
 };
+
+export const requireRow =
+  <E>(notFound: () => E) =>
+  (rows: ReadonlyArray<unknown>): Effect.Effect<void, E> =>
+    rows.length === 0 ? Effect.fail(notFound()) : Effect.void;

@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 import { AccountNotFound, type DbQueryFailed, type DbRowInvalid } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
-import { NullableTime, rowsDecoder, writeEncoder } from "../rows.ts";
+import { NullableTime, requireRow, rowsDecoder, writeEncoder } from "../rows.ts";
 import { githubAccounts } from "../schema.ts";
 
 export const Account = createSelectSchema(githubAccounts, {
@@ -70,8 +70,7 @@ export const make = Effect.gen(function* () {
               .returning({ id: githubAccounts.id }),
           ),
         ),
-        Effect.filterOrFail(Arr.isReadonlyArrayNonEmpty, () => new AccountNotFound({ accountId: sync.accountId })),
-        Effect.asVoid,
+        Effect.flatMap(requireRow(() => new AccountNotFound({ accountId: sync.accountId }))),
       ),
   } satisfies Queries;
 });

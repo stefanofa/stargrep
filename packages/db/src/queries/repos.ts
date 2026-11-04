@@ -9,7 +9,7 @@ import * as Struct from "effect/Struct";
 import { type Embedding, EmbeddingModelId, type EmbeddingModelMismatch, requireModel } from "../embedding.ts";
 import { type DbQueryFailed, type DbRowInvalid, RepoNotFound } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
-import { excluded, NullableTime, rowsDecoder, writeEncoder } from "../rows.ts";
+import { excluded, NullableTime, requireRow, rowsDecoder, writeEncoder } from "../rows.ts";
 import { repos } from "../schema.ts";
 
 const RepoRow = createSelectSchema(repos, {
@@ -66,7 +66,7 @@ export interface RepoEmbedding {
 
 export interface Queries {
   readonly upsertRefs: (refs: ReadonlyArray<RepoRef>) => Effect.Effect<void, DbQueryFailed>;
-  readonly unenriched: (
+  readonly pendingEnrichment: (
     ids: ReadonlyArray<RepoId>,
   ) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
   readonly saveFacts: (facts: RepoFacts) => Effect.Effect<void, DbQueryFailed>;
@@ -84,10 +84,7 @@ const encodeRefs = writeEncoder(Schema.Array(RepoRef));
 const encodeFacts = writeEncoder(RepoFacts);
 const encodeSummary = writeEncoder(RepoSummary);
 
-const requireFound =
-  (id: RepoId) =>
-  (rows: ReadonlyArray<unknown>): Effect.Effect<void, RepoNotFound> =>
-    rows.length === 0 ? Effect.fail(new RepoNotFound({ repoId: id })) : Effect.void;
+const repoFound = (id: RepoId) => requireRow(() => new RepoNotFound({ repoId: id }));
 
 export const make = Effect.fn("Db.repos.make")(function* (configuredModel: EmbeddingModelId) {
   const { run, withTransaction } = yield* Postgres.Postgres;
@@ -115,16 +112,16 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           { discard: true },
         ),
       ),
-    unenriched: (ids) =>
-      run("repos.unenriched", (db) =>
+    pendingEnrichment: (ids) =>
+      run("repos.pendingEnrichment", (db) =>
         db
           .select({ id: repos.id })
           .from(repos)
           .where(
-            sql`${repos.id} = any(${sql.param([...ids])}::bigint[]) and (${repos.summary} is null or ${repos.summaryReadmeOid} is distinct from ${repos.readmeOid})`,
+            sql`${repos.id} = any(${sql.param([...ids])}::bigint[]) and (${repos.summary} is null or ${repos.summaryReadmeOid} is distinct from ${repos.readmeOid} or ${repos.embeddingModel} is null)`,
           ),
       ).pipe(
-        Effect.flatMap(decodeIds("repos.unenriched")),
+        Effect.flatMap(decodeIds("repos.pendingEnrichment")),
         Effect.map((rows) => {
           const pending = new Set<number>(rows.map((row) => row.id));
           return ids.filter((id) => pending.has(id));
@@ -155,7 +152,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
             ? Effect.void
             : run("repos.saveSummary", (db) =>
                 db.select({ id: repos.id }).from(repos).where(eq(repos.id, summary.id)),
-              ).pipe(Effect.flatMap(requireFound(summary.id))),
+              ).pipe(Effect.flatMap(repoFound(summary.id))),
         ),
       ),
     saveEmbedding: (input) =>
@@ -169,7 +166,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
               .returning({ id: repos.id }),
           ),
         ),
-        Effect.flatMap(requireFound(input.id)),
+        Effect.flatMap(repoFound(input.id)),
       ),
     get: (id) =>
       run("repos.get", (db) => db.select(repoColumns).from(repos).where(eq(repos.id, id))).pipe(

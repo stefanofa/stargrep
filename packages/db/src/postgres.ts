@@ -4,7 +4,6 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
-import * as Semaphore from "effect/Semaphore";
 import { DbQueryFailed, type Operation } from "./errors.ts";
 
 export type Database = PgAsyncDatabase<PgQueryResultHKT>;
@@ -19,7 +18,7 @@ export interface Driver {
   readonly database: Database;
   readonly connect: () => PromiseLike<TransactionClient>;
   readonly isDatabaseError: (error: unknown) => error is { readonly code?: string | undefined };
-  readonly singleConnection: boolean;
+  readonly exclusive: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
 }
 
 const queryTimeout = "10 seconds";
@@ -65,10 +64,6 @@ export class Postgres extends Context.Service<
 >()("@stargrep/db/postgres") {}
 
 export const make = (driver: Driver) => {
-  const turn = driver.singleConnection
-    ? Semaphore.makeUnsafe(1).withPermits(1)
-    : <A, E, R>(effect: Effect.Effect<A, E, R>) => effect;
-
   const attempt = <A>(operation: Operation, evaluate: () => PromiseLike<A>) =>
     Effect.promise(evaluate).pipe(
       Effect.catchDefect((defect) =>
@@ -87,7 +82,7 @@ export const make = (driver: Driver) => {
     function* <A>(operation: Operation, query: (db: Database) => PromiseLike<A>) {
       const transaction = yield* CurrentTransaction;
       return yield* Option.match(transaction, {
-        onNone: () => turn(attempt(operation, () => query(driver.database))),
+        onNone: () => driver.exclusive(attempt(operation, () => query(driver.database))),
         onSome: (database) => attempt(operation, () => query(database)),
       });
     },
@@ -111,7 +106,7 @@ export const make = (driver: Driver) => {
     effect: Effect.Effect<A, E, R>,
   ) {
     if (Option.isSome(yield* CurrentTransaction)) return yield* effect;
-    return yield* turn(
+    return yield* driver.exclusive(
       Effect.acquireUseRelease(
         begin,
         (client) => Effect.provideService(effect, CurrentTransaction, Option.some(client.database)),

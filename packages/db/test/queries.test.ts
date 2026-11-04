@@ -24,6 +24,7 @@ const accountId = Schema.decodeSync(GitHubAccountId);
 const repoId = Schema.decodeSync(RepoId);
 const login = Schema.decodeSync(Login);
 const repoName = Schema.decodeSync(RepoName);
+const decodeWaiting = Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ waiting: Schema.Int })));
 const readme = (digit: string) => Schema.decodeSync(ObjectId)(digit.repeat(40));
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const iso = (time: DateTime.Utc | null) => (time === null ? null : DateTime.formatIso(time));
@@ -84,9 +85,9 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       const db = yield* Db.Db;
       const id = accountId(102);
       yield* db.accounts.upsert(account(id));
-      expect(yield* db.stars.markUnstarred({ accountId: id, keep: [], at: at("2026-10-02T00:00:00Z") })).toBe(0);
+      expect(yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-02T00:00:00Z") })).toBe(0);
       yield* db.accounts.recordStarSync({ accountId: id, etag: "next", at: at("2026-10-03T00:00:00Z") });
-      expect(yield* db.stars.markUnstarred({ accountId: id, keep: [], at: at("2026-10-01T00:00:00Z") })).toBe(0);
+      expect(yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-01T00:00:00Z") })).toBe(0);
 
       const stored = Option.getOrThrow(yield* db.accounts.get(id));
       expect(stored.starsEtag).toBe("next");
@@ -98,7 +99,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         .recordStarSync({ accountId: missing, etag: null, at: at("2026-10-02T00:00:00Z") })
         .pipe(Effect.flip);
       const snapshot = yield* db.stars
-        .markUnstarred({ accountId: missing, keep: [], at: at("2026-10-02T00:00:00Z") })
+        .applySnapshot({ accountId: missing, stars: [], at: at("2026-10-02T00:00:00Z") })
         .pipe(Effect.flip);
       expect([sync._tag, snapshot._tag]).toEqual(["AccountNotFound", "AccountNotFound"]);
     }),
@@ -116,16 +117,30 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     }),
   );
 
-  test.effect("reports stored repos without a summary as unenriched, in the order asked", () =>
+  test.effect("reports repos pending enrichment, in the order asked", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
-      const [fresh, summarized, alsoFresh, missing] = [repoId(2051), repoId(2052), repoId(2053), repoId(2059)];
-      yield* db.repos.upsertRefs([ref(fresh), ref(summarized), ref(alsoFresh)]);
-      yield* db.repos.saveSummary({ id: summarized, readmeOid: null, summary: "done", keywords: [], kind: "app" });
+      const [fresh, enriched, alsoFresh, missing] = [repoId(2051), repoId(2052), repoId(2053), repoId(2059)];
+      yield* db.repos.upsertRefs([ref(fresh), ref(enriched), ref(alsoFresh)]);
+      yield* db.repos.saveSummary({ id: enriched, readmeOid: null, summary: "done", keywords: [], kind: "app" });
+      yield* db.repos.saveEmbedding({ id: enriched, embedding: embedding({ 0: 1 }) });
 
-      expect(yield* db.repos.unenriched([alsoFresh, missing, summarized, fresh])).toEqual([alsoFresh, fresh]);
-      yield* db.repos.upsertRefs([ref(fresh), ref(summarized), ref(alsoFresh)]);
-      expect(yield* db.repos.unenriched([fresh, summarized, alsoFresh])).toEqual([fresh, alsoFresh]);
+      expect(yield* db.repos.pendingEnrichment([alsoFresh, missing, enriched, fresh])).toEqual([alsoFresh, fresh]);
+      yield* db.repos.upsertRefs([ref(fresh), ref(enriched), ref(alsoFresh)]);
+      expect(yield* db.repos.pendingEnrichment([fresh, enriched, alsoFresh])).toEqual([fresh, alsoFresh]);
+    }),
+  );
+
+  test.effect("keeps a repo pending when its summary is current but its embedding failed", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const id = repoId(2061);
+      yield* db.repos.upsertRefs([ref(id)]);
+      yield* db.repos.saveSummary({ id, readmeOid: null, summary: "summarized", keywords: [], kind: "app" });
+      expect(yield* db.repos.pendingEnrichment([id])).toEqual([id]);
+
+      yield* db.repos.saveEmbedding({ id, embedding: embedding({ 0: 1 }) });
+      expect(yield* db.repos.pendingEnrichment([id])).toEqual([]);
     }),
   );
 
@@ -264,9 +279,13 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         stars: [kept, gone, alsoGone].map((repo) => starred(repo, "2026-01-01T00:00:00Z")),
       });
 
-      const unstar = { accountId: id, keep: [kept], at: at("2026-02-01T00:00:00Z") };
-      expect(yield* db.stars.markUnstarred(unstar)).toBe(2);
-      expect(yield* db.stars.markUnstarred(unstar)).toBe(0);
+      const snapshot = {
+        accountId: id,
+        stars: [starred(kept, "2026-01-01T00:00:00Z")],
+        at: at("2026-02-01T00:00:00Z"),
+      };
+      expect(yield* db.stars.applySnapshot(snapshot)).toBe(2);
+      expect(yield* db.stars.applySnapshot(snapshot)).toBe(0);
       expect((yield* db.stars.list(id)).map((star) => star.repoId)).toEqual([kept]);
     }),
   );
@@ -279,7 +298,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.accounts.upsert(account(id));
       yield* db.repos.upsertRefs([ref(repo)]);
       yield* db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-01-01T00:00:00Z")] });
-      yield* db.stars.markUnstarred({ accountId: id, keep: [], at: at("2026-02-01T00:00:00Z") });
+      yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-02-01T00:00:00Z") });
 
       yield* db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-01-01T00:00:00Z")] });
       expect(yield* db.stars.list(id)).toEqual([]);
@@ -319,7 +338,11 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         stars: [same, close, far, unstarred].map((id) => starred(id, "2026-01-01T00:00:00Z")),
       });
       yield* db.stars.upsert({ accountId: other, stars: [starred(notMine, "2026-01-01T00:00:00Z")] });
-      yield* db.stars.markUnstarred({ accountId: owner, keep: [same, close, far], at: at("2026-02-01T00:00:00Z") });
+      yield* db.stars.applySnapshot({
+        accountId: owner,
+        stars: [same, close, far].map((id) => starred(id, "2026-01-01T00:00:00Z")),
+        at: at("2026-02-01T00:00:00Z"),
+      });
 
       const query = { scope: stars(owner), text: "", embedding: embedding({ 0: 1 }) };
       const hits = yield* db.search.hybrid({ ...query, limit: 10 });
@@ -483,12 +506,12 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         kind: "app",
         embeddingModel: model,
       });
-      expect(yield* db.repos.unenriched([id])).toEqual([]);
+      expect(yield* db.repos.pendingEnrichment([id])).toEqual([]);
 
       yield* db.repos.saveFacts({ ...facts(id), readmeOid: readme("d") });
       yield* db.repos.saveSummary({ id, readmeOid: readme("b"), summary: "LATE", keywords: [], kind: "app" });
       expect(Option.getOrThrow(yield* db.repos.get(id)).summary).toBe("NEW");
-      expect(yield* db.repos.unenriched([id])).toEqual([id]);
+      expect(yield* db.repos.pendingEnrichment([id])).toEqual([id]);
     }),
   );
 
@@ -518,8 +541,8 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.accounts.upsert(account(id));
       yield* db.repos.upsertRefs([ref(repo)]);
       yield* db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-10-01T00:00:00Z")] });
-      yield* db.stars.markUnstarred({ accountId: id, keep: [], at: at("2026-10-02T00:00:00Z") });
-      yield* db.stars.markUnstarred({ accountId: id, keep: [], at: at("2026-10-05T00:00:00Z") });
+      yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-02T00:00:00Z") });
+      yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-05T00:00:00Z") });
       yield* db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-10-03T00:00:00Z")] });
 
       expect(yield* db.stars.list(id)).toEqual([]);
@@ -535,8 +558,28 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.repos.upsertRefs([ref(repo)]);
       yield* db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-10-05T00:00:00Z")] });
 
-      expect(yield* db.stars.markUnstarred({ accountId: id, keep: [], at: at("2026-10-02T00:00:00Z") })).toBe(0);
+      expect(yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-02T00:00:00Z") })).toBe(0);
       expect((yield* db.stars.list(id)).map((star) => star.repoId)).toEqual([repo]);
+    }),
+  );
+
+  test.effect("stores every star of a first full snapshot, however old", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const id = accountId(9351);
+      const [older, newer, replayed] = [repoId(9351), repoId(9352), repoId(9353)];
+      yield* db.accounts.upsert(account(id));
+      yield* db.repos.upsertRefs([ref(older), ref(newer), ref(replayed)]);
+
+      const unstarred = yield* db.stars.applySnapshot({
+        accountId: id,
+        stars: [starred(older, "2020-01-01T00:00:00Z"), starred(newer, "2026-09-01T00:00:00Z")],
+        at: at("2026-10-05T00:00:00Z"),
+      });
+      yield* db.stars.upsert({ accountId: id, stars: [starred(replayed, "2026-10-01T00:00:00Z")] });
+
+      expect(unstarred).toBe(0);
+      expect((yield* db.stars.list(id)).map((star) => star.repoId)).toEqual([newer, older]);
     }),
   );
 
@@ -666,72 +709,53 @@ it.layer(TestDatabase.layerMemory({ embeddingModel: model }))("PGlite Db", share
 it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgres Db", (test) => {
   sharedCases(test);
 
-  test.effect("keeps a star read before a newer snapshot commits from staying active", () =>
+  test.effect("keeps a star event that read an older snapshot time from outliving a newer snapshot", () =>
     Effect.gen(function* () {
+      const db = yield* Db.Db;
       const database = yield* TestDatabase.TestDatabase;
-      const pool = yield* Effect.acquireRelease(
-        Effect.sync(() => new pg.Pool({ connectionString: Option.getOrThrow(database.url), lock_timeout: 500 })),
-        (pool) => Effect.promise(() => pool.end()),
+      const id = accountId(9801);
+      const repo = repoId(9801);
+      yield* db.accounts.upsert(account(id));
+      yield* db.repos.upsertRefs([ref(repo)]);
+      const blocker = yield* Effect.acquireRelease(
+        Effect.promise(async () => {
+          const client = new pg.Client({ connectionString: Option.getOrThrow(database.url) });
+          await client.connect();
+          return client;
+        }),
+        (client) => Effect.promise(() => client.end()),
       );
-      const postgres = Postgres.make({
-        database: drizzle({ client: pool }),
-        connect: async () => {
-          const client = await pool.connect();
-          return {
-            database: drizzle({ client }),
-            query: (statement) => client.query(statement),
-            release: (broken) => client.release(broken),
-          };
-        },
-        isDatabaseError: (error) => error instanceof pg.DatabaseError,
-        singleConnection: false,
-      });
-      const snapshotRead = yield* Deferred.make<void>();
-      const resume = yield* Deferred.make<void>();
-      const pauseAfterSnapshotRead = Postgres.Postgres.of({
-        ...postgres,
-        run: <A>(operation: Parameters<typeof postgres.run>[0], query: (db: Postgres.Database) => PromiseLike<A>) =>
-          postgres
-            .run(operation, query)
-            .pipe(
-              Effect.tap(() =>
-                operation === "stars.upsert"
-                  ? Deferred.isDone(snapshotRead).pipe(
-                      Effect.flatMap((done) =>
-                        done
-                          ? Effect.void
-                          : Deferred.succeed(snapshotRead, undefined).pipe(Effect.andThen(Deferred.await(resume))),
-                      ),
-                    )
-                  : Effect.void,
-              ),
-            ),
-      });
-
-      yield* Effect.gen(function* () {
-        const db = yield* Db.Db;
-        const id = accountId(9801);
-        const repo = repoId(9801);
-        const snapshot = { accountId: id, keep: [], at: at("2026-10-05T00:00:00Z") };
-        yield* db.accounts.upsert(account(id));
-        yield* db.repos.upsertRefs([ref(repo)]);
-        const upsert = yield* Effect.forkChild(
-          db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-10-03T00:00:00Z")] }),
+      const lockWaits = database
+        .query(
+          "select count(*)::int as waiting from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'",
+        )
+        .pipe(
+          Effect.flatMap(decodeWaiting),
+          Effect.map((rows) => rows[0]?.waiting ?? 0),
         );
-        yield* Deferred.await(snapshotRead);
-        yield* db.stars.markUnstarred(snapshot).pipe(Effect.exit);
-        yield* Deferred.succeed(resume, undefined);
-        yield* Fiber.join(upsert);
-        yield* db.stars.markUnstarred(snapshot);
+      const until = <E>(ready: Effect.Effect<boolean, E>) =>
+        ready.pipe(Effect.repeat({ until: (done) => done, times: 5000 }));
 
-        expect(yield* db.stars.list(id)).toEqual([]);
-      }).pipe(
-        Effect.provide(
-          Db.layer({ embeddingModel: model }).pipe(
-            Layer.provide(Layer.succeed(Postgres.Postgres, pauseAfterSnapshotRead)),
-          ),
+      yield* Effect.promise(() => blocker.query("begin"));
+      yield* Effect.promise(() =>
+        blocker.query(
+          "insert into stars (account_id, repo_id, starred_at, observed_at, source) values ($1, $2, $3, $3, 'api')",
+          [id, repo, "2026-09-01T00:00:00Z"],
         ),
       );
+      const event = yield* Effect.forkChild(
+        db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-10-03T00:00:00Z")] }),
+      );
+      yield* until(Effect.map(lockWaits, (waiting) => waiting >= 1));
+      const snapshot = yield* Effect.forkChild(
+        db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-05T00:00:00Z") }),
+      );
+      yield* until(Effect.map(lockWaits, (waiting) => waiting >= 2 || snapshot.pollUnsafe() !== undefined));
+      yield* Effect.promise(() => blocker.query("rollback"));
+      yield* Fiber.join(event);
+      yield* Fiber.join(snapshot);
+
+      expect(yield* db.stars.list(id)).toEqual([]);
     }),
   );
 

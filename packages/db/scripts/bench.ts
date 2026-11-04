@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 import pg from "pg";
 import * as Db from "../src/db.ts";
 import { Embedding, EmbeddingModelId } from "../src/embedding.ts";
-import { migrationsFolder } from "../src/migrations.ts";
+import { createMigratedDatabase, databaseUrl, withClient } from "../src/local-database.ts";
 
 const adminUrl = process.env.DATABASE_URL ?? "postgres://stargrep:stargrep@127.0.0.1:54317/stargrep";
 const repoCount = 100_000;
@@ -87,34 +87,10 @@ const words = [
   "scheduler",
 ];
 
-const benchUrl = (() => {
-  const url = new URL(adminUrl);
-  url.pathname = "/stargrep_bench";
-  return url.href;
-})();
+const benchDatabase = "stargrep_bench";
+const benchUrl = databaseUrl(adminUrl, benchDatabase);
 
-const withClient = <A>(url: string, use: (client: pg.Client) => Promise<A>) =>
-  Effect.promise(async () => {
-    const client = new pg.Client({ connectionString: url });
-    await client.connect();
-    try {
-      return await use(client);
-    } finally {
-      await client.end();
-    }
-  });
-
-const prepare = withClient(adminUrl, async (client) => {
-  const { rowCount } = await client.query("select 1 from pg_database where datname = 'stargrep_bench'");
-  if (rowCount === 0) await client.query("create database stargrep_bench");
-}).pipe(
-  Effect.andThen(
-    Effect.promise(async () => {
-      const pool = new pg.Pool({ connectionString: benchUrl });
-      await migrate(drizzle({ client: pool }), { migrationsFolder });
-      await pool.end();
-    }),
-  ),
+const prepare = createMigratedDatabase(adminUrl, benchDatabase).pipe(
   Effect.andThen(
     withClient(benchUrl, async (client) => {
       const { rows } = await client.query("select count(*)::int as count from repos where embedding_model = $1", [

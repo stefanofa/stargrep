@@ -1,5 +1,3 @@
-import { drizzle } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -8,8 +6,8 @@ import * as Random from "effect/Random";
 import * as Redacted from "effect/Redacted";
 import pg from "pg";
 import * as Db from "../src/db.ts";
+import { createMigratedDatabase, dropDatabase } from "../src/local-database.ts";
 import * as Memory from "../src/memory.ts";
-import { migrationsFolder } from "../src/migrations.ts";
 
 const adminUrl = process.env.DATABASE_URL ?? "postgres://stargrep:stargrep@127.0.0.1:54317/stargrep";
 
@@ -42,42 +40,26 @@ const testDatabase = (
 
 export const layerMemory = (options: Db.Options) =>
   Layer.unwrap(
-    Effect.map(Memory.open, (client) =>
+    Effect.map(Memory.open, (pglite) =>
       Layer.merge(
-        Memory.layerPglite(client, options),
+        Memory.layerPglite(pglite, options),
         testDatabase(
-          (text, values) => client.query(text, values),
-          (connectOptions) => Memory.layerPglite(client, connectOptions),
+          (text, values) => pglite.client.query(text, values),
+          (connectOptions) => Memory.layerPglite(pglite, connectOptions),
           Option.none(),
         ),
       ),
     ),
   );
 
-const admin = (statement: string) =>
-  Effect.promise(async () => {
-    const client = new pg.Client({ connectionString: adminUrl });
-    await client.connect();
-    try {
-      await client.query(statement);
-    } finally {
-      await client.end();
-    }
-  });
-
 const freshDatabase = Effect.gen(function* () {
   const name = `stargrep_test_${yield* Random.nextIntBetween(0, 2 ** 31)}`;
-  yield* Effect.acquireRelease(admin(`create database ${name}`), () =>
-    admin(`drop database if exists ${name} with (force)`),
-  );
-  const url = new URL(adminUrl);
-  url.pathname = `/${name}`;
+  const url = yield* Effect.acquireRelease(createMigratedDatabase(adminUrl, name), () => dropDatabase(adminUrl, name));
   const pool = yield* Effect.acquireRelease(
-    Effect.sync(() => new pg.Pool({ connectionString: url.href })),
+    Effect.sync(() => new pg.Pool({ connectionString: url })),
     (pool) => Effect.promise(() => pool.end()),
   );
-  yield* Effect.promise(() => migrate(drizzle({ client: pool }), { migrationsFolder }));
-  return { url: Redacted.make(url.href), pool };
+  return { url: Redacted.make(url), pool };
 });
 
 export const layerNodePostgres = (options: Db.Options) =>
