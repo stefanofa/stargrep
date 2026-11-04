@@ -27,6 +27,7 @@ type BeforePage = (page: number, list: Array<Starred>) => Fake.Reply | undefined
 
 const lists = new Map<string, Array<Starred>>();
 const users = new Map<string, { readonly id: number; readonly login: string }>();
+const orgs = new Set<string>();
 const queue = EnrichQueue.layerMemory();
 const sent = queue.sent;
 const hooks: { beforePage: BeforePage } = { beforePage: () => undefined };
@@ -34,7 +35,9 @@ const hooks: { beforePage: BeforePage } = { beforePage: () => undefined };
 const github = Fake.layer((request) => {
   if (request.url.pathname === "/graphql") {
     const login: string = JSON.parse(request.body ?? "{}").variables.login;
-    return Fake.starCountReply(lists.get(login)?.length ?? 0);
+    return orgs.has(login)
+      ? { body: { data: { user: null }, errors: [{ type: "NOT_FOUND", message: "Could not resolve to a User" }] } }
+      : Fake.starCountReply(lists.get(login)?.length ?? 0);
   }
   const [, , login = "", list] = request.url.pathname.split("/");
   if (list === undefined) {
@@ -64,6 +67,7 @@ const reset = (beforePage: BeforePage = () => undefined) =>
   Effect.gen(function* () {
     lists.clear();
     users.clear();
+    orgs.clear();
     sent.length = 0;
     github.sent.length = 0;
     hooks.beforePage = beforePage;
@@ -80,12 +84,13 @@ const unstar = (list: Array<Starred>, index: number): Starred => {
   return gone;
 };
 
-const account = (id: number, login: string, list: Array<Starred>) =>
+const account = (id: number, login: string, list: Array<Starred>, type: "user" | "org" = "user") =>
   Effect.gen(function* () {
     lists.set(login, list);
+    if (type === "org") orgs.add(login);
     yield* (yield* Db.Db).accounts.upsert({
       id: id as GitHubAccountId,
-      type: "user",
+      type,
       login: login as Login,
       name: null,
       avatarUrl: null,
@@ -432,6 +437,20 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
       ]);
       expect(yield* sync(id)).toEqual(report({ listed: 1, added: 0, unchanged: 5 }));
       expect(yield* activeRepos(id)).not.toContain(50);
+    }),
+  );
+
+  test.effect("syncs an org as having no stars without asking GraphQL for a count", () =>
+    Effect.gen(function* () {
+      yield* reset();
+      const id = yield* account(3, "acme", [], "org");
+      for (const mode of ["incremental", "full"] as const) {
+        expect(yield* sync(id, mode)).toEqual(report({ listed: 0, added: 0, unstarred: 0, shifted: false }));
+        yield* TestClock.adjust("1 hour");
+      }
+      expect(github.sent.map((sent) => sent.url.pathname)).toEqual(["/users/acme/starred", "/users/acme/starred"]);
+      const stored = yield* (yield* Db.Db).accounts.require(id);
+      expect([stored.starsSyncedAt, stored.starsFullSyncedAt]).not.toContain(null);
     }),
   );
 

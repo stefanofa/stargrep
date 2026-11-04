@@ -72,9 +72,8 @@ const make = Effect.gen(function* () {
     const stored = DiffPage.stored(yield* db.stars.list(account.id), stopLine);
     // GitHub pages the list by offset, so a star added or removed mid-read shifts later pages. Equal
     // counts before and after the read are what lets a full read stand as a snapshot.
-    const countBefore = Option.isNone(stopLine)
-      ? Option.some(yield* github.starCount(account.login))
-      : Option.none<number>();
+    const countStars = account.type === "org" ? Effect.succeed(0) : github.starCount(account.login);
+    const countBefore = Option.isNone(stopLine) ? Option.some(yield* countStars) : Option.none<number>();
 
     const pages = yield* github.starPages(account.login).pipe(
       Stream.mapAccum(
@@ -90,7 +89,7 @@ const make = Effect.gen(function* () {
     );
 
     const snapshotReady = !pages.some((page) => page.stopped) && Option.isSome(countBefore);
-    const shifted = snapshotReady && countBefore.value !== (yield* github.starCount(account.login));
+    const shifted = snapshotReady && countBefore.value !== (yield* countStars);
     const snapshot =
       snapshotReady && !shifted
         ? yield* db.stars.applySnapshot({
