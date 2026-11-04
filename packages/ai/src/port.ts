@@ -23,7 +23,10 @@ export const tokensUsed = Metric.counter("stargrep_ai_tokens", {
 });
 
 export const countTokens = (model: string, direction: "input" | "output", tokens: number | undefined) =>
-  Metric.update(Metric.withAttributes(tokensUsed, { model, direction }), tokens ?? 0);
+  Effect.andThen(
+    Metric.update(Metric.withAttributes(tokensUsed, { model, direction }), tokens ?? 0),
+    Effect.annotateCurrentSpan(`gen_ai.usage.${direction}_tokens`, tokens ?? 0),
+  );
 
 export const tokensSpent = (model: string) =>
   Effect.all({

@@ -591,7 +591,7 @@ describe("gateway privacy", () => {
         expect(answer !== undefined && Result.isFailure(answer) && answer.failure._tag).toBe("AiOutputInvalid");
         expect((yield* Effect.flip(Summarize.summarize({ ...repo, readme: keyCanary })))._tag).toBe("AiOutputInvalid");
         const failed = spans.filter((span) => span.status._tag === "Ended" && Exit.isFailure(span.status.exit));
-        expect(failed.map((span) => span.name)).toEqual(["TextGeneration.generate"]);
+        expect(failed.map((span) => span.name)).toEqual(["TextGeneration.generate", "TextGeneration.generate"]);
       }),
     ),
   );
@@ -599,6 +599,7 @@ describe("gateway privacy", () => {
 
 describe("gateway without the batch API", () => {
   it.effect("answers a batch of prompts with one direct call each and never starts a batch job", () => {
+    const { spans, tracer } = collectSpans();
     let calls = 0;
     const layer = textLayer(
       () => {
@@ -612,7 +613,13 @@ describe("gateway without the batch API", () => {
       const results = yield* Summarize.summarizeBatch([repo, { ...repo, fullName: "other/repo" }, repo]);
       expect(results.map(Result.isSuccess)).toEqual([true, true, true]);
       expect(calls).toBe(3);
-    }).pipe(Effect.provide(layer));
+      const generated = spans.filter((span) => span.name === "TextGeneration.generate");
+      expect(generated.map((span) => Object.fromEntries(span.attributes))).toEqual(
+        Array.from({ length: 3 }, () =>
+          expect.objectContaining({ "gen_ai.usage.input_tokens": 100, "gen_ai.usage.output_tokens": 20 }),
+        ),
+      );
+    }).pipe(Effect.provide(layer), Effect.withTracer(tracer));
   });
 });
 

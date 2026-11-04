@@ -89,7 +89,7 @@ export const make = (options: {
     prompt: string,
     item: Result.Result<RunResult, AiError> | undefined,
   ) => {
-    const direct = generateOne({ schema: request.schema, system: request.system, prompt });
+    const direct = generate({ schema: request.schema, system: request.system, prompt });
     const answered =
       item === undefined || Result.isFailure(item)
         ? direct
