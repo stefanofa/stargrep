@@ -18,6 +18,8 @@ export interface Driver {
   readonly database: Database;
   readonly connect: () => PromiseLike<TransactionClient>;
   readonly isDatabaseError: (error: unknown) => error is { readonly code?: string | undefined };
+  // A lost connection the driver reports without a SQLSTATE or socket code.
+  readonly isConnectionError: (error: unknown) => boolean;
   readonly exclusive: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
 }
 
@@ -45,7 +47,10 @@ const classify = (driver: Driver, operation: Operation, error: unknown): Option.
     const sqlState = error.code ?? null;
     return Option.some(new DbQueryFailed({ operation, reason: reasonOf(sqlState), sqlState }));
   }
-  if (Predicate.hasProperty(error, "code") && Predicate.isString(error.code) && socketErrors.has(error.code)) {
+  if (
+    driver.isConnectionError(error) ||
+    (Predicate.hasProperty(error, "code") && Predicate.isString(error.code) && socketErrors.has(error.code))
+  ) {
     return Option.some(new DbQueryFailed({ operation, reason: "transport", sqlState: null }));
   }
   return Predicate.hasProperty(error, "cause") ? classify(driver, operation, error.cause) : Option.none();
@@ -64,7 +69,7 @@ export class Postgres extends Context.Service<
 >()("@stargrep/db/postgres") {}
 
 export const make = (driver: Driver) => {
-  const attempt = <A>(operation: Operation, evaluate: () => PromiseLike<A>) =>
+  const attempt = <A>(operation: Operation, evaluate: (signal: AbortSignal) => PromiseLike<A>) =>
     Effect.promise(evaluate).pipe(
       Effect.catchDefect((defect) =>
         Option.match(classify(driver, operation, defect), {
@@ -89,7 +94,20 @@ export const make = (driver: Driver) => {
     (effect, operation) => Effect.withSpan(effect, `Db.${operation}`),
   );
 
-  const begin = attempt("transaction", driver.connect).pipe(
+  // A driver cannot cancel a pending connect, so a client that arrives after the connect timed out
+  // goes straight back to the pool. Effect.promise passes a signal only because this declares one.
+  const connect = (signal: AbortSignal) => {
+    const client = Promise.resolve(driver.connect());
+    const returnLate = () =>
+      void client.then(
+        (late) => late.release(false),
+        () => undefined,
+      );
+    signal.addEventListener("abort", returnLate, { once: true });
+    return client;
+  };
+
+  const begin = attempt("transaction", connect).pipe(
     Effect.tap((client) =>
       attempt("transaction", () => client.query("begin")).pipe(
         Effect.onError(() => Effect.sync(() => client.release(true))),

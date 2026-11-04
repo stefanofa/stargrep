@@ -7,6 +7,7 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import pg from "pg";
 import * as Db from "../src/db.ts";
+import { ignoreError } from "../src/node-postgres.ts";
 import * as TestDatabase from "./database.ts";
 import { account, accountId, at, decodeWaiting, iso, model, ref, repoId, starred } from "./fixtures.ts";
 
@@ -367,6 +368,7 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgr
       const blocker = yield* Effect.acquireRelease(
         Effect.promise(async () => {
           const client = new pg.Client({ connectionString: Option.getOrThrow(database.url) });
+          client.on("error", ignoreError);
           await client.connect();
           return client;
         }),
