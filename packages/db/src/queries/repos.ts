@@ -63,6 +63,8 @@ export type RepoSummary = typeof RepoSummary.Type;
 export interface RepoEmbedding {
   readonly id: RepoId;
   readonly embedding: Embedding;
+  readonly summary: string | null;
+  readonly summaryReadmeOid: ObjectId | null;
 }
 
 export interface Queries {
@@ -71,11 +73,12 @@ export interface Queries {
     ids: ReadonlyArray<RepoId>,
   ) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
   readonly saveFacts: (facts: RepoFacts) => Effect.Effect<void, DbQueryFailed>;
-  readonly saveSummary: (summary: RepoSummary) => Effect.Effect<void, DbQueryFailed | RepoNotFound>;
+  readonly saveSummary: (summary: RepoSummary) => Effect.Effect<boolean, DbQueryFailed | RepoNotFound>;
   readonly saveEmbedding: (
     input: RepoEmbedding,
-  ) => Effect.Effect<void, DbQueryFailed | RepoNotFound | EmbeddingModelMismatch>;
+  ) => Effect.Effect<boolean, DbQueryFailed | RepoNotFound | EmbeddingModelMismatch>;
   readonly get: (id: RepoId) => Effect.Effect<Option.Option<Repo>, DbQueryFailed | DbRowInvalid>;
+  readonly getMany: (ids: ReadonlyArray<RepoId>) => Effect.Effect<ReadonlyArray<Repo>, DbQueryFailed | DbRowInvalid>;
 }
 
 const batchSize = 1000;
@@ -89,6 +92,16 @@ const repoFound = (id: RepoId) => requireRow(() => new RepoNotFound({ repoId: id
 
 export const make = Effect.fn("Db.repos.make")(function* (configuredModel: EmbeddingModelId) {
   const { run, withTransaction } = yield* Postgres.Postgres;
+
+  const applied =
+    (operation: "repos.saveSummary" | "repos.saveEmbedding", id: RepoId) =>
+    (rows: ReadonlyArray<unknown>): Effect.Effect<boolean, DbQueryFailed | RepoNotFound> =>
+      rows.length > 0
+        ? Effect.succeed(true)
+        : run(operation, (db) => db.select({ id: repos.id }).from(repos).where(eq(repos.id, id))).pipe(
+            Effect.flatMap(repoFound(id)),
+            Effect.as(false),
+          );
 
   return {
     upsertRefs: (refs) =>
@@ -148,13 +161,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
               .returning({ id: repos.id }),
           ),
         ),
-        Effect.flatMap((rows) =>
-          rows.length > 0
-            ? Effect.void
-            : run("repos.saveSummary", (db) =>
-                db.select({ id: repos.id }).from(repos).where(eq(repos.id, summary.id)),
-              ).pipe(Effect.flatMap(repoFound(summary.id))),
-        ),
+        Effect.flatMap(applied("repos.saveSummary", summary.id)),
       ),
     saveEmbedding: (input) =>
       requireModel(configuredModel, input.embedding).pipe(
@@ -163,16 +170,30 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
             db
               .update(repos)
               .set({ embedding: [...vector], embeddingModel: configuredModel })
-              .where(eq(repos.id, input.id))
+              .where(
+                and(
+                  eq(repos.id, input.id),
+                  sql`${repos.summary} is not distinct from ${input.summary}`,
+                  sql`${repos.summaryReadmeOid} is not distinct from ${input.summaryReadmeOid}`,
+                  sql`${repos.readmeOid} is not distinct from ${input.summaryReadmeOid}`,
+                ),
+              )
               .returning({ id: repos.id }),
           ),
         ),
-        Effect.flatMap(repoFound(input.id)),
+        Effect.flatMap(applied("repos.saveEmbedding", input.id)),
       ),
     get: (id) =>
       run("repos.get", (db) => db.select(repoColumns).from(repos).where(eq(repos.id, id))).pipe(
         Effect.flatMap(decodeRepos("repos.get")),
         Effect.map(Arr.head),
       ),
+    getMany: (ids) =>
+      run("repos.getMany", (db) =>
+        db
+          .select(repoColumns)
+          .from(repos)
+          .where(sql`${repos.id} = any(${sql.param([...ids])}::bigint[])`),
+      ).pipe(Effect.flatMap(decodeRepos("repos.getMany"))),
   } satisfies Queries;
 });

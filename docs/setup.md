@@ -102,8 +102,8 @@ To time the search queries, run `bun run --cwd packages/db bench`. It seeds 100,
 ```sh
 export DATABASE_URL=postgres://stargrep:stargrep@127.0.0.1:54317/stargrep
 export GITHUB_TOKEN=... AI_GATEWAY_API_KEY=... STARGREP_MODE=local
-bun run --cwd packages/core enrich effect-ts/effect
-bun run --cwd packages/core enrich --stars <login> --limit 200
+bun run --cwd packages/core enrich repo effect-ts/effect
+bun run --cwd packages/core enrich stars <login> --limit 200
 ```
 
 The first command prints the summary, kind, and embedding size, and prints `unchanged` when you run it again. The second batch-enriches an account's newest stars through one AI Gateway batch job, which can take many minutes. Stop it and run it again, and it waits for the same job. `bun run --cwd packages/core bench <login>` times 20 single enrichments, each followed by an unchanged run, and splits each enrichment into model, embedding, GitHub, and local time.
