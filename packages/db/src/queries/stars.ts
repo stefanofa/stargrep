@@ -50,9 +50,13 @@ const encodeTime = writeEncoder(Schema.DateTimeUtcFromDate);
 export const make = Effect.gen(function* () {
   const { run, withTransaction } = yield* Postgres.Postgres;
 
-  const lastSnapshot = (accountId: GitHubAccountId) =>
+  const lockSnapshot = (accountId: GitHubAccountId) =>
     run("stars.upsert", (db) =>
-      db.select({ at: githubAccounts.starsFullSyncedAt }).from(githubAccounts).where(eq(githubAccounts.id, accountId)),
+      db
+        .select({ at: githubAccounts.starsFullSyncedAt })
+        .from(githubAccounts)
+        .where(eq(githubAccounts.id, accountId))
+        .for("update"),
     ).pipe(
       Effect.flatMap(decodeSnapshot("stars.upsert")),
       Effect.map((rows) => Option.fromNullishOr(rows[0]?.at)),
@@ -85,7 +89,7 @@ export const make = Effect.gen(function* () {
         ? Effect.void
         : withTransaction(
             Effect.gen(function* () {
-              const snapshot = yield* lastSnapshot(input.accountId);
+              const snapshot = yield* lockSnapshot(input.accountId);
               const newer = input.stars.filter((star) =>
                 Option.match(snapshot, {
                   onNone: () => true,

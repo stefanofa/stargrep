@@ -1,17 +1,21 @@
 import { expect } from "bun:test";
 import { GitHubAccountId, Login, ObjectId, RepoId, RepoName } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
+import { drizzle } from "drizzle-orm/node-postgres";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import pg from "pg";
 import * as Db from "../src/db.ts";
 import { Embedding, EmbeddingModelId } from "../src/embedding.ts";
+import * as Postgres from "../src/postgres.ts";
 import * as TestDatabase from "./database.ts";
 
 const model = Schema.decodeSync(EmbeddingModelId)("test/embedding-1024");
@@ -661,6 +665,75 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgr
 it.layer(TestDatabase.layerMemory({ embeddingModel: model }))("PGlite Db", sharedCases);
 it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgres Db", (test) => {
   sharedCases(test);
+
+  test.effect("keeps a star read before a newer snapshot commits from staying active", () =>
+    Effect.gen(function* () {
+      const database = yield* TestDatabase.TestDatabase;
+      const pool = yield* Effect.acquireRelease(
+        Effect.sync(() => new pg.Pool({ connectionString: Option.getOrThrow(database.url), lock_timeout: 500 })),
+        (pool) => Effect.promise(() => pool.end()),
+      );
+      const postgres = Postgres.make({
+        database: drizzle({ client: pool }),
+        connect: async () => {
+          const client = await pool.connect();
+          return {
+            database: drizzle({ client }),
+            query: (statement) => client.query(statement),
+            release: (broken) => client.release(broken),
+          };
+        },
+        isDatabaseError: (error) => error instanceof pg.DatabaseError,
+        singleConnection: false,
+      });
+      const snapshotRead = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const pauseAfterSnapshotRead = Postgres.Postgres.of({
+        ...postgres,
+        run: <A>(operation: Parameters<typeof postgres.run>[0], query: (db: Postgres.Database) => PromiseLike<A>) =>
+          postgres
+            .run(operation, query)
+            .pipe(
+              Effect.tap(() =>
+                operation === "stars.upsert"
+                  ? Deferred.isDone(snapshotRead).pipe(
+                      Effect.flatMap((done) =>
+                        done
+                          ? Effect.void
+                          : Deferred.succeed(snapshotRead, undefined).pipe(Effect.andThen(Deferred.await(resume))),
+                      ),
+                    )
+                  : Effect.void,
+              ),
+            ),
+      });
+
+      yield* Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const id = accountId(9801);
+        const repo = repoId(9801);
+        const snapshot = { accountId: id, keep: [], at: at("2026-10-05T00:00:00Z") };
+        yield* db.accounts.upsert(account(id));
+        yield* db.repos.upsertRefs([ref(repo)]);
+        const upsert = yield* Effect.forkChild(
+          db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-10-03T00:00:00Z")] }),
+        );
+        yield* Deferred.await(snapshotRead);
+        yield* db.stars.markUnstarred(snapshot).pipe(Effect.exit);
+        yield* Deferred.succeed(resume, undefined);
+        yield* Fiber.join(upsert);
+        yield* db.stars.markUnstarred(snapshot);
+
+        expect(yield* db.stars.list(id)).toEqual([]);
+      }).pipe(
+        Effect.provide(
+          Db.layer({ embeddingModel: model }).pipe(
+            Layer.provide(Layer.succeed(Postgres.Postgres, pauseAfterSnapshotRead)),
+          ),
+        ),
+      );
+    }),
+  );
 
   test.effect("never erases another connection's commit when a transaction fails", () =>
     Effect.gen(function* () {

@@ -3,6 +3,7 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Redacted from "effect/Redacted";
 import pg from "pg";
@@ -19,12 +20,14 @@ export class TestDatabase extends Context.Service<
   {
     readonly query: (text: string, values?: ReadonlyArray<unknown>) => Effect.Effect<ReadonlyArray<unknown>>;
     readonly connect: (options: Db.Options) => DbLayer;
+    readonly url: Option.Option<string>;
   }
 >()("@stargrep/db/test/database/TestDatabase") {}
 
 const testDatabase = (
   query: (text: string, values: Array<unknown>) => Promise<{ rows: Array<unknown> }>,
   connect: (options: Db.Options) => DbLayer,
+  url: Option.Option<string>,
 ) =>
   Layer.succeed(
     TestDatabase,
@@ -33,6 +36,7 @@ const testDatabase = (
         return (yield* Effect.promise(() => query(text, [...values]))).rows;
       }),
       connect,
+      url,
     }),
   );
 
@@ -44,6 +48,7 @@ export const layerMemory = (options: Db.Options) =>
         testDatabase(
           (text, values) => client.query(text, values),
           (connectOptions) => Memory.layerPglite(client, connectOptions),
+          Option.none(),
         ),
       ),
     ),
@@ -83,6 +88,7 @@ export const layerNodePostgres = (options: Db.Options) =>
         testDatabase(
           (text, values) => pool.query(text, values),
           (connectOptions) => Db.layerNodePostgres({ ...connectOptions, connectionString: url }),
+          Option.some(Redacted.value(url)),
         ),
       ),
     ),
