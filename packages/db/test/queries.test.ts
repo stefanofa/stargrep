@@ -733,6 +733,15 @@ it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 30_000 
 it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgres Db", (test) => {
   sharedCases(test);
 
+  test.effect("a session opened after the migrations stops statements that run past 11 seconds", () =>
+    Effect.gen(function* () {
+      const database = yield* TestDatabase.TestDatabase;
+      expect(yield* database.query("select current_setting('statement_timeout') as timeout")).toEqual([
+        { timeout: "11s" },
+      ]);
+    }),
+  );
+
   test.effect("never erases another connection's commit when a transaction fails", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;

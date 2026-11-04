@@ -94,6 +94,8 @@ const prepare = createMigratedDatabase(adminUrl, benchDatabase).pipe(
         model,
       ]);
       if (rows[0]?.count === repoCount) return false;
+      // Seeding runs single statements for longer than the role's 11 second statement timeout.
+      await client.query("set statement_timeout = 0");
       await client.query("truncate repos, github_accounts cascade");
       await client.query(
         "insert into github_accounts (id, type, login) select g, 'user', 'bench-' || g from generate_series(1, $1::int) g",
