@@ -4,10 +4,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Redacted from "effect/Redacted";
-import pg from "pg";
 import * as Db from "../src/db.ts";
 import { createMigratedDatabase, dropDatabase } from "../src/local-database.ts";
 import * as Memory from "../src/memory.ts";
+import { acquirePool } from "../src/node-postgres.ts";
 
 const adminUrl = process.env.DATABASE_URL ?? "postgres://stargrep:stargrep@127.0.0.1:54317/stargrep";
 
@@ -55,10 +55,7 @@ export const layerMemory = (options: Db.Options) =>
 const freshDatabase = Effect.gen(function* () {
   const name = `stargrep_test_${yield* Random.nextIntBetween(0, 2 ** 31)}`;
   const url = yield* Effect.acquireRelease(createMigratedDatabase(adminUrl, name), () => dropDatabase(adminUrl, name));
-  const pool = yield* Effect.acquireRelease(
-    Effect.sync(() => new pg.Pool({ connectionString: url })),
-    (pool) => Effect.promise(() => pool.end()),
-  );
+  const pool = yield* acquirePool(url);
   return { url: Redacted.make(url), pool };
 });
 
