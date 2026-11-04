@@ -150,6 +150,11 @@ const enrich = (n: number) =>
 
 const get = (n: number) => Effect.flatMap(Db.Db, (db) => Effect.map(db.repos.get(id(n)), Option.getOrThrow));
 
+const countsOf = (n: number) =>
+  Effect.flatMap(TestDatabase.TestDatabase, (database) =>
+    database.query("select stars, forks from repo_metrics where repo_id = $1", [n]),
+  );
+
 const resummarize = (n: number) =>
   Effect.gen(function* () {
     const db = yield* Db.Db;
@@ -192,19 +197,32 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
     }),
   );
 
-  it.effect("keeps the star and fork counts from the facts and updates them on the next fetch", () =>
+  it.effect("keeps the star and fork counts and refreshes them on a retry after their write failed", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
-      const database = yield* TestDatabase.TestDatabase;
-      const countsOf = (n: number) => database.query("select stars, forks from repo_metrics where repo_id = $1", [n]);
-      remotes.set(40, { description: "Counter", stars: 1200, forks: 30, readme: { oid: oid("a"), text: "# A" } });
+      remotes.set(40, { description: "Counter", stars: 100, forks: 2, readme: { oid: oid("a"), text: "# A" } });
       yield* enrich(40);
-      expect(yield* countsOf(40)).toEqual([{ stars: 1200, forks: 30 }]);
+      expect(yield* countsOf(40)).toEqual([{ stars: 100, forks: 2 }]);
 
-      remotes.set(40, { description: "Counter", stars: 1250, forks: 31, readme: { oid: oid("b"), text: "# B" } });
       yield* db.repos.saveFacts({ ...(yield* get(40)), readmeOid: oid("b") });
-      yield* enrich(40);
-      expect(yield* countsOf(40)).toEqual([{ stars: 1250, forks: 31 }]);
+      remotes.set(40, { description: "Counter", stars: 200, forks: 3, readme: { oid: oid("a"), text: "# A" } });
+      const failing = Db.Db.of({
+        ...db,
+        repos: {
+          ...db.repos,
+          saveCounts: () =>
+            Effect.fail(new DbQueryFailed({ operation: "repos.saveCounts", reason: "transport", sqlState: null })),
+        },
+      });
+      const withFailingCounts = Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(Layer.succeed(Db.Db, failing)));
+      expect(yield* Effect.flip(enrich(40).pipe(Effect.provide(withFailingCounts)))).toMatchObject({
+        _tag: "DbQueryFailed",
+        operation: "repos.saveCounts",
+      });
+      expect(yield* db.repos.pendingEnrichment([id(40)])).toEqual([id(40)]);
+
+      expect(yield* enrich(40)).toEqual({ _tag: "Unchanged", id: id(40) });
+      expect(yield* countsOf(40)).toEqual([{ stars: 200, forks: 3 }]);
     }),
   );
 
@@ -461,40 +479,6 @@ for (const [adapter, database] of adapters) {
         yield* Effect.flip(enrich(23).pipe(using(failingEmbeddings)));
         expect(yield* enrich(23)).toMatchObject({ _tag: "Embedded", id: id(23) });
         expect(yield* enrich(23)).toEqual({ _tag: "Unchanged", id: id(23) });
-      }),
-    );
-  });
-}
-
-for (const [adapter, database] of [
-  ["PGlite", TestDatabase.layerMemory({ embeddingModel })],
-  ["Postgres", TestDatabase.layerNodePostgres({ embeddingModel })],
-] as const) {
-  it.layer(enrichment(database), { timeout: 30_000 })(`enrichRepo counts on ${adapter}`, (it) => {
-    it.effect("refreshes the counts on a retry after their write failed", () =>
-      Effect.gen(function* () {
-        const db = yield* Db.Db;
-        const database = yield* TestDatabase.TestDatabase;
-        remotes.set(80, { description: "Retry", stars: 100, forks: 2, readme: { oid: oid("a"), text: "# Retry" } });
-        yield* enrich(80);
-        yield* db.repos.saveFacts({ ...(yield* get(80)), readmeOid: oid("b") });
-        remotes.set(80, { description: "Retry", stars: 200, forks: 3, readme: { oid: oid("a"), text: "# Retry" } });
-
-        const failing = Db.Db.of({
-          ...db,
-          repos: {
-            ...db.repos,
-            saveCounts: () =>
-              Effect.fail(new DbQueryFailed({ operation: "repos.saveCounts", reason: "transport", sqlState: null })),
-          },
-        });
-        const withFailingCounts = Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(Layer.succeed(Db.Db, failing)));
-        expect(Exit.isFailure(yield* Effect.exit(enrich(80).pipe(Effect.provide(withFailingCounts))))).toBe(true);
-
-        yield* enrich(80);
-        expect(yield* database.query("select stars, forks from repo_metrics where repo_id = $1", [80])).toEqual([
-          { stars: 200, forks: 3 },
-        ]);
       }),
     );
   });
