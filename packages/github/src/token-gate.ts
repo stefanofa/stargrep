@@ -7,6 +7,7 @@ import * as Exit from "effect/Exit";
 import * as Headers from "effect/http/Headers";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpMethod from "effect/http/HttpMethod";
 import * as UrlParams from "effect/http/UrlParams";
 import * as Layer from "effect/Layer";
@@ -37,7 +38,16 @@ const rateLimitHeaders = (headers: Headers.Headers): RateLimitHeaders => ({
   resetAt: Option.map(decodeInt(headers["x-ratelimit-reset"]), (seconds) => seconds * 1000),
 });
 
-export const hasBody = (status: number) => status >= 200 && status < 300;
+export const isSuccess = (status: number) => status >= 200 && status < 300;
+
+const ERROR_BODY_LIMIT = 1024;
+
+// GitHub names a secondary rate limit only in the message of a 403, so the gate keeps the start of that body.
+const readBody = (response: HttpClientResponse.HttpClientResponse) => {
+  if (isSuccess(response.status)) return Effect.option(response.text);
+  if (response.status !== 403) return Effect.succeedNone;
+  return Effect.option(Effect.map(response.text, (text) => text.slice(0, ERROR_BODY_LIMIT)));
+};
 
 export interface Reply {
   readonly status: number;
@@ -92,7 +102,7 @@ export const makeMemory = Effect.fn("TokenGate.makeMemory")(function* (options: 
         if (Option.isSome(observed)) {
           yield* Ref.update(budget, (current) => TokenBudget.observe(current, observed.value));
         }
-        const body = hasBody(response.status) ? yield* Effect.option(response.text) : Option.none();
+        const body = yield* readBody(response);
         return { status: response.status, headers: response.headers, body, rateLimit };
       }),
     ).pipe(

@@ -119,6 +119,23 @@ describe("TokenGate.layerRemote", () => {
     }).pipe(Effect.provide(fake.layer));
   });
 
+  effect("carries only the start of a 403 body and no other error body back from a remote gate", () => {
+    const message = `You have exceeded a secondary rate limit. ${"x".repeat(5000)}`;
+    const fake = viaRemote((sent) => ({
+      status: sent.url.pathname === "/users/octocat" ? 403 : 422,
+      body: { message },
+      headers: Fake.rateLimitHeaders(4900),
+    }));
+    return Effect.gen(function* () {
+      const gate = yield* TokenGate.TokenGate;
+      const forbidden = yield* gate.execute("account", HttpClientRequest.get("https://api.github.com/users/octocat"));
+      const invalid = yield* gate.execute("list-stars", HttpClientRequest.get("https://api.github.com/user/1/starred"));
+      expect(Option.map(forbidden.body, (body) => body.length)).toEqual(Option.some(1024));
+      expect(Option.exists(forbidden.body, (body) => body.includes("secondary rate limit"))).toBe(true);
+      expect(invalid.body).toEqual(Option.none());
+    }).pipe(Effect.provide(fake.layer));
+  });
+
   effect("reports a remote call that breaks as a transport failure", () =>
     Effect.gen(function* () {
       const gate = yield* TokenGate.TokenGate;

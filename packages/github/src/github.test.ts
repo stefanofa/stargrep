@@ -22,6 +22,8 @@ const login = "octocat" as Login;
 
 const listedAt = "2026-01-01T00:00:00Z";
 
+const marker = "BODY_MARKER_SECRET_PAYLOAD";
+
 const starItem = (n: number) => Fake.starItem({ repo: n, starredAt: listedAt });
 
 const starPages =
@@ -132,7 +134,6 @@ describe("stars", () => {
     }).pipe(Effect.provide(fake.layer));
   });
 
-  const marker = "BODY_MARKER_SECRET_PAYLOAD";
   const leaks: ReadonlyArray<readonly [string, Fake.Handler, string]> = [
     ["an unexpected status", () => ({ status: 422, body: { message: marker } }), "GitHubRequestFailed"],
     [
@@ -292,6 +293,52 @@ describe("rate limits", () => {
     }).pipe(Effect.provide(fake.layer));
   });
 
+  const secondaryLimit = (detail: string) => ({
+    status: 403,
+    body: { message: `You have exceeded a secondary rate limit. ${detail}` },
+    headers: Fake.rateLimitHeaders(4900, 3600),
+  });
+
+  effect("waits a minute on a secondary rate limit with quota left and no Retry-After", () => {
+    const fake = Fake.layer((sent, index) =>
+      index === 0 ? secondaryLimit("Please wait a few minutes.") : starPages(1)(sent, index),
+    );
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(collectStars);
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Fiber.join(fiber)).toHaveLength(1);
+      expect(fake.sent.map((sent) => sent.startedAt)).toEqual([0, 60_000]);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("fails a secondary rate limit that persists with RateLimited and keeps its message out", () => {
+    const fake = Fake.layer(() => secondaryLimit(marker));
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(Effect.exit(collectStars));
+      yield* TestClock.adjust("3 minutes");
+      const exit = yield* Fiber.join(fiber);
+      expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toMatchObject({
+        _tag: "RateLimited",
+        retryAfterMillis: 60_000,
+      });
+      expect(fake.sent).toHaveLength(4);
+      expect(reachableStrings(exit).filter((value) => value.includes(marker))).toEqual([]);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("fails a 403 that is not a rate limit with its status, without waiting", () => {
+    const fake = Fake.layer(() => ({
+      status: 403,
+      body: { message: "Resource not accessible by personal access token" },
+      headers: Fake.rateLimitHeaders(4900, 3600),
+    }));
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(collectStars);
+      expect(error).toMatchObject({ _tag: "GitHubRequestFailed", reason: "status", status: 403 });
+      expect(fake.sent).toHaveLength(1);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
   effect("gives up after three retries", () => {
     const fake = Fake.layer(() => ({ status: 502 }));
     return Effect.gen(function* () {
@@ -425,8 +472,6 @@ describe("readme", () => {
 });
 
 describe("telemetry", () => {
-  const marker = "BODY_MARKER_SECRET_PAYLOAD";
-
   effect("logs only bounded GraphQL error types", () => {
     const logs: Array<unknown> = [];
     const fake = Fake.layer(() => ({

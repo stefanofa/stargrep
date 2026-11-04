@@ -99,6 +99,14 @@ const rateLimitWait = (reply: TokenGate.Reply, now: number): Option.Option<numbe
       ),
   );
 
+// GitHub sends a secondary rate limit as a 403 that can have quota left and no Retry-After, so only its message names it.
+const secondaryLimit = /secondary rate limit|abuse detection/i;
+
+const isRateLimit = (reply: TokenGate.Reply, now: number) =>
+  reply.status === 429 ||
+  (reply.status === 403 &&
+    (Option.isSome(rateLimitWait(reply, now)) || Option.exists(reply.body, (body) => secondaryLimit.test(body))));
+
 // GitHub asks for a one minute wait on a rate limit that names no reset time.
 const rateLimited = (endpoint: Endpoint, reply: TokenGate.Reply, now: number) =>
   new RateLimited({
@@ -108,7 +116,7 @@ const rateLimited = (endpoint: Endpoint, reply: TokenGate.Reply, now: number) =>
   });
 
 const classify = (endpoint: Endpoint, reply: TokenGate.Reply, now: number): Result.Result<string, GitHubError> => {
-  if (TokenGate.hasBody(reply.status)) {
+  if (TokenGate.isSuccess(reply.status)) {
     return Option.match(reply.body, {
       onNone: () => Result.fail(new GitHubResponseInvalid({ ...endpoint, reason: "unreadable-body" })),
       onSome: Result.succeed,
@@ -116,9 +124,7 @@ const classify = (endpoint: Endpoint, reply: TokenGate.Reply, now: number): Resu
   }
   if (reply.status === 401) return Result.fail(new Unauthorized({ operation: endpoint.operation }));
   if (reply.status === 404) return Result.fail(new NotFound({ operation: endpoint.operation, path: endpoint.path }));
-  if (reply.status === 429 || (reply.status === 403 && Option.isSome(rateLimitWait(reply, now)))) {
-    return Result.fail(rateLimited(endpoint, reply, now));
-  }
+  if (isRateLimit(reply, now)) return Result.fail(rateLimited(endpoint, reply, now));
   return Result.fail(new GitHubRequestFailed({ ...endpoint, status: reply.status, reason: "status" }));
 };
 
