@@ -16,7 +16,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { GitHubRequestFailed, GitHubTokenMissing, Operation, TokenBudgetExhausted } from "./errors.ts";
-import { BudgetShare, IntFromString } from "./schemas.ts";
+import { type BudgetShare, IntFromString } from "./schemas.ts";
 import * as TokenBudget from "./token-budget.ts";
 
 const EXCHANGE_TIMEOUT = Duration.seconds(30);
@@ -53,7 +53,6 @@ export class TokenGate extends Context.Service<
       operation: Operation,
       request: HttpClientRequest.HttpClientRequest,
     ) => Effect.Effect<Reply, GitHubRequestFailed | TokenBudgetExhausted | GitHubTokenMissing>;
-    readonly budget: Effect.Effect<TokenBudget.Budget>;
   }
 >()("@stargrep/github/token-gate/TokenGate") {}
 
@@ -63,57 +62,60 @@ const endpointOf = (operation: Operation, request: HttpClientRequest.HttpClientR
   path: new URL(request.url).pathname,
 });
 
-export const layerMemory = (options: {
+interface MemoryOptions {
   readonly token: Redacted.Redacted<string>;
   readonly share: BudgetShare;
-  readonly budget?: TokenBudget.Budget | undefined;
-}) =>
+  readonly windows?: TokenBudget.Windows | undefined;
+}
+
+export const makeMemory = Effect.fn("TokenGate.makeMemory")(function* (options: MemoryOptions) {
+  const client = HttpClient.withScope(yield* HttpClient.HttpClient);
+  const permit = yield* Semaphore.make(1);
+  const budget = yield* Ref.make(TokenBudget.make(options.share, options.windows));
+
+  const execute = Effect.fn("TokenGate.execute")(function* (
+    operation: Operation,
+    request: HttpClientRequest.HttpClientRequest,
+  ) {
+    const endpoint = endpointOf(operation, request);
+    yield* Effect.annotateCurrentSpan({ "http.request.method": endpoint.method, "url.path": endpoint.path });
+    const resource = TokenBudget.resourceOf(endpoint.path);
+    const decision = TokenBudget.check(yield* Ref.get(budget), resource, yield* Clock.currentTimeMillis);
+    if (decision._tag === "Exhausted") {
+      return yield* new TokenBudgetExhausted({ resource, resetAt: decision.resetAt });
+    }
+    const reply = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const response = yield* client.execute(HttpClientRequest.bearerToken(request, options.token));
+        const rateLimit = rateLimitHeaders(response.headers);
+        const observed = Option.all(rateLimit);
+        if (Option.isSome(observed)) {
+          yield* Ref.update(budget, (current) => TokenBudget.observe(current, observed.value));
+        }
+        const body = hasBody(response.status) ? yield* Effect.option(response.text) : Option.none();
+        return { status: response.status, headers: response.headers, body, rateLimit };
+      }),
+    ).pipe(
+      Effect.timeoutOrElse({
+        duration: EXCHANGE_TIMEOUT,
+        orElse: () => Effect.fail(new GitHubRequestFailed({ ...endpoint, status: null, reason: "timeout" })),
+      }),
+      Effect.catchTags({
+        HttpClientError: () => Effect.fail(new GitHubRequestFailed({ ...endpoint, status: null, reason: "transport" })),
+      }),
+      Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
+    );
+    yield* Effect.annotateCurrentSpan({ "http.response.status_code": reply.status });
+    return reply;
+  }, permit.withPermit);
+
+  return { execute, budget: Ref.get(budget) };
+});
+
+export const layerMemory = (options: MemoryOptions) =>
   Layer.effect(
     TokenGate,
-    Effect.gen(function* () {
-      const client = HttpClient.withScope(yield* HttpClient.HttpClient);
-      const permit = yield* Semaphore.make(1);
-      const budget = yield* Ref.make(options.budget ?? TokenBudget.make(options.share));
-
-      const execute = Effect.fn("TokenGate.execute")(function* (
-        operation: Operation,
-        request: HttpClientRequest.HttpClientRequest,
-      ) {
-        const endpoint = endpointOf(operation, request);
-        yield* Effect.annotateCurrentSpan({ "http.request.method": endpoint.method, "url.path": endpoint.path });
-        const resource = TokenBudget.resourceOf(endpoint.path);
-        const decision = TokenBudget.check(yield* Ref.get(budget), resource, yield* Clock.currentTimeMillis);
-        if (decision._tag === "Exhausted") {
-          return yield* new TokenBudgetExhausted({ resource, resetAt: decision.resetAt });
-        }
-        const reply = yield* Effect.scoped(
-          Effect.gen(function* () {
-            const response = yield* client.execute(HttpClientRequest.bearerToken(request, options.token));
-            const rateLimit = rateLimitHeaders(response.headers);
-            const observed = Option.all(rateLimit);
-            if (Option.isSome(observed)) {
-              yield* Ref.update(budget, (current) => TokenBudget.observe(current, observed.value));
-            }
-            const body = hasBody(response.status) ? yield* Effect.option(response.text) : Option.none();
-            return { status: response.status, headers: response.headers, body, rateLimit };
-          }),
-        ).pipe(
-          Effect.timeoutOrElse({
-            duration: EXCHANGE_TIMEOUT,
-            orElse: () => Effect.fail(new GitHubRequestFailed({ ...endpoint, status: null, reason: "timeout" })),
-          }),
-          Effect.catchTags({
-            HttpClientError: () =>
-              Effect.fail(new GitHubRequestFailed({ ...endpoint, status: null, reason: "transport" })),
-          }),
-          Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
-        );
-        yield* Effect.annotateCurrentSpan({ "http.response.status_code": reply.status });
-        return reply;
-      }, permit.withPermit);
-
-      return TokenGate.of({ execute, budget: Ref.get(budget) });
-    }),
+    Effect.map(makeMemory(options), ({ execute }) => TokenGate.of({ execute })),
   );
 
 export const layerMissing = Layer.succeed(
@@ -122,7 +124,6 @@ export const layerMissing = Layer.succeed(
     execute: Effect.fn("TokenGate.execute")(function* (operation: Operation) {
       return yield* new GitHubTokenMissing({ operation });
     }),
-    budget: Effect.succeed(TokenBudget.make(BudgetShare.make(1))),
   }),
 );
 
@@ -137,13 +138,13 @@ export const RemoteRequest = Schema.Struct({
 });
 export type RemoteRequest = typeof RemoteRequest.Type;
 
-export const RemoteResult = Schema.Union([
+const RemoteResult = Schema.Union([
   Schema.TaggedStruct("Replied", { status: Schema.Int, headers: StringRecord, body: Schema.NullOr(Schema.String) }),
   GitHubRequestFailed,
   TokenBudgetExhausted,
   GitHubTokenMissing,
 ]);
-export type RemoteResult = typeof RemoteResult.Type;
+type RemoteResult = typeof RemoteResult.Type;
 
 const decodeRemoteRequest = Schema.decodeUnknownEffect(RemoteRequest);
 const encodeRemoteResult = Schema.encodeEffect(RemoteResult);
@@ -173,7 +174,7 @@ const fromRemoteRequest = (request: RemoteRequest) => {
   return request.body === null ? sent : HttpClientRequest.bodyText(sent, request.body.text, request.body.contentType);
 };
 
-export const serve = (gate: TokenGate["Service"]) =>
+export const serve = (gate: Pick<TokenGate["Service"], "execute">) =>
   Effect.fn("TokenGate.serve")(function* (input: unknown) {
     const request = yield* Effect.orDie(decodeRemoteRequest(input));
     const result = yield* gate.execute(request.operation, fromRemoteRequest(request)).pipe(
@@ -190,10 +191,7 @@ export const serve = (gate: TokenGate["Service"]) =>
     return yield* Effect.orDie(encodeRemoteResult(result));
   });
 
-export const layerRemote = (remote: {
-  readonly execute: (request: RemoteRequest) => Effect.Effect<unknown>;
-  readonly budget: Effect.Effect<TokenBudget.Budget>;
-}) =>
+export const layerRemote = (remote: { readonly execute: (request: RemoteRequest) => Effect.Effect<unknown> }) =>
   Layer.succeed(
     TokenGate,
     TokenGate.of({
@@ -218,6 +216,5 @@ export const layerRemote = (remote: {
           rateLimit: rateLimitHeaders(headers),
         } satisfies Reply;
       }),
-      budget: remote.budget,
     }),
   );

@@ -67,7 +67,6 @@ const viaRemote = (handler: Fake.Handler, share = 1 as BudgetShare) => {
           remoteCalls.push(JSON.stringify(request));
           return serve(structuredClone(request)).pipe(Effect.map(structuredClone));
         },
-        budget: local.budget,
       });
     }),
   ).pipe(
@@ -127,14 +126,43 @@ describe("TokenGate.layerRemote", () => {
         gate.execute("account", HttpClientRequest.get("https://api.github.com/users/octocat")),
       );
       expect(error).toMatchObject({ _tag: "GitHubRequestFailed", reason: "transport" });
-    }).pipe(
-      Effect.provide(
-        TokenGate.layerRemote({
-          execute: () => Effect.die(new Error("RPC receiver went away")),
-          budget: Effect.succeed(TokenBudget.make(1 as BudgetShare)),
-        }),
-      ),
-    ),
+    }).pipe(Effect.provide(TokenGate.layerRemote({ execute: () => Effect.die(new Error("RPC receiver went away")) }))),
+  );
+});
+
+describe("TokenGate.makeMemory across a restart", () => {
+  effect("keeps the stored windows and applies the share the new instance starts with", () => {
+    const fake = Fake.make((_sent, index) => ({
+      body: [],
+      headers: Fake.rateLimitHeaders(index === 0 ? 1000 : 400, 3600),
+    }));
+    const request = HttpClientRequest.get("https://api.github.com/users/octocat/starred");
+    return Effect.gen(function* () {
+      const first = yield* TokenGate.makeMemory({ token: Redacted.make(Fake.token), share: 0.5 as BudgetShare });
+      yield* first.execute("list-stars", request);
+      yield* first.execute("list-stars", request);
+      expect((yield* Effect.flip(first.execute("list-stars", request)))._tag).toBe("TokenBudgetExhausted");
+      const stored: unknown = JSON.parse(JSON.stringify((yield* first.budget).windows));
+
+      const windows = TokenBudget.decodeWindows(stored);
+      expect(Option.isSome(windows)).toBe(true);
+      const restarted = yield* TokenGate.makeMemory({
+        token: Redacted.make(Fake.token),
+        share: 0.7 as BudgetShare,
+        windows: Option.getOrUndefined(windows),
+      });
+      expect((yield* restarted.budget).windows).toEqual((yield* first.budget).windows);
+      expect((yield* restarted.budget).share).toBe(0.7 as BudgetShare);
+      expect((yield* restarted.execute("list-stars", request)).status).toBe(200);
+      expect(fake.sent).toHaveLength(3);
+    }).pipe(Effect.provide(fake.client));
+  });
+
+  effect("starts with no windows when the stored value does not decode", () =>
+    Effect.sync(() => {
+      expect(TokenBudget.decodeWindows({ core: { remaining: "many" } })).toEqual(Option.none());
+      expect(TokenBudget.decodeWindows(undefined)).toEqual(Option.none());
+    }),
   );
 });
 
