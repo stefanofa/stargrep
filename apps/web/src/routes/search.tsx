@@ -25,7 +25,7 @@ import { Page } from "../components/page.tsx";
 import { SignInButton } from "../components/sign-in-button.tsx";
 import { Wordmark } from "../components/wordmark.tsx";
 import { keywordTerms } from "../lib/keyword.ts";
-import { getLibrary, reloadLibrary } from "../lib/library-collection.ts";
+import { getLibrary, useRecoveries } from "../lib/library-collection.ts";
 import { formatCount, now, stars, syncedAgo, toDetail } from "../lib/present.ts";
 import { mergeResults } from "../lib/results.ts";
 import { api, signedOut, type Viewer } from "../lib/rpc.ts";
@@ -110,7 +110,7 @@ function SearchPage() {
       {state.status === "failed" && (
         <Notice heading="stargrep couldn't load your account" detail="try again in a moment" mood="surprised" />
       )}
-      {state.status === "ready" && <Stars viewer={state.viewer} />}
+      {state.status === "ready" && <Library viewer={state.viewer} />}
     </Page>
   );
 }
@@ -184,8 +184,14 @@ function useTimeLeft(done: number, total: number, syncing: boolean) {
   return seconds < 90 ? `about ${seconds} seconds left` : `about ${Math.round(seconds / 60)} minutes left`;
 }
 
+function Library({ viewer }: { viewer: Viewer }) {
+  const recoveries = useRecoveries(getLibrary());
+  return <Stars key={recoveries} viewer={viewer} />;
+}
+
 function Stars({ viewer }: { viewer: Viewer }) {
-  const library = getLibrary();
+  const { collection: library, reload } = getLibrary();
+  const [retrying, setRetrying] = useState(false);
   const [at] = useState(now);
   const params = Route.useSearch();
   const navigate = Route.useNavigate();
@@ -203,13 +209,17 @@ function Stars({ viewer }: { viewer: Viewer }) {
       : q.from({ repo: library }).where(({ repo }) => containsEvery(repo.text, [first, ...rest]));
   });
   const semantic = useSemanticSearch(viewer.login, query);
-  const { status: sync, retry } = useSync(viewer.login, reloadLibrary);
+  const { status: sync, retry } = useSync(viewer.login, reload);
 
   const syncingNow = sync?.state === "queued";
   const total = Math.max(viewer.starredCount ?? 0, entries.length);
   const timeLeft = useTimeLeft(entries.length, total, syncingNow);
   const syncing: Syncing | undefined = syncingNow ? { total, timeLeft } : undefined;
 
+  const retryLibrary = () => {
+    setRetrying(true);
+    reload().finally(() => setRetrying(false));
+  };
   const search = (next: string) => {
     setQuery(next);
     navigate({ search: (previous) => ({ ...previous, q: next === "" ? undefined : next }), replace: true });
@@ -260,7 +270,7 @@ function Stars({ viewer }: { viewer: Viewer }) {
             detail="the library didn't arrive"
             mood="surprised"
             action={
-              <Button variant="primary" size="lg" onClick={reloadLibrary}>
+              <Button variant="primary" size="lg" disabled={retrying} onClick={retryLibrary}>
                 Try again
               </Button>
             }
