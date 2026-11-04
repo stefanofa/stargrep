@@ -15,6 +15,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { user } from "./auth-schema.ts";
 import { embeddingDimensions } from "./embedding.ts";
@@ -40,21 +41,25 @@ export const embeddingSettings = pgTable(
   () => [check("embedding_settings_one_row", sql`singleton`)],
 );
 
-export const githubAccounts = pgTable("github_accounts", {
-  id: githubId("id").primaryKey(),
-  type: accountType("type").notNull(),
-  login: text("login").notNull(),
-  name: text("name"),
-  avatarUrl: text("avatar_url"),
-  followers: integer("followers"),
-  publicRepos: integer("public_repos"),
-  ownedRepoStars: integer("owned_repo_stars"),
-  claimedBy: text("claimed_by").references(() => user.id, { onDelete: "set null" }),
-  starredCount: integer("starred_count"),
-  starsEtag: text("stars_etag"),
-  starsSyncedAt: time("stars_synced_at"),
-  starsFullSyncedAt: time("stars_full_synced_at"),
-});
+export const githubAccounts = pgTable(
+  "github_accounts",
+  {
+    id: githubId("id").primaryKey(),
+    type: accountType("type").notNull(),
+    login: text("login").notNull(),
+    name: text("name"),
+    avatarUrl: text("avatar_url"),
+    followers: integer("followers"),
+    publicRepos: integer("public_repos"),
+    ownedRepoStars: integer("owned_repo_stars"),
+    claimedBy: text("claimed_by").references(() => user.id, { onDelete: "set null" }),
+    starredCount: integer("starred_count"),
+    starsEtag: text("stars_etag"),
+    starsSyncedAt: time("stars_synced_at"),
+    starsFullSyncedAt: time("stars_full_synced_at"),
+  },
+  (table) => [uniqueIndex("github_accounts_claimed_by_key").on(table.claimedBy)],
+);
 
 export const repos = pgTable(
   "repos",

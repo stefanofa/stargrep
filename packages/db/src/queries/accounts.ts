@@ -94,7 +94,7 @@ export const make = Effect.gen(function* () {
       ),
     claimedBy: (userId) =>
       run("accounts.claimedBy", (db) =>
-        db.select().from(githubAccounts).where(eq(githubAccounts.claimedBy, userId)).limit(1),
+        db.select().from(githubAccounts).where(eq(githubAccounts.claimedBy, userId)),
       ).pipe(Effect.flatMap(decodeAccounts("accounts.claimedBy")), Effect.map(Arr.head)),
     get: (id) =>
       run("accounts.get", (db) => db.select().from(githubAccounts).where(eq(githubAccounts.id, id))).pipe(

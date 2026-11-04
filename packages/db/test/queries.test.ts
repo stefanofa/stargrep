@@ -83,6 +83,10 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         starredCount: 2432,
       });
       expect(Option.isNone(yield* db.accounts.claimedBy(grace))).toBe(true);
+      const second = yield* Effect.flip(
+        db.accounts.claim({ facts: account(accountId(112)), userId: ada, starredCount: 1 }),
+      );
+      expect([second._tag, second.operation]).toEqual(["DbQueryFailed", "accounts.claim"]);
     }),
   );
 

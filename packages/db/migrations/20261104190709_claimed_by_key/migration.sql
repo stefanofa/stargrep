@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "github_accounts_claimed_by_key" ON "github_accounts" ("claimed_by");
