@@ -172,13 +172,7 @@ const summarize = (name: string, samples: ReadonlyArray<number>, rows: ReadonlyA
   return `${name.padEnd(13)} median ${fixed(at(0.5))} ms  p95 ${fixed(at(0.95))} ms  min ${fixed(sorted[0] ?? 0)} ms  max ${fixed(sorted.at(-1) ?? 0)} ms  rows ${Math.min(...rows)}-${Math.max(...rows)}`;
 };
 
-const bench = Effect.gen(function* () {
-  const seeded = yield* prepare;
-  yield* Console.log(
-    seeded
-      ? `seeded ${repoCount} repos and ${starCount} stars for each of ${accountCount} accounts`
-      : "reused the seeded database",
-  );
+const measure = Effect.gen(function* () {
   const db = yield* Db.Db;
 
   const timed = <A, E>(effect: Effect.Effect<ReadonlyArray<A>, E>) =>
@@ -212,5 +206,15 @@ const bench = Effect.gen(function* () {
   yield* Console.log(summarize("vector only", results.nearest, counts.nearest));
   yield* Console.log(summarize("hybrid rrf", results.hybrid, counts.hybrid));
 }).pipe(Effect.provide(Db.layerNodePostgres({ connectionString: Redacted.make(benchUrl), embeddingModel: model })));
+
+const bench = Effect.gen(function* () {
+  const seeded = yield* prepare;
+  yield* Console.log(
+    seeded
+      ? `seeded ${repoCount} repos and ${starCount} stars for each of ${accountCount} accounts`
+      : "reused the seeded database",
+  );
+  yield* measure;
+});
 
 await Effect.runPromise(bench);
