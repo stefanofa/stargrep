@@ -9,6 +9,7 @@
     "./gateway": "./src/gateway.ts",
     "./local": "./src/local.ts",
     "./models": "./src/models.ts",
+    "./port": "./src/port.ts",
     "./schema-bridge": "./src/schema-bridge.ts",
     "./summarize": "./src/prompts/summarize.ts",
     "./summarize.fake": "./src/prompts/summarize.fake.ts",
@@ -25,6 +26,7 @@
   "devDependencies": {
     "@effect/tsgo": "catalog:",
     "@stargrep/config": "workspace:*",
+    "@stargrep/telemetry": "workspace:*",
     "@stargrep/testing": "workspace:*",
     "@types/bun": "catalog:",
     "typescript": "catalog:"

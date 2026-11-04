@@ -95,6 +95,19 @@ Deployed stages apply the same migrations through the stage's `Neon.Branch` in `
 
 To time the search queries, run `bun run --cwd packages/db bench`. It seeds 100,000 repos with random embeddings and 50 accounts of 5,000 stars into a `stargrep_bench` database, then prints the median and p95 of 100 interleaved runs of each query.
 
+## Enrich repos locally
+
+`bun run --cwd packages/core enrich` runs the enrichment pipeline on your machine against a migrated database. It needs a GitHub token, the AI Gateway key, and `STARGREP_MODE=local`. READMEs go to `packages/core/.cache/blobs`, and GitHub ETags to `packages/core/.cache/github`.
+
+```sh
+export DATABASE_URL=postgres://stargrep:stargrep@127.0.0.1:54317/stargrep
+export GITHUB_TOKEN=... AI_GATEWAY_API_KEY=... STARGREP_MODE=local
+bun run --cwd packages/core enrich repo effect-ts/effect
+bun run --cwd packages/core enrich stars <login> --limit 200
+```
+
+The first command prints the summary, kind, and embedding size, and prints `unchanged` when you run it again. The second batch-enriches an account's newest stars through one AI Gateway batch job, which can take many minutes. Stop it and run it again, and it waits for the same job. `bun run --cwd packages/core bench <login>` times 20 single enrichments, each followed by an unchanged run, and splits each enrichment into model, embedding, GitHub, and local time.
+
 ## Cloudflare and Neon
 
 Four workflows run the stages, and their jobs skip until the steps below are done. `preview` deploys stage `pr-<number>` for each pull request and runs `scripts/stage-smoke.ts` against it. `preview-destroy` destroys the stage when the pull request closes. `preview-reconcile` runs daily, or by hand with a dry-run option, and destroys any `pr-<number>` stage whose pull request is closed or gone. `deploy` runs on each push to `main`, or by hand on `main`. It deploys the database stack's stage `shared` and then stage `prod`. Each deploy first checks that its commit is still the head of `main` or of the pull request, so an older run never replaces a newer deploy.

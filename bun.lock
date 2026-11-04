@@ -74,6 +74,7 @@
       "devDependencies": {
         "@effect/tsgo": "catalog:",
         "@stargrep/config": "workspace:*",
+        "@stargrep/telemetry": "workspace:*",
         "@stargrep/testing": "workspace:*",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
@@ -85,6 +86,7 @@
     "packages/core": {
       "name": "@stargrep/core",
       "dependencies": {
+        "@stargrep/ai": "workspace:*",
         "@stargrep/db": "workspace:*",
         "@stargrep/github": "workspace:*",
         "effect": "catalog:",
@@ -92,8 +94,8 @@
       "devDependencies": {
         "@effect/platform-bun": "4.1.2",
         "@effect/tsgo": "catalog:",
-        "@stargrep/ai": "workspace:*",
         "@stargrep/config": "workspace:*",
+        "@stargrep/telemetry": "workspace:*",
         "@stargrep/testing": "workspace:*",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
@@ -126,6 +128,20 @@
       },
       "devDependencies": {
         "@effect/platform-bun": "4.1.2",
+        "@effect/tsgo": "catalog:",
+        "@stargrep/config": "workspace:*",
+        "@stargrep/telemetry": "workspace:*",
+        "@stargrep/testing": "workspace:*",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
+    "packages/telemetry": {
+      "name": "@stargrep/telemetry",
+      "dependencies": {
+        "effect": "catalog:",
+      },
+      "devDependencies": {
         "@effect/tsgo": "catalog:",
         "@stargrep/config": "workspace:*",
         "@stargrep/testing": "workspace:*",
@@ -522,6 +538,8 @@
     "@stargrep/infra": ["@stargrep/infra@workspace:infra"],
 
     "@stargrep/scripts": ["@stargrep/scripts@workspace:scripts"],
+
+    "@stargrep/telemetry": ["@stargrep/telemetry@workspace:packages/telemetry"],
 
     "@stargrep/testing": ["@stargrep/testing@workspace:packages/testing"],
 

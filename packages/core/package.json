@@ -6,10 +6,13 @@
     "./*": "./src/*/index.ts"
   },
   "scripts": {
+    "bench": "bun scripts/bench.ts",
+    "enrich": "bun scripts/enrich.ts",
     "sync": "bun scripts/sync.ts",
     "typecheck": "effect-tsgo tsc -p ."
   },
   "dependencies": {
+    "@stargrep/ai": "workspace:*",
     "@stargrep/db": "workspace:*",
     "@stargrep/github": "workspace:*",
     "effect": "catalog:"
@@ -17,8 +20,8 @@
   "devDependencies": {
     "@effect/platform-bun": "4.1.2",
     "@effect/tsgo": "catalog:",
-    "@stargrep/ai": "workspace:*",
     "@stargrep/config": "workspace:*",
+    "@stargrep/telemetry": "workspace:*",
     "@stargrep/testing": "workspace:*",
     "@types/bun": "catalog:",
     "typescript": "catalog:"

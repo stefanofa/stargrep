@@ -648,6 +648,12 @@ Lint rule `t3code/prefer-effect-fn` reports functions that return `Effect.gen`. 
 
 **For Stargrep.** Adopt, with one fix. T3 Code uses two span name styles, `WorkspacePaths.normalizeWorkspaceRoot` in the server and `relay.t3chat.get_link` in the relay. Stargrep picks `Service.operation` everywhere, since it matches the code and is searchable.
 
+### Rule: every tracer is installed through `withoutResults`
+
+This rule is Stargrep's own. Every tracer is installed through `withoutResults` from `@stargrep/telemetry/tracer`, which ends a successful span with no value and keeps a failed span's cause. Effect's OTLP exporter already sends only a status code for a successful span. The exposure is in process: a custom tracer, a collector that holds spans, or any span object that is still referenced (such as the parent of a child that outlives it) keeps the span's exit, and a successful exit holds whatever the function returned, such as README text, a prompt, or model output.
+
+**For Stargrep.** Adopt. `collectSpans` from `@stargrep/telemetry/collector` installs its tracer this way, and tests in `packages/ai` and `packages/core` use it to check that no span holds a canary from a key, a README, or model output.
+
 ### Rule: transports instrument in middleware, and handlers add only per-call attributes
 
 RPC spans and metrics come from one middleware. Handlers call `Effect.annotateCurrentSpan` for context such as an id.

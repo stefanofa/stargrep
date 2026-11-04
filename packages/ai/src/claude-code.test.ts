@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -7,7 +8,6 @@ import * as Logger from "effect/Logger";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 import * as ClaudeCode from "./claude-code.ts";
 import type { AiError } from "./errors.ts";
@@ -140,15 +140,8 @@ const promptCanary = "PRIVATE_PROMPT_CANARY";
 const huge = "x".repeat(8 * 1024 * 1024);
 
 const observe = <A, E>(effect: Effect.Effect<A, E>) => {
-  const spans: Array<Tracer.Span> = [];
+  const { spans, tracer } = collectSpans();
   const logs: Array<unknown> = [];
-  const tracer = Tracer.make({
-    span: (options) => {
-      const span = Tracer.nativeTracer.span(options);
-      spans.push(span);
-      return span;
-    },
-  });
   const logger = Logger.make((options) => {
     logs.push({ message: options.message, cause: options.cause });
   });

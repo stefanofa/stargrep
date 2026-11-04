@@ -1,18 +1,24 @@
 import { describe, expect, spyOn } from "bun:test";
-import { GatewayModelNotFoundError } from "@ai-sdk/gateway";
+import { GatewayInternalServerError, GatewayModelNotFoundError } from "@ai-sdk/gateway";
+import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
 import { APICallError } from "ai";
 import { MockEmbeddingModelV4, MockLanguageModelV4 } from "ai/test";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Metric from "effect/Metric";
+import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
+import type * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 import * as Embeddings from "./embeddings.ts";
 import * as Gateway from "./gateway.ts";
 import * as Models from "./models.ts";
+import * as Port from "./port.ts";
 import * as Summarize from "./prompts/summarize.ts";
 import * as TextGeneration from "./text-generation.ts";
 
@@ -38,10 +44,30 @@ const textLayer = (doGenerate: (options: CallOptions) => PromiseLike<GenerateRes
     Layer.provide(
       Layer.succeed(
         Gateway.AiProvider,
-        Gateway.AiProvider.of({ languageModel: () => new MockLanguageModelV4({ doGenerate }), embeddingModel: unused }),
+        Gateway.AiProvider.of({
+          languageModel: () => new MockLanguageModelV4({ doGenerate }),
+          embeddingModel: unused,
+          experimental_batch: unused,
+        }),
       ),
     ),
   );
+
+const settleSteps = 120;
+
+// Each attempt settles a promise before its backoff sleep starts, and TestClock.adjust never yields to the
+// event loop. So each step yields first, letting the fake's promises settle, then moves the clock.
+const settle = <A, E>(fiber: Fiber.Fiber<A, E>) =>
+  Effect.gen(function* () {
+    for (let step = 0; step < settleSteps && fiber.pollUnsafe() === undefined; step++) {
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("1 second");
+    }
+    if (fiber.pollUnsafe() === undefined) {
+      return yield* Effect.die(`the retried call was still running after ${settleSteps} virtual seconds`);
+    }
+    return yield* Fiber.join(fiber);
+  });
 
 const repo: Summarize.RepoFacts = {
   fullName: "ratatui/ratatui",
@@ -121,11 +147,36 @@ describe("gateway text generation", () => {
   it.effect("fails with AiRequestFailed that keeps the status and drops the request body", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(Summarize.summarize(repo));
-      expect(error.message).toBe("Model 'test/model' request failed in 'generate': AI_APICallError with status 502");
+      expect(error.message).toBe("Model 'test/model' request failed in 'generate': AI_APICallError with status 400");
       expect(JSON.stringify(error)).not.toContain("SECRET");
     }).pipe(
       Effect.provide(
         textLayer(async () => {
+          throw new APICallError({
+            message: "bad request",
+            url: "https://ai-gateway.vercel.sh/v1",
+            requestBodyValues: { prompt: "SECRET README TEXT" },
+            statusCode: 400,
+          });
+        }),
+      ),
+    ),
+  );
+
+  it.effect("retries an error the SDK marks as retryable three times, then fails with AiUnavailable", () => {
+    let attempts = 0;
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(Effect.flip(Summarize.summarize(repo)));
+      const upstream = yield* settle(fiber);
+      expect(attempts).toBe(4);
+      expect(upstream.message).toBe(
+        "Model 'test/model' is unavailable for 'generate' and may answer a retry: AI_APICallError with status 502",
+      );
+      expect(JSON.stringify(upstream)).not.toContain("SECRET");
+    }).pipe(
+      Effect.provide(
+        textLayer(async () => {
+          attempts++;
           throw new APICallError({
             message: "upstream failed",
             url: "https://ai-gateway.vercel.sh/v1",
@@ -134,17 +185,182 @@ describe("gateway text generation", () => {
           });
         }),
       ),
+    );
+  });
+
+  it.effect("fails with AiUnavailable on the gateway's internal server error", () =>
+    Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(Effect.flip(Summarize.summarize(repo)));
+      const error = yield* settle(fiber);
+      expect(error._tag).toBe("AiUnavailable");
+      expect(error.message).toContain("GatewayInternalServerError with status 500");
+    }).pipe(
+      Effect.provide(
+        textLayer(async () => {
+          throw new GatewayInternalServerError({ message: "Internal server error" });
+        }),
+      ),
     ),
   );
 
   it.effect("counts the gateway's reported tokens per model", () => {
     const tokens = (direction: string) =>
-      Metric.value(Metric.withAttributes(TextGeneration.tokensUsed, { model: "metered/model", direction }));
+      Metric.value(Metric.withAttributes(Port.tokensUsed, { model: "metered/model", direction }));
     return Effect.gen(function* () {
       const before = yield* tokens("output");
       yield* Summarize.summarize(repo);
       expect((yield* tokens("output")).count - before.count).toBe(20);
     }).pipe(Effect.provide(textLayer(async () => textResult(JSON.stringify(validSummary)), "metered/model")));
+  });
+});
+
+type BatchApi = ReturnType<Gateway.AiProvider["Service"]["experimental_batch"]>;
+type StartOptions = Parameters<BatchApi["doStartBatch"]>[0];
+type BatchItem = Awaited<ReturnType<BatchApi["doGetBatchResults"]>> extends ReadableStream<infer Item> ? Item : never;
+
+const succeeded = (id: string, text: string): BatchItem => ({
+  type: "text",
+  id,
+  status: "succeeded",
+  result: textResult(text),
+});
+
+type BatchCall = "start" | "status" | "results";
+
+const fakeBatch = (options: {
+  readonly items: ReadonlyArray<BatchItem>;
+  readonly fails?: boolean;
+  readonly throwOnce?: ReadonlyArray<BatchCall>;
+}) => {
+  const starts: Array<StartOptions> = [];
+  const direct = { calls: 0 };
+  const calls: Record<BatchCall, number> = { start: 0, status: 0, results: 0 };
+  const firstStart = Promise.withResolvers<void>();
+  const attempt = (call: BatchCall) => {
+    calls[call]++;
+    if (calls[call] === 1 && options.throwOnce?.includes(call)) {
+      throw new GatewayInternalServerError({ message: "Internal server error" });
+    }
+  };
+  const languageModel = () =>
+    new MockLanguageModelV4({
+      doGenerate: async () => {
+        direct.calls++;
+        return textResult(JSON.stringify(validSummary));
+      },
+    });
+  const api: BatchApi = {
+    specificationVersion: "v4",
+    provider: "gateway.batch",
+    supportedUrls: {},
+    doStartBatch: async (start) => {
+      firstStart.resolve();
+      attempt("start");
+      starts.push(start);
+      return { batchId: `job_${starts.length}`, status: "pending", warnings: [] };
+    },
+    doGetBatchStatus: async () => {
+      attempt("status");
+      return options.fails
+        ? { status: "failed", error: { message: "rejected", code: "invalid_batch" } }
+        : { status: "completed" };
+    },
+    doGetBatchResults: async () => {
+      attempt("results");
+      return new ReadableStream<BatchItem>({
+        start: (controller) => {
+          for (const item of options.items) controller.enqueue(item);
+          controller.close();
+        },
+      });
+    },
+  };
+  const layer = Gateway.layerTextGeneration("test/model").pipe(
+    Layer.provide(
+      Layer.succeed(
+        Gateway.AiProvider,
+        Gateway.AiProvider.of({ languageModel, embeddingModel: unused, experimental_batch: () => api }),
+      ),
+    ),
+  );
+  return { starts, direct, calls, layer, firstStart: firstStart.promise };
+};
+
+const batchRepos = [repo, { ...repo, fullName: "junegunn/fzf" }, { ...repo, fullName: "sharkdp/bat" }];
+
+describe("gateway batch", () => {
+  it.effect("submits one job with the JSON schema and answers failed or invalid items with a direct call", () => {
+    const fake = fakeBatch({
+      items: [
+        succeeded("2", "Sure! Here is the summary."),
+        succeeded("0", JSON.stringify(validSummary)),
+        { type: "text", id: "1", status: "failed", error: { message: "upstream", code: "server_error" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const results = yield* Summarize.summarizeBatch(batchRepos);
+      expect(fake.starts).toHaveLength(1);
+      const request = fake.starts[0]?.requests[0];
+      expect(request?.modelId).toBe("test/model");
+      expect(request?.type === "text" && request.options.responseFormat?.type).toBe("json");
+      expect(request?.id).toBe("0");
+      expect(results).toEqual([
+        Result.succeed(validSummary),
+        Result.succeed(validSummary),
+        Result.succeed(validSummary),
+      ]);
+      expect(fake.direct.calls).toBe(2);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  it.effect("answers an item the batch left out with a direct call, in prompt order", () => {
+    const other = { ...validSummary, summary: "A command-line fuzzy finder." };
+    const fake = fakeBatch({ items: [succeeded("1", JSON.stringify(other))] });
+    return Effect.gen(function* () {
+      const results = yield* Summarize.summarizeBatch([repo, repo]);
+      expect(results).toEqual([Result.succeed(validSummary), Result.succeed(other)]);
+      expect(fake.direct.calls).toBe(1);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  it.effect("sends the same idempotency key for the same batch and a new one when a prompt changes", () => {
+    const fake = fakeBatch({ items: [succeeded("0", JSON.stringify(validSummary))] });
+    const keyOf = (start: StartOptions | undefined) =>
+      (start?.providerOptions?.gateway as { readonly idempotencyKey?: string } | undefined)?.idempotencyKey;
+    return Effect.gen(function* () {
+      yield* Summarize.summarizeBatch([repo]);
+      yield* Summarize.summarizeBatch([repo]);
+      yield* Summarize.summarizeBatch([{ ...repo, readme: "a new README" }]);
+      const [first, again, changed] = fake.starts.map(keyOf);
+      expect(first).toMatch(/^stargrep-batch-[0-9a-f]{64}$/);
+      expect(again).toBe(first);
+      expect(changed).not.toBe(first);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  it.effect("answers every prompt directly when the gateway fails the whole batch", () => {
+    const fake = fakeBatch({ items: [], fails: true });
+    return Effect.gen(function* () {
+      const results = yield* Summarize.summarizeBatch(batchRepos);
+      expect(results).toEqual(batchRepos.map(() => Result.succeed(validSummary)));
+      expect(fake.direct.calls).toBe(3);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  it.effect("retries a failed start, status check, and result read without starting a second job", () => {
+    const fake = fakeBatch({
+      items: [succeeded("0", JSON.stringify(validSummary))],
+      throwOnce: ["start", "status", "results"],
+    });
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(Summarize.summarizeBatch([repo]));
+      // The idempotency key's SHA-256 runs on real time, so the clock steps start once the job is first sent.
+      yield* Effect.promise(() => fake.firstStart);
+      expect(yield* settle(fiber)).toEqual([Result.succeed(validSummary)]);
+      expect(fake.calls).toEqual({ start: 2, status: 2, results: 2 });
+      expect(fake.starts).toHaveLength(1);
+      expect(fake.direct.calls).toBe(0);
+    }).pipe(Effect.provide(fake.layer));
   });
 });
 
@@ -156,6 +372,7 @@ describe("gateway embeddings", () => {
         new MockEmbeddingModelV4({
           doEmbed: async ({ values }) => ({ embeddings: values.map(() => [0.1, 0.2]), warnings: [] }),
         }),
+      experimental_batch: unused,
     });
     return Effect.gen(function* () {
       const embeddings = yield* Embeddings.Embeddings;
@@ -217,6 +434,7 @@ describe("gateway privacy", () => {
         new MockEmbeddingModelV4({
           doEmbed: async ({ values }) => ({ embeddings: values.map(() => [1, 0, 0]), warnings: [warning] }),
         }),
+      experimental_batch: unused,
     });
     const layer = Layer.merge(
       Gateway.layerTextGeneration("private/model"),
@@ -243,4 +461,84 @@ describe("gateway privacy", () => {
       ),
     );
   });
+
+  const keyCanary = "sk-PRIVATE-GATEWAY-KEY-CANARY";
+  const rejected = JSON.stringify({ summary: keyCanary, keywords: "not a list", kind: "cli" });
+  const gatewayUsage = { inputTokens: { total: 1 }, outputTokens: { total: 1 } };
+
+  const gatewayFetch = (direct: string) => {
+    const authorized: Array<boolean> = [];
+    const answer = async (input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(String(input), init);
+      authorized.push(request.headers.get("authorization")?.includes(keyCanary) ?? false);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith("/batch/start")) {
+        return Response.json({ batchId: "job_private", status: "completed", warnings: [] });
+      }
+      if (path.endsWith("/batch/results")) {
+        const content = [{ type: "text", text: rejected }];
+        const item = { type: "text", id: "0", status: "succeeded", result: { content, usage: gatewayUsage } };
+        return new Response(`${JSON.stringify(item)}\n`, { headers: { "content-type": "application/x-ndjson" } });
+      }
+      const content = [{ type: "text", text: direct }];
+      return Response.json({ content, finishReason: { unified: "stop" }, usage: gatewayUsage, warnings: [] });
+    };
+    const spy = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(answer, { preconnect: globalThis.fetch.preconnect }),
+    );
+    return { authorized, spy };
+  };
+
+  const throughGateway = <E>(
+    direct: string,
+    check: (seen: {
+      readonly authorized: ReadonlyArray<boolean>;
+      readonly spans: ReadonlyArray<Tracer.NativeSpan>;
+    }) => Effect.Effect<void, E, TextGeneration.TextGeneration>,
+  ) => {
+    const fetch = gatewayFetch(direct);
+    const collected = collectSpans();
+    const logs: Array<string> = [];
+    const logger = Logger.make((options) => {
+      logs.push(Logger.formatJson.log(options));
+    });
+    const layer = Gateway.layerTextGeneration("anthropic/claude-haiku-5.5").pipe(
+      Layer.provide(Gateway.layerProvider({ apiKey: Redacted.make(keyCanary) })),
+    );
+    return check({ authorized: fetch.authorized, spans: collected.spans }).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(collected.spans.map((span) => span.name)).toContain("Gateway.runBatch");
+          expect(collected.text()).not.toContain(keyCanary);
+          expect(logs.join("\n")).not.toContain(keyCanary);
+        }),
+      ),
+      Effect.withTracer(collected.tracer),
+      Effect.provide(Layer.merge(layer, Logger.layer([logger]))),
+      Effect.ensuring(Effect.sync(() => fetch.spy.mockRestore())),
+    );
+  };
+
+  it.effect("keeps rejected batch output out of every span when the direct fallback recovers", () =>
+    throughGateway(JSON.stringify(validSummary), ({ authorized }) =>
+      Effect.gen(function* () {
+        expect(yield* Summarize.summarizeBatch([{ ...repo, readme: keyCanary }])).toEqual([
+          Result.succeed(validSummary),
+        ]);
+        expect(authorized).toEqual([true, true, true]);
+      }),
+    ),
+  );
+
+  it.effect("keeps rejected output out of every span when the direct fallback fails too", () =>
+    throughGateway(rejected, ({ spans }) =>
+      Effect.gen(function* () {
+        const [answer] = yield* Summarize.summarizeBatch([{ ...repo, readme: keyCanary }]);
+        expect(answer !== undefined && Result.isFailure(answer) && answer.failure._tag).toBe("AiOutputInvalid");
+        expect((yield* Effect.flip(Summarize.summarize({ ...repo, readme: keyCanary })))._tag).toBe("AiOutputInvalid");
+        const failed = spans.filter((span) => span.status._tag === "Ended" && Exit.isFailure(span.status.exit));
+        expect(failed.map((span) => span.name)).toEqual(["TextGeneration.generate"]);
+      }),
+    ),
+  );
 });

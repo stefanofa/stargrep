@@ -1,13 +1,10 @@
 import { GitHubAccountId } from "@stargrep/github/schemas";
-import { drizzle } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
 import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Random from "effect/Random";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import pg from "pg";
 import * as Db from "../src/db.ts";
 import { Embedding, EmbeddingModelId } from "../src/embedding.ts";
 import { createMigratedDatabase, databaseUrl, withClient } from "../src/local-database.ts";
