@@ -8,25 +8,31 @@ import type * as Postgres from "./postgres.ts";
 // process. The next query on that connection fails with its own error.
 export const ignoreError = () => {};
 
-// pg 8.23.1 reports a lost connection with these plain errors, which carry no code. In
-// pg/lib/client.js, the con.once('end') handler in Client._connect raises "Connection terminated"
-// and "Connection terminated unexpectedly", and Client.query raises "not queryable" once
-// Client._handleErrorEvent has marked the client broken. On workerd, pg-cloudflare passes on the
-// runtime's socket errors, which are plain errors too: a refused or unreachable address fails
-// `opened` with "connection attempt failed" or "proxy request failed, ...", and a dropped socket
-// fails with "Network connection lost.". Check this set again when upgrading pg or workerd.
-// A server FATAL such as 57P01 arrives as a DatabaseError with its SQLSTATE, and a socket failure
-// on Node or Bun carries its errno code.
-const connectionErrors = new Set([
+// A lost connection reaches pg's callers as a plain error with no code, from one of two sources. Check
+// both sets again when upgrading pg or workerd. A server FATAL such as 57P01 arrives as a DatabaseError
+// with its SQLSTATE, and a socket failure on Node or Bun carries its errno code.
+
+// pg 8.23.1, pg/lib/client.js: the con.once('end') handler in Client._connect raises the two
+// "Connection terminated" errors, and Client.query raises "not queryable" once
+// Client._handleErrorEvent has marked the client broken.
+const pgErrors = new Set([
   "Client has encountered a connection error and is not queryable",
   "Connection terminated",
   "Connection terminated unexpectedly",
-  "connection attempt failed",
-  "Network connection lost.",
-  "proxy request failed, cannot connect to the specified address",
 ]);
 
-const isConnectionError = (error: unknown) => error instanceof Error && connectionErrors.has(error.message);
+// On workerd, pg-cloudflare passes on the runtime's socket errors unchanged. workerd's
+// src/workerd/api/sockets.c++ fails a refused or unreachable connect with the first two, and
+// src/workerd/jsg/util.c++ reports a dropped socket with the third. The web Worker's
+// "when the database is unreachable" test produces "connection attempt failed".
+const workerdErrors = new Set([
+  "connection attempt failed",
+  "proxy request failed, cannot connect to the specified address",
+  "Network connection lost.",
+]);
+
+const isConnectionError = (error: unknown) =>
+  error instanceof Error && (pgErrors.has(error.message) || workerdErrors.has(error.message));
 
 const makePool = (connectionString: string, max: number | undefined) => {
   const pool = new pg.Pool({ connectionString, ...(max === undefined ? {} : { max }) });

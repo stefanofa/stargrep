@@ -1,0 +1,1 @@
+CREATE INDEX "sync_requests_requested_at_idx" ON "sync_requests" ("requested_at");

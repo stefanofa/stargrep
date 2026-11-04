@@ -181,11 +181,15 @@ export const collectionItems = pgTable(
   (table) => [primaryKey({ columns: [table.collectionId, table.repoId] })],
 );
 
-export const syncRequests = pgTable("sync_requests", {
-  login: text("login").primaryKey(),
-  requestedAt: time("requested_at").notNull(),
-  outcome: syncRequestOutcome("outcome").notNull(),
-});
+export const syncRequests = pgTable(
+  "sync_requests",
+  {
+    login: text("login").primaryKey(),
+    requestedAt: time("requested_at").notNull(),
+    outcome: syncRequestOutcome("outcome").notNull(),
+  },
+  (table) => [index("sync_requests_requested_at_idx").on(table.requestedAt)],
+);
 
 export const searchEvents = pgTable("search_events", {
   id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),

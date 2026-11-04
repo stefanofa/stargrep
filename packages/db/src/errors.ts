@@ -23,6 +23,7 @@ export const Operation = Schema.Literals([
   "search.hybrid",
   "syncRequests.get",
   "syncRequests.claim",
+  "syncRequests.prune",
   "syncRequests.markFailed",
   "usage.increment",
   "usage.get",

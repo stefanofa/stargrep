@@ -19,13 +19,12 @@ export const queueNames = { syncStars: "sync-stars", enrichRepo: "enrich-repo" }
 
 const retries = { maxRetries: 5, retryDelay: "1 minute" } as const;
 
-const consume = Effect.fn("Queues.consume")(function* <A, R, E>(
+const consume = Effect.fn("Queues.consume")(function* <A, R, D, E>(
   name: string,
   queues: { readonly queue: typeof SyncStars; readonly deadLetters: typeof SyncStars },
   settings: Omit<Cloudflare.Queues.MessagesProps, "deadLetterQueue">,
-  pipeline: Settle.Pipeline<A, R>,
-  runtime: Layer.Layer<NoInfer<R>, E, RuntimeContext>,
-  onDeadLetter?: (body: A) => Effect.Effect<void, never, RuntimeContext>,
+  pipeline: Settle.Pipeline<A, R, D>,
+  runtime: Layer.Layer<NoInfer<R | D>, E, RuntimeContext>,
 ) {
   const queue = yield* queues.queue;
   const deadLetters = yield* queues.deadLetters;
@@ -37,10 +36,8 @@ const consume = Effect.fn("Queues.consume")(function* <A, R, E>(
       yield* Settle.processBatch(pipeline, bound, yield* Stream.runCollect(stream));
     }).pipe(Effect.provide(runtime)),
   );
-  yield* Cloudflare.Queues.consumeQueueMessages(
-    deadLetters,
-    { batchSize: 10, maxWaitTime: "1 second" },
-    Settle.logDeadLetters(name, pipeline, onDeadLetter),
+  yield* Cloudflare.Queues.consumeQueueMessages(deadLetters, { batchSize: 10, maxWaitTime: "1 second" }, (stream) =>
+    Settle.handleDeadLetters(name, pipeline)(stream).pipe(Effect.provide(runtime)),
   );
 });
 
@@ -54,7 +51,6 @@ export const consumeAll = <E>(
       { batchSize: 5, maxWaitTime: "1 second", ...retries },
       SyncStarsConsumer.pipeline,
       runtime,
-      SyncStarsConsumer.markFailed(runtime),
     ),
     consume(
       queueNames.enrichRepo,

@@ -64,10 +64,12 @@ export const syncRequests: Db.Db["Service"]["syncRequests"] = {
         requests.set(login.toLowerCase(), { login: login.toLowerCase(), requestedAt: at, outcome: "pending" });
       return claimed;
     }),
-  markFailed: (login, at) =>
+  markFailed: (login, requestedAt) =>
     Effect.sync(() => {
-      const requestedAt = requests.get(login.toLowerCase())?.requestedAt ?? at;
-      requests.set(login.toLowerCase(), { login: login.toLowerCase(), requestedAt, outcome: "failed" });
+      const current = requests.get(login.toLowerCase());
+      if (current !== undefined && DateTime.Equivalence(current.requestedAt, requestedAt)) {
+        requests.set(login.toLowerCase(), { ...current, outcome: "failed" });
+      }
     }),
 };
 

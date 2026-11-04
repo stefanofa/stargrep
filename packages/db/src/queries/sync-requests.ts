@@ -1,5 +1,5 @@
 import type { Login } from "@stargrep/github/schemas";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, inArray, lt, lte, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import * as Arr from "effect/Array";
 import type * as DateTime from "effect/DateTime";
@@ -19,18 +19,24 @@ export interface SyncClaim {
   readonly login: Login;
   readonly at: DateTime.Utc;
   readonly cooldown: Duration.Duration;
+  readonly lifetime: Duration.Duration;
 }
 
 export interface Queries {
   readonly get: (login: Login) => Effect.Effect<Option.Option<SyncRequest>, DbQueryFailed | DbRowInvalid>;
   readonly claim: (claim: SyncClaim) => Effect.Effect<boolean, DbQueryFailed>;
-  readonly markFailed: (login: Login, at: DateTime.Utc) => Effect.Effect<void, DbQueryFailed>;
+  readonly markFailed: (login: Login, requestedAt: DateTime.Utc) => Effect.Effect<void, DbQueryFailed>;
 }
 
 const decodeRequests = rowsDecoder(SyncRequest);
 const encodeTime = writeEncoder(Schema.DateTimeUtcFromDate);
 
 const keyOf = (login: Login) => login.toLowerCase();
+
+const before = (time: Date, duration: Duration.Duration) =>
+  sql`${time}::timestamptz - ${`${Duration.toMillis(duration)} milliseconds`}::interval`;
+
+const pruneBatch = 100;
 
 export const make = Effect.gen(function* () {
   const { run } = yield* Postgres.Postgres;
@@ -43,31 +49,42 @@ export const make = Effect.gen(function* () {
           .from(syncRequests)
           .where(eq(syncRequests.login, keyOf(login))),
       ).pipe(Effect.flatMap(decodeRequests("syncRequests.get")), Effect.map(Arr.head)),
-    claim: ({ login, at, cooldown }) =>
-      encodeTime(at).pipe(
-        Effect.flatMap((requestedAt) =>
-          run("syncRequests.claim", (db) =>
+    claim: Effect.fn("Db.syncRequests.claim")(function* ({ login, at, cooldown, lifetime }: SyncClaim) {
+      const requestedAt = yield* encodeTime(at);
+      yield* run("syncRequests.prune", (db) =>
+        db.delete(syncRequests).where(
+          inArray(
+            syncRequests.login,
             db
-              .insert(syncRequests)
-              .values({ login: keyOf(login), requestedAt, outcome: "pending" })
-              .onConflictDoUpdate({
-                target: syncRequests.login,
-                set: { requestedAt, outcome: "pending" },
-                setWhere: sql`${syncRequests.requestedAt} <= ${requestedAt}::timestamptz - ${`${Duration.toMillis(cooldown)} milliseconds`}::interval`,
-              })
-              .returning({ login: syncRequests.login }),
+              .select({ login: syncRequests.login })
+              .from(syncRequests)
+              .where(lt(syncRequests.requestedAt, before(requestedAt, lifetime)))
+              .limit(pruneBatch)
+              .for("update", { skipLocked: true }),
           ),
         ),
-        Effect.map((claimed) => claimed.length > 0),
-      ),
-    markFailed: (login, at) =>
-      encodeTime(at).pipe(
-        Effect.flatMap((requestedAt) =>
+      );
+      const claimed = yield* run("syncRequests.claim", (db) =>
+        db
+          .insert(syncRequests)
+          .values({ login: keyOf(login), requestedAt, outcome: "pending" })
+          .onConflictDoUpdate({
+            target: syncRequests.login,
+            set: { requestedAt, outcome: "pending" },
+            setWhere: lte(syncRequests.requestedAt, before(requestedAt, cooldown)),
+          })
+          .returning({ login: syncRequests.login }),
+      );
+      return claimed.length > 0;
+    }),
+    markFailed: (login, requestedAt) =>
+      encodeTime(requestedAt).pipe(
+        Effect.flatMap((time) =>
           run("syncRequests.markFailed", (db) =>
             db
-              .insert(syncRequests)
-              .values({ login: keyOf(login), requestedAt, outcome: "failed" })
-              .onConflictDoUpdate({ target: syncRequests.login, set: { outcome: "failed" } }),
+              .update(syncRequests)
+              .set({ outcome: "failed" })
+              .where(and(eq(syncRequests.login, keyOf(login)), eq(syncRequests.requestedAt, time))),
           ),
         ),
         Effect.asVoid,

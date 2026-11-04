@@ -42,10 +42,8 @@ const synced = (login: string, syncedAt: number) =>
     yield* db.accounts.recordStarSync({ accountId, etag: null, at: at(syncedAt) });
   });
 
-const markFailed = (login: string) =>
-  Effect.gen(function* () {
-    yield* (yield* Db.Db).syncRequests.markFailed(login as Login, yield* DateTime.now);
-  });
+const markFailed = (login: string, requestedAt: number) =>
+  Db.Db.use((db) => db.syncRequests.markFailed(login as Login, at(requestedAt)));
 
 const request = (login: string) => SyncRequests.SyncRequests.use((service) => service.request(login as Login));
 const status = (login: string) => SyncRequests.SyncRequests.use((service) => service.status(login as Login));
@@ -58,7 +56,7 @@ it.layer(layerWith(queue.layer), { timeout: 30_000 })("SyncRequests", (it) => {
       expect(yield* request("octocat")).toEqual({ state: "queued", requestedAt: at(start), syncedAt: null });
       yield* TestClock.adjust("1 minute");
       expect(yield* request("OctoCat")).toEqual({ state: "queued", requestedAt: at(start), syncedAt: null });
-      expect(queue.sent).toEqual([{ login: "octocat" as Login, mode: "incremental" }]);
+      expect(queue.sent).toEqual([{ login: "octocat" as Login, mode: "incremental", requestedAt: at(start) }]);
 
       yield* synced("octocat", start + 30_000);
       expect(yield* status("Octocat")).toEqual({ state: "done", syncedAt: at(start + 30_000) });
@@ -110,7 +108,7 @@ it.layer(layerWith(queue.layer), { timeout: 30_000 })("SyncRequests", (it) => {
       yield* reset;
       yield* request("no-such-login");
       yield* TestClock.adjust("1 minute");
-      yield* markFailed("No-Such-Login");
+      yield* markFailed("No-Such-Login", start);
       const failed = { state: "failed", requestedAt: at(start), syncedAt: null } as const;
       expect(yield* status("no-such-login")).toEqual(failed);
       expect(yield* request("no-such-login")).toEqual(failed);
@@ -119,6 +117,18 @@ it.layer(layerWith(queue.layer), { timeout: 30_000 })("SyncRequests", (it) => {
       yield* TestClock.adjust("10 minutes");
       expect(yield* request("no-such-login")).toMatchObject({ state: "queued" });
       expect(queue.sent).toHaveLength(2);
+    }),
+  );
+
+  it.effect("keeps a fresh request queued when the dead letter of an older one arrives", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      yield* request("octocat");
+      yield* TestClock.adjust("11 minutes");
+      const fresh = yield* request("octocat");
+      yield* markFailed("octocat", start);
+      expect(yield* status("octocat")).toEqual(fresh);
+      expect(fresh).toMatchObject({ state: "queued", requestedAt: at(start + 11 * 60_000) });
     }),
   );
 

@@ -20,7 +20,11 @@ export type Mode = typeof Mode.Type;
 export const SyncRequest = Schema.Struct({ accountId: GitHubAccountId, mode: Mode });
 export type SyncRequest = typeof SyncRequest.Type;
 
-export const LoginSyncRequest = Schema.Struct({ login: Login, mode: Mode });
+export const LoginSyncRequest = Schema.Struct({
+  login: Login,
+  mode: Mode,
+  requestedAt: Schema.optionalKey(Schema.DateTimeUtcFromMillis),
+});
 export type LoginSyncRequest = typeof LoginSyncRequest.Type;
 
 export type StarSyncError =

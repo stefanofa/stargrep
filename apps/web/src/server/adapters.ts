@@ -1,11 +1,12 @@
 import { SyncLimiter, SyncLimiterUnavailable, SyncRateLimited } from "@stargrep/api/sync-limiter";
 import { SearchCache } from "@stargrep/core/search";
-import { type StarSync, SyncQueue } from "@stargrep/core/stars";
+import { StarSync, SyncQueue } from "@stargrep/core/stars";
 import * as Digest from "effect/crypto/Digest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 const kvMinimumTtl = Duration.seconds(60);
 
@@ -28,13 +29,15 @@ export const layerSearchCache = (namespace: KVNamespace) =>
     }),
   ).pipe(Layer.provide(Digest.layerWebCrypto));
 
+const encodeSyncRequest = Schema.encodeSync(StarSync.LoginSyncRequest);
+
 export const layerSyncQueue = (queue: Queue<unknown>) =>
   Layer.succeed(
     SyncQueue.SyncQueue,
     SyncQueue.SyncQueue.of({
       send: Effect.fn("SyncQueue.send")(function* (request: StarSync.LoginSyncRequest) {
         yield* Effect.tryPromise({
-          try: () => queue.send(request),
+          try: () => queue.send(encodeSyncRequest(request)),
           catch: (cause) => new SyncQueue.SyncQueueFailed({ cause }),
         });
       }),

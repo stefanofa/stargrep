@@ -25,7 +25,7 @@ export interface Driver {
 
 const queryTimeout = "10 seconds";
 
-const socketErrors = new Set([
+const errnoCodes = new Set([
   "ECONNREFUSED",
   "ECONNRESET",
   "ECONNABORTED",
@@ -33,9 +33,16 @@ const socketErrors = new Set([
   "ENOTFOUND",
   "EPIPE",
   "ETIMEDOUT",
-  "ERR_SOCKET_CLOSED",
-  "ERR_SOCKET_CLOSED_BEFORE_CONNECTION",
 ]);
+
+// Node's lib/net.js fails a write to a socket destroyed before it connected, or after, with these, and
+// Bun's node:net uses the same codes.
+const socketClosedCodes = new Set(["ERR_SOCKET_CLOSED", "ERR_SOCKET_CLOSED_BEFORE_CONNECTION"]);
+
+const isSocketError = (error: unknown) =>
+  Predicate.hasProperty(error, "code") &&
+  Predicate.isString(error.code) &&
+  (errnoCodes.has(error.code) || socketClosedCodes.has(error.code));
 
 // Postgres aborts one side of a deadlock or a serialization failure so the other can commit, and a retry can pass.
 const conflictStates = new Set(["40001", "40P01"]);
@@ -51,10 +58,7 @@ const classify = (driver: Driver, operation: Operation, error: unknown): Option.
     const sqlState = error.code ?? null;
     return Option.some(new DbQueryFailed({ operation, reason: reasonOf(sqlState), sqlState }));
   }
-  if (
-    driver.isConnectionError(error) ||
-    (Predicate.hasProperty(error, "code") && Predicate.isString(error.code) && socketErrors.has(error.code))
-  ) {
+  if (driver.isConnectionError(error) || isSocketError(error)) {
     return Option.some(new DbQueryFailed({ operation, reason: "transport", sqlState: null }));
   }
   return Predicate.hasProperty(error, "cause") ? classify(driver, operation, error.cause) : Option.none();

@@ -111,7 +111,8 @@ const syncStatus = (login: Login, status: SyncRequests.SyncStatus) => ({
 });
 
 const implementer = implement(contract).$context<ApiContext>();
-// Procedure-level middleware runs after input validation, so a bad request never builds the services.
+// Router-level middleware such as instrumentation runs before input validation, so a validation error gets a trace ID.
+// Procedure-level middleware such as provideServices runs after it, so a bad request never builds the services.
 const os = implementer.use(instrumentation);
 
 export const router = implementer.router({

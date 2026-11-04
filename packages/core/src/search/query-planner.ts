@@ -30,8 +30,9 @@ export const plansMade = Metric.counter("stargrep_search_plans", {
   description: "Query plans, by source, and by the planner failure that made search fall back to the typed text.",
 });
 
-const recordPlan = ({ plan: _plan, ...outcome }: Planned) => {
-  const attributes: Readonly<Record<string, string>> = outcome;
+const recordPlan = (planned: Planned) => {
+  const attributes: Readonly<Record<string, string>> =
+    planned.source === "fallback" ? { source: planned.source, failure: planned.failure } : { source: planned.source };
   return Effect.annotateCurrentSpan(Record.mapKeys(attributes, (key) => `search.plan.${key}`)).pipe(
     Effect.andThen(Metric.update(Metric.withAttributes(plansMade, attributes), 1)),
   );

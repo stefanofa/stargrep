@@ -22,6 +22,8 @@ export type SyncStatus =
     }
   | { readonly state: "done"; readonly syncedAt: DateTime.Utc };
 
+true satisfies SyncState | SyncStatus["state"] extends SyncState & SyncStatus["state"] ? true : never;
+
 export type SyncStatusError = DbQueryFailed | DbRowInvalid;
 
 export type SyncRequestError = SyncStatusError | SyncQueue.SyncQueueFailed;
@@ -69,9 +71,11 @@ const make = Effect.gen(function* () {
     const now = yield* DateTime.now;
     const current = yield* statusAt(login, now);
     if (current.state === "done" && within(cooldown, now)(current.syncedAt)) return current;
-    if (!(yield* db.syncRequests.claim({ login, at: now, cooldown }))) return yield* statusAt(login, now);
+    if (!(yield* db.syncRequests.claim({ login, at: now, cooldown, lifetime: requestLifetime }))) {
+      return yield* statusAt(login, now);
+    }
     yield* queue
-      .send({ login, mode: "incremental" })
+      .send({ login, mode: "incremental", requestedAt: now })
       .pipe(Effect.tapError(() => db.syncRequests.markFailed(login, now).pipe(Effect.ignore)));
     return {
       state: "queued",

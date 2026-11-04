@@ -109,6 +109,8 @@ describe("search", () => {
 
     const viaRpc = await rpcFailure(rpc.search({ login: "ada", q: "" }));
     expect([viaRpc.code, viaRpc.data.traceId]).toEqual(["BAD_REQUEST", traceId]);
+    const rawRpc = await call("/rpc/search", post({ json: { login: "ada", q: "" } }));
+    expect(rawRpc.status).toBe(400);
 
     const result = await tool("search", { login: "ada", q: "" });
     expect(result.isError).toBe(true);
@@ -211,7 +213,13 @@ describe("sync", () => {
     expect(first.status).toBe(202);
     expect(first.body).toMatchObject({ login: "octocat", state: "queued", syncedAt: null });
     expect((await rest("/sync/octocat", from("192.0.2.1"))).body.state).toBe("queued");
-    expect(queue.sent).toEqual([{ login: "octocat", mode: "incremental" }]);
+    expect(queue.sent).toEqual([
+      {
+        login: "octocat",
+        mode: "incremental",
+        requestedAt: DateTime.toUtc(DateTime.makeUnsafe(first.body.requestedAt)),
+      },
+    ]);
 
     const statuses = [];
     for (let attempt = 0; attempt < 4; attempt++)
@@ -236,11 +244,15 @@ describe("sync", () => {
     expect(queue.sent.filter((request) => request.login.toLowerCase() === "swarm-race")).toHaveLength(1);
   });
 
-  it("reports a dead-lettered sync as failed", async () => {
-    expect((await rest("/sync/Hubot", { method: "POST", headers: { "cf-connecting-ip": "192.0.2.9" } })).status).toBe(
-      202,
+  it("reports a dead-lettered sync as failed, and ignores the dead letter of an older request", async () => {
+    const queued = await rest("/sync/Hubot", { method: "POST", headers: { "cf-connecting-ip": "192.0.2.9" } });
+    expect(queued.status).toBe(202);
+    const requestedAt = DateTime.toUtc(DateTime.makeUnsafe(queued.body.requestedAt));
+    await Effect.runPromise(
+      syncRequests.markFailed(Login.make("hubot"), DateTime.subtract(requestedAt, { minutes: 11 })),
     );
-    await Effect.runPromise(Effect.flatMap(DateTime.now, (now) => syncRequests.markFailed(Login.make("hubot"), now)));
+    expect((await rest("/sync/hubot")).body.state).toBe("queued");
+    await Effect.runPromise(syncRequests.markFailed(Login.make("hubot"), requestedAt));
     expect((await rest("/sync/hubot")).body).toMatchObject({ login: "hubot", state: "failed", syncedAt: null });
   });
 
