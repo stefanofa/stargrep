@@ -1,5 +1,5 @@
 import { GitHubAccountId, Login } from "@stargrep/github/schemas";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import * as Arr from "effect/Array";
 import type * as DateTime from "effect/DateTime";
@@ -21,7 +21,7 @@ export const Account = createSelectSchema(githubAccounts, {
 export type Account = typeof Account.Type;
 
 const AccountFacts = Schema.Struct(
-  Struct.omit(Account.fields, ["claimedBy", "starsEtag", "starsSyncedAt", "starsFullSyncedAt"]),
+  Struct.omit(Account.fields, ["claimedBy", "ownedRepoStars", "starsEtag", "starsSyncedAt", "starsFullSyncedAt"]),
 );
 export type AccountFacts = typeof AccountFacts.Type;
 
@@ -31,9 +31,16 @@ export interface StarSync {
   readonly at: DateTime.Utc;
 }
 
+export interface OwnedRepoStars {
+  readonly accountId: GitHubAccountId;
+  readonly stars: number;
+}
+
 export interface Queries {
   readonly upsert: (facts: AccountFacts) => Effect.Effect<void, DbQueryFailed>;
   readonly get: (id: GitHubAccountId) => Effect.Effect<Option.Option<Account>, DbQueryFailed | DbRowInvalid>;
+  readonly require: (id: GitHubAccountId) => Effect.Effect<Account, DbQueryFailed | DbRowInvalid | AccountNotFound>;
+  readonly setOwnedRepoStars: (input: OwnedRepoStars) => Effect.Effect<void, DbQueryFailed | AccountNotFound>;
   readonly recordStarSync: (sync: StarSync) => Effect.Effect<void, DbQueryFailed | AccountNotFound>;
 }
 
@@ -59,13 +66,31 @@ export const make = Effect.gen(function* () {
         Effect.flatMap(decodeAccounts("accounts.get")),
         Effect.map(Arr.head),
       ),
+    require: (id) =>
+      run("accounts.require", (db) => db.select().from(githubAccounts).where(eq(githubAccounts.id, id))).pipe(
+        Effect.flatMap(decodeAccounts("accounts.require")),
+        Effect.flatMap((rows) =>
+          Effect.fromOption(Arr.head(rows)).pipe(Effect.mapError(() => new AccountNotFound({ accountId: id }))),
+        ),
+      ),
+    setOwnedRepoStars: (input) =>
+      run("accounts.setOwnedRepoStars", (db) =>
+        db
+          .update(githubAccounts)
+          .set({ ownedRepoStars: input.stars })
+          .where(eq(githubAccounts.id, input.accountId))
+          .returning({ id: githubAccounts.id }),
+      ).pipe(Effect.flatMap(requireRow(() => new AccountNotFound({ accountId: input.accountId })))),
     recordStarSync: (sync) =>
       encodeTime(sync.at).pipe(
         Effect.flatMap((at) =>
           run("accounts.recordStarSync", (db) =>
             db
               .update(githubAccounts)
-              .set({ starsEtag: sync.etag, starsSyncedAt: at })
+              .set({
+                starsEtag: sql`case when ${githubAccounts.starsSyncedAt} > ${at}::timestamptz then ${githubAccounts.starsEtag} else ${sync.etag} end`,
+                starsSyncedAt: sql`greatest(${githubAccounts.starsSyncedAt}, ${at}::timestamptz)`,
+              })
               .where(eq(githubAccounts.id, sync.accountId))
               .returning({ id: githubAccounts.id }),
           ),

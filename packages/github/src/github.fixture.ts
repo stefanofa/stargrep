@@ -37,6 +37,40 @@ export const rateLimitHeaders = (remaining: number, resetSeconds = 3600, resourc
   "x-ratelimit-reset": String(resetSeconds),
 });
 
+export interface FakeStar {
+  readonly repo: number;
+  readonly starredAt: string;
+}
+
+export const starItem = (star: FakeStar) => ({
+  starred_at: star.starredAt,
+  repo: {
+    id: star.repo,
+    node_id: `R_${star.repo}`,
+    name: `repo-${star.repo}`,
+    owner: { login: "owner" },
+    private: false,
+  },
+});
+
+export const starPage = (stars: ReadonlyArray<FakeStar>, sent: Sent): Reply => {
+  const page = Number(sent.url.searchParams.get("page"));
+  return {
+    body: stars.slice((page - 1) * 100, page * 100).map(starItem),
+    headers: {
+      ...rateLimitHeaders(4000),
+      ...(page * 100 < stars.length
+        ? { link: `<https://api.github.com/user/1/starred?per_page=100&page=${page + 1}>; rel="next"` }
+        : {}),
+    },
+  };
+};
+
+export const starCountReply = (totalCount: number): Reply => ({
+  body: { data: { user: { starredRepositories: { totalCount } } } },
+  headers: rateLimitHeaders(4000, 3600, "graphql"),
+});
+
 const streamed = (kind: "broken" | "hang", onRead: () => void) =>
   new ReadableStream<Uint8Array>(
     {

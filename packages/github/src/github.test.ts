@@ -20,28 +20,17 @@ import type { BudgetShare, Login, ObjectId, RepoName, RepoNodeId } from "./schem
 
 const login = "octocat" as Login;
 
-const starItem = (n: number) => ({
-  starred_at: "2026-01-01T00:00:00Z",
-  repo: { id: n, node_id: `R_${n}`, name: `repo-${n}`, owner: { login: "owner" }, private: false },
-});
+const listedAt = "2026-01-01T00:00:00Z";
+
+const starItem = (n: number) => Fake.starItem({ repo: n, starredAt: listedAt });
 
 const starPages =
   (total: number): Fake.Handler =>
-  (sent) => {
-    const page = Number(sent.url.searchParams.get("page"));
-    const first = (page - 1) * 100 + 1;
-    const items = Array.from({ length: Math.max(0, Math.min(100, total - first + 1)) }, (_, i) => starItem(first + i));
-    const last = Math.ceil(total / 100);
-    return {
-      body: items,
-      headers: {
-        ...Fake.rateLimitHeaders(4000),
-        ...(page < last
-          ? { link: `<https://api.github.com/user/1/starred?per_page=100&page=${page + 1}>; rel="next"` }
-          : {}),
-      },
-    };
-  };
+  (sent) =>
+    Fake.starPage(
+      Array.from({ length: total }, (_, i) => ({ repo: i + 1, starredAt: listedAt })),
+      sent,
+    );
 
 const collectStars = Effect.gen(function* () {
   const github = yield* GitHub.GitHub;
@@ -72,6 +61,23 @@ const reachableStrings = (root: unknown): Array<string> => {
 };
 
 describe("stars", () => {
+  effect("emits one element per page from starPages", () => {
+    const fake = Fake.layer(starPages(250));
+    return Effect.gen(function* () {
+      const pages = yield* Stream.runCollect((yield* GitHub.GitHub).starPages(login));
+      expect(pages.map((page) => page.length)).toEqual([100, 100, 50]);
+      expect(pages[2]?.[0]?.repo.id as number).toBe(201);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("emits one empty page for an account with no stars", () => {
+    const fake = Fake.layer(() => ({ body: [] }));
+    return Effect.gen(function* () {
+      const pages = yield* Stream.runCollect((yield* GitHub.GitHub).starPages(login));
+      expect(pages).toEqual([[]]);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
   effect("pages newest first until the last page", () => {
     const fake = Fake.layer(starPages(250));
     return Effect.gen(function* () {
@@ -172,6 +178,80 @@ describe("stars", () => {
       const error = yield* Effect.flip(collectStars);
       expect(error._tag).toBe("GitHubResponseInvalid");
       expect(fake.sent).toHaveLength(1);
+    }).pipe(Effect.provide(fake.layer));
+  });
+});
+
+describe("account", () => {
+  const user = {
+    login: "octocat",
+    id: 583231,
+    type: "User",
+    name: "The Octocat",
+    avatar_url: null,
+    followers: 9,
+    public_repos: 8,
+  };
+
+  effect("reads an account by login", () => {
+    const fake = Fake.layer(() => ({ body: { ...user, site_admin: false } }));
+    return Effect.gen(function* () {
+      const account = yield* (yield* GitHub.GitHub).account(login);
+      expect(account).toEqual({
+        id: 583231,
+        login: "octocat",
+        type: "user",
+        name: "The Octocat",
+        avatarUrl: null,
+        followers: 9,
+        publicRepos: 8,
+      } as never);
+      expect(fake.sent.map((sent) => sent.url.pathname)).toEqual(["/users/octocat"]);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("reads an organization as an org", () => {
+    const fake = Fake.layer(() => ({ body: { ...user, type: "Organization" } }));
+    return Effect.gen(function* () {
+      expect((yield* (yield* GitHub.GitHub).account(login)).type).toBe("org");
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("fails with NotFound for an unknown login", () => {
+    const fake = Fake.layer(() => ({ status: 404, body: { message: "Not Found" } }));
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip((yield* GitHub.GitHub).account(login));
+      expect(error).toMatchObject({ _tag: "NotFound", operation: "account", path: "/users/octocat" });
+    }).pipe(Effect.provide(fake.layer));
+  });
+});
+
+describe("starCount", () => {
+  effect("reads a user's starred repository total through GraphQL", () => {
+    const fake = Fake.layer(() => Fake.starCountReply(2936));
+    return Effect.gen(function* () {
+      expect(yield* (yield* GitHub.GitHub).starCount(login)).toBe(2936);
+      expect(fake.sent.map((sent) => [sent.url.pathname, JSON.parse(sent.body ?? "{}").variables])).toEqual([
+        ["/graphql", { login: "octocat" }],
+      ]);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("fails with NotFound when GraphQL has no such user", () => {
+    const fake = Fake.layer(() => ({
+      body: { data: { user: null }, errors: [{ type: "NOT_FOUND", message: "Could not resolve" }] },
+    }));
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip((yield* GitHub.GitHub).starCount(login));
+      expect(error).toMatchObject({ _tag: "NotFound", operation: "star-count" });
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("fails with GitHubRequestFailed on other GraphQL errors", () => {
+    const fake = Fake.layer(() => ({ body: { data: null, errors: [{ type: "INTERNAL", message: "boom" }] } }));
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip((yield* GitHub.GitHub).starCount(login));
+      expect(error).toMatchObject({ _tag: "GitHubRequestFailed", operation: "star-count", reason: "graphql-errors" });
     }).pipe(Effect.provide(fake.layer));
   });
 });

@@ -5,6 +5,7 @@ import type { PgColumn } from "drizzle-orm/pg-core";
 import * as Arr from "effect/Array";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 import { AccountNotFound, type DbQueryFailed, type DbRowInvalid } from "../errors.ts";
@@ -24,9 +25,12 @@ export type Star = typeof Star.Type;
 const StarredRepo = Schema.Struct(Struct.pick(Star.fields, ["repoId", "starredAt", "source"]));
 export type StarredRepo = typeof StarredRepo.Type;
 
+const StarEvent = Schema.Struct(Struct.pick(Star.fields, ["repoId", "starredAt", "observedAt", "source"]));
+export type StarEvent = typeof StarEvent.Type;
+
 export interface StarsUpsert {
   readonly accountId: GitHubAccountId;
-  readonly stars: ReadonlyArray<StarredRepo>;
+  readonly stars: ReadonlyArray<StarEvent>;
 }
 
 export interface StarsSnapshot {
@@ -35,37 +39,68 @@ export interface StarsSnapshot {
   readonly at: DateTime.Utc;
 }
 
+export interface SnapshotChanges {
+  readonly starred: ReadonlyArray<RepoId>;
+  readonly unstarred: ReadonlyArray<RepoId>;
+}
+
 export interface Queries {
-  readonly upsert: (input: StarsUpsert) => Effect.Effect<void, DbQueryFailed>;
-  readonly applySnapshot: (snapshot: StarsSnapshot) => Effect.Effect<number, DbQueryFailed | AccountNotFound>;
+  readonly upsert: (input: StarsUpsert) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
+  readonly applySnapshot: (
+    snapshot: StarsSnapshot,
+  ) => Effect.Effect<SnapshotChanges, DbQueryFailed | DbRowInvalid | AccountNotFound>;
   readonly list: (accountId: GitHubAccountId) => Effect.Effect<ReadonlyArray<Star>, DbQueryFailed | DbRowInvalid>;
 }
 
 const decodeStars = rowsDecoder(Star);
-const encodeStarred = writeEncoder(
+const decodeChanged = rowsDecoder(Schema.Struct({ repoId: RepoId }));
+const encodeEvents = writeEncoder(
   Schema.fromJsonString(
-    Schema.Array(Schema.Struct({ ...StarredRepo.fields, starredAt: Schema.DateTimeUtcFromString })),
+    Schema.Array(
+      Schema.Struct({
+        ...StarEvent.fields,
+        starredAt: Schema.DateTimeUtcFromString,
+        observedAt: Schema.DateTimeUtcFromString,
+      }),
+    ),
   ),
 );
 const encodeTime = writeEncoder(Schema.DateTimeUtcFromString);
 
+const resultRows = (result: unknown) => (Predicate.hasProperty(result, "rows") ? result.rows : result);
+
 const column = (target: PgColumn) => sql.identifier(target.name);
 
-const insertStars = (accountId: GitHubAccountId, starred: string, observedAt: SQL, filter: SQL) => sql`
-  insert into ${stars} (${column(stars.accountId)}, ${column(stars.repoId)}, ${column(stars.starredAt)}, ${column(stars.observedAt)}, ${column(stars.source)})
-  select ${accountId}, starred."repoId", starred."starredAt", ${observedAt}, starred.source
-  from (
-    select distinct on ("repoId") "repoId", "starredAt", source
-    from jsonb_to_recordset(${starred}::jsonb) as listed("repoId" bigint, "starredAt" timestamptz, source star_source)
-    order by "repoId", "starredAt" desc, case source when 'api' then 0 else 1 end, source
-  ) as starred
-  where ${filter}
-  on conflict (${column(stars.accountId)}, ${column(stars.repoId)}) do update set
-    ${column(stars.starredAt)} = ${excluded(stars.starredAt)},
-    ${column(stars.source)} = ${excluded(stars.source)},
-    ${column(stars.unstarredAt)} = null,
-    ${column(stars.observedAt)} = ${excluded(stars.observedAt)}
-  where ${excluded(stars.observedAt)} > ${stars.observedAt}`;
+const noChanges: SnapshotChanges = { starred: [], unstarred: [] };
+
+const writeStarsReturningVisibleChanges = (accountId: GitHubAccountId, events: string, filter: SQL) => sql`
+  prior as (
+    select ${column(stars.repoId)}, ${column(stars.starredAt)}, ${column(stars.unstarredAt)}
+    from ${stars} where ${stars.accountId} = ${accountId}
+  ),
+  written as (
+    insert into ${stars} (${column(stars.accountId)}, ${column(stars.repoId)}, ${column(stars.starredAt)}, ${column(stars.observedAt)}, ${column(stars.source)})
+    select ${accountId}, event."repoId", event."starredAt", event."observedAt", event.source
+    from (
+      select distinct on ("repoId") "repoId", "starredAt", "observedAt", source
+      from jsonb_to_recordset(${events}::jsonb)
+        as listed("repoId" bigint, "starredAt" timestamptz, "observedAt" timestamptz, source star_source)
+      order by "repoId", "observedAt" desc, "starredAt" desc, case source when 'api' then 0 else 1 end, source
+    ) as event
+    where ${filter}
+    on conflict (${column(stars.accountId)}, ${column(stars.repoId)}) do update set
+      ${column(stars.starredAt)} = ${excluded(stars.starredAt)},
+      ${column(stars.source)} = ${excluded(stars.source)},
+      ${column(stars.unstarredAt)} = null,
+      ${column(stars.observedAt)} = ${excluded(stars.observedAt)}
+    where ${excluded(stars.observedAt)} > ${stars.observedAt}
+    returning ${column(stars.repoId)}, ${column(stars.starredAt)}
+  )
+  select written.${column(stars.repoId)}::float8 as "repoId"
+  from written left join prior using (${column(stars.repoId)})
+  where prior.${column(stars.repoId)} is null
+    or prior.${column(stars.unstarredAt)} is not null
+    or prior.${column(stars.starredAt)} <> written.${column(stars.starredAt)}`;
 
 export const make = Effect.gen(function* () {
   const { run, withTransaction } = yield* Postgres.Postgres;
@@ -73,29 +108,32 @@ export const make = Effect.gen(function* () {
   return {
     upsert: (input) =>
       Arr.isReadonlyArrayEmpty(input.stars)
-        ? Effect.void
-        : encodeStarred(input.stars).pipe(
-            Effect.flatMap((starred) =>
+        ? Effect.succeed([])
+        : encodeEvents(input.stars).pipe(
+            Effect.flatMap((events) =>
               run("stars.upsert", (db) =>
                 db.execute(sql`
                   with account as (
                     select ${githubAccounts.starsFullSyncedAt} as synced from ${githubAccounts}
                     where ${githubAccounts.id} = ${input.accountId}
                     for no key update
-                  )
-                  ${insertStars(
+                  ),
+                  ${writeStarsReturningVisibleChanges(
                     input.accountId,
-                    starred,
-                    sql`starred."starredAt"`,
-                    sql`starred."starredAt" > coalesce((select synced from account), '-infinity')`,
+                    events,
+                    sql`event."observedAt" > coalesce((select synced from account), '-infinity')`,
                   )}`),
               ),
             ),
-            Effect.asVoid,
+            Effect.flatMap((result) => decodeChanged("stars.upsert")(resultRows(result))),
+            Effect.map((rows) => rows.map((row) => row.repoId)),
           ),
     applySnapshot: (snapshot) =>
-      Effect.all([encodeTime(snapshot.at), encodeStarred(snapshot.stars)]).pipe(
-        Effect.flatMap(([at, starred]) =>
+      Effect.all([
+        encodeTime(snapshot.at),
+        encodeEvents(snapshot.stars.map((star) => ({ ...star, observedAt: snapshot.at }))),
+      ]).pipe(
+        Effect.flatMap(([at, events]) =>
           withTransaction(
             Effect.gen(function* () {
               const advanced = yield* run("stars.applySnapshot", (db) =>
@@ -117,13 +155,13 @@ export const make = Effect.gen(function* () {
                     .from(githubAccounts)
                     .where(eq(githubAccounts.id, snapshot.accountId)),
                 ).pipe(Effect.flatMap(requireRow(() => new AccountNotFound({ accountId: snapshot.accountId }))));
-                return 0;
+                return noChanges;
               }
-              if (Arr.isReadonlyArrayNonEmpty(snapshot.stars)) {
-                yield* run("stars.applySnapshot", (db) =>
-                  db.execute(insertStars(snapshot.accountId, starred, sql`${at}::timestamptz`, sql`true`)),
-                );
-              }
+              const starred = Arr.isReadonlyArrayNonEmpty(snapshot.stars)
+                ? yield* run("stars.applySnapshot", (db) =>
+                    db.execute(sql`with ${writeStarsReturningVisibleChanges(snapshot.accountId, events, sql`true`)}`),
+                  ).pipe(Effect.flatMap((result) => decodeChanged("stars.applySnapshot")(resultRows(result))))
+                : [];
               const unstarred = yield* run("stars.applySnapshot", (db) =>
                 db
                   .update(stars)
@@ -132,9 +170,18 @@ export const make = Effect.gen(function* () {
                     observedAt: sql`${at}::timestamptz`,
                   })
                   .where(and(eq(stars.accountId, snapshot.accountId), sql`${stars.observedAt} < ${at}::timestamptz`))
-                  .returning({ newlyUnstarred: sql<boolean>`${stars.unstarredAt} = ${at}::timestamptz` }),
+                  .returning({
+                    repoId: stars.repoId,
+                    newlyUnstarred: sql<boolean>`${stars.unstarredAt} = ${at}::timestamptz`,
+                  }),
               );
-              return unstarred.filter((row) => row.newlyUnstarred).length;
+              const newlyUnstarred = yield* decodeChanged("stars.applySnapshot")(
+                unstarred.filter((row) => row.newlyUnstarred),
+              );
+              return {
+                starred: starred.map((row) => row.repoId),
+                unstarred: newlyUnstarred.map((row) => row.repoId),
+              };
             }),
           ),
         ),

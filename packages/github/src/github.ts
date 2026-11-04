@@ -11,6 +11,7 @@ import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as AccountLookup from "./account.ts";
 import {
   type GitHubError,
   GitHubRequestFailed,
@@ -23,6 +24,8 @@ import {
 import * as Readme from "./readme.ts";
 import * as Facts from "./repo-facts.ts";
 import {
+  type Account,
+  type GraphQLError,
   IntFromString,
   type Login,
   type ObjectId,
@@ -31,6 +34,7 @@ import {
   type RepoNodeId,
   type Star,
 } from "./schemas.ts";
+import * as StarCount from "./star-count.ts";
 import * as StarList from "./star-list.ts";
 import * as TokenBudget from "./token-budget.ts";
 import * as TokenGate from "./token-gate.ts";
@@ -68,7 +72,10 @@ const isRetryable = (error: GitHubError) => {
 export class GitHub extends Context.Service<
   GitHub,
   {
+    readonly account: (login: Login) => Effect.Effect<Account, GitHubError>;
+    readonly starPages: (login: Login) => Stream.Stream<ReadonlyArray<Star>, GitHubError>;
     readonly stars: (login: Login) => Stream.Stream<Star, GitHubError>;
+    readonly starCount: (login: Login) => Effect.Effect<number, GitHubError>;
     readonly repoFacts: (ids: ReadonlyArray<RepoNodeId>) => Effect.Effect<ReadonlyArray<RepoFacts>, GitHubError>;
     readonly readme: (input: {
       readonly owner: Login;
@@ -118,6 +125,23 @@ const classify = (endpoint: Endpoint, reply: TokenGate.Reply, now: number): Resu
   return Result.fail(new GitHubRequestFailed({ ...endpoint, status: reply.status, reason: "status" }));
 };
 
+const graphQLFailure = (
+  endpoint: Endpoint,
+  reply: TokenGate.Reply,
+  now: number,
+  errors: ReadonlyArray<GraphQLError>,
+): Effect.Effect<never, GitHubError> =>
+  errors.some((error) => error.type === "RATE_LIMITED")
+    ? Effect.fail(rateLimited(endpoint, reply, now))
+    : Effect.logWarning("GitHub GraphQL errors", {
+        count: errors.length,
+        types: errors.flatMap((error) =>
+          error.type !== undefined && graphQLErrorType.test(error.type) ? [error.type] : [],
+        ),
+      }).pipe(
+        Effect.andThen(Effect.fail(new GitHubRequestFailed({ ...endpoint, status: null, reason: "graphql-errors" }))),
+      );
+
 const make = Effect.gen(function* () {
   const gate = yield* TokenGate.TokenGate;
   const readmes = KeyValueStore.toSchemaStore(
@@ -157,6 +181,12 @@ const make = Effect.gen(function* () {
       );
   };
 
+  const account = Effect.fn("GitHub.account")(function* (login: Login) {
+    return yield* exchange("account", AccountLookup.request(login), (body) =>
+      Effect.map(AccountLookup.decodeUser(body), AccountLookup.toAccount),
+    );
+  });
+
   const starPage = Effect.fn("GitHub.starPage")(function* (login: Login, page: number) {
     return yield* exchange("list-stars", StarList.request(login, page), (body, reply, endpoint) =>
       Effect.gen(function* () {
@@ -168,24 +198,34 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const stars = (login: Login) => Stream.paginate(1, (page: number) => starPage(login, page));
+  const starPages = (login: Login) =>
+    Stream.paginate(1, (page: number) =>
+      Effect.map(starPage(login, page), ([stars, next]) => [[stars], next] as const),
+    );
+
+  const stars = (login: Login) => Stream.flattenIterable(starPages(login));
 
   const factsBatch = Effect.fn("GitHub.factsBatch")(function* (ids: ReadonlyArray<RepoNodeId>) {
     return yield* exchange("repo-facts", Facts.request(ids), (raw, reply, endpoint, now) =>
       Effect.gen(function* () {
         const body = yield* Facts.decodeResponse(raw);
         const errors = (body.errors ?? []).filter((error) => error.type !== "NOT_FOUND");
-        if (errors.some((error) => error.type === "RATE_LIMITED")) return yield* rateLimited(endpoint, reply, now);
-        if (errors.length > 0 || !body.data) {
-          yield* Effect.logWarning("GitHub GraphQL errors", {
-            count: errors.length,
-            types: errors.flatMap((error) =>
-              error.type !== undefined && graphQLErrorType.test(error.type) ? [error.type] : [],
-            ),
-          });
-          return yield* new GitHubRequestFailed({ ...endpoint, status: null, reason: "graphql-errors" });
-        }
+        if (errors.length > 0 || !body.data) return yield* graphQLFailure(endpoint, reply, now, errors);
         return body.data.nodes.flatMap((node) => (node === null ? [] : [Facts.toFacts(node)]));
+      }),
+    );
+  });
+
+  const starCount = Effect.fn("GitHub.starCount")(function* (login: Login) {
+    return yield* exchange("star-count", StarCount.request(login), (raw, reply, endpoint, now) =>
+      Effect.gen(function* () {
+        const body = yield* StarCount.decodeResponse(raw);
+        const errors = body.errors ?? [];
+        if (body.data?.user === null && errors.every((error) => error.type === "NOT_FOUND")) {
+          return yield* new NotFound({ operation: "star-count", path: `/users/${login}` });
+        }
+        if (errors.length > 0 || !body.data?.user) return yield* graphQLFailure(endpoint, reply, now, errors);
+        return body.data.user.starredRepositories.totalCount;
       }),
     );
   });
@@ -223,7 +263,7 @@ const make = Effect.gen(function* () {
     return body;
   });
 
-  return GitHub.of({ stars, repoFacts, readme });
+  return GitHub.of({ account, starPages, stars, starCount, repoFacts, readme });
 });
 
 export const layer = Layer.effect(GitHub, make);

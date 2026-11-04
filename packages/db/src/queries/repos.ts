@@ -1,4 +1,4 @@
-import { Login, ObjectId, RepoId, RepoName } from "@stargrep/github/schemas";
+import { Repo as GitHubRepo, Login, ObjectId, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
 import { and, eq, getColumns, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import * as Arr from "effect/Array";
@@ -16,6 +16,7 @@ const RepoRow = createSelectSchema(repos, {
   id: RepoId,
   owner: Login,
   name: RepoName,
+  nodeId: Schema.NullOr(RepoNodeId),
   topics: Schema.Array(Schema.String),
   createdAt: NullableTime,
   pushedAt: NullableTime,
@@ -31,7 +32,7 @@ export type Repo = typeof Repo.Type;
 const { embedding: _embedding, search: _search, ...columns } = getColumns(repos);
 export const repoColumns = columns;
 
-const RepoRef = Schema.Struct(Struct.pick(Repo.fields, ["id", "owner", "name"]));
+const RepoRef = GitHubRepo;
 export type RepoRef = typeof RepoRef.Type;
 
 const RepoFacts = Schema.Struct(
@@ -103,8 +104,8 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
                     .values([...values])
                     .onConflictDoUpdate({
                       target: repos.id,
-                      set: { owner: excluded(repos.owner), name: excluded(repos.name) },
-                      setWhere: sql`(${repos.owner}, ${repos.name}) is distinct from (${excluded(repos.owner)}, ${excluded(repos.name)})`,
+                      set: { owner: excluded(repos.owner), name: excluded(repos.name), nodeId: excluded(repos.nodeId) },
+                      setWhere: sql`(${repos.owner}, ${repos.name}, ${repos.nodeId}) is distinct from (${excluded(repos.owner)}, ${excluded(repos.name)}, ${excluded(repos.nodeId)})`,
                     }),
                 ),
               ),

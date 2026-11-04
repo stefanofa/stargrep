@@ -1,7 +1,7 @@
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schema from "effect/Schema";
 import { pickReadme, TreeEntry } from "./readme.ts";
-import { Login, type RepoFacts, RepoId, RepoName, RepoNodeId } from "./schemas.ts";
+import { GraphQLError, Login, type RepoFacts, RepoId, RepoName, RepoNodeId } from "./schemas.ts";
 
 // GitHub cuts a GraphQL query off at 10 s. With topics and the root tree,
 // 25 repos measured 2.4 s and 100 repos timed out.
@@ -51,11 +51,6 @@ const RepoNode = Schema.Struct({
   root: Schema.NullOr(Schema.Struct({ entries: Schema.optionalKey(Schema.Array(TreeEntry)) })),
 });
 type RepoNode = typeof RepoNode.Type;
-
-const GraphQLError = Schema.Struct({
-  type: Schema.optionalKey(Schema.String),
-  message: Schema.String,
-});
 
 export const decodeResponse = Schema.decodeEffect(
   Schema.fromJsonString(

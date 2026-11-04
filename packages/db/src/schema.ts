@@ -59,6 +59,7 @@ export const repos = pgTable(
     id: githubId("id").primaryKey(),
     owner: text("owner").notNull(),
     name: text("name").notNull(),
+    nodeId: text("node_id"),
     description: text("description"),
     topics: jsonb("topics").notNull().default([]),
     language: text("language"),
