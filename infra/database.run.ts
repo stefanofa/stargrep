@@ -19,6 +19,7 @@ export default Alchemy.Stack(
       pgVersion: 17,
       historyRetentionSeconds: 21600,
     }).pipe(RemovalPolicy.retain());
+    // The main Worker's placement in apps/worker/src/worker.ts must match this region.
     const usEast = yield* Neon.Project("ProjectUsEast", {
       name: "stargrep-us-east",
       region: "aws-us-east-1",
