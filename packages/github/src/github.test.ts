@@ -20,28 +20,17 @@ import type { BudgetShare, Login, ObjectId, RepoName, RepoNodeId } from "./schem
 
 const login = "octocat" as Login;
 
-const starItem = (n: number) => ({
-  starred_at: "2026-01-01T00:00:00Z",
-  repo: { id: n, node_id: `R_${n}`, name: `repo-${n}`, owner: { login: "owner" }, private: false },
-});
+const listedAt = "2026-01-01T00:00:00Z";
+
+const starItem = (n: number) => Fake.starItem({ repo: n, starredAt: listedAt });
 
 const starPages =
   (total: number): Fake.Handler =>
-  (sent) => {
-    const page = Number(sent.url.searchParams.get("page"));
-    const first = (page - 1) * 100 + 1;
-    const items = Array.from({ length: Math.max(0, Math.min(100, total - first + 1)) }, (_, i) => starItem(first + i));
-    const last = Math.ceil(total / 100);
-    return {
-      body: items,
-      headers: {
-        ...Fake.rateLimitHeaders(4000),
-        ...(page < last
-          ? { link: `<https://api.github.com/user/1/starred?per_page=100&page=${page + 1}>; rel="next"` }
-          : {}),
-      },
-    };
-  };
+  (sent) =>
+    Fake.starPage(
+      Array.from({ length: total }, (_, i) => ({ repo: i + 1, starredAt: listedAt })),
+      sent,
+    );
 
 const collectStars = Effect.gen(function* () {
   const github = yield* GitHub.GitHub;
@@ -72,6 +61,23 @@ const reachableStrings = (root: unknown): Array<string> => {
 };
 
 describe("stars", () => {
+  effect("emits one element per page from starPages", () => {
+    const fake = Fake.layer(starPages(250));
+    return Effect.gen(function* () {
+      const pages = yield* Stream.runCollect((yield* GitHub.GitHub).starPages(login));
+      expect(pages.map((page) => page.length)).toEqual([100, 100, 50]);
+      expect(pages[2]?.[0]?.repo.id as number).toBe(201);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("emits one empty page for an account with no stars", () => {
+    const fake = Fake.layer(() => ({ body: [] }));
+    return Effect.gen(function* () {
+      const pages = yield* Stream.runCollect((yield* GitHub.GitHub).starPages(login));
+      expect(pages).toEqual([[]]);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
   effect("pages newest first until the last page", () => {
     const fake = Fake.layer(starPages(250));
     return Effect.gen(function* () {

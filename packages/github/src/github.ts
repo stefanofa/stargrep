@@ -71,6 +71,7 @@ export class GitHub extends Context.Service<
   GitHub,
   {
     readonly account: (login: Login) => Effect.Effect<Account, GitHubError>;
+    readonly starPages: (login: Login) => Stream.Stream<ReadonlyArray<Star>, GitHubError>;
     readonly stars: (login: Login) => Stream.Stream<Star, GitHubError>;
     readonly repoFacts: (ids: ReadonlyArray<RepoNodeId>) => Effect.Effect<ReadonlyArray<RepoFacts>, GitHubError>;
     readonly readme: (input: {
@@ -177,7 +178,12 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const stars = (login: Login) => Stream.paginate(1, (page: number) => starPage(login, page));
+  const starPages = (login: Login) =>
+    Stream.paginate(1, (page: number) =>
+      Effect.map(starPage(login, page), ([stars, next]) => [[stars], next] as const),
+    );
+
+  const stars = (login: Login) => Stream.flattenIterable(starPages(login));
 
   const factsBatch = Effect.fn("GitHub.factsBatch")(function* (ids: ReadonlyArray<RepoNodeId>) {
     return yield* exchange("repo-facts", Facts.request(ids), (raw, reply, endpoint, now) =>
@@ -232,7 +238,7 @@ const make = Effect.gen(function* () {
     return body;
   });
 
-  return GitHub.of({ account, stars, repoFacts, readme });
+  return GitHub.of({ account, starPages, stars, repoFacts, readme });
 });
 
 export const layer = Layer.effect(GitHub, make);
