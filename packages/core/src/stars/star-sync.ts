@@ -2,7 +2,7 @@ import * as Db from "@stargrep/db";
 import type { AccountNotFound, DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
 import type { GitHubError } from "@stargrep/github/errors";
 import * as GitHub from "@stargrep/github/github";
-import { GitHubAccountId, Login, type RepoId, type Star } from "@stargrep/github/schemas";
+import { GitHubAccountId, Login, type Star } from "@stargrep/github/schemas";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -40,18 +40,27 @@ export class StarSync extends Context.Service<
 
 const toStarred = (star: Star): Db.StarredRepo => ({ repoId: star.repo.id, starredAt: star.starredAt, source: "api" });
 
+const noChanges: Db.SnapshotChanges = { starred: [], unstarred: [] };
+
 const make = Effect.gen(function* () {
   const db = yield* Db.Db;
   const github = yield* GitHub.GitHub;
   const queue = yield* EnrichQueue.EnrichQueue;
 
-  const writePage = Effect.fn("StarSync.writePage")(function* (accountId: GitHubAccountId, page: DiffPage.PageDiff) {
-    if (!Arr.isReadonlyArrayNonEmpty(page.listed)) return { ...page, enqueued: 0 };
+  const writePage = Effect.fn("StarSync.writePage")(function* (
+    accountId: GitHubAccountId,
+    at: DateTime.Utc,
+    page: DiffPage.PageDiff,
+  ) {
+    if (!Arr.isReadonlyArrayNonEmpty(page.listed)) return { ...page, starred: [], enqueued: 0 };
     yield* db.repos.upsertRefs(page.listed.map((star) => star.repo));
-    yield* db.stars.upsert({ accountId, stars: page.fresh.map(toStarred) });
+    const starred = yield* db.stars.upsert({
+      accountId,
+      stars: page.fresh.map((star) => ({ ...toStarred(star), observedAt: at })),
+    });
     const pending = yield* db.repos.pendingEnrichment(page.listed.map((star) => star.repo.id));
     if (Arr.isReadonlyArrayNonEmpty(pending)) yield* queue.send(pending.map((repoId) => ({ repoId })));
-    return { ...page, enqueued: pending.length };
+    return { ...page, starred, enqueued: pending.length };
   });
 
   const sync = Effect.fn("StarSync.sync")(function* (request: SyncRequest) {
@@ -59,33 +68,39 @@ const make = Effect.gen(function* () {
     // The run's start, not its end: the snapshot unstars rows observed before it, and the next run's
     // stop line is this time, so a star added while the pages are read must land after it.
     const at = yield* DateTime.now;
-    const stored = DiffPage.stored(
-      yield* db.stars.list(account.id),
-      request.mode === "full" ? Option.none() : Option.fromNullishOr(account.starsSyncedAt),
-    );
+    const stopLine = request.mode === "full" ? Option.none() : Option.fromNullishOr(account.starsSyncedAt);
+    const stored = DiffPage.stored(yield* db.stars.list(account.id), stopLine);
+    // GitHub pages the list by offset, so a star added or removed mid-read shifts later pages. Equal
+    // counts before and after the read are what lets a full read stand as a snapshot.
+    const countBefore = Option.isNone(stopLine)
+      ? Option.some(yield* github.starCount(account.login))
+      : Option.none<number>();
 
     const pages = yield* github.starPages(account.login).pipe(
       Stream.mapAccum(
-        (): ReadonlySet<RepoId> => new Set(),
-        (seen, page) => {
-          const diff = DiffPage.diffPage(stored, seen, page);
-          return [new Set([...seen, ...diff.listed.map((star) => star.repo.id)]), [diff]];
+        () => DiffPage.start,
+        (cursor, page) => {
+          const [next, diff] = DiffPage.diffPage(stored, cursor, page);
+          return [next, [diff]];
         },
       ),
       Stream.takeUntil((page) => page.stopped),
-      Stream.mapEffect((page) => writePage(account.id, page)),
+      Stream.mapEffect((page) => writePage(account.id, at, page)),
       Stream.runCollect,
     );
 
-    const unstarred = pages.some((page) => page.stopped)
-      ? 0
-      : yield* db.stars.applySnapshot({
-          accountId: account.id,
-          stars: pages.flatMap((page) => page.listed).map(toStarred),
-          at,
-        });
-    yield* db.accounts.recordStarSync({ accountId: account.id, etag: null, at });
-    return DiffPage.report(stored, pages, unstarred);
+    const snapshotReady = !pages.some((page) => page.stopped) && Option.isSome(countBefore);
+    const shifted = snapshotReady && countBefore.value !== (yield* github.starCount(account.login));
+    const snapshot =
+      snapshotReady && !shifted
+        ? yield* db.stars.applySnapshot({
+            accountId: account.id,
+            stars: pages.flatMap((page) => page.listed).map(toStarred),
+            at,
+          })
+        : noChanges;
+    if (!shifted) yield* db.accounts.recordStarSync({ accountId: account.id, etag: null, at });
+    return DiffPage.report(stored, pages, snapshot, shifted);
   });
 
   const syncLogin = Effect.fn("StarSync.syncLogin")(function* (request: LoginSyncRequest) {

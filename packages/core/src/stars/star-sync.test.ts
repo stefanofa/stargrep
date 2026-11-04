@@ -1,11 +1,10 @@
 import { expect } from "bun:test";
 import * as Db from "@stargrep/db";
 import type { EmbeddingModelId } from "@stargrep/db/embedding";
-import * as Memory from "@stargrep/db/memory";
+import * as TestDatabase from "@stargrep/db/test-database";
 import * as Fake from "@stargrep/github/github.fixture";
 import type { GitHubAccountId, Login } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
-import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -15,6 +14,7 @@ import type * as DiffPage from "./diff-page.ts";
 import * as StarSync from "./star-sync.ts";
 
 const embeddingModel = "test/model" as EmbeddingModelId;
+const second = 1_000;
 const minute = 60_000;
 const syncTime = Date.parse("2026-11-04T00:00:00Z");
 
@@ -25,8 +25,6 @@ interface Starred {
 
 type BeforePage = (page: number, list: Array<Starred>) => Fake.Reply | undefined;
 
-class Sql extends Context.Service<Sql, Memory.Pglite["client"]>()("@stargrep/core/stars/star-sync.test/Sql") {}
-
 const lists = new Map<string, Array<Starred>>();
 const users = new Map<string, { readonly id: number; readonly login: string }>();
 const queue = EnrichQueue.layerMemory();
@@ -34,6 +32,10 @@ const sent = queue.sent;
 const hooks: { beforePage: BeforePage } = { beforePage: () => undefined };
 
 const github = Fake.layer((request) => {
+  if (request.url.pathname === "/graphql") {
+    const login: string = JSON.parse(request.body ?? "{}").variables.login;
+    return Fake.starCountReply(lists.get(login)?.length ?? 0);
+  }
   const [, , login = "", list] = request.url.pathname.split("/");
   if (list === undefined) {
     const user = users.get(login);
@@ -52,21 +54,11 @@ const github = Fake.layer((request) => {
   );
 });
 
-const layerTest = Layer.unwrap(
-  Effect.map(Memory.open, (pglite) =>
-    StarSync.layer.pipe(
-      Layer.provideMerge(Memory.layerPglite(pglite, { embeddingModel })),
-      Layer.provideMerge(github.layer),
-      Layer.provideMerge(queue.layer),
-      Layer.provideMerge(Layer.succeed(Sql, pglite.client)),
-    ),
-  ),
-);
+const layerOn = <E>(database: Layer.Layer<Db.Db | Db.Transactions | TestDatabase.TestDatabase, E>) =>
+  StarSync.layer.pipe(Layer.provideMerge(database), Layer.provideMerge(github.layer), Layer.provideMerge(queue.layer));
 
-const query = <A>(text: string, values: ReadonlyArray<unknown> = []) =>
-  Effect.flatMap(Sql, (sql) => Effect.promise(() => sql.query<A>(text, [...values]))).pipe(
-    Effect.map((result) => result.rows),
-  );
+const query = (text: string, values: ReadonlyArray<unknown> = []) =>
+  Effect.flatMap(TestDatabase.TestDatabase, (database) => database.query(text, values));
 
 const reset = (beforePage: BeforePage = () => undefined) =>
   Effect.gen(function* () {
@@ -106,13 +98,18 @@ const account = (id: number, login: string, list: Array<Starred>) =>
 const sync = (accountId: GitHubAccountId, mode: StarSync.Mode = "incremental") =>
   Effect.flatMap(StarSync.StarSync, (starSync) => starSync.sync({ accountId, mode }));
 
+interface Row {
+  readonly repo_id: number;
+  readonly starred_at: Date;
+  readonly unstarred_at: Date | null;
+}
+
 const rows = (accountId: GitHubAccountId) =>
-  query<{ repo_id: number; starred_at: Date; unstarred_at: Date | null }>(
-    "select repo_id::int, starred_at, unstarred_at from stars where account_id = $1 order by repo_id",
-    [accountId],
-  ).pipe(
+  query("select repo_id::int, starred_at, unstarred_at from stars where account_id = $1 order by repo_id", [
+    accountId,
+  ]).pipe(
     Effect.map((all) =>
-      all.map((row) => ({
+      (all as ReadonlyArray<Row>).map((row) => ({
         repo: row.repo_id,
         starredAt: row.starred_at.getTime(),
         unstarredAt: row.unstarred_at?.getTime() ?? null,
@@ -123,23 +120,41 @@ const rows = (accountId: GitHubAccountId) =>
 const activeRepos = (accountId: GitHubAccountId) =>
   Effect.map(rows(accountId), (all) => all.filter((row) => row.unstarredAt === null).map((row) => row.repo));
 
+const starredAt = (accountId: GitHubAccountId, repo: number) =>
+  Effect.map(rows(accountId), (all) => all.find((row) => row.repo === repo && row.unstarredAt === null)?.starredAt);
+
 const report = (values: Partial<DiffPage.SyncReport>) => expect.objectContaining(values);
 
 const byNumber = (a: number, b: number) => a - b;
 
+const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
+
 const sentRepos = () => sent.map((message) => message.repoId as number);
 
-it.layer(layerTest, { timeout: 30_000 })("StarSync", (test) => {
+const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | TestDatabase.TestDatabase> }) => {
   test.effect("writes every star on a first sync and enqueues each new repo once", () =>
     Effect.gen(function* () {
       yield* reset();
       const list = newestFirst(250);
       const id = yield* account(1, "ada", list);
 
-      expect(yield* sync(id)).toEqual({ listed: 250, added: 250, unchanged: 0, unstarred: 0, enqueued: 250 });
+      expect(yield* sync(id)).toEqual({
+        listed: 250,
+        added: 250,
+        unchanged: 0,
+        unstarred: 0,
+        enqueued: 250,
+        shifted: false,
+      });
       expect(yield* activeRepos(id)).toEqual(list.map((star) => star.repo).toSorted(byNumber));
       expect(sentRepos().toSorted(byNumber)).toEqual(list.map((star) => star.repo).toSorted(byNumber));
-      expect(github.sent).toHaveLength(3);
+      expect(github.sent.map((sent) => sent.url.pathname)).toEqual([
+        "/graphql",
+        "/users/ada/starred",
+        "/users/ada/starred",
+        "/users/ada/starred",
+        "/graphql",
+      ]);
     }),
   );
 
@@ -153,7 +168,14 @@ it.layer(layerTest, { timeout: 30_000 })("StarSync", (test) => {
       const enqueued = sent.length;
 
       yield* TestClock.adjust("1 hour");
-      expect(yield* sync(id)).toEqual({ listed: 0, added: 0, unchanged: 250, unstarred: 0, enqueued: 0 });
+      expect(yield* sync(id)).toEqual({
+        listed: 0,
+        added: 0,
+        unchanged: 250,
+        unstarred: 0,
+        enqueued: 0,
+        shifted: false,
+      });
       expect(yield* rows(id)).toEqual(before);
       expect(github.sent.length - requests).toBe(1);
       expect(sent).toHaveLength(enqueued);
@@ -170,7 +192,14 @@ it.layer(layerTest, { timeout: 30_000 })("StarSync", (test) => {
       yield* TestClock.adjust("1 hour");
       list.unshift({ repo: 900, at: syncTime + 30 * minute }, { repo: 901, at: syncTime + 20 * minute });
       const requests = github.sent.length;
-      expect(yield* sync(id)).toEqual({ listed: 2, added: 2, unchanged: 250, unstarred: 0, enqueued: 2 });
+      expect(yield* sync(id)).toEqual({
+        listed: 2,
+        added: 2,
+        unchanged: 250,
+        unstarred: 0,
+        enqueued: 2,
+        shifted: false,
+      });
       expect(github.sent.length - requests).toBe(1);
       expect(yield* activeRepos(id)).toContain(900);
       expect(sentRepos().slice(-2)).toEqual([900, 901]);
@@ -190,7 +219,14 @@ it.layer(layerTest, { timeout: 30_000 })("StarSync", (test) => {
       expect(yield* activeRepos(id)).toContain(gone.repo);
 
       yield* TestClock.adjust("1 hour");
-      expect(yield* sync(id, "full")).toEqual({ listed: 149, added: 0, unchanged: 149, unstarred: 1, enqueued: 149 });
+      expect(yield* sync(id, "full")).toEqual({
+        listed: 149,
+        added: 0,
+        unchanged: 149,
+        unstarred: 1,
+        enqueued: 149,
+        shifted: false,
+      });
       const row = (yield* rows(id)).find((candidate) => candidate.repo === gone.repo);
       expect(row?.unstarredAt).toBe(syncTime + 2 * 60 * minute);
       expect(yield* activeRepos(id)).not.toContain(gone.repo);
@@ -211,7 +247,14 @@ it.layer(layerTest, { timeout: 30_000 })("StarSync", (test) => {
       yield* TestClock.adjust("1 hour");
       const restarredAt = syncTime + 90 * minute;
       list.unshift({ repo: gone.repo, at: restarredAt });
-      expect(yield* sync(id)).toEqual({ listed: 1, added: 1, unchanged: 149, unstarred: 0, enqueued: 1 });
+      expect(yield* sync(id)).toEqual({
+        listed: 1,
+        added: 1,
+        unchanged: 149,
+        unstarred: 0,
+        enqueued: 1,
+        shifted: false,
+      });
       const row = (yield* rows(id)).find((candidate) => candidate.repo === gone.repo);
       expect(row).toEqual({ repo: gone.repo, starredAt: restarredAt, unstarredAt: null });
     }),
@@ -280,23 +323,115 @@ it.layer(layerTest, { timeout: 30_000 })("StarSync", (test) => {
       const bob = yield* account(2, "bob", newestFirst(120, 61));
       yield* sync(ada);
       expect(yield* sync(bob)).toEqual(report({ added: 120, enqueued: 120 }));
-      expect(yield* query<{ count: number }>("select count(*)::int as count from repos")).toEqual([{ count: 180 }]);
+      expect(yield* query("select count(*)::int as count from repos")).toEqual([{ count: 180 }]);
     }),
   );
 
-  test.effect("skips a repo the list shows twice when a new star shifts the pages", () =>
+  test.effect("does not apply a snapshot when a star added mid-read shifts the pages, then reads it all again", () =>
     Effect.gen(function* () {
       yield* reset((page, list) => {
-        if (page === 2 && list[0]?.repo !== 999) list.unshift({ repo: 999, at: syncTime + 1000 });
+        if (page === 2 && list[0]?.repo !== 999) list.unshift({ repo: 999, at: syncTime + second });
         return undefined;
       });
       const id = yield* account(1, "ada", newestFirst(150));
-      expect(yield* sync(id)).toEqual(report({ listed: 150, added: 150 }));
+      expect(yield* sync(id)).toEqual(report({ listed: 150, added: 150, shifted: true }));
       expect(yield* activeRepos(id)).toHaveLength(150);
 
       yield* TestClock.adjust("1 hour");
-      expect(yield* sync(id)).toEqual(report({ listed: 1, added: 1, unchanged: 150 }));
+      expect(yield* sync(id)).toEqual(report({ listed: 151, added: 1, unchanged: 150, shifted: false }));
       expect(yield* activeRepos(id)).toContain(999);
+    }),
+  );
+
+  test.effect(
+    "keeps a star a mid-read unstar pushed across a page boundary, and repairs the list on the next run",
+    () =>
+      Effect.gen(function* () {
+        yield* reset((page, list) => {
+          if (page === 2 && list[0]?.repo === 1) list.shift();
+          return undefined;
+        });
+        const id = yield* account(1, "ada", newestFirst(230));
+        expect(yield* sync(id, "full")).toEqual(report({ listed: 229, unstarred: 0, shifted: true }));
+        expect(yield* activeRepos(id)).not.toContain(101);
+
+        yield* TestClock.adjust("1 hour");
+        expect(yield* sync(id)).toEqual(report({ added: 1, unstarred: 1, shifted: false }));
+        expect(yield* activeRepos(id)).toEqual(range(2, 230));
+        yield* TestClock.adjust("1 hour");
+        expect(yield* sync(id)).toEqual(report({ added: 0, unstarred: 0 }));
+        expect(yield* activeRepos(id)).toEqual(range(2, 230));
+      }),
+  );
+
+  test.effect("reads past a stored star to a new star that shares its starred_at", () =>
+    Effect.gen(function* () {
+      yield* reset();
+      yield* TestClock.setTime(syncTime + 500);
+      const list = [{ repo: 1, at: syncTime }];
+      const id = yield* account(1, "ada", list);
+      yield* sync(id);
+
+      list.push({ repo: 2, at: syncTime });
+      yield* TestClock.adjust("1 second");
+      expect(yield* sync(id)).toEqual(report({ added: 1, unchanged: 1 }));
+      yield* TestClock.adjust("1 second");
+      expect(yield* sync(id)).toEqual(report({ added: 0, unchanged: 2 }));
+      expect(yield* activeRepos(id)).toEqual([1, 2]);
+    }),
+  );
+
+  test.effect("stores a star that became visible after the last full snapshot though starred before it", () =>
+    Effect.gen(function* () {
+      yield* reset();
+      yield* TestClock.setTime(syncTime + 500);
+      const list = [{ repo: 1, at: syncTime }];
+      const id = yield* account(1, "ada", list);
+      yield* sync(id);
+
+      list.unshift({ repo: 2, at: syncTime });
+      yield* TestClock.adjust("1 second");
+      expect(yield* sync(id)).toEqual(report({ added: 1, unchanged: 1 }));
+      yield* TestClock.adjust("1 second");
+      expect(yield* sync(id)).toEqual(report({ added: 0, unchanged: 2 }));
+      expect(yield* activeRepos(id)).toEqual([1, 2]);
+    }),
+  );
+
+  test.effect("stores an older starred_at that GitHub lists for a starred repo after the last snapshot", () =>
+    Effect.gen(function* () {
+      yield* reset();
+      const list = [
+        { repo: 1, at: syncTime - 10 * second },
+        { repo: 2, at: syncTime - 20 * second },
+      ];
+      const id = yield* account(1, "ada", list);
+      yield* sync(id);
+
+      list[0] = { repo: 1, at: syncTime - 15 * second };
+      yield* TestClock.adjust("1 minute");
+      expect(yield* sync(id)).toEqual(report({ added: 1, unchanged: 1 }));
+      expect(yield* starredAt(id, 1)).toBe(syncTime - 15 * second);
+      yield* TestClock.adjust("1 minute");
+      expect(yield* sync(id)).toEqual(report({ added: 0, unchanged: 2 }));
+    }),
+  );
+
+  test.effect("reports no added star when the database drops it as older than a newer snapshot", () =>
+    Effect.gen(function* () {
+      yield* reset();
+      const list = newestFirst(5);
+      const id = yield* account(1, "ada", list);
+      yield* sync(id);
+
+      yield* TestClock.adjust("1 hour");
+      list.unshift({ repo: 50, at: syncTime + 30 * minute });
+      yield* query("update github_accounts set stars_full_synced_at = $1 where id = $2", [
+        DateTime.formatIso(DateTime.makeUnsafe(syncTime + 2 * 60 * minute)),
+        id,
+      ]);
+      expect(yield* sync(id)).toEqual(report({ listed: 1, added: 0, unchanged: 5 }));
+      expect(yield* activeRepos(id)).not.toContain(50);
     }),
   );
 
@@ -322,8 +457,10 @@ it.layer(layerTest, { timeout: 30_000 })("StarSync", (test) => {
       expect(yield* activeRepos(7 as GitHubAccountId)).toHaveLength(120);
       expect(github.sent.map((sent) => sent.url.pathname)).toEqual([
         "/users/ada",
+        "/graphql",
         "/users/ada/starred",
         "/users/ada/starred",
+        "/graphql",
       ]);
     }),
   );
@@ -349,4 +486,10 @@ it.layer(layerTest, { timeout: 30_000 })("StarSync", (test) => {
       expect(yield* activeRepos(7 as GitHubAccountId)).toHaveLength(120);
     }),
   );
-});
+};
+
+it.layer(layerOn(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30_000 })("StarSync on PGlite", cases);
+it.layer(layerOn(TestDatabase.layerNodePostgres({ embeddingModel })), { timeout: 30_000 })(
+  "StarSync on Postgres",
+  cases,
+);

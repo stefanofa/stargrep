@@ -18,63 +18,82 @@ const listed = (repo: number, hours: number): Star => ({
   },
 });
 
-const row = (repo: number, hours: number): Db.Star => ({
+const row = (repo: number, hours: number, observedHours = 10): Db.Star => ({
   accountId: 1 as GitHubAccountId,
   repoId: repo as RepoId,
   starredAt: time(hours),
   unstarredAt: null,
-  observedAt: time(hours),
+  observedAt: time(observedHours),
   source: "api",
 });
 
 const ids = (stars: ReadonlyArray<Star>) => stars.map((star) => star.repo.id as number);
 
-describe("diffPage", () => {
-  const stored = DiffPage.stored([row(1, 1), row(2, 2), row(3, 30)], Option.some(time(10)));
+const diff = (stored: DiffPage.Stored, page: ReadonlyArray<Star>, cursor = DiffPage.start) =>
+  DiffPage.diffPage(stored, cursor, page);
 
-  test("stops at the first stored star the last completed run saw", () => {
-    const diff = DiffPage.diffPage(stored, new Set(), [listed(9, 20), listed(2, 2), listed(1, 1)]);
-    expect(ids(diff.listed)).toEqual([9]);
-    expect(ids(diff.fresh)).toEqual([9]);
-    expect(diff.stopped).toBe(true);
+describe("diffPage", () => {
+  const stored = DiffPage.stored([row(1, 1), row(2, 2), row(3, 30, 40)], Option.some(time(10)));
+
+  test("stops at the first star older than a stored star the last completed run observed", () => {
+    const [, page] = diff(stored, [listed(9, 20), listed(2, 2), listed(1, 1)]);
+    expect(ids(page.listed)).toEqual([9]);
+    expect(ids(page.fresh)).toEqual([9]);
+    expect(page.stopped).toBe(true);
   });
 
-  test("reads past stored stars newer than the last completed run", () => {
-    const diff = DiffPage.diffPage(stored, new Set(), [listed(3, 30), listed(9, 20), listed(2, 2)]);
-    expect(ids(diff.listed)).toEqual([3, 9]);
-    expect(ids(diff.fresh)).toEqual([9]);
-    expect(diff.stopped).toBe(true);
+  test("reads past stored stars a later, unfinished run wrote", () => {
+    const [, page] = diff(stored, [listed(3, 30), listed(9, 20), listed(2, 2), listed(1, 1)]);
+    expect(ids(page.listed)).toEqual([3, 9]);
+    expect(ids(page.fresh)).toEqual([9]);
+  });
+
+  test("reads every star that shares the stop star's starred_at", () => {
+    const [, page] = diff(stored, [listed(2, 2), listed(8, 2), listed(1, 1)]);
+    expect(ids(page.listed)).toEqual([8]);
+    expect(ids(page.fresh)).toEqual([8]);
+    expect(page.stopped).toBe(true);
+  });
+
+  test("carries a tie that reaches the end of a page into the next page", () => {
+    const [cursor, first] = diff(stored, [listed(9, 20), listed(2, 2)]);
+    expect([ids(first.listed), first.stopped]).toEqual([[9], false]);
+    const [, second] = diff(stored, [listed(8, 2), listed(1, 1)], cursor);
+    expect(ids(second.listed)).toEqual([8]);
+    expect(second.stopped).toBe(true);
   });
 
   test("treats a stored repo with a new starred_at as fresh", () => {
-    const diff = DiffPage.diffPage(stored, new Set(), [listed(1, 25), listed(2, 2)]);
-    expect(ids(diff.fresh)).toEqual([1]);
-    expect(diff.stopped).toBe(true);
+    const [, page] = diff(stored, [listed(1, 25), listed(2, 2), listed(4, 1)]);
+    expect(ids(page.fresh)).toEqual([1]);
+    expect(page.stopped).toBe(true);
   });
 
   test("never stops without a completed run", () => {
-    const diff = DiffPage.diffPage(DiffPage.stored([row(1, 1)], Option.none()), new Set(), [listed(1, 1)]);
-    expect(ids(diff.listed)).toEqual([1]);
-    expect(diff.fresh).toEqual([]);
-    expect(diff.stopped).toBe(false);
+    const [, page] = diff(DiffPage.stored([row(1, 1)], Option.none()), [listed(1, 1), listed(5, 0)]);
+    expect(ids(page.listed)).toEqual([1, 5]);
+    expect(page.stopped).toBe(false);
   });
 
   test("lists a repo once when the pages repeat it", () => {
-    const diff = DiffPage.diffPage(stored, new Set([7 as RepoId]), [listed(7, 21), listed(8, 20), listed(8, 20)]);
-    expect(ids(diff.listed)).toEqual([8]);
+    const [cursor] = diff(stored, [listed(7, 21)]);
+    const [, page] = diff(stored, [listed(7, 21), listed(8, 20), listed(8, 20)], cursor);
+    expect(ids(page.listed)).toEqual([8]);
   });
 });
 
 describe("report", () => {
-  test("counts added, re-starred, unchanged, unstarred, and enqueued stars", () => {
+  test("counts changes the database made, not the stars it was sent", () => {
     const stored = DiffPage.stored([row(1, 1), row(2, 2), row(3, 3)], Option.none());
-    const page = DiffPage.diffPage(stored, new Set(), [listed(9, 20), listed(1, 15), listed(2, 2)]);
-    expect(DiffPage.report(stored, [{ ...page, enqueued: 4 }], 1)).toEqual({
+    const [, page] = diff(stored, [listed(9, 20), listed(1, 15), listed(2, 2)]);
+    const written = { ...page, starred: [9 as RepoId], enqueued: 4 };
+    expect(DiffPage.report(stored, [written], { starred: [], unstarred: [3 as RepoId] }, false)).toEqual({
       listed: 3,
-      added: 2,
-      unchanged: 1,
+      added: 1,
+      unchanged: 2,
       unstarred: 1,
       enqueued: 4,
+      shifted: false,
     });
   });
 });

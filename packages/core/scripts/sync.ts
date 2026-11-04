@@ -105,6 +105,7 @@ const sync = Command.make(
       yield* Console.log(`unchanged: ${report.unchanged}`);
       yield* Console.log(`unstarred: ${report.unstarred}`);
       yield* Console.log(`listed: ${report.listed}`);
+      yield* Console.log(`shifted: ${report.shifted}`);
       yield* Console.log(
         `enqueued: ${report.enqueued} (${new Set(queue.sent.map((message) => message.repoId)).size} distinct repos)`,
       );
