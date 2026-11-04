@@ -22,7 +22,6 @@ const stopwords = new Set([
 
 export const normalize = (query: string) => query.trim().replace(/\s+/g, " ").toLowerCase();
 
-// A one-word query keeps a stopword, so typing a name letter by letter narrows on every key.
 export const keywordTerms = (query: string) => {
   const words = normalize(query)
     .split(" ")
@@ -47,7 +46,6 @@ export const searchText = (repo: Searchable) =>
     .join(" ")
     .toLowerCase();
 
-// Each term counts once, by the best place it matched, so a topic never outranks a name.
 const termScore = (term: string, name: string, owner: string, topics: ReadonlyArray<string>) => {
   if (name === term) return 100;
   if (name.startsWith(term)) return 50;

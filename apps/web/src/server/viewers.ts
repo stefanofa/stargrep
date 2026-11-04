@@ -35,7 +35,6 @@ const github = (request: HttpClientRequest.HttpClientRequest, token: Redacted.Re
 
 const unavailable = (step: ViewerUnavailable["step"]) => () => Effect.fail(new ViewerUnavailable({ step }));
 
-// The user's own token reads who they are and how many repos they starred, so the sync shows its progress at once.
 export const importViewer = Effect.fn("Viewers.import")(
   function* (userId: UserId, token: Redacted.Redacted<string>) {
     const facts = GitHubAccount.toAccount(
@@ -49,13 +48,12 @@ export const importViewer = Effect.fn("Viewers.import")(
     yield* SyncRequests.SyncRequests.use((requests) => requests.request(facts.login)).pipe(
       Effect.catch((error) => Effect.logWarning("Sync after sign-in was not queued", { failure: error._tag })),
     );
-    return yield* db.accounts.require(facts.id);
+    return yield* db.accounts.require(facts.id).pipe(Effect.catchTags({ AccountNotFound: Effect.die }));
   },
   Effect.catchTags({
     HttpClientError: unavailable("github"),
     SchemaError: unavailable("github"),
     TimeoutError: unavailable("github"),
-    AccountNotFound: unavailable("github"),
   }),
 );
 

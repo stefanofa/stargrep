@@ -45,16 +45,6 @@ export const monthOf = (iso: string) => monthFormat.format(millis(iso)).toLowerC
 
 const reasonOf = (repo: LibraryEntry) => repo.summary ?? repo.description ?? "";
 
-// The API's reason line starts with how the repo ranked, which the tile already shows by its place, and ends with the
-// values that ranked it, which the tile adds after the summary.
-const rankParts = /^(exact name|keyword match #\d+|meaning match #\d+)$/;
-
-export const rankedBy = (reason: string) =>
-  reason
-    .split(", ")
-    .filter((part) => part !== "" && !rankParts.test(part))
-    .join(", ");
-
 export const toResult = (repo: LibraryEntry, terms: ReadonlyArray<string>, at: number, values = ""): Result => {
   const summary = reasonOf(repo);
   const reason = values === "" ? summary : [summary, values].filter((part) => part !== "").join(" · ");

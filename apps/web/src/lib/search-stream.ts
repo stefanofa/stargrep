@@ -16,8 +16,6 @@ export interface Answer<A, E> {
   readonly result: Result.Result<A, E> | undefined;
 }
 
-// A query reaches the server once typing pauses, and a newer query interrupts the request for the one before it.
-// A query too short to mean anything answers with no result, so the page drops the last query's semantic tiles.
 export const semanticAnswers = <A, E, R>(
   queries: Stream.Stream<string>,
   search: (query: string) => Effect.Effect<A, E, R>,

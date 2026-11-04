@@ -41,7 +41,7 @@ export default defineConfig({
     testTimeout: 30_000,
     globalSetup: ["./test/auth-databases.ts"],
     // With the module cache on, the plugin sends the whole warm import graph to workerd in one WebSocket message, which
-    // workerd refuses past 32 MiB (cloudflare/workers-sdk#16349). Sign-in's dependencies took CI past it.
+    // workerd refuses past 32 MiB (cloudflare/workers-sdk#16349).
     fsModuleCache: false,
   },
 });

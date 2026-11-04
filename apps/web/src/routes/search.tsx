@@ -17,7 +17,7 @@ import {
 import { and, ilike } from "@tanstack/db";
 import { useLiveQuery } from "@tanstack/react-db";
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { AccountMenu } from "../components/account-menu.tsx";
 import { LibraryView, type Syncing } from "../components/library-view.tsx";
 import { Page } from "../components/page.tsx";
@@ -25,7 +25,7 @@ import { SignInButton } from "../components/sign-in-button.tsx";
 import { Wordmark } from "../components/wordmark.tsx";
 import { keywordTerms, score } from "../lib/keyword.ts";
 import { getLibrary, type LibraryEntry } from "../lib/library-collection.ts";
-import { formatCount, now, rankedBy, stars, syncedAgo, toDetail, toResult } from "../lib/present.ts";
+import { formatCount, now, stars, syncedAgo, toDetail, toResult } from "../lib/present.ts";
 import { api, signedOut, type Viewer } from "../lib/rpc.ts";
 import { useSemanticSearch } from "../lib/use-semantic.ts";
 import { useSync } from "../lib/use-sync.ts";
@@ -122,7 +122,7 @@ function Notice({
   heading: string;
   detail?: string;
   mood: "searching" | "surprised" | "flat";
-  action?: React.ReactNode;
+  action?: ReactNode;
 }) {
   return (
     <Tile className="relative flex min-h-[240px] flex-col justify-center gap-6 px-tile-lg py-10 sm:px-12">
@@ -244,7 +244,7 @@ function Stars({ viewer }: { viewer: Viewer }) {
       const entry: LibraryEntry | undefined = library.collection.get(hit.id);
       if (entry === undefined || seen.has(hit.id)) return [];
       seen.add(hit.id);
-      return [toResult(entry, terms, at, rankedBy(hit.reason))];
+      return [toResult(entry, terms, at, hit.rankedBy.join(", "))];
     });
     return [...keyword.map((entry) => toResult(entry, terms, at)), ...appended];
   }, [matched, terms, semantic.results, library.collection, at]);

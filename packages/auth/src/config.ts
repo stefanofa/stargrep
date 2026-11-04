@@ -46,7 +46,6 @@ const direct = (clientId: string) =>
     ),
   );
 
-// A proxied stage never reads the client secret, so a preview that proxies through prod cannot hold it.
 const proxied = (clientId: string, productionOrigin: string) =>
   required(names.proxySecret).pipe(
     Config.map((proxySecret): GitHubSignIn => ({ _tag: "proxied", clientId, productionOrigin, proxySecret })),

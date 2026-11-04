@@ -14,8 +14,6 @@ const SearchCache = Cloudflare.KV.Namespace("SearchCache");
 
 const BetterAuthSecret = Alchemy.makeRandom("BetterAuthSecret");
 
-// Prod signs in directly with the GitHub App and forwards previews' sign-ins, so it needs both secrets. A preview
-// without its own Better Auth secret gets one generated for its stage.
 const signInBindings = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;
   const signIn = yield* githubSignIn;

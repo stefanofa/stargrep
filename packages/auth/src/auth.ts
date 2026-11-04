@@ -21,7 +21,6 @@ const providerId = "github";
 // preview's sign-in, which carries the user's GitHub token, only to a preview Worker of this account.
 export const previewHost = /^stargrep-web-pr-\d+-[a-z0-9]+\.rewebdotso\.workers\.dev$/;
 
-// Prod never creates a session from a forwarded profile, so a forged one cannot sign anyone in there.
 export const proxyCompletionPaths = [`/callback/${providerId}/oauth-proxy`, "/oauth-proxy-callback"];
 
 export const redirectAllowed = (location: string, origin: string) => {

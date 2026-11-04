@@ -6,8 +6,7 @@ export interface LibraryEntry extends LibraryRepo {
   readonly text: string;
 }
 
-// The collection holds the signed-in account's whole library. Each load is a snapshot, so a repo unstarred on GitHub
-// leaves the collection at the next load.
+// A snapshot commit replaces every row, so a repo unstarred on GitHub leaves the collection at the next load.
 const make = () => {
   let load = () => {};
   const collection = createCollection<LibraryEntry, number>({
