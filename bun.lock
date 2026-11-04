@@ -82,6 +82,23 @@
     "packages/config": {
       "name": "@stargrep/config",
     },
+    "packages/core": {
+      "name": "@stargrep/core",
+      "dependencies": {
+        "@stargrep/db": "workspace:*",
+        "@stargrep/github": "workspace:*",
+        "effect": "catalog:",
+      },
+      "devDependencies": {
+        "@effect/platform-bun": "4.1.2",
+        "@effect/tsgo": "catalog:",
+        "@stargrep/ai": "workspace:*",
+        "@stargrep/config": "workspace:*",
+        "@stargrep/testing": "workspace:*",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
     "packages/db": {
       "name": "@stargrep/db",
       "dependencies": {
@@ -493,6 +510,8 @@
     "@stargrep/ai": ["@stargrep/ai@workspace:packages/ai"],
 
     "@stargrep/config": ["@stargrep/config@workspace:packages/config"],
+
+    "@stargrep/core": ["@stargrep/core@workspace:packages/core"],
 
     "@stargrep/db": ["@stargrep/db@workspace:packages/db"],
 
