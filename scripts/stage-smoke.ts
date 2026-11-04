@@ -4,7 +4,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schema from "effect/Schema";
-import { isCloudflare404, NotSettled, untilRouted, waitUntilReady } from "./fresh-stage.ts";
+import { NotSettled, untilRouted, waitUntilReady } from "./fresh-stage.ts";
 import { readStageOutput } from "./stage-output.ts";
 
 const [stage, ...alchemyArgs] = process.argv.slice(2);
@@ -20,7 +20,7 @@ const Transaction = Schema.Struct({ pid: Schema.Int, sum: Schema.Int });
 type Check = { readonly check: string; readonly ok: boolean; readonly detail: unknown };
 const check = (name: string, ok: boolean, detail: unknown): Check => ({ check: name, ok, detail });
 
-let resent = 0;
+const resends = { cloudflare404: 0, dropped: 0 };
 
 const call = Effect.fn("StageSmoke.call")(function* (
   method: "GET" | "POST",
@@ -33,15 +33,13 @@ const call = Effect.fn("StageSmoke.call")(function* (
     const response = yield* HttpClient.execute(
       authorization === null ? request : HttpClientRequest.setHeader(request, "authorization", authorization),
     );
-    const answer = {
+    return {
       status: response.status,
       contentType: response.headers["content-type"] ?? "",
       body: yield* response.text,
     };
-    if (isCloudflare404(answer)) resent++;
-    return answer;
   });
-  return yield* untilRouted(`${method} ${url}`, send);
+  return yield* untilRouted(`${method} ${url}`, send, resends);
 });
 
 const decode = <S extends Schema.Top>(schema: S, body: string) =>
@@ -171,5 +169,5 @@ const checks = (
   )
 ).flat();
 for (const result of checks) console.log(JSON.stringify(result));
-console.log(JSON.stringify({ resentAfterCloudflare404: resent }));
+console.log(JSON.stringify({ resentAfterCloudflare404: resends.cloudflare404, resentAfterDrop: resends.dropped }));
 if (checks.some(({ ok }) => !ok)) process.exit(1);
