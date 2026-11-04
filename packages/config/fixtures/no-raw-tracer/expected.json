@@ -22,5 +22,11 @@
   "s-cf-telemetry-args.ts": 1,
   "t-require.ts": 1,
   "u-exporter-ok.ts": 0,
-  "v-alchemy-telemetry-layer.ts": 1
+  "v-alchemy-telemetry-layer.ts": 1,
+  "w-destructure.ts": 1,
+  "w2-destructure-renamed.ts": 1,
+  "w3-destructure-nested.ts": 1,
+  "w4-destructure-param-and-assignment.ts": 2,
+  "x-member-alias.ts": 1,
+  "y-destructure-ok.ts": 0
 }

@@ -1,13 +1,18 @@
 language js
 
 or {
-  `$receiver.Telemetry($arguments)`,
-  `$receiver.Telemetry.layer($arguments)`,
-  `$receiver.layerOtlp($arguments)`,
+  `$receiver.Telemetry`,
+  `$receiver.layerOtlp` where { not $receiver <: `$_.Telemetry` },
+  or { JsObjectBindingPatternShorthandProperty(), JsObjectAssignmentPatternShorthandProperty() } as $property where {
+    $property <: r"Telemetry|layerOtlp"
+  },
+  or { JsObjectBindingPatternProperty(), JsObjectAssignmentPatternProperty() } as $property where {
+    $property <: r"(?:Telemetry|layerOtlp)\s*:[\s\S]*"
+  },
   `import { $names } from $package` where {
     $package <: r"[\"']@alchemy\.run/cloudflare[\"']",
     $names <: contains `Telemetry`
   }
 } as $match where {
-  register_diagnostic(span=$match, message="This installs a tracer that keeps span results. Use the layers from @stargrep/telemetry.")
+  register_diagnostic(span=$match, message="This reaches a tracer that keeps span results. Use the layers from @stargrep/telemetry.")
 }
