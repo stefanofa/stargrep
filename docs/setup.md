@@ -142,7 +142,7 @@ Four workflows run the stages, and their jobs skip until the steps below are don
 
 4. Create Alchemy's state store in the account, as described in the next section.
 
-5. Push to `main`. That deploy creates the Neon project `stargrep` in stage `shared`, and then `prod`. A pull request stage fails with a missing reference until it has run.
+5. Push to `main`. That deploy creates the Neon projects in stage `shared`, and then `prod`. A pull request stage fails with a missing reference until it has run.
 
 Every stage gets its own Neon branch of the project. Neon deletes a preview branch about two weeks after its last deploy, in case its destroy job never ran.
 
