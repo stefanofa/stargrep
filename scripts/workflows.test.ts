@@ -73,12 +73,11 @@ describe("workflow concurrency", () => {
   });
 
   test("a newer push to a pull request cancels its ci and preview runs", () => {
-    expect(
-      groups
-        .filter((group) => group["cancel-in-progress"] !== undefined)
-        .map(({ at }) => at)
-        .sort(),
-    ).toEqual(["ci.yml", "preview.yml"]);
+    const cancelling = groups.filter((group) => group["cancel-in-progress"] !== undefined);
+    expect(Object.fromEntries(cancelling.map((group) => [group.at, group["cancel-in-progress"]]))).toEqual({
+      "ci.yml": "${{ github.event_name == 'pull_request' }}",
+      "preview.yml": true,
+    });
   });
 
   test("every deploy and destroy queues in a deploy group that nothing cancels", () => {

@@ -3,7 +3,8 @@ name: preview
 on:
   pull_request:
     types: [opened, reopened, synchronize]
-    # Docs never reach a stage. Preview is not a required check, so a skipped run blocks no merge.
+    # Docs never reach a stage. Preview is not a required check, so a skipped run blocks no merge. If it becomes one,
+    # move this skip into the job, because a required check waits forever on a workflow that never starts.
     paths-ignore:
       - "docs/**"
       - "**/*.md"
