@@ -22,8 +22,8 @@ export const semanticAnswers = <A, E, R>(
 ): Stream.Stream<Answer<A, E>, never, R> =>
   queries.pipe(
     Stream.map(normalize),
-    Stream.changes,
     Stream.debounce(pause),
+    Stream.changes,
     Stream.switchMap((query) =>
       query.length < minimumLength
         ? Stream.succeed<Answer<A, E>>({ query, result: undefined })

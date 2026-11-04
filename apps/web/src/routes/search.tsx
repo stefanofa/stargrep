@@ -1,4 +1,5 @@
 import {
+  Button,
   Mascot,
   type OpenResult,
   RepoPanel,
@@ -17,15 +18,16 @@ import {
 import { and, ilike } from "@tanstack/db";
 import { useLiveQuery } from "@tanstack/react-db";
 import { createFileRoute } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { AccountMenu } from "../components/account-menu.tsx";
 import { LibraryView, type Syncing } from "../components/library-view.tsx";
 import { Page } from "../components/page.tsx";
 import { SignInButton } from "../components/sign-in-button.tsx";
 import { Wordmark } from "../components/wordmark.tsx";
-import { keywordTerms, score } from "../lib/keyword.ts";
-import { getLibrary, type LibraryEntry } from "../lib/library-collection.ts";
-import { formatCount, now, stars, syncedAgo, toDetail, toResult } from "../lib/present.ts";
+import { keywordTerms } from "../lib/keyword.ts";
+import { getLibrary, reloadLibrary } from "../lib/library-collection.ts";
+import { formatCount, now, stars, syncedAgo, toDetail } from "../lib/present.ts";
+import { mergeResults } from "../lib/results.ts";
 import { api, signedOut, type Viewer } from "../lib/rpc.ts";
 import { useSemanticSearch } from "../lib/use-semantic.ts";
 import { useSync } from "../lib/use-sync.ts";
@@ -168,17 +170,14 @@ const containsEvery = (text: Text, [first, ...rest]: readonly [string, ...Array<
   return second === undefined ? head : and(head, second, ...others);
 };
 
-const keywordLimit = 60;
-
 function useTimeLeft(done: number, total: number, syncing: boolean) {
-  const first = useRef<{ readonly at: number; readonly done: number }>(undefined);
-  if (!syncing) {
-    first.current = undefined;
-    return "";
-  }
-  const at = now();
-  first.current ??= { at, done };
-  const perSecond = (done - first.current.done) / Math.max(1, (at - first.current.at) / 1000);
+  const [first, setFirst] = useState<{ readonly at: number; readonly done: number }>();
+  useEffect(() => {
+    if (!syncing) setFirst(undefined);
+    else setFirst((current) => current ?? { at: now(), done });
+  }, [syncing, done]);
+  if (!syncing || first === undefined) return syncing ? "starting" : "";
+  const perSecond = (done - first.done) / Math.max(1, (now() - first.at) / 1000);
   if (perSecond <= 0) return "starting";
   const seconds = Math.ceil((total - done) / perSecond);
   if (seconds <= 5) return "almost done";
@@ -187,6 +186,7 @@ function useTimeLeft(done: number, total: number, syncing: boolean) {
 
 function Stars({ viewer }: { viewer: Viewer }) {
   const library = getLibrary();
+  const [at] = useState(now);
   const params = Route.useSearch();
   const navigate = Route.useNavigate();
   const [storedView, storeView] = useStoredView();
@@ -194,16 +194,16 @@ function Stars({ viewer }: { viewer: Viewer }) {
   const [query, setQuery] = useState(params.q ?? "");
   const [opener, setOpener] = useState<HTMLElement | null>(null);
   const terms = useMemo(() => keywordTerms(query), [query]);
-  const at = now();
 
-  const { data: entries, isReady } = useLiveQuery((q) => q.from({ repo: library.collection }));
-  const { data: matched } = useLiveQuery((q) => {
-    const rows = q.from({ repo: library.collection });
+  const { data: entries, isReady, isLoadingError } = useLiveQuery((q) => q.from({ repo: library }));
+  const { data: matched = [] } = useLiveQuery((q) => {
     const [first, ...rest] = terms;
-    return first === undefined ? rows : rows.where(({ repo }) => containsEvery(repo.text, [first, ...rest]));
+    return first === undefined
+      ? undefined
+      : q.from({ repo: library }).where(({ repo }) => containsEvery(repo.text, [first, ...rest]));
   });
   const semantic = useSemanticSearch(viewer.login, query);
-  const { status: sync, retry } = useSync(viewer.login, library.reload);
+  const { status: sync, retry } = useSync(viewer.login, reloadLibrary);
 
   const syncingNow = sync?.state === "queued";
   const total = Math.max(viewer.starredCount ?? 0, entries.length);
@@ -226,28 +226,10 @@ function Stars({ viewer }: { viewer: Viewer }) {
     params.repo === undefined ? undefined : entries.find((entry) => `${entry.owner}/${entry.name}` === params.repo);
 
   const searching = terms.length > 0 || semantic.pending || semantic.results.length > 0;
-  const results = useMemo(() => {
-    if (terms.length === 0 && semantic.results.length === 0) return [];
-    const keyword =
-      terms.length === 0
-        ? []
-        : matched
-            .toSorted(
-              (a, b) =>
-                score(b, terms) - score(a, terms) ||
-                (b.stars ?? -1) - (a.stars ?? -1) ||
-                b.starredAt.localeCompare(a.starredAt),
-            )
-            .slice(0, keywordLimit);
-    const seen = new Set(keyword.map((entry) => entry.id));
-    const appended = semantic.results.flatMap((hit) => {
-      const entry: LibraryEntry | undefined = library.collection.get(hit.id);
-      if (entry === undefined || seen.has(hit.id)) return [];
-      seen.add(hit.id);
-      return [toResult(entry, terms, at, hit.rankedBy.join(", "))];
-    });
-    return [...keyword.map((entry) => toResult(entry, terms, at)), ...appended];
-  }, [matched, terms, semantic.results, library.collection, at]);
+  const results = useMemo(
+    () => mergeResults({ matched, terms, hits: semantic.results, find: (id) => library.get(id), at }),
+    [matched, terms, semantic.results, library, at],
+  );
 
   const syncedNote =
     sync?.state === "failed" ? (
@@ -272,7 +254,18 @@ function Stars({ viewer }: { viewer: Viewer }) {
         <SearchTile query={query} onQueryChange={search} label="Search your stars" />
       </div>
       <div className="flex flex-col gap-gap max-sm:pb-28">
-        {!isReady ? (
+        {isLoadingError ? (
+          <Notice
+            heading="stargrep couldn't load your stars"
+            detail="the library didn't arrive"
+            mood="surprised"
+            action={
+              <Button variant="primary" size="lg" onClick={reloadLibrary}>
+                Try again
+              </Button>
+            }
+          />
+        ) : !isReady ? (
           <Loading />
         ) : searching ? (
           results.length === 0 && !semantic.pending ? (

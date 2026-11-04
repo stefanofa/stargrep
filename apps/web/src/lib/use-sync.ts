@@ -19,10 +19,12 @@ export function useSync(login: string, onProgress: () => void) {
         () => trigger,
       ),
     );
+    let syncing = false;
     const publish = (current: SyncStatus) =>
       Effect.sync(() => {
         setStatus(current);
-        onProgress();
+        if (syncing || current.state === "queued") onProgress();
+        syncing = current.state === "queued";
       });
     const poll = Effect.gen(function* () {
       let current = yield* round === 0 ? read : trigger;
