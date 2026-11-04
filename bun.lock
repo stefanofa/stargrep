@@ -16,7 +16,11 @@
       "dependencies": {
         "@alchemy.run/cloudflare": "2.0.0-beta.85",
         "@alchemy.run/neon": "2.0.0-beta.85",
+        "@stargrep/ai": "workspace:*",
+        "@stargrep/core": "workspace:*",
         "@stargrep/db": "workspace:*",
+        "@stargrep/github": "workspace:*",
+        "@stargrep/telemetry": "workspace:*",
         "alchemy": "2.0.0-beta.85",
         "effect": "catalog:",
         "pg": "catalog:",
@@ -117,6 +121,7 @@
       "devDependencies": {
         "@effect/tsgo": "catalog:",
         "@stargrep/config": "workspace:*",
+        "@stargrep/telemetry": "workspace:*",
         "@stargrep/testing": "workspace:*",
         "@types/bun": "catalog:",
         "@types/pg": "catalog:",
@@ -142,6 +147,8 @@
     "packages/telemetry": {
       "name": "@stargrep/telemetry",
       "dependencies": {
+        "@alchemy.run/cloudflare": "2.0.0-beta.85",
+        "alchemy": "2.0.0-beta.85",
         "effect": "catalog:",
       },
       "devDependencies": {

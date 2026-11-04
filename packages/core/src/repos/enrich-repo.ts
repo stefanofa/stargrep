@@ -74,6 +74,7 @@ type Summarizer = (
 
 const batchSize = 250;
 const batchConcurrency = 4;
+const planConcurrency = 4;
 const embedBatchSize = 128;
 
 const decodeEmbedding = Schema.decodeUnknownEffect(Embedding);
@@ -173,10 +174,13 @@ const make = Effect.gen(function* () {
     const nodeIds = located.flatMap((step) => (Result.isSuccess(step) ? [step.success.nodeId] : []));
     const facts = nodeIds.length === 0 ? [] : yield* github.repoFacts(nodeIds);
     const factsById = new Map<number, RepoFacts>(facts.map((entry) => [entry.id, entry]));
-    return yield* Effect.forEach(located, (step) =>
-      Result.isFailure(step)
-        ? Effect.succeed(Result.fail(step.failure))
-        : planOne(step.success, factsById.get(step.success.id)),
+    return yield* Effect.forEach(
+      located,
+      (step) =>
+        Result.isFailure(step)
+          ? Effect.succeed(Result.fail(step.failure))
+          : planOne(step.success, factsById.get(step.success.id)),
+      { concurrency: planConcurrency },
     );
   });
 

@@ -35,6 +35,12 @@ const textResult = (text: string): GenerateResult => ({
   warnings: [],
 });
 
+const noTextResult: GenerateResult = {
+  ...textResult(""),
+  content: [],
+  finishReason: { unified: "length", raw: "max_tokens" },
+};
+
 const unused = () => {
   throw new Error("not used in this test");
 };
@@ -116,6 +122,16 @@ describe("gateway text generation", () => {
         "Model 'test/model' returned output that does not match the expected shape in 'generate': the model did not return a JSON object",
       );
     }).pipe(Effect.provide(textLayer(async () => textResult("Sure! Here is the summary you asked for.")))),
+  );
+
+  it.effect("fails with AiOutputInvalid naming the finish reason when the model returns no text", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(Summarize.summarize(repo));
+      expect(error).toMatchObject({
+        _tag: "AiOutputInvalid",
+        detail: "the model returned no output, finish reason length",
+      });
+    }).pipe(Effect.provide(textLayer(async () => noTextResult))),
   );
 
   it.effect("fails with AiOutputInvalid when the JSON does not match the schema", () =>
@@ -367,6 +383,35 @@ describe("gateway batch", () => {
     }).pipe(Effect.provide(fake.layer));
   });
 
+  it.effect("puts token counts on each direct call's span, not on the batch span, and counts every item", () => {
+    const { spans, tracer } = collectSpans();
+    const fake = fakeBatch({
+      items: [
+        succeeded("0", JSON.stringify(validSummary)),
+        succeeded("1", JSON.stringify(validSummary)),
+        { type: "text", id: "2", status: "failed", error: { message: "upstream", code: "server_error" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const before = yield* Port.tokensSpent("test/model");
+      const results = yield* Summarize.summarizeBatch(batchRepos);
+      const after = yield* Port.tokensSpent("test/model");
+      expect(results.map(Result.isSuccess)).toEqual([true, true, true]);
+      const attributes = (name: string) =>
+        spans.filter((span) => span.name === name).map((span) => Object.fromEntries(span.attributes));
+      expect(attributes("TextGeneration.generateBatch")).toEqual([
+        expect.not.objectContaining({ "gen_ai.usage.input_tokens": expect.anything() }),
+      ]);
+      expect(attributes("TextGeneration.generate")).toEqual([
+        expect.objectContaining({ "gen_ai.usage.input_tokens": 100, "gen_ai.usage.output_tokens": 20 }),
+      ]);
+      expect({ input: after.input - before.input, output: after.output - before.output }).toEqual({
+        input: 300,
+        output: 60,
+      });
+    }).pipe(Effect.provide(fake.layer), Effect.withTracer(tracer));
+  });
+
   it.effect("answers an item the batch left out with a direct call, in prompt order", () => {
     const other = { ...validSummary, summary: "A command-line fuzzy finder." };
     const fake = fakeBatch({ items: [succeeded("1", JSON.stringify(other))] });
@@ -591,8 +636,65 @@ describe("gateway privacy", () => {
         expect(answer !== undefined && Result.isFailure(answer) && answer.failure._tag).toBe("AiOutputInvalid");
         expect((yield* Effect.flip(Summarize.summarize({ ...repo, readme: keyCanary })))._tag).toBe("AiOutputInvalid");
         const failed = spans.filter((span) => span.status._tag === "Ended" && Exit.isFailure(span.status.exit));
-        expect(failed.map((span) => span.name)).toEqual(["TextGeneration.generate"]);
+        expect(failed.map((span) => span.name)).toEqual(["TextGeneration.generate", "TextGeneration.generate"]);
       }),
     ),
+  );
+});
+
+describe("gateway without the batch API", () => {
+  it.effect("answers a batch of prompts with one direct call each and never starts a batch job", () => {
+    const { spans, tracer } = collectSpans();
+    let calls = 0;
+    const layer = textLayer(
+      () => {
+        calls++;
+        return Promise.resolve(textResult(JSON.stringify(validSummary)));
+      },
+      Models.summaryModel,
+      { batch: false },
+    );
+    return Effect.gen(function* () {
+      const results = yield* Summarize.summarizeBatch([repo, { ...repo, fullName: "other/repo" }, repo]);
+      expect(results.map(Result.isSuccess)).toEqual([true, true, true]);
+      expect(calls).toBe(3);
+      const generated = spans.filter((span) => span.name === "TextGeneration.generate");
+      expect(generated.map((span) => Object.fromEntries(span.attributes))).toEqual(
+        Array.from({ length: 3 }, () =>
+          expect.objectContaining({ "gen_ai.usage.input_tokens": 100, "gen_ai.usage.output_tokens": 20 }),
+        ),
+      );
+    }).pipe(Effect.provide(layer), Effect.withTracer(tracer));
+  });
+
+  it.effect("fails only the prompt whose call returns no output", () => {
+    let calls = 0;
+    const layer = textLayer(
+      () => Promise.resolve(++calls === 2 ? noTextResult : textResult(JSON.stringify(validSummary))),
+      Models.summaryModel,
+      { batch: false },
+    );
+    return Effect.gen(function* () {
+      const results = yield* Summarize.summarizeBatch([repo, { ...repo, fullName: "other/repo" }, repo]);
+      expect(results.map((result) => (Result.isSuccess(result) ? "summary" : result.failure._tag))).toEqual([
+        "summary",
+        "AiOutputInvalid",
+        "summary",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("gateway with no key", () => {
+  it.effect("fails every summary and embedding with AiKeyMissing and sends nothing", () =>
+    Effect.gen(function* () {
+      const embeddings = yield* Embeddings.Embeddings;
+      const summary = yield* Effect.flip(Summarize.summarize(repo));
+      const embedded = yield* Effect.flip(embeddings.embed(["a repo"]));
+      expect([summary, embedded]).toMatchObject([
+        { _tag: "AiKeyMissing", operation: "generate", model: Models.summaryModel },
+        { _tag: "AiKeyMissing", operation: "embed", model: Models.embeddingModel.id },
+      ]);
+    }).pipe(Effect.provide(Gateway.layerKeyMissing)),
   );
 });

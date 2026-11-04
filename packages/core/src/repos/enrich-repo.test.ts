@@ -26,6 +26,7 @@ import * as EnrichRepo from "./enrich-repo.ts";
 
 const embeddingModel = Schema.decodeSync(EmbeddingModelId)("fake/hash-embedding");
 const oid = (digit: string) => Schema.decodeSync(ObjectId)(digit.repeat(40));
+const wideOid = (n: number) => Schema.decodeSync(ObjectId)(String(n).padStart(40, "b"));
 const repo = (n: number) => Schema.decodeSync(Repo)({ id: n, nodeId: `R_${n}`, owner: "owner", name: `repo-${n}` });
 const id = (n: number) => repo(n).id;
 
@@ -71,7 +72,7 @@ const github = GitHubFake.layer((sent) => {
   const remote = [...remotes.values()].find((entry) => entry.readme?.oid === blob);
   return remote?.readme === undefined || remote.readme.text === missingBlob
     ? { status: 404 }
-    : { body: remote.readme.text, headers: { etag: `"${blob}"` } };
+    : { body: remote.readme.text };
 });
 
 const readmeRequests = () => github.sent.filter((sent) => sent.url.pathname.includes("/git/blobs/")).length;
@@ -542,6 +543,42 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       yield* TestClock.adjust("10 seconds");
       expect((yield* Fiber.join(fiber)).map((outcome) => outcome._tag)).toEqual(["Summarized"]);
       expect(attempts).toBe(2);
+    }),
+  );
+  it.effect("reads up to four READMEs from the blob store at once while it plans", () =>
+    Effect.gen(function* () {
+      const numbers = [60, 61, 62, 63, 64, 65, 66, 67];
+      for (const n of numbers) {
+        remotes.set(n, {
+          description: `Planned ${n}`,
+          readme: { oid: wideOid(n), text: `# Planned ${n}` },
+        });
+      }
+      const fourWaiting = yield* Deferred.make<void>();
+      const reads = { inFlight: 0, peak: 0 };
+      const slowBlobs = Layer.effect(
+        BlobStore.BlobStore,
+        Effect.map(BlobStore.BlobStore, (blobs) =>
+          BlobStore.BlobStore.of({
+            get: (key) =>
+              Effect.gen(function* () {
+                reads.inFlight++;
+                reads.peak = Math.max(reads.peak, reads.inFlight);
+                if (reads.inFlight === 4) yield* Deferred.succeed(fourWaiting, undefined);
+                yield* Deferred.await(fourWaiting);
+                reads.inFlight--;
+                return yield* blobs.get(key);
+              }),
+            put: blobs.put,
+          }),
+        ),
+      ).pipe(Layer.provide(BlobStore.layerMemory));
+      const ids = yield* store(numbers);
+      const outcomes = yield* Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) => enricher.enrichRepos(ids)).pipe(
+        Effect.provide(Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(slowBlobs))),
+      );
+      expect(outcomes.map((outcome) => outcome._tag)).toEqual(numbers.map(() => "Summarized"));
+      expect(reads.peak).toBe(4);
     }),
   );
 });

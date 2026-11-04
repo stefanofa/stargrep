@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { withoutResults } from "@stargrep/telemetry/tracer";
+import * as Otlp from "@stargrep/telemetry/otlp";
 import { effect } from "@stargrep/testing";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -12,9 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as OtlpExporter from "effect/observability/OtlpExporter";
 import * as OtlpSerialization from "effect/observability/OtlpSerialization";
-import * as OtlpTracer from "effect/observability/OtlpTracer";
 import * as Stream from "effect/Stream";
-import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 import * as Fake from "./github.fixture.ts";
 import * as GitHub from "./github.ts";
@@ -23,6 +21,8 @@ import type { BudgetShare, Login, ObjectId, RepoName, RepoNodeId } from "./schem
 const login = "octocat" as Login;
 
 const listedAt = "2026-01-01T00:00:00Z";
+
+const marker = "BODY_MARKER_SECRET_PAYLOAD";
 
 const starItem = (n: number) => Fake.starItem({ repo: n, starredAt: listedAt });
 
@@ -134,7 +134,6 @@ describe("stars", () => {
     }).pipe(Effect.provide(fake.layer));
   });
 
-  const marker = "BODY_MARKER_SECRET_PAYLOAD";
   const leaks: ReadonlyArray<readonly [string, Fake.Handler, string]> = [
     ["an unexpected status", () => ({ status: 422, body: { message: marker } }), "GitHubRequestFailed"],
     [
@@ -294,6 +293,52 @@ describe("rate limits", () => {
     }).pipe(Effect.provide(fake.layer));
   });
 
+  const secondaryLimit = (detail: string) => ({
+    status: 403,
+    body: { message: `You have exceeded a secondary rate limit. ${detail}` },
+    headers: Fake.rateLimitHeaders(4900, 3600),
+  });
+
+  effect("waits a minute on a secondary rate limit with quota left and no Retry-After", () => {
+    const fake = Fake.layer((sent, index) =>
+      index === 0 ? secondaryLimit("Please wait a few minutes.") : starPages(1)(sent, index),
+    );
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(collectStars);
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Fiber.join(fiber)).toHaveLength(1);
+      expect(fake.sent.map((sent) => sent.startedAt)).toEqual([0, 60_000]);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("fails a secondary rate limit that persists with RateLimited and keeps its message out", () => {
+    const fake = Fake.layer(() => secondaryLimit(marker));
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(Effect.exit(collectStars));
+      yield* TestClock.adjust("3 minutes");
+      const exit = yield* Fiber.join(fiber);
+      expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toMatchObject({
+        _tag: "RateLimited",
+        retryAfterMillis: 60_000,
+      });
+      expect(fake.sent).toHaveLength(4);
+      expect(reachableStrings(exit).filter((value) => value.includes(marker))).toEqual([]);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("fails a 403 that is not a rate limit with its status, without waiting", () => {
+    const fake = Fake.layer(() => ({
+      status: 403,
+      body: { message: "Resource not accessible by personal access token" },
+      headers: Fake.rateLimitHeaders(4900, 3600),
+    }));
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(collectStars);
+      expect(error).toMatchObject({ _tag: "GitHubRequestFailed", reason: "status", status: 403 });
+      expect(fake.sent).toHaveLength(1);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
   effect("gives up after three retries", () => {
     const fake = Fake.layer(() => ({ status: 502 }));
     return Effect.gen(function* () {
@@ -413,31 +458,20 @@ describe("repoFacts", () => {
 });
 
 describe("readme", () => {
-  effect("serves the second fetch from the ETag", () => {
+  effect("fetches the blob by object id as raw text, with no conditional header", () => {
     const oid = "a".repeat(40) as ObjectId;
-    const fake = Fake.layer((sent) =>
-      sent.headers["if-none-match"] === `"blob"`
-        ? { status: 304, headers: Fake.rateLimitHeaders(4000) }
-        : { body: "# Hello", headers: { ...Fake.rateLimitHeaders(3999), etag: `"blob"` } },
-    );
+    const fake = Fake.layer(() => ({ body: "# Hello", headers: { ...Fake.rateLimitHeaders(3999), etag: `"blob"` } }));
     return Effect.gen(function* () {
       const github = yield* GitHub.GitHub;
-      const input = { owner: "owner" as Login, name: "repo" as RepoName, oid };
-      expect(yield* github.readme(input)).toBe("# Hello");
-      expect(yield* github.readme(input)).toBe("# Hello");
-      expect(fake.sent.map((sent) => sent.url.pathname)).toEqual([
-        `/repos/owner/repo/git/blobs/${oid}`,
-        `/repos/owner/repo/git/blobs/${oid}`,
-      ]);
+      expect(yield* github.readme({ owner: "owner" as Login, name: "repo" as RepoName, oid })).toBe("# Hello");
+      expect(fake.sent.map((sent) => sent.url.pathname)).toEqual([`/repos/owner/repo/git/blobs/${oid}`]);
       expect(fake.sent[0]?.headers.accept).toBe("application/vnd.github.raw+json");
-      expect(fake.sent[1]?.headers["if-none-match"]).toBe(`"blob"`);
+      expect(fake.sent[0]?.headers["if-none-match"]).toBeUndefined();
     }).pipe(Effect.provide(fake.layer));
   });
 });
 
 describe("telemetry", () => {
-  const marker = "BODY_MARKER_SECRET_PAYLOAD";
-
   effect("logs only bounded GraphQL error types", () => {
     const logs: Array<unknown> = [];
     const fake = Fake.layer(() => ({
@@ -469,17 +503,11 @@ describe("telemetry", () => {
         return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
       }),
     );
-    const otlp = OtlpTracer.make({
+    const otlp = Otlp.layer({
       url: "https://collector.invalid/v1/traces",
       resource: { serviceName: "github-test" },
       exportInterval: "1 hour",
-    }).pipe(
-      Effect.map(withoutResults),
-      Layer.effect(Tracer.Tracer),
-      Layer.provideMerge(OtlpExporter.layerFlusher),
-      Layer.provide(OtlpSerialization.layerJson),
-      Layer.provide(Layer.succeed(HttpClient.HttpClient, collector)),
-    );
+    }).pipe(Layer.provide(OtlpSerialization.layerJson), Layer.provide(Layer.succeed(HttpClient.HttpClient, collector)));
     const fake = Fake.layer(() => ({ transportError: `${Fake.token} ${marker}` }));
     return Effect.gen(function* () {
       const fiber = yield* Effect.forkChild(Effect.flip(collectStars));

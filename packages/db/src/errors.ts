@@ -30,7 +30,7 @@ export class DbQueryFailed extends Schema.TaggedError<DbQueryFailed, { readonly 
   "DbQueryFailed",
   {
     operation: Operation,
-    reason: Schema.Literals(["transport", "timeout", "constraint", "query"]),
+    reason: Schema.Literals(["transport", "timeout", "conflict", "constraint", "query"]),
     sqlState: Schema.NullOr(Schema.String),
   },
 ) {

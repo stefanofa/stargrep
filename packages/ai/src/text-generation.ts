@@ -4,7 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import { type AiError, AiOutputInvalid, AiTimeout } from "./errors.ts";
-import { countTokens, type Retry, unavailableRetry } from "./port.ts";
+import { annotateTokens, countTokens, type Retry, unavailableRetry } from "./port.ts";
 import type { AiSchema } from "./schema-bridge.ts";
 
 export interface GenerateRequest<A> {
@@ -79,6 +79,7 @@ export const make = (options: {
     run({ jsonSchema: request.schema.jsonSchema, system: request.system, prompt: request.prompt }).pipe(
       Effect.timeoutOrElse({ duration: timeout, orElse: () => Effect.fail(timedOut(timeout)) }),
       Effect.retry(retry),
+      Effect.tap(({ usage }) => annotateTokens({ input: usage.inputTokens, output: usage.outputTokens })),
       Effect.flatMap(accept(request.schema)),
     );
 
@@ -90,7 +91,7 @@ export const make = (options: {
     prompt: string,
     item: Result.Result<RunResult, AiError> | undefined,
   ) => {
-    const direct = generateOne({ schema: request.schema, system: request.system, prompt });
+    const direct = generate({ schema: request.schema, system: request.system, prompt });
     const answered =
       item === undefined || Result.isFailure(item)
         ? direct

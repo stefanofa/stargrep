@@ -1,23 +1,51 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Tracing from "@stargrep/telemetry/cloudflare";
+import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Ref from "effect/Ref";
+import { budgetShareName, stageBudgetShare } from "./budget-share.ts";
 import { Database, DatabaseMigrations } from "./database.ts";
+import { tokenGate } from "./github-gate.ts";
 import { healthResponse } from "./health.ts";
+import * as Layers from "./layers.ts";
+import * as Queues from "./queues.ts";
+import { requireStageSecrets } from "./secrets.ts";
+
+const Readmes = Cloudflare.R2.Bucket("Readmes");
 
 export default class Worker extends Cloudflare.Worker<Worker>()(
   "Worker",
   // The Worker binds Hyperdrive by an ID that stays stable across updates, so Alchemy would deploy it
   // while the branch still migrates. Reading the applied migrations makes the deploy wait for them.
   // The placement region matches the Neon projects in infra/database.run.ts, so queries stay in one region.
-  Effect.map(DatabaseMigrations, (migrations) => ({
-    main: import.meta.url,
-    env: { DATABASE_MIGRATIONS: migrations },
-    placement: { region: "aws:us-east-1" },
-  })),
+  Effect.gen(function* () {
+    const { stage } = yield* Alchemy.Stack;
+    yield* requireStageSecrets(stage);
+    return {
+      main: import.meta.url,
+      env: {
+        DATABASE_MIGRATIONS: yield* DatabaseMigrations,
+        [budgetShareName]: String(yield* stageBudgetShare(stage)),
+      },
+      placement: { region: "aws:us-east-1" },
+      observability: { enabled: true, logs: { enabled: true, invocationLogs: true }, traces: { enabled: true } },
+    };
+  }),
   Effect.gen(function* () {
     const database = yield* Cloudflare.Hyperdrive.Connect(Database);
+    const runtime = Layers.layerRuntime({
+      database: database.connectionString,
+      readmes: yield* Cloudflare.R2.ReadWriteBucket(Readmes),
+      enrichQueue: yield* Cloudflare.Queues.WriteQueue(yield* Queues.EnrichRepos),
+      tokenGate: yield* tokenGate,
+      ai: yield* Effect.orDie(Layers.aiModels),
+      adopted: yield* Ref.make(false),
+    });
+    yield* Queues.consumeAll(runtime);
     return {
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest;
@@ -27,5 +55,15 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
         return HttpServerResponse.empty({ status: 404 });
       }).pipe(Effect.orDie),
     };
-  }).pipe(Effect.provide(Cloudflare.Hyperdrive.ConnectBinding)),
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Cloudflare.Hyperdrive.ConnectBinding,
+        Cloudflare.R2.ReadWriteBucketBinding,
+        Cloudflare.Queues.WriteQueueBinding,
+        Cloudflare.Queues.EventSourceLive,
+        Tracing.layer,
+      ),
+    ),
+  ),
 ) {}

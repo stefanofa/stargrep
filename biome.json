@@ -6,7 +6,13 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**/*.{ts,tsx,js,jsx,mjs,cjs,json,jsonc,css}", "!repos", "!packages/db/migrations", "!evals/fixtures"]
+    "includes": [
+      "**/*.{ts,tsx,js,jsx,mjs,cjs,json,jsonc,css}",
+      "!repos",
+      "!packages/db/migrations",
+      "!evals/fixtures",
+      "!packages/config/fixtures"
+    ]
   },
   "formatter": {
     "indentStyle": "space",
@@ -59,6 +65,10 @@
     {
       "includes": ["apps/**", "!apps/**/*.test.ts", "!apps/**/*.test.tsx", "!apps/**/*.workerd-test.ts"],
       "plugins": ["./packages/config/no-local-ai-import.grit"]
+    },
+    {
+      "includes": ["**", "!packages/telemetry/**"],
+      "plugins": ["./packages/config/no-raw-tracer-import.grit", "./packages/config/no-raw-tracer-call.grit"]
     }
   ]
 }

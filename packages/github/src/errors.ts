@@ -1,7 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
-const Operation = Schema.Literals(["account", "list-stars", "star-count", "repo-facts", "readme"]);
+export const Operation = Schema.Literals(["account", "list-stars", "star-count", "repo-facts", "readme"]);
 export type Operation = typeof Operation.Type;
 
 export class NotFound extends Schema.TaggedError<NotFound, { readonly brand: unique symbol }>()("NotFound", {
@@ -46,6 +46,17 @@ export class TokenBudgetExhausted extends Schema.TaggedError<TokenBudgetExhauste
   }
 }
 
+export class GitHubTokenMissing extends Schema.TaggedError<GitHubTokenMissing, { readonly brand: unique symbol }>()(
+  "GitHubTokenMissing",
+  {
+    operation: Operation,
+  },
+) {
+  override get message(): string {
+    return `No GitHub token is configured, so '${this.operation}' cannot run`;
+  }
+}
+
 export class GitHubRequestFailed extends Schema.TaggedError<GitHubRequestFailed, { readonly brand: unique symbol }>()(
   "GitHubRequestFailed",
   {
@@ -80,6 +91,7 @@ export const GitHubError = Schema.Union([
   Unauthorized,
   RateLimited,
   TokenBudgetExhausted,
+  GitHubTokenMissing,
   GitHubRequestFailed,
   GitHubResponseInvalid,
 ]);

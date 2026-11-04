@@ -1,0 +1,10 @@
+language js
+
+or {
+  JsModuleSource() as $source where { not $source <: within r"(?:import|export)\s+type\s[\s\S]*" },
+  `import($source)`,
+  `require($source)`
+} where {
+  $source <: r"[\"'`](?:effect/observability(?:/Otlp|/OtlpTracer)?|@alchemy\.run/cloudflare/Workers/CloudflareTracer|alchemy/Telemetry)[\"'`]",
+  register_diagnostic(span=$source, message="Build and install tracers with @stargrep/telemetry. Its layers wrap each tracer in withoutResults, so no span keeps a success value.")
+}

@@ -8,7 +8,6 @@ import * as Command from "effect/cli/Command";
 import * as Flag from "effect/cli/Flag";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as EnrichQueue from "../src/repos/enrich-queue.ts";
 import * as StarSync from "../src/stars/star-sync.ts";
 import * as Runtime from "./runtime.ts";
@@ -65,7 +64,7 @@ const sync = Command.make(
     Effect.provide(
       StarSync.layer.pipe(
         Layer.provideMerge(Runtime.layerDb(embeddingModel.id)),
-        Layer.provideMerge(Runtime.layerGitHub(KeyValueStore.layerMemory)),
+        Layer.provideMerge(Runtime.layerGitHub),
         Layer.provide(queue.layer),
       ),
     ),

@@ -29,6 +29,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
+      - name: Stop early when a pipeline secret is missing
+        run: |
+          if [ -z "$STARGREP_GITHUB_TOKEN" ] || [ -z "$AI_GATEWAY_API_KEY" ]; then
+            echo "Prod needs STARGREP_GITHUB_TOKEN and AI_GATEWAY_API_KEY. The prod deploy would fail on them later."
+            exit 1
+          fi
+        env:
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+          STARGREP_GITHUB_TOKEN: ${{ secrets.STARGREP_GITHUB_TOKEN }}
       - run: |
           head=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
           if [ "$head" != "$GITHUB_SHA" ]; then echo "main moved to $head, so the run for that commit deploys prod."; exit 0; fi
@@ -37,3 +46,5 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+          STARGREP_GITHUB_TOKEN: ${{ secrets.STARGREP_GITHUB_TOKEN }}

@@ -652,7 +652,7 @@ Lint rule `t3code/prefer-effect-fn` reports functions that return `Effect.gen`. 
 
 This rule is Stargrep's own. Every tracer is installed through `withoutResults` from `@stargrep/telemetry/tracer`, which ends a successful span with no value and keeps a failed span's cause. Effect's OTLP exporter already sends only a status code for a successful span. The exposure is in process: a custom tracer, a collector that holds spans, or any span object that is still referenced (such as the parent of a child that outlives it) keeps the span's exit, and a successful exit holds whatever the function returned, such as README text, a prompt, or model output.
 
-**For Stargrep.** Adopt. `collectSpans` from `@stargrep/telemetry/collector` installs its tracer this way, and tests in `packages/ai` and `packages/core` use it to check that no span holds a canary from a key, a README, or model output.
+**For Stargrep.** Adopt. `@stargrep/telemetry` builds every tracer this way. `collectSpans` from `@stargrep/telemetry/collector` serves tests and scripts, `layer` from `@stargrep/telemetry/otlp` exports over OTLP, and `layer` from `@stargrep/telemetry/cloudflare` sends Worker spans to Workers Observability. Tests in `packages/ai` and `packages/core` use `collectSpans` to check that no span holds a canary from a key, a README, or model output. Two Biome rules, `packages/config/no-raw-tracer-import.grit` and `no-raw-tracer-call.grit`, stop code outside `packages/telemetry` from importing `effect/observability`, its `Otlp` or `OtlpTracer` modules, Alchemy's `CloudflareTracer`, or `alchemy/Telemetry`, from importing `Telemetry` from `@alchemy.run/cloudflare`, and from reading `.Telemetry` or `.layerOtlp` off any object, by property access or by destructuring. `bun run check` runs the rules against `packages/config/fixtures/no-raw-tracer` and fails when a fixture's diagnostic count changes.
 
 ### Rule: transports instrument in middleware, and handlers add only per-call attributes
 
@@ -688,7 +688,7 @@ export const rpcRequestDuration = Metric.timer("t3_rpc_request_duration", {
 });
 ```
 
-**For Stargrep.** Adopt, with a `stargrep_` prefix. Useful early ones are GitHub requests by source and status, `304` hits, queue step outcomes, and model tokens.
+**For Stargrep.** Adopt, with a `stargrep_` prefix. Useful early ones are GitHub requests by source and status, queue step outcomes, and model tokens.
 
 ### Rule: logs are structured, with bounded fields
 

@@ -5,6 +5,7 @@ import {
   generateText,
   jsonSchema,
   NoObjectGeneratedError,
+  NoOutputGeneratedError,
   Output,
   type EmbeddingModel as SdkEmbeddingModel,
   type LanguageModel as SdkLanguageModel,
@@ -20,6 +21,7 @@ import * as Schema from "effect/Schema";
 import * as Embeddings from "./embeddings.ts";
 import {
   type AiError,
+  AiKeyMissing,
   AiModelNotFound,
   AiOutputInvalid,
   AiRequestFailed,
@@ -43,6 +45,7 @@ export class AiProvider extends Context.Service<
 >()("@stargrep/ai/gateway/AiProvider") {}
 
 const textTimeout = Duration.seconds(60);
+const embedTimeout = Duration.seconds(30);
 const batchTimeout = Duration.hours(24);
 const batchPollInterval = Duration.seconds(10);
 
@@ -181,16 +184,18 @@ export interface TextOptions {
   readonly reasoning: "none" | "provider-default";
   readonly timeout: Duration.Duration;
   readonly retry: Retry;
+  readonly batch: boolean;
 }
 
 const defaultTextOptions: TextOptions = {
   reasoning: "provider-default",
   timeout: textTimeout,
   retry: unavailableRetry,
+  batch: true,
 };
 
 export const layerTextGeneration = (model: string, options: Partial<TextOptions> = {}) => {
-  const { reasoning, timeout, retry } = { ...defaultTextOptions, ...options };
+  const { reasoning, timeout, retry, batch } = { ...defaultTextOptions, ...options };
   return Layer.effect(
     TextGeneration.TextGeneration,
     Effect.andThen(
@@ -215,12 +220,25 @@ export const layerTextGeneration = (model: string, options: Partial<TextOptions>
                 }),
               catch: fromSdkError("generate", model),
             }).pipe(
-              Effect.map((result) => ({
-                output: result.output,
-                usage: { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens },
-              })),
+              Effect.flatMap((result) =>
+                // The SDK's output getter throws when the last step stopped without text, such as on a length limit.
+                Effect.try({
+                  try: () => ({
+                    output: result.output,
+                    usage: { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens },
+                  }),
+                  catch: (cause) =>
+                    NoOutputGeneratedError.isInstance(cause)
+                      ? new AiOutputInvalid({
+                          operation: "generate",
+                          model,
+                          detail: `the model returned no output, finish reason ${result.finishReason}`,
+                        })
+                      : fromSdkError("generate", model)(cause),
+                }),
+              ),
             ),
-          batch: { timeout: batchTimeout, run: runBatch(provider, model) },
+          ...(batch ? { batch: { timeout: batchTimeout, run: runBatch(provider, model) } } : {}),
         }),
       ),
     ),
@@ -236,7 +254,7 @@ export const layerEmbeddings = (model: Models.EmbeddingModel) =>
         Embeddings.make({
           provider: "gateway",
           model,
-          timeout: Duration.seconds(30),
+          timeout: embedTimeout,
           run: (values) =>
             Effect.tryPromise({
               try: (abortSignal) =>
@@ -254,6 +272,37 @@ export const layerEmbeddings = (model: Models.EmbeddingModel) =>
     ),
   );
 
+export const keyMissingText = (model: string) =>
+  Layer.succeed(
+    TextGeneration.TextGeneration,
+    TextGeneration.make({
+      provider: "gateway",
+      model,
+      timeout: textTimeout,
+      run: Effect.fn("Gateway.keyMissing")(function* () {
+        return yield* new AiKeyMissing({ operation: "generate", model });
+      }),
+    }),
+  );
+
+export const keyMissingEmbeddings = (model: Models.EmbeddingModel) =>
+  Layer.succeed(
+    Embeddings.Embeddings,
+    Embeddings.make({
+      provider: "gateway",
+      model,
+      timeout: embedTimeout,
+      run: Effect.fn("Gateway.keyMissing")(function* () {
+        return yield* new AiKeyMissing({ operation: "embed", model: model.id });
+      }),
+    }),
+  );
+
+export const layerKeyMissing = Layer.merge(
+  keyMissingText(Models.summaryModel),
+  keyMissingEmbeddings(Models.embeddingModel),
+);
+
 export const layerProvider = (config: { readonly apiKey: Redacted.Redacted<string> }) =>
   Layer.sync(AiProvider, () => AiProvider.of(createGateway({ apiKey: Redacted.value(config.apiKey) })));
 
@@ -267,6 +316,9 @@ export const layerPlannerTextGeneration = layerTextGeneration(Models.plannerMode
   retry: noRetry,
 }).pipe(Layer.provide(layerProviderConfig));
 
-export const layer = Layer.merge(layerTextGeneration(Models.summaryModel), layerEmbeddings(Models.embeddingModel)).pipe(
-  Layer.provide(layerProviderConfig),
-);
+export const layerModels = <E, R>(provider: Layer.Layer<AiProvider, E, R>, options: Partial<TextOptions> = {}) =>
+  Layer.merge(layerTextGeneration(Models.summaryModel, options), layerEmbeddings(Models.embeddingModel)).pipe(
+    Layer.provide(provider),
+  );
+
+export const layer = layerModels(layerProviderConfig);

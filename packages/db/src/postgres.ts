@@ -35,12 +35,14 @@ const socketErrors = new Set([
   "ETIMEDOUT",
 ]);
 
-const reasonOf = (sqlState: string | null) =>
-  sqlState === null || /^(08|28|53|57)/.test(sqlState)
-    ? "transport"
-    : sqlState.startsWith("23")
-      ? "constraint"
-      : "query";
+// Postgres aborts one side of a deadlock or a serialization failure so the other can commit, and a retry can pass.
+const conflictStates = new Set(["40001", "40P01"]);
+
+const reasonOf = (sqlState: string | null) => {
+  if (sqlState === null || /^(08|28|53|57)/.test(sqlState)) return "transport";
+  if (conflictStates.has(sqlState)) return "conflict";
+  return sqlState.startsWith("23") ? "constraint" : "query";
+};
 
 const classify = (driver: Driver, operation: Operation, error: unknown): Option.Option<DbQueryFailed> => {
   if (driver.isDatabaseError(error)) {

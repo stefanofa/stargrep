@@ -163,6 +163,20 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
     }),
   );
 
+  test.effect("enqueues new repos only after it has read the last page", () =>
+    Effect.gen(function* () {
+      const sentBeforePage: Array<number> = [];
+      yield* reset((page) => {
+        sentBeforePage.push(sent.length);
+        return undefined;
+      });
+      const id = yield* account(1, "ada", newestFirst(250));
+      yield* sync(id);
+      expect(sentBeforePage).toEqual([0, 0, 0]);
+      expect(new Set(sentRepos()).size).toBe(250);
+    }),
+  );
+
   test.effect("makes one request and changes nothing when it runs twice", () =>
     Effect.gen(function* () {
       yield* reset();

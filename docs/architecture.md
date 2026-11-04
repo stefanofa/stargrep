@@ -74,7 +74,7 @@ packages/
   auth/             Better Auth config
   ui/               design tokens and components
   testing/          bun test helpers that stand in for it.effect and it.layer
-  telemetry/        the tracer wrapper that drops span results, and a span collector for tests and scripts
+  telemetry/        the tracer wrapper that drops span results, the OTLP and Workers tracers built with it, and a span collector for tests and scripts
   config/           shared tsconfig and Biome plugins
 infra/              Alchemy stacks, providers, state store, and which Workers each stage deploys
 repos/              read-only source of effect, orpc, and alchemy at the pinned versions, for reference
@@ -107,7 +107,7 @@ GitHub limits each user token to 5,000 requests per hour. That budget is shared 
 
 1. **Event archives.** Public star history with account, repo, and time, loaded without API calls. "Event sources" below explains which archive covers which period.
 2. **Incremental sync.** A sync reads the star list newest first and stops at the first star it already has, so an unchanged account costs one request. ETags do not help here. Each star list page embeds live repo stats such as `pushed_at`, so its ETag changes when any of its 100 repos changes, even when no star changed.
-3. **README object IDs.** GraphQL returns the README's object ID with the repo. Stargrep fetches and summarizes a README again only when that ID changes. A README fetch by object ID sends its stored ETag, and a `304` response does not count against the rate limit.
+3. **README object IDs.** GraphQL returns the README's object ID with the repo. Stargrep fetches and summarizes a README again only when that ID changes. An object ID names fixed content, so R2 keeps each README under its ID, and a README already in R2 costs no request.
 4. **The user's own token.** A signed-in user's sync uses their token, capped at a share of their remaining budget read from `x-ratelimit-remaining`.
 5. **The app's credentials.** Signed-out lookups of accounts that GH Archive does not cover yet.
 
@@ -133,13 +133,23 @@ Since October 2025 push events carry no commit list or count, so commit metrics 
 
 Each step is a queue message type. Each consumer is idempotent.
 
-1. `sync-stars` fetches an account's star list newest first. It stops at the first star older than a star the last completed sync saw unchanged, so it reads every star that shares that star's `starred_at`. A full sync runs on claim and weekly after that. Stars that are gone mark `unstarred_at`. The list pages by offset, so a full read counts the stars through GraphQL before and after. When the counts differ, the read shifted, and the sync writes what it read but skips the unstars and does not record the run. A star added and another removed at different page boundaries during one read leave the counts equal, so that read can hide one star until the next full sync. An org cannot star repos, so its count is zero without a GraphQL request. A finished sync only moves the account's sync time forward, so an older run that finishes last cannot pull the stop line back.
+1. `sync-stars` fetches an account's star list newest first. It stops at the first star older than a star the last completed sync saw unchanged, so it reads every star that shares that star's `starred_at`. A full sync runs on claim and weekly after that. Stars that are gone mark `unstarred_at`. The list pages by offset, so a full read counts the stars through GraphQL before and after. When the counts differ, the read shifted, and the sync writes what it read but skips the unstars and does not record the run. A star added and another removed at different page boundaries during one read leave the counts equal, so that read can hide one star until the next full sync. An org cannot star repos, so its count is zero without a GraphQL request. A finished sync only moves the account's sync time forward, so an older run that finishes last cannot pull the stop line back. It enqueues the repos that need enrichment after it reads the last page, because enrichment shares the token's one request at a time and would otherwise hold it between the sync's pages.
 2. `enrich-repo` runs for repos that are new or whose README object ID changed. It stores the README in R2, writes the summary, keywords, and kind, and computes the embedding. It also fetches the facts events do not carry, such as license and homepage.
 3. `import-events` is an hourly cron. It streams the hour's archive file, keeps star, fork, pull request, issue, and release events, writes them to R2 as Parquet, and loads new stars for served accounts into `stars`. A streaming parse of a full OpenDigger hour measured under 15 MB of heap and about 12 seconds of CPU, inside a Worker's 128 MB and the 15-minute limit for hourly crons. Writing Parquet needs a JavaScript Parquet writer in the Worker or a hand-off to a container.
 4. `snapshot-repos` is a daily cron. It fetches facts events no longer carry, such as the commit history count, for tracked repos through batched GraphQL queries.
 5. `rollup-metrics` is a daily job. It turns events and snapshots into weekly series per repo and writes current values and changes into `repo_metrics`. DuckDB does not run in Workers, so the rollup runs in a container or a scheduled CI job.
 
-Bulk enrichment, such as a backfill of popular repos, uses the Gateway batch API for summaries and `embedMany` for embeddings. The batch path serves the CLI and backfills only. The queue consumers enrich one repo per message through the single path, because a batch job can take minutes.
+Bulk enrichment, such as a backfill of popular repos, uses the Gateway batch API for summaries and `embedMany` for embeddings. The batch path serves the CLI and backfills only, because a batch job can take minutes to hours.
+
+`apps/worker` runs steps 1 and 2 as queue consumers. `src/queues.ts` declares each queue, its dead-letter queue, and its consumer settings.
+
+- A consumer decodes each message, calls one service method, and settles the message. Success acks it. `afterFailure` in `src/consumers/settle.ts` maps every failure tag to one settlement, and a new tag fails typecheck until it has a row.
+- A failure that can pass on a second try, such as a lost database connection, a deadlock, a GitHub 5xx, a GitHub 403 that names no rate limit, or a model timeout, retries up to five times a minute apart, and then Cloudflare moves the message to the dead-letter queue. A failure that cannot, such as a missing token or key, an unknown account, or a body that does not decode, goes to the dead-letter queue on its first attempt. A failure while the runtime layers build, such as a lost database connection or an embedding model conflict, fails the whole batch before any message is settled, and Alchemy retries every message in it.
+- A spent token budget or a GitHub rate limit is not a failure. GitHub names the time the limit lifts, or asks for a minute when a secondary rate limit names no time, so the consumer sends the message again with that delay and acks the original. A long pause then spends none of the five retries.
+- The `enrich-repo` consumer takes up to 100 messages per batch and runs one batch at a time. The Worker's text-generation layer has no batch API, so `enrichRepos` answers each repo with its own model call, and it reads each repo id once. A repo several accounts starred arrives once per account, and a later batch finds it enriched.
+- Each dead-letter queue has a consumer that logs the message ID, its attempts, and the IDs in its body, or only the body's type when the body does not decode.
+
+The `GitHubGate` Durable Object holds the Worker's GitHub token. Every GitHub request from every isolate goes through it, so it sends them one at a time. It keeps the rate-limit windows GitHub reported in its storage and takes its share of each window from `GITHUB_BUDGET_SHARE`, so a restart keeps the windows and a new share applies at once. The share is 0.5 unless a preview stage sets a number above 0 and at most 1, and a `prod` deploy fails with any other value. Requests and replies cross the RPC boundary as plain data, and the token never leaves the object. A pull request stage may deploy without a token. It then binds no `GitHubGate`, and every GitHub call fails with `GitHubTokenMissing`.
 
 ## Search
 
@@ -179,7 +189,7 @@ An adapter only sends the request and returns the raw output and token counts. T
 
 `TextGeneration.generateBatch` answers many prompts with one schema and returns one result per prompt, so one bad answer fails only its own repo. The gateway adapter submits one AI Gateway batch job through the AI SDK's experimental batch API, which accepts text requests only. The job's idempotency key is a hash of the requests, so a run that stops while it waits finds the same job again instead of paying for a second one. A replayed job returns its stored failures too, so a failed item gets one direct call. Adapters without a batch API answer the prompts one at a time.
 
-Deployed code uses `layer` from `@stargrep/ai/gateway`. It serves both ports with the models in `models.ts` and reads `AI_GATEWAY_API_KEY` through `layerProviderConfig`. Local tools use `layer` from `@stargrep/ai/local` instead. It reads `AI_TEXT_PROVIDER` (`gateway`, `claude-code`, or `fake`) and `AI_EMBEDDINGS_PROVIDER` (`gateway` or `fake`), both `gateway` by default, and needs Bun to spawn the CLI.
+Deployed code uses the layers from `@stargrep/ai/gateway`. `layer` serves both ports with the models in `models.ts` and reads `AI_GATEWAY_API_KEY` through `layerProviderConfig`. `layerModels` serves both ports with a given provider and options. The Worker reads the key once at startup and uses `layerModels` with no batch API. Without a key, or with an empty one, as on a local stage, it uses `layerKeyMissing`, whose calls fail with `AiKeyMissing`. Local tools use `layer` from `@stargrep/ai/local` instead. It reads `AI_TEXT_PROVIDER` (`gateway`, `claude-code`, or `fake`) and `AI_EMBEDDINGS_PROVIDER` (`gateway` or `fake`), both `gateway` by default, and needs Bun to spawn the CLI.
 
 **The Claude Code CLI is for local development only.** It runs `claude -p` with the developer's own subscription, for experiments, small eval runs, and summary samples. Anthropic's terms let a person use the unmodified Claude Code binary with their own subscription, but products and pipelines must use API keys. So deployed stages, CI, and bulk backfills always use the AI Gateway. Four checks enforce this.
 
@@ -190,7 +200,7 @@ Deployed code uses `layer` from `@stargrep/ai/gateway`. It serves both ports wit
 | The Biome rule `packages/config/no-local-ai-import.grit` | Code in `apps/`, except tests, cannot import `@stargrep/ai/local`, `@stargrep/ai/fake`, `@stargrep/ai/summarize.fake`, or `@stargrep/ai/claude-code` |
 | The gateway layer's type does not require `ChildProcessSpawner` | A Worker that uses it never needs a process spawner, so typecheck catches a Worker wired to the local layer |
 
-**Embeddings from different models cannot be compared.** Each database has one embedding model and size. The one-row `embedding_settings` table records them, and a migration creates it. When the `Db` layer starts, it reads that row. In a fresh database it writes the configured model once, and when the configured model or size differs from the stored one, the layer fails with `EmbeddingModelConflict` before any query runs. Reading the row costs one query per `Db` build. P9 will make the Worker cache the adoption result per isolate, so only an isolate's first request will pay it. So a local run configured with fake or foreign embeddings can never write into a database that production reads. Every embedding carries the ID of the model that made it, every `repos` row stores it in `embedding_model`, and `saveEmbedding` refuses a vector from any model other than the stored one with `EmbeddingModelMismatch`. No `Db` function changes the stored model. To switch models on purpose, write a migration that clears `embedding` and `embedding_model` on every repo and updates `embedding_settings`, then re-embed every repo with the new model.
+**Embeddings from different models cannot be compared.** Each database has one embedding model and size. The one-row `embedding_settings` table records them, and a migration creates it. When the `Db` layer starts, it reads that row. In a fresh database it writes the configured model once, and when the configured model or size differs from the stored one, the layer fails with `EmbeddingModelConflict` before any query runs. Reading the row costs one query per `Db` build. The Worker builds `Db` per request, because a Hyperdrive socket opened in one request cannot serve another, and passes a `Ref` it keeps for the isolate's lifetime. So only an isolate's first request reads the row. So a local run configured with fake or foreign embeddings can never write into a database that production reads. Every embedding carries the ID of the model that made it, every `repos` row stores it in `embedding_model`, and `saveEmbedding` refuses a vector from any model other than the stored one with `EmbeddingModelMismatch`. No `Db` function changes the stored model. To switch models on purpose, write a migration that clears `embedding` and `embedding_model` on every repo and updates `embedding_settings`, then re-embed every repo with the new model.
 
 ## Client
 
@@ -212,7 +222,7 @@ The web app loads the signed-in user's whole library into a TanStack DB collecti
 | Workers cache | Public profile pages, discovery pages, and OG images, with stale-while-revalidate |
 | KV | Query plans and query embeddings, through the `SearchCache` port |
 | Postgres | Summaries and embeddings, shared across accounts |
-| GitHub | README ETags, so an unchanged README returns `304` |
+| R2 | README text by object ID, so GitHub serves each README once |
 
 ## Everything as code
 
@@ -238,7 +248,7 @@ Some things stay outside the repo. Secret values live in Cloudflare secrets and 
 
 The Alchemy program has two stacks, so no app stage's state holds a Neon project. `infra/database.run.ts` owns the projects in its only stage, `shared`. `infra/alchemy.run.ts` is the app stack, deployed once per stage: `pr-<number>` for each pull request and `prod` for `main`. Each app stage references one project and owns one branch of it, so destroying a stage deletes its branch and never the project. `prod` uses `stargrep-us-east`, and every preview stage uses `stargrep-previews-us-east`, both in `aws-us-east-1`, so a Neon key scoped to the previews project can't reach prod's branch. The first project, `stargrep` in `aws-eu-central-1`, stays declared and retained, and no stage uses it. Only the deploy from `main` deploys `shared`. A pull request stage fails with a missing reference until `main` has deployed once.
 
-`prod` deploys only the Worker and its database. Every other stage also deploys a debug Worker with a queue and consumer, KV, R2, two Durable Objects, and an hourly cron, so the checks in `docs/setup.md` can drive them. Its routes take a bearer token that the stack generates per stage, and a Durable Object caps them at 300 units of work a minute.
+`prod` deploys only the Worker, its database, and the queues, R2 bucket, and Durable Object the pipeline needs. Every other stage also deploys a debug Worker with a queue and consumer, KV, R2, two Durable Objects, and an hourly cron, so the checks in `docs/setup.md` can drive them. Its routes take a bearer token that the stack generates per stage, and a Durable Object caps them at 300 units of work a minute.
 
 Deployed stages keep Alchemy state in the Cloudflare account through `Cloudflare.state()`. Under `alchemy dev`, state stays in `infra/.alchemy/` and the stage declares no Neon resources, so a local stage needs no credentials.
 

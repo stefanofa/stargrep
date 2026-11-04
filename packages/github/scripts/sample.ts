@@ -3,6 +3,7 @@ import * as BunServices from "@effect/platform-bun/BunServices";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
+import * as Context from "effect/Context";
 import * as Argument from "effect/cli/Argument";
 import * as Command from "effect/cli/Command";
 import * as Flag from "effect/cli/Flag";
@@ -18,6 +19,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as GitHub from "../src/github.ts";
 import { BudgetShare, Login, RepoId, type Star } from "../src/schemas.ts";
+import type * as TokenBudget from "../src/token-budget.ts";
 import * as TokenGate from "../src/token-gate.ts";
 
 const CACHE_DIRECTORY = ".cache/github";
@@ -58,17 +60,22 @@ const layerLoggedFetch = Layer.effect(
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer));
 
+class GateBudget extends Context.Service<GateBudget, Effect.Effect<TokenBudget.Budget>>()(
+  "@stargrep/github/scripts/sample/GateBudget",
+) {}
+
 const layerGitHub = Layer.unwrap(
   Effect.gen(function* () {
-    const token = yield* Config.Redacted("GITHUB_TOKEN");
-    const share = yield* shareConfig;
+    const gate = yield* TokenGate.makeMemory({
+      token: yield* Config.Redacted("GITHUB_TOKEN"),
+      share: yield* shareConfig,
+    });
     return GitHub.layer.pipe(
-      Layer.provideMerge(TokenGate.layerMemory({ token, share })),
-      Layer.provide(layerLoggedFetch),
-      Layer.provideMerge(KeyValueStore.layerFileSystem(CACHE_DIRECTORY)),
+      Layer.provideMerge(Layer.succeed(TokenGate.TokenGate, TokenGate.TokenGate.of({ execute: gate.execute }))),
+      Layer.merge(Layer.succeed(GateBudget, gate.budget)),
     );
-  }),
-);
+  }).pipe(Effect.provide(layerLoggedFetch)),
+).pipe(Layer.provideMerge(KeyValueStore.layerFileSystem(CACHE_DIRECTORY)));
 
 const formatStar = (star: Star) => `${DateTime.formatIso(star.starredAt)}  ${star.repo.owner}/${star.repo.name}`;
 
@@ -123,13 +130,11 @@ const showReadme = Effect.fn("sample.showReadme")(function* (stars: ReadonlyArra
   const facts = yield* github.repoFacts(stars.map((star) => star.repo.nodeId));
   const fact = facts.find((candidate) => candidate.readme !== null);
   if (fact?.readme == null) return yield* Console.log("readme: none of these repos has a README");
-  for (const attempt of [1, 2]) {
-    const before = requests.length;
-    const text = yield* github.readme({ owner: fact.owner, name: fact.name, oid: fact.readme.oid });
-    yield* Console.log(
-      `readme fetch ${attempt}: ${fact.owner}/${fact.name} ${fact.readme.name} ${text.length} chars, status ${requests.slice(before).map((request) => request.status)}`,
-    );
-  }
+  const before = requests.length;
+  const text = yield* github.readme({ owner: fact.owner, name: fact.name, oid: fact.readme.oid });
+  yield* Console.log(
+    `readme: ${fact.owner}/${fact.name} ${fact.readme.name} ${text.length} chars, status ${requests.slice(before).map((request) => request.status)}`,
+  );
 });
 
 const fireParallel = Effect.fn("sample.fireParallel")(function* (login: Login, count: number) {
@@ -142,15 +147,14 @@ const fireParallel = Effect.fn("sample.fireParallel")(function* (login: Login, c
 });
 
 const summarize = Effect.fn("sample.summarize")(function* (started: number, log: boolean) {
-  const budget = yield* (yield* TokenGate.TokenGate).budget;
+  const budget = yield* yield* GateBudget;
   for (const [resource, window] of Object.entries(budget.windows)) {
     yield* Console.log(
       `rate limit ${resource}: ${window.remaining}/${window.limit} remaining, resets ${DateTime.formatIso(DateTime.makeUnsafe(window.resetAt))}`,
     );
   }
   const elapsed = (yield* Clock.currentTimeMillis) - started;
-  const notModified = requests.filter((request) => request.status === 304).length;
-  yield* Console.log(`requests: ${requests.length} (304: ${notModified}) wall: ${elapsed}ms`);
+  yield* Console.log(`requests: ${requests.length} wall: ${elapsed}ms`);
   if (log) for (const request of requests) yield* Console.log(`  ${request.line}`);
 });
 
@@ -159,7 +163,7 @@ const sample = Command.make(
   {
     login: Argument.String("login").pipe(Argument.withSchema(Login)),
     facts: Flag.Int("facts").pipe(Flag.withDescription("Fetch repo facts for the first N stars"), Flag.optional),
-    readme: Flag.Boolean("readme").pipe(Flag.withDescription("Fetch one README twice"), Flag.withDefault(false)),
+    readme: Flag.Boolean("readme").pipe(Flag.withDescription("Fetch one README"), Flag.withDefault(false)),
     parallel: Flag.Int("parallel").pipe(
       Flag.withDescription("Fire N parallel first-page requests instead of listing"),
       Flag.optional,
