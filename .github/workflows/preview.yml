@@ -62,5 +62,9 @@ jobs:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
           STARGREP_GITHUB_TOKEN: ${{ secrets.STARGREP_GITHUB_TOKEN }}
+          GITHUB_APP_CLIENT_ID: ${{ vars.GITHUB_APP_CLIENT_ID }}
+          GITHUB_APP_CLIENT_SECRET: ${{ secrets.GITHUB_APP_CLIENT_SECRET }}
+          AUTH_PROXY_ORIGIN: ${{ vars.AUTH_PROXY_ORIGIN }}
+          AUTH_PROXY_SECRET: ${{ secrets.AUTH_PROXY_SECRET }}
           GITHUB_TOKEN: ${{ github.token }}
           PULL_REQUEST: ${{ github.event.pull_request.number }}
