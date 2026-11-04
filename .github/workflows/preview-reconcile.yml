@@ -28,6 +28,7 @@ jobs:
   list:
     if: vars.CLOUDFLARE_ACCOUNT_ID != ''
     runs-on: ubuntu-latest
+    environment: preview
     timeout-minutes: 10
     outputs:
       stale: ${{ steps.list.outputs.stale }}
@@ -53,6 +54,7 @@ jobs:
     needs: list
     if: needs.list.outputs.stale != '[]'
     runs-on: ubuntu-latest
+    environment: preview
     timeout-minutes: 15
     strategy:
       fail-fast: false

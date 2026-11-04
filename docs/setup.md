@@ -130,25 +130,35 @@ DATABASE_URL=postgres://stargrep:stargrep@127.0.0.1:54317/stargrep_bench \
 
 Four workflows run the stages, and their jobs skip until the steps below are done. `preview` deploys stage `pr-<number>` for each pull request and runs `scripts/stage-smoke.ts` against it. `preview-destroy` destroys the stage when the pull request closes. `preview-reconcile` runs daily, or by hand with a dry-run option, and destroys any `pr-<number>` stage whose pull request is closed or gone. `deploy` runs on each push to `main`, or by hand on `main`. It deploys the database stack's stage `shared` and then stage `prod`. Each deploy first checks that its commit is still the head of `main` or of the pull request, so an older run never replaces a newer deploy.
 
-1. Create a Cloudflare API token for the account with these permissions: Workers Scripts Write, Workers KV Storage Write, Workers R2 Storage Write, Queues Write, Hyperdrive Write, Secrets Store Write, Account Settings Write, and Workers Tail Read. The Secrets Store permission is for Alchemy's state store, which keeps its keys there.
+1. Create two Cloudflare API tokens for the account, one for prod and one for previews, each with these permissions: Workers Scripts Write, Workers KV Storage Write, Workers R2 Storage Write, Queues Write, Hyperdrive Write, Secrets Store Write, Account Settings Write, and Workers Tail Read. The Secrets Store permission is for Alchemy's state store, which keeps its keys there. Cloudflare can't limit a token to some Workers, so the preview token can still change prod's Workers and read prod's records in the shared state store.
 
-2. Create a Neon API key in the Neon console.
+2. Create two Neon API keys in the Neon console. Prod's key is an organization key, because the deploy from `main` creates the projects. The preview key is scoped to the project `stargrep-previews-us-east`, so create it after that deploy.
 
 3. Create a fine-grained GitHub token with read access to public repositories and no other permission. Each stage's Worker syncs stars and fetches READMEs with it, and uses half of each hourly window.
 
-4. Add the tokens, the Neon key, and the AI Gateway key as GitHub Actions secrets, and the Cloudflare account ID as a variable. The variable turns the deploy jobs on. Each deploy binds `AI_GATEWAY_API_KEY` and `STARGREP_GITHUB_TOKEN` to the Worker as secrets. A `prod` deploy fails without either secret. A pull request stage or a local stage deploys without them. There, every GitHub call fails with `GitHubTokenMissing` and every model call with `AiKeyMissing`, so each pipeline message goes to the dead-letter queue on its first attempt.
+4. Create the GitHub environments. Only `main` can deploy to `production`. `preview` has no rules.
 
    ```sh
-   gh secret set CLOUDFLARE_API_TOKEN
-   gh secret set NEON_API_KEY
-   gh secret set AI_GATEWAY_API_KEY
-   gh secret set STARGREP_GITHUB_TOKEN
+   echo '{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}' \
+     | gh api -X PUT 'repos/{owner}/{repo}/environments/production' --input -
+   gh api -X POST 'repos/{owner}/{repo}/environments/production/deployment-branch-policies' -f name=main -f type=branch
+   gh api -X PUT 'repos/{owner}/{repo}/environments/preview'
+   ```
+
+5. Add each environment's secrets, and the Cloudflare account ID as a repository variable. The variable turns the deploy jobs on. `deploy` reads secrets only from `production`, and the preview workflows only from `preview`. A workflow on any branch can read repository secrets and `preview` secrets, so keep prod's credentials only in `production` and keep no secrets at the repository level. Both environments can hold the same AI Gateway key and GitHub token. Each deploy binds `AI_GATEWAY_API_KEY` and `STARGREP_GITHUB_TOKEN` to the Worker as secrets. A `prod` deploy fails without either secret. A pull request stage or a local stage deploys without them. There, every GitHub call fails with `GitHubTokenMissing` and every model call with `AiKeyMissing`, so each pipeline message goes to the dead-letter queue on its first attempt.
+
+   ```sh
+   for env in production preview; do
+     for name in CLOUDFLARE_API_TOKEN NEON_API_KEY AI_GATEWAY_API_KEY STARGREP_GITHUB_TOKEN; do
+       gh secret set "$name" --env "$env"
+     done
+   done
    gh variable set CLOUDFLARE_ACCOUNT_ID --body <account id>
    ```
 
-5. Create Alchemy's state store in the account, as described in the next section.
+6. Create Alchemy's state store in the account, as described in the next section.
 
-6. Push to `main`. That deploy creates the Neon projects in stage `shared`, and then `prod`. A pull request stage fails with a missing reference until it has run.
+7. Push to `main`. That deploy creates the Neon projects in stage `shared`, and then `prod`. A pull request stage fails with a missing reference until it has run.
 
 Every stage gets its own Neon branch. Prod's branch is in the project `stargrep-us-east`, and each preview stage's branch is in `stargrep-previews-us-east`. Neon deletes a preview branch about two weeks after its last deploy, in case its destroy job never ran.
 

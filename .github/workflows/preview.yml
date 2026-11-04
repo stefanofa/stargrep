@@ -19,6 +19,7 @@ jobs:
   preview:
     if: vars.CLOUDFLARE_ACCOUNT_ID != ''
     runs-on: ubuntu-latest
+    environment: preview
     timeout-minutes: 20
     concurrency:
       group: deploy-pr-${{ github.event.pull_request.number }}
