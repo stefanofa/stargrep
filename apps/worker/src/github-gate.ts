@@ -2,13 +2,11 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
 import { BudgetShare } from "@stargrep/github/schemas";
 import type * as TokenBudget from "@stargrep/github/token-budget";
 import * as TokenGate from "@stargrep/github/token-gate";
-import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
-
-export const githubToken = Config.Redacted("STARGREP_GITHUB_TOKEN");
+import { githubToken } from "./github-token.ts";
 
 // The token belongs to the person who runs the stage, so half of each hourly window stays theirs.
 const share = BudgetShare.make(0.5);

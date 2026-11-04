@@ -2,42 +2,50 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Models from "@stargrep/ai/models";
 import { EmbeddingModelId } from "@stargrep/db/embedding";
 import * as Tracing from "@stargrep/telemetry/cloudflare";
+import * as Alchemy from "alchemy";
 import * as Telemetry from "alchemy/Telemetry";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { Database, DatabaseMigrations } from "./database.ts";
-import { GitHubGate, githubToken } from "./github-gate.ts";
+import { GitHubGate } from "./github-gate.ts";
+import { githubToken, requireGitHubToken } from "./github-token.ts";
 import { healthResponse } from "./health.ts";
 import * as Layers from "./layers.ts";
 import * as Queues from "./queues.ts";
 
 const decodeModelId = Schema.decodeEffect(EmbeddingModelId);
 
+const Readmes = Cloudflare.R2.Bucket("Readmes");
+
 export default class Worker extends Cloudflare.Worker<Worker>()(
   "Worker",
   // The Worker binds Hyperdrive by an ID that stays stable across updates, so Alchemy would deploy it
   // while the branch still migrates. Reading the applied migrations makes the deploy wait for them.
   // The placement region matches the Neon projects in infra/database.run.ts, so queries stay in one region.
-  Effect.map(DatabaseMigrations, (migrations) => ({
-    main: import.meta.url,
-    env: { DATABASE_MIGRATIONS: migrations },
-    placement: { region: "aws:us-east-1" },
-    observability: { enabled: true, logs: { enabled: true, invocationLogs: true }, traces: { enabled: true } },
-  })),
+  Effect.gen(function* () {
+    yield* requireGitHubToken((yield* Alchemy.Stack).stage);
+    return {
+      main: import.meta.url,
+      env: { DATABASE_MIGRATIONS: yield* DatabaseMigrations },
+      placement: { region: "aws:us-east-1" },
+      observability: { enabled: true, logs: { enabled: true, invocationLogs: true }, traces: { enabled: true } },
+    };
+  }),
   Effect.gen(function* () {
     const database = yield* Cloudflare.Hyperdrive.Connect(Database);
-    yield* Effect.orDie(githubToken);
+    const token = yield* Effect.orDie(Config.option(githubToken));
     const runtime = Layers.layerRuntime({
       database: database.connectionString,
-      readmes: yield* Cloudflare.R2.ReadWriteBucket(Layers.Readmes),
+      readmes: yield* Cloudflare.R2.ReadWriteBucket(Readmes),
       enrichQueue: yield* Cloudflare.Queues.WriteQueue(yield* Queues.EnrichRepos),
-      gates: yield* GitHubGate,
+      gates: Option.isSome(token) ? Option.some(yield* GitHubGate) : Option.none(),
       aiGatewayKey: yield* Effect.orDie(Config.Redacted("AI_GATEWAY_API_KEY")),
       embeddingModel: yield* Effect.orDie(decodeModelId(Models.embeddingModel.id)),
       adopted: yield* Ref.make(false),

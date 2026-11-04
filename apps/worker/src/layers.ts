@@ -1,4 +1,4 @@
-import * as Cloudflare from "@alchemy.run/cloudflare";
+import type * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Gateway from "@stargrep/ai/gateway";
 import * as Models from "@stargrep/ai/models";
 import { BlobStore, EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
@@ -15,8 +15,6 @@ import * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
 import type * as Ref from "effect/Ref";
 import type { GitHubGate } from "./github-gate.ts";
-
-export const Readmes = Cloudflare.R2.Bucket("Readmes");
 
 const queueBatchLimit = 100;
 // A Worker invocation holds at most six connections, and R2 and the queue need some of them.
@@ -73,21 +71,22 @@ export const layerEnrichQueue = (queue: Cloudflare.Queues.WriteQueueClient) =>
     }),
   );
 
-export const layerGitHub = (gates: Effect.Success<typeof GitHubGate>) =>
-  GitHub.layer.pipe(
-    Layer.provide(
-      Layer.unwrap(
-        Effect.gen(function* () {
-          const run = yield* inRuntime;
-          const gate = () => gates.getByName("github-token");
-          return TokenGate.layerRemote({
-            execute: (request) => run(gate().execute(request)),
-            budget: Effect.suspend(() => gate().budget()),
-          });
-        }),
-      ),
-    ),
+type Gates = Effect.Success<typeof GitHubGate>;
+
+const layerGate = (gates: Gates) =>
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const run = yield* inRuntime;
+      const gate = () => gates.getByName("github-token");
+      return TokenGate.layerRemote({
+        execute: (request) => run(gate().execute(request)),
+        budget: Effect.suspend(() => gate().budget()),
+      });
+    }),
   );
+
+export const layerGitHub = (gates: Option.Option<Gates>) =>
+  GitHub.layer.pipe(Layer.provide(Option.match(gates, { onNone: () => TokenGate.layerMissing, onSome: layerGate })));
 
 export const layerAi = (apiKey: Redacted.Redacted<string>) =>
   Layer.merge(Gateway.layerTextGeneration(Models.summaryModel), Gateway.layerEmbeddings(Models.embeddingModel)).pipe(
@@ -98,7 +97,7 @@ export interface Bindings {
   readonly database: Effect.Effect<Redacted.Redacted<string>, never, RuntimeContext>;
   readonly readmes: Cloudflare.R2.ReadWriteBucketClient;
   readonly enrichQueue: Cloudflare.Queues.WriteQueueClient;
-  readonly gates: Effect.Success<typeof GitHubGate>;
+  readonly gates: Option.Option<Gates>;
   readonly aiGatewayKey: Redacted.Redacted<string>;
   readonly embeddingModel: EmbeddingModelId;
   readonly adopted: Ref.Ref<boolean>;

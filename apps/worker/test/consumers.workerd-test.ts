@@ -1,12 +1,17 @@
 import { createExecutionContext, createMessageBatch, getQueueResult } from "cloudflare:test";
 import { AiRequestFailed } from "@stargrep/ai/errors";
-import { EnrichRepo } from "@stargrep/core/repos";
+import { EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
 import { StarSync } from "@stargrep/core/stars";
+import * as Db from "@stargrep/db";
 import { DbQueryFailed } from "@stargrep/db/errors";
 import { TokenBudgetExhausted } from "@stargrep/github/errors";
+import * as GitHub from "@stargrep/github/github";
 import { type GitHubAccountId, RepoId } from "@stargrep/github/schemas";
+import * as TokenGate from "@stargrep/github/token-gate";
 import * as Clock from "effect/Clock";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
@@ -15,6 +20,7 @@ import { describe, expect, it } from "vitest";
 import * as EnrichRepoConsumer from "../src/consumers/enrich-repo.ts";
 import * as Settle from "../src/consumers/settle.ts";
 import * as SyncStarsConsumer from "../src/consumers/sync-stars.ts";
+import { requireGitHubToken } from "../src/github-token.ts";
 
 const report = { listed: 1, added: 1, unchanged: 0, unstarred: 0, enqueued: 1, shifted: false };
 const repoId = Schema.decodeUnknownSync(RepoId);
@@ -154,6 +160,42 @@ describe("enrich-repo consumer", () => {
     expect(later.map((sent) => sent.body)).toEqual([{ repoId: 3 }, { repoId: 4 }]);
     expect(result.explicitAcks.toSorted()).toEqual(["m0", "m1"]);
     expect(result.retryMessages).toEqual([]);
+  });
+});
+
+describe("a stage with no GitHub token", () => {
+  const withEnv = (env: Record<string, string>) =>
+    Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)));
+
+  it("fails a prod deploy that has no token, and deploys a preview stage without one", async () => {
+    const prod = await Effect.runPromiseExit(requireGitHubToken("prod").pipe(withEnv({})));
+    const prodWithToken = await Effect.runPromiseExit(
+      requireGitHubToken("prod").pipe(withEnv({ STARGREP_GITHUB_TOKEN: "token" })),
+    );
+    const preview = await Effect.runPromiseExit(requireGitHubToken("pr-18").pipe(withEnv({})));
+    expect([Exit.isFailure(prod), Exit.isSuccess(prodWithToken), Exit.isSuccess(preview)]).toEqual([true, true, true]);
+  });
+
+  it("retries a sync that fails with GitHubTokenMissing, so it reaches the dead-letter queue", async () => {
+    const { queues, deadLetters, later } = recordingQueues();
+    const batch = batchOf("sync-stars", [{ login: "octocat", mode: "full" }]);
+    const unusedDb = Layer.succeed(Db.Db, Db.Db.of({} as Db.Db["Service"]));
+    const runtime = StarSync.layer.pipe(
+      Layer.provide(GitHub.layer.pipe(Layer.provide(TokenGate.layerMissing))),
+      Layer.provide(unusedDb),
+      Layer.provide(EnrichQueue.layerMemory().layer),
+    );
+    const message = batch.messages[0];
+    if (message === undefined) throw new Error("the batch has one message");
+    expect(await Effect.runPromise(SyncStarsConsumer.handle(message).pipe(Effect.provide(runtime)))).toEqual(
+      Settle.Settlement.Retry({ error: "GitHubTokenMissing" }),
+    );
+    const result = await run(
+      SyncStarsConsumer.processBatch(queues, batch.messages).pipe(Effect.provide(runtime)),
+      batch,
+    );
+    expect(result.retryMessages).toEqual([{ msgId: "m0" }]);
+    expect([deadLetters, later]).toEqual([[], []]);
   });
 });
 

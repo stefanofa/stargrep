@@ -32,6 +32,7 @@ jobs:
       - run: |
           head=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
           if [ "$head" != "$GITHUB_SHA" ]; then echo "main moved to $head, so the run for that commit deploys prod."; exit 0; fi
+          if [ -z "${STARGREP_GITHUB_TOKEN:-}" ]; then echo "STARGREP_GITHUB_TOKEN is not set, and prod cannot sync stars without it."; exit 1; fi
           bun run --cwd infra deploy --config database.run.ts --stage shared --yes
           bun run --cwd infra deploy --stage prod --yes
         env:

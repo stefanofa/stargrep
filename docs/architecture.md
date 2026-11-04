@@ -148,7 +148,7 @@ Bulk enrichment, such as a backfill of popular repos, uses the Gateway batch API
 - The `enrich-repo` consumer takes up to 100 messages per batch and runs one batch at a time. `enrichRepos` with direct summaries handles the batch, one model call per repo, and reads each repo id once. A repo several accounts starred arrives once per account, and a later batch finds it enriched.
 - Each dead-letter queue has a consumer that logs the message ID, its attempts, and the IDs in its body, or only the body's type when the body does not decode.
 
-The `GitHubGate` Durable Object holds the Worker's GitHub token. Every GitHub request from every isolate goes through it, so it sends them one at a time and tracks the budget in its storage. Requests and replies cross the RPC boundary as plain data, and the token never leaves the object.
+The `GitHubGate` Durable Object holds the Worker's GitHub token. Every GitHub request from every isolate goes through it, so it sends them one at a time and tracks the budget in its storage. Requests and replies cross the RPC boundary as plain data, and the token never leaves the object. A pull request stage may deploy without a token. It then binds no `GitHubGate`, and every GitHub call fails with `GitHubTokenMissing`.
 
 ## Search
 
