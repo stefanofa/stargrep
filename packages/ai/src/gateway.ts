@@ -5,6 +5,7 @@ import {
   generateText,
   jsonSchema,
   NoObjectGeneratedError,
+  NoOutputGeneratedError,
   Output,
   type EmbeddingModel as SdkEmbeddingModel,
   type LanguageModel as SdkLanguageModel,
@@ -226,12 +227,14 @@ export const layerTextGeneration = (model: string, options: Partial<TextOptions>
                     output: result.output,
                     usage: { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens },
                   }),
-                  catch: () =>
-                    new AiOutputInvalid({
-                      operation: "generate",
-                      model,
-                      detail: `the model returned no output, finish reason ${result.finishReason}`,
-                    }),
+                  catch: (cause) =>
+                    NoOutputGeneratedError.isInstance(cause)
+                      ? new AiOutputInvalid({
+                          operation: "generate",
+                          model,
+                          detail: `the model returned no output, finish reason ${result.finishReason}`,
+                        })
+                      : fromSdkError("generate", model)(cause),
                 }),
               ),
             ),

@@ -3,7 +3,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import { type AiError, AiOutputInvalid, AiTimeout } from "./errors.ts";
 import type { EmbeddingModel } from "./models.ts";
-import { countTokens, unavailableRetry } from "./port.ts";
+import { annotateTokens, countTokens, unavailableRetry } from "./port.ts";
 
 export interface Embedding {
   readonly model: string;
@@ -38,6 +38,7 @@ export const make = (options: {
         Effect.retry(unavailableRetry),
       );
       yield* countTokens(model.id, "input", tokens);
+      yield* annotateTokens({ input: tokens });
       const wrongSize = vectors.find((vector) => vector.length !== model.dimensions);
       if (vectors.length !== values.length || wrongSize !== undefined) {
         return yield* new AiOutputInvalid({

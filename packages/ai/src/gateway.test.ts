@@ -383,6 +383,35 @@ describe("gateway batch", () => {
     }).pipe(Effect.provide(fake.layer));
   });
 
+  it.effect("puts token counts on each direct call's span, not on the batch span, and counts every item", () => {
+    const { spans, tracer } = collectSpans();
+    const fake = fakeBatch({
+      items: [
+        succeeded("0", JSON.stringify(validSummary)),
+        succeeded("1", JSON.stringify(validSummary)),
+        { type: "text", id: "2", status: "failed", error: { message: "upstream", code: "server_error" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const before = yield* Port.tokensSpent("test/model");
+      const results = yield* Summarize.summarizeBatch(batchRepos);
+      const after = yield* Port.tokensSpent("test/model");
+      expect(results.map(Result.isSuccess)).toEqual([true, true, true]);
+      const attributes = (name: string) =>
+        spans.filter((span) => span.name === name).map((span) => Object.fromEntries(span.attributes));
+      expect(attributes("TextGeneration.generateBatch")).toEqual([
+        expect.not.objectContaining({ "gen_ai.usage.input_tokens": expect.anything() }),
+      ]);
+      expect(attributes("TextGeneration.generate")).toEqual([
+        expect.objectContaining({ "gen_ai.usage.input_tokens": 100, "gen_ai.usage.output_tokens": 20 }),
+      ]);
+      expect({ input: after.input - before.input, output: after.output - before.output }).toEqual({
+        input: 300,
+        output: 60,
+      });
+    }).pipe(Effect.provide(fake.layer), Effect.withTracer(tracer));
+  });
+
   it.effect("answers an item the batch left out with a direct call, in prompt order", () => {
     const other = { ...validSummary, summary: "A command-line fuzzy finder." };
     const fake = fakeBatch({ items: [succeeded("1", JSON.stringify(other))] });
