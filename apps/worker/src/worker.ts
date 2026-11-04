@@ -1,26 +1,18 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
-import * as Models from "@stargrep/ai/models";
-import { EmbeddingModelId } from "@stargrep/db/embedding";
 import * as Tracing from "@stargrep/telemetry/cloudflare";
 import * as Alchemy from "alchemy";
-import * as Telemetry from "alchemy/Telemetry";
-import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
-import * as Schema from "effect/Schema";
 import { Database, DatabaseMigrations } from "./database.ts";
-import { GitHubGate } from "./github-gate.ts";
+import { tokenGate } from "./github-gate.ts";
 import { healthResponse } from "./health.ts";
 import * as Layers from "./layers.ts";
 import * as Queues from "./queues.ts";
-import { aiGatewayKey, githubToken, requireStageSecrets } from "./secrets.ts";
-
-const decodeModelId = Schema.decodeEffect(EmbeddingModelId);
+import { requireStageSecrets } from "./secrets.ts";
 
 const Readmes = Cloudflare.R2.Bucket("Readmes");
 
@@ -40,14 +32,12 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
   }),
   Effect.gen(function* () {
     const database = yield* Cloudflare.Hyperdrive.Connect(Database);
-    const token = yield* Effect.orDie(Config.option(githubToken));
     const runtime = Layers.layerRuntime({
       database: database.connectionString,
       readmes: yield* Cloudflare.R2.ReadWriteBucket(Readmes),
       enrichQueue: yield* Cloudflare.Queues.WriteQueue(yield* Queues.EnrichRepos),
-      gates: Option.isSome(token) ? Option.some(yield* GitHubGate) : Option.none(),
-      aiGatewayKey: yield* Effect.orDie(Config.option(aiGatewayKey)),
-      embeddingModel: yield* Effect.orDie(decodeModelId(Models.embeddingModel.id)),
+      tokenGate: yield* tokenGate,
+      ai: yield* Effect.orDie(Layers.aiModels),
       adopted: yield* Ref.make(false),
     });
     yield* Queues.consumeAll(runtime);
@@ -67,7 +57,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
         Cloudflare.R2.ReadWriteBucketBinding,
         Cloudflare.Queues.WriteQueueBinding,
         Cloudflare.Queues.EventSourceLive,
-        Telemetry.layer(Tracing.layer),
+        Tracing.layer,
       ),
     ),
   ),

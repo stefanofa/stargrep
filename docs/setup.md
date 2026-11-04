@@ -168,3 +168,15 @@ To read a deployed stage's debug token, run this with the same credentials:
 ```sh
 CLOUDFLARE_ACCOUNT_ID=<account id> CLOUDFLARE_API_TOKEN=<token> bun scripts/stage-output.ts pr-<number> debugToken > debug-token
 ```
+
+Without an API token, sign in with the `cf` CLI and pass its session token. `cf auth whoami` prints the signed-in account and its ID. The session token lives in the `cf` config file and expires after about an hour, and `cf` refreshes it on its next command.
+
+```sh
+cf auth whoami
+export CLOUDFLARE_ACCOUNT_ID=<account id>
+export CLOUDFLARE_API_TOKEN="$(python3 -c 'import json, os; print(json.load(open(os.path.expanduser("~/Library/Preferences/cloudflare/config/default.json")))["oauth_token"])')"
+bun scripts/stage-output.ts pr-<number> debugUrl
+bun scripts/stage-output.ts pr-<number> debugToken > debug-token
+```
+
+The config file path above is the one `cf` uses on macOS. `cf auth whoami` prints the path it reads from as `authSource`.

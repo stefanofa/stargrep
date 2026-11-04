@@ -1,36 +1,61 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import { BudgetShare } from "@stargrep/github/schemas";
-import type * as TokenBudget from "@stargrep/github/token-budget";
+import * as TokenBudget from "@stargrep/github/token-budget";
 import * as TokenGate from "@stargrep/github/token-gate";
-import * as Context from "effect/Context";
+import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import { inRuntime } from "./layers.ts";
 import { githubToken } from "./secrets.ts";
 
 const share = BudgetShare.make(0.5);
 
-const budgetKey = "budget";
+const windowsKey = "windows";
+
+const requiredToken = Effect.flatMap(
+  Effect.orDie(githubToken),
+  Option.match({
+    onNone: () => Effect.die("GitHubGate is bound only when STARGREP_GITHUB_TOKEN is set"),
+    onSome: Effect.succeed,
+  }),
+);
 
 export class GitHubGate extends Cloudflare.DurableObject<GitHubGate>()(
   "GitHubGate",
   Effect.gen(function* () {
     const state = yield* Cloudflare.DurableObjectState;
     return Effect.gen(function* () {
-      const token = yield* Effect.orDie(githubToken);
-      const budget = yield* state.storage.get<TokenBudget.Budget>(budgetKey);
-      const services = yield* Layer.build(
-        TokenGate.layerMemory({ token, share, budget }).pipe(Layer.provide(FetchHttpClient.layer)),
-      );
-      const gate = Context.get(services, TokenGate.TokenGate);
+      const windows = TokenBudget.decodeWindows(yield* state.storage.get(windowsKey));
+      const gate = yield* TokenGate.makeMemory({
+        token: yield* requiredToken,
+        share,
+        windows: Option.getOrUndefined(windows),
+      }).pipe(Effect.provide(FetchHttpClient.layer));
       const serve = TokenGate.serve(gate);
       return {
         execute: (request: TokenGate.RemoteRequest) =>
           serve(request).pipe(
-            Effect.tap(() => Effect.flatMap(gate.budget, (spent) => state.storage.put(budgetKey, spent))),
+            Effect.tap(() => Effect.flatMap(gate.budget, (budget) => state.storage.put(windowsKey, budget.windows))),
           ),
-        budget: () => gate.budget,
       };
     });
   }),
 ) {}
+
+const layerRemote = (gates: Effect.Success<typeof GitHubGate>) =>
+  Layer.unwrap(
+    Effect.map(inRuntime, (run) =>
+      TokenGate.layerRemote({ execute: (request) => run(gates.getByName("github-token").execute(request)) }),
+    ),
+  );
+
+export const tokenGate = Effect.gen(function* (): Effect.fn.Return<
+  Layer.Layer<TokenGate.TokenGate, never, RuntimeContext>,
+  never,
+  Effect.Services<typeof GitHubGate>
+> {
+  if (Option.isNone(yield* Effect.orDie(githubToken))) return TokenGate.layerMissing;
+  return layerRemote(yield* GitHubGate);
+});

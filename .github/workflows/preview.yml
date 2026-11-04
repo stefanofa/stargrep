@@ -38,8 +38,6 @@ jobs:
           pr=$(gh pr view "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY" --json state,headRefOid --jq '.state + " " + .headRefOid')
           if [ "${pr% *}" != OPEN ]; then echo "Pull request is ${pr% *}, so $STAGE is left to the destroy job."; exit 0; fi
           if [ "${pr#* }" != "${{ github.event.pull_request.head.sha }}" ]; then echo "The head moved to ${pr#* }, so the run for that commit deploys $STAGE."; exit 0; fi
-          if [ -z "${STARGREP_GITHUB_TOKEN:-}" ]; then unset STARGREP_GITHUB_TOKEN; echo "No STARGREP_GITHUB_TOKEN, so $STAGE deploys without GitHub access."; fi
-          if [ -z "${AI_GATEWAY_API_KEY:-}" ]; then unset AI_GATEWAY_API_KEY; echo "No AI_GATEWAY_API_KEY, so $STAGE deploys without model access."; fi
           bun run --cwd infra deploy --stage "$STAGE" --yes
           bun scripts/stage-smoke.ts "$STAGE"
         env:

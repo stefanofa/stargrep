@@ -1,54 +1,28 @@
 import { EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
-import type { RepoId } from "@stargrep/github/schemas";
-import * as Arr from "effect/Array";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
-import * as Schema from "effect/Schema";
 import * as Settle from "./settle.ts";
 
-const decodeMessage = Schema.decodeUnknownEffect(EnrichQueue.EnrichRepo);
-const isMessage = Schema.is(EnrichQueue.EnrichRepo);
+const done = () => Result.succeed<Settle.Settlement>(Settle.Settlement.Done());
 
-const settlementOf = (outcome: EnrichRepo.Enrichment, now: number): Settle.Settlement => {
-  switch (outcome._tag) {
-    case "Failed":
-      return Settle.afterFailure(outcome.error, now);
-    case "Stale":
-      return Settle.Settlement.Retry({ error: outcome._tag });
-    default:
-      return Settle.Settlement.Done();
-  }
-};
-
-export const handleBatch = Effect.fn("EnrichRepoConsumer.handleBatch")(function* (
-  messages: ReadonlyArray<Settle.Message>,
-) {
-  const decoded = yield* Effect.forEach(messages, (message) => Effect.result(decodeMessage(message.body)));
-  const ids = decoded.flatMap((result): Array<RepoId> => (Result.isSuccess(result) ? [result.success.repoId] : []));
-  const enricher = yield* EnrichRepo.EnrichRepo;
-  const enriched = yield* Effect.result(enricher.enrichRepos(ids, "direct"));
-  const now = yield* Clock.currentTimeMillis;
-  const byId = new Map<number, EnrichRepo.Enrichment>(
-    Result.isSuccess(enriched) ? enriched.success.map((outcome) => [outcome.id, outcome]) : [],
-  );
-  return yield* Effect.forEach(decoded, (result) => {
-    if (Result.isFailure(result)) return Effect.succeed(Settle.Settlement.DeadLetter({ error: result.failure._tag }));
-    if (Result.isFailure(enriched)) return Effect.succeed(Settle.afterFailure(enriched.failure, now));
-    return Effect.map(Effect.orDie(Effect.fromNullishOr(byId.get(result.success.repoId))), (outcome) =>
-      settlementOf(outcome, now),
-    );
-  });
+const settlementOf = EnrichRepo.Enrichment.$match({
+  Failed: (outcome): Result.Result<Settle.Settlement, Settle.Failure> => Result.fail(outcome.error),
+  Stale: (outcome) => Result.succeed(Settle.Settlement.Retry({ error: outcome._tag })),
+  Unchanged: done,
+  NotFound: done,
+  NoNodeId: done,
+  Gone: done,
+  Summarized: done,
+  Embedded: done,
 });
 
-export const processBatch = Effect.fn("EnrichRepoConsumer.processBatch")(function* (
-  queues: Settle.Queues,
-  messages: ReadonlyArray<Settle.Message>,
-) {
-  const settlements = yield* handleBatch(messages);
-  yield* Effect.forEach(Arr.zip(messages, settlements), ([message, settlement]) =>
-    Settle.settle(queues, message, settlement),
-  );
+export const pipeline = Settle.pipeline({
+  schema: EnrichQueue.EnrichRepo,
+  run: Effect.fn("EnrichRepoConsumer.run")(function* (bodies) {
+    const enricher = yield* EnrichRepo.EnrichRepo;
+    const enriched = yield* Effect.result(enricher.enrichRepos(bodies.map((body) => body.repoId)));
+    if (Result.isFailure(enriched)) return bodies.map(() => Result.fail(enriched.failure));
+    return enriched.success.map(settlementOf);
+  }),
+  describe: (body) => ({ repoId: body.repoId }),
 });
-
-export const describe = (body: unknown) => (isMessage(body) ? { repoId: body.repoId } : Settle.bodyType(body));

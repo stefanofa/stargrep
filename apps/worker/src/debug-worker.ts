@@ -12,7 +12,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Database } from "./database.ts";
 import { withClient } from "./postgres.ts";
-import { EnrichRepos, SyncStars } from "./queues.ts";
+import { EnrichRepos, queueNames, SyncStars } from "./queues.ts";
 
 const UNITS_PER_MINUTE = 300;
 
@@ -84,10 +84,10 @@ export default Cloudflare.Worker(
     const token = yield* yield* DebugToken;
     const jobs = yield* DebugJobs;
     const sender = yield* Cloudflare.Queues.WriteQueue(jobs);
-    const pipeline = {
-      "sync-stars": yield* Cloudflare.Queues.WriteQueue(yield* SyncStars),
-      "enrich-repo": yield* Cloudflare.Queues.WriteQueue(yield* EnrichRepos),
-    };
+    const pipelineQueues = new Map<string, Cloudflare.Queues.WriteQueueClient>([
+      [queueNames.syncStars, yield* Cloudflare.Queues.WriteQueue(yield* SyncStars)],
+      [queueNames.enrichRepo, yield* Cloudflare.Queues.WriteQueue(yield* EnrichRepos)],
+    ]);
     yield* Cloudflare.KV.ReadWriteNamespace(DebugCache);
     yield* Cloudflare.R2.ReadWriteBucket(DebugBlobs);
     const database = yield* Cloudflare.Hyperdrive.Connect(Database);
@@ -160,12 +160,12 @@ export default Cloudflare.Worker(
           ),
         );
       }
-      const pipelineQueue = /^\/queue\/(sync-stars|enrich-repo)$/.exec(url.pathname)?.[1];
-      if (method === "POST" && (pipelineQueue === "sync-stars" || pipelineQueue === "enrich-repo")) {
+      const pipelineQueue = pipelineQueues.get(url.pathname.replace(/^\/queue\//, ""));
+      if (method === "POST" && pipelineQueue !== undefined) {
         const body = yield* (yield* HttpServerRequest).json;
         return yield* withinBudget(
           1,
-          pipeline[pipelineQueue].send(body).pipe(Effect.as(HttpServerResponse.empty({ status: 202 }))),
+          pipelineQueue.send(body).pipe(Effect.as(HttpServerResponse.empty({ status: 202 }))),
         );
       }
       const name = /^\/counter\/([\w-]{1,64})$/.exec(url.pathname)?.[1];
