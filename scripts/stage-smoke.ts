@@ -23,6 +23,7 @@ const check = (name: string, ok: boolean, detail: unknown): Check => ({ check: n
 // Until a new workers.dev URL reaches every edge machine, some requests get Cloudflare's own HTML 404 page instead of
 // the Worker, for over a minute under this load. The Worker never answers with HTML, so those requests are sent again.
 class NotRoutedYet extends Schema.TaggedError<NotRoutedYet>()("NotRoutedYet", {}) {}
+let resent = 0;
 
 const call = Effect.fn("StageSmoke.call")(function* (
   method: "GET" | "POST",
@@ -36,6 +37,7 @@ const call = Effect.fn("StageSmoke.call")(function* (
       authorization === null ? request : HttpClientRequest.setHeader(request, "authorization", authorization),
     );
     if (response.status === 404 && response.headers["content-type"]?.startsWith("text/html")) {
+      resent++;
       return yield* new NotRoutedYet();
     }
     return { status: response.status, body: yield* response.text };
@@ -160,4 +162,5 @@ const checks = (
   await Effect.runPromise(Effect.all([unauthenticated, traffic, flood]).pipe(Effect.provide(FetchHttpClient.layer)))
 ).flat();
 for (const result of checks) console.log(JSON.stringify(result));
+console.log(JSON.stringify({ resentAfterCloudflare404: resent }));
 if (checks.some(({ ok }) => !ok)) process.exit(1);
