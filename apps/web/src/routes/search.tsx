@@ -9,7 +9,6 @@ import {
   Skeleton,
   type Sort,
   SyncProgress,
-  sorts,
   Tile,
   useStoredView,
   type View,
@@ -41,7 +40,10 @@ interface Params {
 
 const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
 
-const isSort = (value: unknown): value is Sort => sorts.some((sort) => sort.value === value);
+// The route's options stay in the entry chunk, so they import nothing from the UI package.
+const sortValues: ReadonlyArray<unknown> = ["starred", "stars", "pushed"] satisfies ReadonlyArray<Sort>;
+
+const isSort = (value: unknown): value is Sort => sortValues.includes(value);
 
 export const Route = createFileRoute("/search")({
   ssr: false,
