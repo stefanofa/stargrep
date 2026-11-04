@@ -7,6 +7,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
+import { budgetShareName, stageBudgetShare } from "./budget-share.ts";
 import { Database, DatabaseMigrations } from "./database.ts";
 import { tokenGate } from "./github-gate.ts";
 import { healthResponse } from "./health.ts";
@@ -22,10 +23,14 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
   // while the branch still migrates. Reading the applied migrations makes the deploy wait for them.
   // The placement region matches the Neon projects in infra/database.run.ts, so queries stay in one region.
   Effect.gen(function* () {
-    yield* requireStageSecrets((yield* Alchemy.Stack).stage);
+    const { stage } = yield* Alchemy.Stack;
+    yield* requireStageSecrets(stage);
     return {
       main: import.meta.url,
-      env: { DATABASE_MIGRATIONS: yield* DatabaseMigrations },
+      env: {
+        DATABASE_MIGRATIONS: yield* DatabaseMigrations,
+        [budgetShareName]: String(yield* stageBudgetShare(stage)),
+      },
       placement: { region: "aws:us-east-1" },
       observability: { enabled: true, logs: { enabled: true, invocationLogs: true }, traces: { enabled: true } },
     };

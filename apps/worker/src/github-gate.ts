@@ -1,5 +1,4 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
-import { BudgetShare } from "@stargrep/github/schemas";
 import * as TokenBudget from "@stargrep/github/token-budget";
 import * as TokenGate from "@stargrep/github/token-gate";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
@@ -7,10 +6,9 @@ import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import { budgetShare } from "./budget-share.ts";
 import { inRuntime } from "./layers.ts";
 import { githubToken } from "./secrets.ts";
-
-const share = BudgetShare.make(0.5);
 
 const windowsKey = "windows";
 
@@ -30,7 +28,7 @@ export class GitHubGate extends Cloudflare.DurableObject<GitHubGate>()(
       const windows = TokenBudget.decodeWindows(yield* state.storage.get(windowsKey));
       const gate = yield* TokenGate.makeMemory({
         token: yield* requiredToken,
-        share,
+        share: yield* Effect.orDie(budgetShare),
         windows: Option.getOrUndefined(windows),
       }).pipe(Effect.provide(FetchHttpClient.layer));
       const serve = TokenGate.serve(gate);

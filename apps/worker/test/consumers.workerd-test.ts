@@ -41,6 +41,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vitest";
+import * as BudgetShare from "../src/budget-share.ts";
 import * as EnrichRepoConsumer from "../src/consumers/enrich-repo.ts";
 import * as Settle from "../src/consumers/settle.ts";
 import * as SyncStarsConsumer from "../src/consumers/sync-stars.ts";
@@ -446,6 +447,30 @@ describe("stage secrets", () => {
       ].map((check) => Effect.runPromiseExit(check)),
     );
     expect(outcomes.map(Exit.isSuccess)).toEqual([false, false, false, true, true]);
+  });
+
+  const share = (stage: string, env: Record<string, string>) =>
+    Effect.runPromiseExit(BudgetShare.stageBudgetShare(stage).pipe(withEnv(env)));
+
+  it("reads the GitHub budget share as a number in (0, 1] and defaults it to 0.5", async () => {
+    const outcomes = await Promise.all(
+      [{}, { GITHUB_BUDGET_SHARE: "0.02" }, { GITHUB_BUDGET_SHARE: "1" }].map((env) => share("pr-18", env)),
+    );
+    expect(outcomes).toEqual([Exit.succeed(0.5), Exit.succeed(0.02), Exit.succeed(1)]);
+    const refused = await Promise.all(
+      ["0", "-0.1", "1.5", "half", "NaN"].map((value) => share("pr-18", { GITHUB_BUDGET_SHARE: value })),
+    );
+    expect(refused.map(Exit.isFailure)).toEqual([true, true, true, true, true]);
+  });
+
+  it("fails a prod deploy with any budget share other than the default", async () => {
+    const outcomes = await Promise.all(
+      [{}, { GITHUB_BUDGET_SHARE: "0.5" }, { GITHUB_BUDGET_SHARE: "0.02" }, { GITHUB_BUDGET_SHARE: "1" }].map((env) =>
+        share("prod", env),
+      ),
+    );
+    expect(outcomes.map(Exit.isSuccess)).toEqual([true, true, false, false]);
+    expect(String(outcomes[2])).toContain("prod takes a GitHub budget share of 0.5");
   });
 
   it("fails every model call with AiKeyMissing when the AI Gateway key is empty", async () => {
