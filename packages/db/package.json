@@ -1,0 +1,35 @@
+{
+  "name": "@stargrep/db",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/db.ts",
+    "./embedding": "./src/embedding.ts",
+    "./errors": "./src/errors.ts",
+    "./memory": "./src/memory.ts",
+    "./migrations": "./src/migrations.ts"
+  },
+  "scripts": {
+    "bench": "bun scripts/bench.ts",
+    "generate": "drizzle-kit generate",
+    "migrate": "drizzle-kit migrate",
+    "typecheck": "effect-tsgo tsc -p ."
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.11",
+    "@electric-sql/pglite-pgvector": "0.0.12",
+    "@stargrep/github": "workspace:*",
+    "drizzle-orm": "1.0.0-rc.5",
+    "effect": "catalog:",
+    "pg": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "catalog:",
+    "@stargrep/config": "workspace:*",
+    "@stargrep/testing": "workspace:*",
+    "@types/bun": "catalog:",
+    "@types/pg": "catalog:",
+    "drizzle-kit": "1.0.0-rc.5",
+    "typescript": "catalog:"
+  }
+}

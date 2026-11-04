@@ -1,7 +1,13 @@
 import * as Schema from "effect/Schema";
 
-export const RepoId = Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0)), Schema.brand("RepoId"));
+const makeGitHubId = <Brand extends string>(brand: Parameters<typeof Schema.brand<Brand>>[0]) =>
+  Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0)), Schema.brand<Brand>(brand));
+
+export const RepoId = makeGitHubId("RepoId");
 export type RepoId = typeof RepoId.Type;
+
+export const GitHubAccountId = makeGitHubId("GitHubAccountId");
+export type GitHubAccountId = typeof GitHubAccountId.Type;
 
 export const RepoNodeId = Schema.NonEmptyString.pipe(Schema.brand("RepoNodeId"));
 export type RepoNodeId = typeof RepoNodeId.Type;

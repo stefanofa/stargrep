@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**/*.{ts,tsx,js,jsx,mjs,cjs,json,jsonc,css}", "!repos"]
+    "includes": ["**/*.{ts,tsx,js,jsx,mjs,cjs,json,jsonc,css}", "!repos", "!packages/db/migrations"]
   },
   "formatter": {
     "indentStyle": "space",
@@ -26,6 +26,26 @@
     }
   },
   "overrides": [
+    {
+      "includes": ["packages/core/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["drizzle-orm", "drizzle-orm/**", "pg", "pg/**"],
+                    "message": "Core reaches Postgres through the Db service in @stargrep/db, never through Drizzle or pg."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
     {
       "includes": [
         "apps/web/src/**",

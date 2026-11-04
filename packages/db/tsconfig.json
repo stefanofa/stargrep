@@ -1,0 +1,7 @@
+{
+  "extends": "@stargrep/config/tsconfig.json",
+  "compilerOptions": {
+    "types": ["bun"]
+  },
+  "include": ["src", "test", "scripts", "drizzle.config.ts"]
+}
