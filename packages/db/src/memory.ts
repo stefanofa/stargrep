@@ -69,6 +69,7 @@ export const open = Effect.acquireRelease(
       database,
       connect: async () => ({ database, query: (statement) => client.query(statement), release: () => undefined }),
       isDatabaseError: (error) => error instanceof messages.DatabaseError,
+      isConnectionError: () => false,
       exclusive: turn.withPermits(1),
     };
     return { client, driver } satisfies Pglite;

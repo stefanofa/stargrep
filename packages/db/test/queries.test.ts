@@ -662,6 +662,26 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgr
       expect(Option.isSome(yield* db.repos.get(committed))).toBe(true);
     }),
   );
+
+  test.effect("fails a transaction whose connection the server ends as a transport failure", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const { withTransaction } = yield* Db.Transactions;
+      const held = "from pg_stat_activity where datname = current_database() and state = 'idle in transaction'";
+      const error = yield* withTransaction(
+        Effect.gen(function* () {
+          yield* db.accounts.get(accountId(9501));
+          yield* database.query(`select pg_terminate_backend(pid) ${held}`);
+          yield* database
+            .query(`select pid ${held}`)
+            .pipe(Effect.repeat({ until: (rows) => rows.length === 0, times: 5000 }));
+          return yield* db.accounts.get(accountId(9501));
+        }),
+      ).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "DbQueryFailed", operation: "accounts.get", reason: "transport" });
+    }),
+  );
 });
 
 const password = "p3-test-secret";

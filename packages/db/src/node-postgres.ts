@@ -6,6 +6,17 @@ import pg from "pg";
 // process. The next query on that connection fails with its own error.
 export const ignoreError = () => {};
 
+// pg reports a lost connection with these plain errors, which carry no code. A server FATAL such as
+// 57P01 arrives as a DatabaseError with its SQLSTATE, and a socket failure carries its errno code.
+const connectionErrors = new Set([
+  "Client has encountered a connection error and is not queryable",
+  "Connection terminated",
+  "Connection terminated unexpectedly",
+]);
+
+export const isConnectionError = (error: unknown) =>
+  error instanceof Error && !(error instanceof pg.DatabaseError) && connectionErrors.has(error.message);
+
 const makePool = (connectionString: string) => {
   const pool = new pg.Pool({ connectionString });
   pool.on("error", ignoreError);

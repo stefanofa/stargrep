@@ -18,6 +18,8 @@ export interface Driver {
   readonly database: Database;
   readonly connect: () => PromiseLike<TransactionClient>;
   readonly isDatabaseError: (error: unknown) => error is { readonly code?: string | undefined };
+  // A lost connection the driver reports without a SQLSTATE or socket code.
+  readonly isConnectionError: (error: unknown) => boolean;
   readonly exclusive: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
 }
 
@@ -45,7 +47,10 @@ const classify = (driver: Driver, operation: Operation, error: unknown): Option.
     const sqlState = error.code ?? null;
     return Option.some(new DbQueryFailed({ operation, reason: reasonOf(sqlState), sqlState }));
   }
-  if (Predicate.hasProperty(error, "code") && Predicate.isString(error.code) && socketErrors.has(error.code)) {
+  if (
+    driver.isConnectionError(error) ||
+    (Predicate.hasProperty(error, "code") && Predicate.isString(error.code) && socketErrors.has(error.code))
+  ) {
     return Option.some(new DbQueryFailed({ operation, reason: "transport", sqlState: null }));
   }
   return Predicate.hasProperty(error, "cause") ? classify(driver, operation, error.cause) : Option.none();

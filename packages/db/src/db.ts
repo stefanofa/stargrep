@@ -101,6 +101,7 @@ const nodePostgres = (connectionString: Redacted.Redacted<string>) =>
             };
           },
           isDatabaseError: (error) => error instanceof pg.DatabaseError,
+          isConnectionError: NodePostgres.isConnectionError,
           exclusive: (effect) => effect,
         }),
       ),
