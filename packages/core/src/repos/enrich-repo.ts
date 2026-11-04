@@ -41,18 +41,13 @@ export const Enrichment = Data.taggedEnum<Enrichment>();
 
 export type EnrichRepoAbort = DbQueryFailed | DbRowInvalid | EmbeddingModelMismatch | GitHubError;
 
-export type Summaries = "batch" | "direct";
-
 export class EnrichRepo extends Context.Service<
   EnrichRepo,
   {
     readonly enrichRepo: (
       id: RepoId,
     ) => Effect.Effect<Exclude<Enrichment, { readonly _tag: "Failed" }>, EnrichRepoError | EnrichRepoAbort>;
-    readonly enrichRepos: (
-      ids: ReadonlyArray<RepoId>,
-      summaries: Summaries,
-    ) => Effect.Effect<ReadonlyArray<Enrichment>, EnrichRepoAbort>;
+    readonly enrichRepos: (ids: ReadonlyArray<RepoId>) => Effect.Effect<ReadonlyArray<Enrichment>, EnrichRepoAbort>;
   }
 >()("@stargrep/core/repos/enrich-repo/EnrichRepo") {}
 
@@ -80,7 +75,6 @@ type Summarizer = (
 const batchSize = 250;
 const batchConcurrency = 4;
 const planConcurrency = 4;
-const summaryConcurrency = 8;
 const embedBatchSize = 128;
 
 const decodeEmbedding = Schema.decodeUnknownEffect(Embedding);
@@ -274,9 +268,7 @@ const make = Effect.gen(function* () {
   });
 
   const summarizeEach: Summarizer = (repos) =>
-    Effect.forEach(repos, (facts) => Effect.result(Summarize.summarize(facts)), { concurrency: summaryConcurrency });
-
-  const summarizers: Record<Summaries, Summarizer> = { batch: Summarize.summarizeBatch, direct: summarizeEach };
+    Effect.forEach(repos, (facts) => Effect.result(Summarize.summarize(facts)));
 
   const enrichRepo = Effect.fn("EnrichRepo.enrichRepo")(function* (id: RepoId) {
     const outcome = yield* answerAt(yield* enrichChunk([id], summarizeEach), 0);
@@ -284,11 +276,11 @@ const make = Effect.gen(function* () {
     return outcome;
   });
 
-  const enrichRepos = Effect.fn("EnrichRepo.enrichRepos")(function* (ids: ReadonlyArray<RepoId>, summaries: Summaries) {
+  const enrichRepos = Effect.fn("EnrichRepo.enrichRepos")(function* (ids: ReadonlyArray<RepoId>) {
     // Sorting keeps each chunk's contents the same from run to run, so a rerun sends the same batch
     // request and the Gateway's idempotency key finds the job that run already paid for.
     const chunks = Arr.chunksOf(Arr.sort(Arr.dedupe(ids), Order.Number), batchSize);
-    const outcomes = yield* Effect.forEach(chunks, (chunk) => enrichChunk(chunk, summarizers[summaries]), {
+    const outcomes = yield* Effect.forEach(chunks, (chunk) => enrichChunk(chunk, Summarize.summarizeBatch), {
       concurrency: batchConcurrency,
     });
     const byId = new Map<number, Enrichment>(outcomes.flat().map((outcome) => [outcome.id, outcome]));

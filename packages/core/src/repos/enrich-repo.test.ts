@@ -423,7 +423,7 @@ for (const [adapter, database] of adapters) {
         yield* store([1, 2, 3]);
         const calls = prompts.length;
         const input = [id(3), id(999), id(2), id(1), id(3)];
-        const outcomes = yield* (yield* EnrichRepo.EnrichRepo).enrichRepos(input, "batch");
+        const outcomes = yield* (yield* EnrichRepo.EnrichRepo).enrichRepos(input);
         expect(outcomes.map((outcome): [number, string] => [outcome.id, outcome._tag])).toEqual([
           [3, "Summarized"],
           [999, "NotFound"],
@@ -456,7 +456,7 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       const batch = [...(yield* store([34, 33, 32, 31, 30])), id(35)];
       const enricher = yield* EnrichRepo.EnrichRepo;
       expect(
-        (yield* enricher.enrichRepos(batch, "batch")).map((outcome): [number, string] => [outcome.id, outcome._tag]),
+        (yield* enricher.enrichRepos(batch)).map((outcome): [number, string] => [outcome.id, outcome._tag]),
       ).toEqual([
         [34, "Failed"],
         [33, "Gone"],
@@ -467,7 +467,7 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       ]);
 
       const calls = prompts.length;
-      expect((yield* enricher.enrichRepos(batch, "batch")).map((outcome) => outcome._tag)).toEqual([
+      expect((yield* enricher.enrichRepos(batch)).map((outcome) => outcome._tag)).toEqual([
         "Failed",
         "Gone",
         "Unchanged",
@@ -482,7 +482,7 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
   it.effect("marks a repo Failed when its README cannot be read", () =>
     Effect.gen(function* () {
       remotes.set(37, { description: "Lost README", readme: { oid: oid("7"), text: missingBlob } });
-      const outcomes = yield* (yield* EnrichRepo.EnrichRepo).enrichRepos(yield* store([37]), "batch");
+      const outcomes = yield* (yield* EnrichRepo.EnrichRepo).enrichRepos(yield* store([37]));
       expect(outcomes).toMatchObject([{ _tag: "Failed", id: id(37), error: { _tag: "NotFound" } }]);
     }),
   );
@@ -510,9 +510,9 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
         }),
       );
       const ids = yield* store([38]);
-      const outcomes = yield* Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) =>
-        enricher.enrichRepos(ids, "batch"),
-      ).pipe(using(failingBatch));
+      const outcomes = yield* Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) => enricher.enrichRepos(ids)).pipe(
+        using(failingBatch),
+      );
       expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Summarized"]);
       expect(direct).toBe(1);
     }),
@@ -537,7 +537,7 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       );
       const ids = yield* store([36]);
       const fiber = yield* Effect.forkChild(
-        Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) => enricher.enrichRepos(ids, "batch")).pipe(using(flaky)),
+        Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) => enricher.enrichRepos(ids)).pipe(using(flaky)),
       );
       yield* Deferred.await(attempted);
       yield* TestClock.adjust("10 seconds");
@@ -545,45 +545,6 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       expect(attempts).toBe(2);
     }),
   );
-  it.effect("summarizes each repo with its own call in direct mode and starts no batch job", () =>
-    Effect.gen(function* () {
-      for (const n of [50, 51, 52]) {
-        remotes.set(n, {
-          description: `Direct ${n}`,
-          readme: { oid: wideOid(n), text: `# Direct ${n}` },
-        });
-      }
-      const calls = { direct: 0, batch: 0 };
-      const batchCapable = Layer.succeed(
-        TextGeneration.TextGeneration,
-        TextGeneration.make({
-          provider: "test",
-          model: "test/text",
-          timeout: Duration.seconds(5),
-          run: (request) =>
-            Effect.sync(() => {
-              calls.direct++;
-              return { output: SummarizeFake.respond(request.prompt), usage };
-            }),
-          batch: {
-            timeout: Duration.hours(1),
-            run: () =>
-              Effect.suspend(() => {
-                calls.batch++;
-                return Effect.fail(new AiRequestFailed({ operation: "generate", model: "test/text", detail: "batch" }));
-              }),
-          },
-        }),
-      );
-      const ids = yield* store([50, 51, 52]);
-      const outcomes = yield* Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) =>
-        enricher.enrichRepos(ids, "direct"),
-      ).pipe(using(batchCapable));
-      expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Summarized", "Summarized", "Summarized"]);
-      expect(calls).toEqual({ direct: 3, batch: 0 });
-    }),
-  );
-
   it.effect("reads up to four READMEs from the blob store at once while it plans", () =>
     Effect.gen(function* () {
       const numbers = [60, 61, 62, 63, 64, 65, 66, 67];
@@ -613,9 +574,9 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
         ),
       ).pipe(Layer.provide(BlobStore.layerMemory));
       const ids = yield* store(numbers);
-      const outcomes = yield* Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) =>
-        enricher.enrichRepos(ids, "direct"),
-      ).pipe(Effect.provide(Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(slowBlobs))));
+      const outcomes = yield* Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) => enricher.enrichRepos(ids)).pipe(
+        Effect.provide(Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(slowBlobs))),
+      );
       expect(outcomes.map((outcome) => outcome._tag)).toEqual(numbers.map(() => "Summarized"));
       expect(reads.peak).toBe(4);
     }),

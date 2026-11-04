@@ -183,16 +183,20 @@ export interface TextOptions {
   readonly reasoning: "none" | "provider-default";
   readonly timeout: Duration.Duration;
   readonly retry: Retry;
+  readonly batch: boolean;
+  readonly fallbackConcurrency: number | undefined;
 }
 
 const defaultTextOptions: TextOptions = {
   reasoning: "provider-default",
   timeout: textTimeout,
   retry: unavailableRetry,
+  batch: true,
+  fallbackConcurrency: undefined,
 };
 
 export const layerTextGeneration = (model: string, options: Partial<TextOptions> = {}) => {
-  const { reasoning, timeout, retry } = { ...defaultTextOptions, ...options };
+  const { reasoning, timeout, retry, batch, fallbackConcurrency } = { ...defaultTextOptions, ...options };
   return Layer.effect(
     TextGeneration.TextGeneration,
     Effect.andThen(
@@ -203,6 +207,7 @@ export const layerTextGeneration = (model: string, options: Partial<TextOptions>
           model,
           timeout,
           retry,
+          ...(fallbackConcurrency === undefined ? {} : { fallbackConcurrency }),
           run: (request) =>
             Effect.tryPromise({
               try: (abortSignal) =>
@@ -222,7 +227,7 @@ export const layerTextGeneration = (model: string, options: Partial<TextOptions>
                 usage: { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens },
               })),
             ),
-          batch: { timeout: batchTimeout, run: runBatch(provider, model) },
+          ...(batch ? { batch: { timeout: batchTimeout, run: runBatch(provider, model) } } : {}),
         }),
       ),
     ),
@@ -294,6 +299,9 @@ export const layerPlannerTextGeneration = layerTextGeneration(Models.plannerMode
   retry: noRetry,
 }).pipe(Layer.provide(layerProviderConfig));
 
-export const layer = Layer.merge(layerTextGeneration(Models.summaryModel), layerEmbeddings(Models.embeddingModel)).pipe(
-  Layer.provide(layerProviderConfig),
-);
+export const layerModels = <E, R>(provider: Layer.Layer<AiProvider, E, R>, options: Partial<TextOptions> = {}) =>
+  Layer.merge(layerTextGeneration(Models.summaryModel, options), layerEmbeddings(Models.embeddingModel)).pipe(
+    Layer.provide(provider),
+  );
+
+export const layer = layerModels(layerProviderConfig);

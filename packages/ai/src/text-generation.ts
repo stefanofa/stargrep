@@ -43,13 +43,12 @@ export class TextGeneration extends Context.Service<
   }
 >()("@stargrep/ai/text-generation/TextGeneration") {}
 
-const fallbackConcurrency = 4;
-
 export const make = (options: {
   readonly provider: string;
   readonly model: string;
   readonly timeout: Duration.Duration;
   readonly retry?: Retry;
+  readonly fallbackConcurrency?: number;
   readonly run: (request: RunRequest) => Effect.Effect<RunResult, AiError>;
   readonly batch?: {
     readonly timeout: Duration.Duration;
@@ -58,7 +57,7 @@ export const make = (options: {
     ) => Effect.Effect<ReadonlyArray<Result.Result<RunResult, AiError> | undefined>, AiError>;
   };
 }) => {
-  const { provider, model, timeout, retry = unavailableRetry, run, batch } = options;
+  const { provider, model, timeout, retry = unavailableRetry, fallbackConcurrency = 4, run, batch } = options;
   const timedOut = (after: Duration.Duration) =>
     new AiTimeout({ operation: "generate", model, timeoutMillis: Duration.toMillis(after) });
   const invalid = new AiOutputInvalid({

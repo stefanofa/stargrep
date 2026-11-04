@@ -597,6 +597,25 @@ describe("gateway privacy", () => {
   );
 });
 
+describe("gateway without the batch API", () => {
+  it.effect("answers a batch of prompts with one direct call each and never starts a batch job", () => {
+    let calls = 0;
+    const layer = textLayer(
+      () => {
+        calls++;
+        return Promise.resolve(textResult(JSON.stringify(validSummary)));
+      },
+      Models.summaryModel,
+      { batch: false },
+    );
+    return Effect.gen(function* () {
+      const results = yield* Summarize.summarizeBatch([repo, { ...repo, fullName: "other/repo" }, repo]);
+      expect(results.map(Result.isSuccess)).toEqual([true, true, true]);
+      expect(calls).toBe(3);
+    }).pipe(Effect.provide(layer));
+  });
+});
+
 describe("gateway with no key", () => {
   it.effect("fails every summary and embedding with AiKeyMissing and sends nothing", () =>
     Effect.gen(function* () {
