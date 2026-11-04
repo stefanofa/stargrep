@@ -90,6 +90,7 @@ export const IntFromString = Schema.NumberFromString.pipe(Schema.check(Schema.is
 
 export const GraphQLError = Schema.Struct({
   type: Schema.optionalKey(Schema.String),
+  path: Schema.optionalKey(Schema.Array(Schema.Union([Schema.String, Schema.Int]))),
   message: Schema.String,
 });
 export type GraphQLError = typeof GraphQLError.Type;

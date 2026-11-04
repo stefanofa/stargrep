@@ -204,9 +204,10 @@ const make = Effect.gen(function* () {
     return yield* exchange("repo-facts", Facts.request(ids), (raw, reply, endpoint, now) =>
       Effect.gen(function* () {
         const body = yield* Facts.decodeResponse(raw);
-        const errors = (body.errors ?? []).filter((error) => error.type !== "NOT_FOUND");
+        const { facts, forbidden, errors } = Facts.settle(ids, body);
         if (errors.length > 0 || !body.data) return yield* graphQLFailure(endpoint, reply, now, errors);
-        return body.data.nodes.flatMap((node) => (node === null ? [] : [Facts.toFacts(node)]));
+        if (forbidden.length > 0) yield* Effect.logWarning("GitHub forbade repos to the token", { nodeIds: forbidden });
+        return facts;
       }),
     );
   });
