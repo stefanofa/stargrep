@@ -12,13 +12,6 @@ export default Alchemy.Stack(
     if (stage !== "shared") {
       return yield* Effect.die(new Error(`Deploy the database stack only to stage "shared", not "${stage}"`));
     }
-    // A Neon project can't change region, so the US needs new projects. No stage uses the EU project.
-    const euCentral = yield* Neon.Project("Project", {
-      name: "stargrep",
-      region: "aws-eu-central-1",
-      pgVersion: 17,
-      historyRetentionSeconds: 21600,
-    }).pipe(RemovalPolicy.retain());
     // The main Worker's placement in apps/worker/src/worker.ts must match this region.
     const usEast = yield* Neon.Project("ProjectUsEast", {
       name: "stargrep-us-east",
@@ -34,7 +27,6 @@ export default Alchemy.Stack(
       historyRetentionSeconds: 0,
     }).pipe(RemovalPolicy.retain());
     return {
-      euCentralProjectId: euCentral.projectId,
       usEastProjectId: usEast.projectId,
       previewsUsEastProjectId: previewsUsEast.projectId,
     };
