@@ -1,5 +1,9 @@
 import { env } from "cloudflare:workers";
 import type { GitHubSignIn } from "@stargrep/auth/config";
+import { acquirePool } from "@stargrep/db/node-postgres";
+import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -43,7 +47,7 @@ const stage = (origin: string, database: Hyperdrive, github: GitHubSignIn) => {
     }
     return response;
   };
-  return { origin, send };
+  return { origin, send, github };
 };
 
 type Stage = ReturnType<typeof stage>;
@@ -98,9 +102,62 @@ const visit = (at: Stage, url: URL | string) => {
 
 const location = (response: Response) => new URL(response.headers.get("location") ?? "", "http://unset");
 
-const tokenExchanges = async (): Promise<ReadonlyArray<TokenExchange>> =>
+const githubSaw = async (): Promise<{ exchanges: ReadonlyArray<TokenExchange>; viewerReads: number }> =>
   // @effect-diagnostics-next-line globalFetch:off - the fake GitHub behind the outbound service reports what it was sent.
-  (await fetch("https://fake-github.test/exchanges")).json();
+  (await fetch("https://fake-github.test/report")).json();
+
+const sessionCookie = (response: Response) =>
+  response.headers.getSetCookie().some((cookie) => cookie.includes("session_token="));
+
+const linkedAccounts = (database: Hyperdrive, providerId: string) =>
+  Effect.runPromise(
+    acquirePool(database.connectionString).pipe(
+      Effect.flatMap((pool) =>
+        Effect.promise(() =>
+          pool.query<{ count: number }>("select count(*)::int as count from account where provider_id = $1", [
+            providerId,
+          ]),
+        ),
+      ),
+      Effect.map(({ rows }) => rows[0]?.count),
+      Effect.scoped,
+    ),
+  );
+
+const encoder = new TextEncoder();
+
+// Better Auth derives each proxy key with HKDF-SHA256 over the proxy secret, as in better-auth/dist/crypto/purpose.mjs.
+const proxyKey = async (purpose: string) => {
+  const key = await crypto.subtle.importKey("raw", encoder.encode(Redacted.value(proxySecret)), "HKDF", false, [
+    "deriveBits",
+  ]);
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: "HKDF",
+      hash: "SHA-256",
+      salt: encoder.encode("better-auth:oauth-encryption:v1"),
+      info: encoder.encode(`better-auth:${purpose}:v1`),
+    },
+    key,
+    256,
+  );
+  return Array.from(new Uint8Array(bits), (byte) => byte.toString(16).padStart(2, "0")).join("");
+};
+
+const forgedProfile = async (state: string, email: string) =>
+  symmetricEncrypt({
+    key: await proxyKey("oauth-proxy-profile"),
+    data: JSON.stringify({
+      userInfo: { id: "attacker-1", email, name: "Attacker", emailVerified: true },
+      account: { providerId: "x", accountId: "attacker-1", accessToken: "stolen" },
+      state,
+      callbackURL: "/",
+      timestamp: DateTime.toEpochMillis(DateTime.nowUnsafe()),
+    }),
+  });
+
+const forgedCompletion = (profile: string) =>
+  `/auth/callback/x/oauth-proxy?callbackURL=%2F&profile=${encodeURIComponent(profile)}`;
 
 const json = async (response: Response) => [response.status, await response.json()] as const;
 
@@ -113,20 +170,24 @@ describe("direct sign-in", () => {
 
     const callback = await visit(local, githubReturn(authorize, { code: ada.code }));
     expect([callback.status, location(callback).pathname]).toEqual([302, "/search"]);
-    expect(await tokenExchanges()).toEqual([
-      {
-        clientSecret: "client-secret-local",
-        redirectUri: "http://localhost:1340/auth/callback/github",
-        codeVerifier: true,
-      },
-    ]);
+    expect(await githubSaw()).toEqual({
+      exchanges: [
+        {
+          clientSecret: "client-secret-local",
+          redirectUri: "http://localhost:1340/auth/callback/github",
+          codeVerifier: true,
+        },
+      ],
+      viewerReads: 1,
+    });
+    expect((await json(await local.send("/api/sync/ada")))[1]).toMatchObject({ login: "ada", state: "queued" });
 
     expect(await json(await local.send("/api/viewer"))).toEqual([
       200,
       { login: "ada", name: "Ada Lovelace", avatarUrl: ada.user.avatar_url, starredCount: ada.starredCount },
     ]);
     expect(await json(await local.send("/api/library"))).toEqual([200, { repos: [] }]);
-    expect((await json(await local.send("/api/sync/ada")))[1]).toMatchObject({ login: "ada", state: "queued" });
+    expect((await githubSaw()).viewerReads).toBe(0);
   });
 
   it("sends a denied consent back to the landing page with the error", async () => {
@@ -134,7 +195,7 @@ describe("direct sign-in", () => {
     const callback = await visit(local, githubReturn(authorize, { error: "access_denied" }));
     expect(callback.status).toBe(302);
     expect([location(callback).pathname, location(callback).searchParams.get("error")]).toEqual(["/", "access_denied"]);
-    expect(await tokenExchanges()).toEqual([]);
+    expect(await githubSaw()).toEqual({ exchanges: [], viewerReads: 0 });
   });
 
   it("ends the session on sign-out", async () => {
@@ -146,7 +207,7 @@ describe("direct sign-in", () => {
       401,
       expect.objectContaining({ code: "UNAUTHORIZED" }),
     ]);
-    await tokenExchanges();
+    await githubSaw();
   });
 });
 
@@ -159,16 +220,20 @@ describe("sign-in proxied through prod", () => {
     expect(forwarded.status).toBe(302);
     const completion = location(forwarded);
     expect([completion.origin, completion.pathname]).toEqual([preview.origin, "/auth/callback/github/oauth-proxy"]);
-    expect(await tokenExchanges()).toEqual([
-      {
-        clientSecret: Redacted.value(prodSecret),
-        redirectUri: "https://stargrep.com/auth/callback/github",
-        codeVerifier: true,
-      },
-    ]);
+    expect(await githubSaw()).toEqual({
+      exchanges: [
+        {
+          clientSecret: Redacted.value(prodSecret),
+          redirectUri: "https://stargrep.com/auth/callback/github",
+          codeVerifier: true,
+        },
+      ],
+      viewerReads: 0,
+    });
 
     const signedIn = await visit(preview, completion);
     expect([signedIn.status, location(signedIn).pathname]).toEqual([302, "/search"]);
+    expect((await githubSaw()).viewerReads).toBe(1);
     expect((await json(await preview.send("/api/viewer")))[1]).toMatchObject({ login: "ada" });
     expect(await json(await prod.send("/api/viewer"))).toEqual([
       401,
@@ -176,11 +241,31 @@ describe("sign-in proxied through prod", () => {
     ]);
   });
 
-  it("answers 404 to a forged completion on prod", async () => {
-    for (const path of ["/auth/callback/github/oauth-proxy", "/auth/oauth-proxy-callback"]) {
-      const forged = await prod.send(`${path}?callbackURL=%2Fsearch&profile=forged`);
-      expect([path, forged.status]).toEqual([path, 404]);
+  it("turns no profile forged with the proxy secret into a prod session, under any provider id", async () => {
+    await visit(prod, githubReturn(await startSignIn(prod), { code: ada.code }));
+    await githubSaw();
+
+    const onPreview = stage(preview.origin, databases.AUTH_PREVIEW_DATABASE, proxiedThroughProd);
+    const packaged = (await startSignIn(onPreview)).searchParams.get("state") ?? "";
+    const { state: previewState } = JSON.parse(
+      await symmetricDecrypt({ key: await proxyKey("oauth-proxy-package"), data: packaged }),
+    );
+    const accepted = await onPreview.send(forgedCompletion(await forgedProfile(previewState, "attacker@example.com")));
+    expect([accepted.status, sessionCookie(accepted)]).toEqual([302, true]);
+
+    const onProd = stage(prodOrigin, databases.AUTH_PROD_DATABASE, prod.github);
+    const prodState = (await startSignIn(onProd)).searchParams.get("state") ?? "";
+    for (const path of [
+      forgedCompletion(await forgedProfile(prodState, ada.email)),
+      `/auth/callback/github/oauth-proxy?callbackURL=%2F&profile=${encodeURIComponent(await forgedProfile(prodState, ada.email))}`,
+      `/auth/oauth-proxy-callback?callbackURL=%2F&profile=${encodeURIComponent(await forgedProfile(prodState, ada.email))}`,
+    ]) {
+      const refused = await onProd.send(path);
+      expect([path.split("?")[0], refused.status, sessionCookie(refused)]).toEqual([path.split("?")[0], 404, false]);
     }
+    expect((await onProd.send("/api/viewer")).status).toBe(401);
+    expect(await linkedAccounts(databases.AUTH_PROD_DATABASE, "x")).toBe(0);
+    await githubSaw();
   });
 
   it("refuses to forward a sign-in to a host that is not a preview of this account", async () => {
@@ -190,6 +275,6 @@ describe("sign-in proxied through prod", () => {
     expect(forwarded.status).toBe(302);
     expect(location(forwarded).href).toBe("https://stargrep.com/?error=redirect_refused");
     expect(forwarded.headers.get("location")).not.toContain("profile=");
-    await tokenExchanges();
+    await githubSaw();
   });
 });

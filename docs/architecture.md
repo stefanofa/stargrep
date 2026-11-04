@@ -214,7 +214,7 @@ A new session imports the GitHub account with the user's own token: `GET /user` 
 
 A GitHub App cannot match callback URLs by wildcard, and each preview stage has its own workers.dev host. So previews sign in through prod with Better Auth's `oAuthProxy` plugin. The preview sends GitHub's redirect to prod's callback and packs its own state, PKCE verifier included, into GitHub's `state`, encrypted with `AUTH_PROXY_SECRET`. Prod exchanges the code and redirects to the preview with the profile and tokens encrypted for 60 seconds. The preview creates the user and session in its own database. Prod creates neither. `AUTH_PROXY_ORIGIN` decides: unset, a stage signs in directly with the client secret, and set, a stage proxies through that origin and never reads the client secret.
 
-Any branch's workflow can read the `preview` environment, so the design assumes the proxy secret leaks. Two guards on prod keep that leak inside preview databases. Prod answers 404 on the proxy's completion paths, so a forged profile cannot sign anyone in to prod. Prod forwards a sign-in only to its own origin or to a preview Worker of this account, so a forged state cannot send a user's GitHub token to another host.
+Any branch's workflow can read the `preview` environment, so the design assumes the proxy secret leaks. Two guards on prod keep that leak inside preview databases. Prod installs the plugin without its endpoints and keeps only the hooks that forward a preview's sign-in, so prod has no route that turns a profile encrypted with the proxy secret into a session, under any provider ID. Prod forwards a sign-in only to its own origin or to a preview Worker of this account, so a forged state cannot send a user's GitHub token to another host.
 
 ## Client
 

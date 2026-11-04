@@ -55,6 +55,7 @@
         "@types/react-dom": "19.3.0",
         "@vitejs/plugin-react": "6.2.1",
         "alchemy": "2.0.0-beta.85",
+        "better-auth": "1.7.17",
         "tailwindcss": "4.3.4",
         "typescript": "catalog:",
         "vite": "8.3.5",

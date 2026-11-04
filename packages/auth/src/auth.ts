@@ -21,8 +21,6 @@ const providerId = "github";
 // preview's sign-in, which carries the user's GitHub token, only to a preview Worker of this account.
 export const previewHost = /^stargrep-web-pr-\d+-[a-z0-9]+\.rewebdotso\.workers\.dev$/;
 
-export const proxyCompletionPaths = [`/callback/${providerId}/oauth-proxy`, "/oauth-proxy-callback"];
-
 export const redirectAllowed = (location: string, origin: string) => {
   const target = URL.parse(location, origin);
   return (
@@ -66,7 +64,7 @@ export interface LayerOptions<R> extends Omit<Options, "onSignIn"> {
   readonly onSignIn: (signIn: SignIn) => Effect.Effect<void, never, R>;
 }
 
-const github = ({ config, origin }: Options) => {
+export const signInOptions = ({ config, origin }: Pick<Options, "config" | "origin">) => {
   const signIn = config.github;
   if (signIn._tag === "proxied") {
     return {
@@ -78,21 +76,26 @@ const github = ({ config, origin }: Options) => {
           secret: Redacted.value(signIn.proxySecret),
         }),
       ],
-      disabledPaths: [],
     };
   }
+  // Prod only forwards previews' sign-ins, which the plugin's hooks do. Without its endpoints, prod has no route that
+  // turns a profile encrypted with the proxy secret into a session.
   return {
     provider: { clientId: signIn.clientId, clientSecret: Redacted.value(signIn.clientSecret) },
     plugins: Option.match(signIn.proxySecret, {
       onNone: () => [],
-      onSome: (secret) => [oAuthProxy({ productionURL: origin, currentURL: origin, secret: Redacted.value(secret) })],
+      onSome: (secret) => [
+        {
+          ...oAuthProxy({ productionURL: origin, currentURL: origin, secret: Redacted.value(secret) }),
+          endpoints: {},
+        },
+      ],
     }),
-    disabledPaths: proxyCompletionPaths,
   };
 };
 
 export const make = (pool: pg.Pool, options: Options) => {
-  const { provider, plugins, disabledPaths } = github(options);
+  const { provider, plugins } = signInOptions(options);
   const auth = betterAuth({
     appName: "Stargrep",
     baseURL: options.origin,
@@ -107,7 +110,6 @@ export const make = (pool: pg.Pool, options: Options) => {
     telemetry: { enabled: false },
     logger: { level: "error" },
     plugins,
-    disabledPaths,
     databaseHooks: {
       session: {
         create: {
@@ -126,11 +128,16 @@ export const make = (pool: pg.Pool, options: Options) => {
     const { accessToken } = await auth.api.getAccessToken({ body: { accountId: account.id, userId } });
     return accessToken;
   };
-  const tokenOf = (userId: UserId): Effect.Effect<Redacted.Redacted<string>, AuthFailed> =>
-    Effect.tryPromise({
-      try: () => githubToken(userId),
-      catch: (cause) => new AuthFailed({ operation: "token", cause }),
-    }).pipe(Effect.map(Redacted.make));
+  const tokenOf: (userId: UserId) => Effect.Effect<Redacted.Redacted<string>, AuthFailed> = Effect.fn(
+    "Auth.githubToken",
+  )(function* (userId: UserId) {
+    return Redacted.make(
+      yield* Effect.tryPromise({
+        try: () => githubToken(userId),
+        catch: (cause) => new AuthFailed({ operation: "token", cause }),
+      }),
+    );
+  });
   return { handler: auth.handler, getSession: auth.api.getSession, tokenOf };
 };
 
@@ -164,9 +171,7 @@ export const layer = <R>(options: LayerOptions<R>) =>
           });
           return Option.map(Option.fromNullishOr(session), ({ user }) => UserId.make(user.id));
         }),
-        githubToken: Effect.fn("Auth.githubToken")(function* (userId: UserId) {
-          return yield* auth.tokenOf(userId);
-        }),
+        githubToken: auth.tokenOf,
       });
     }),
   );

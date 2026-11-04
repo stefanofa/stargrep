@@ -4,8 +4,7 @@ import type { AuthConfig } from "@stargrep/auth/config";
 import { SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import type { UserId } from "@stargrep/db/auth-schema";
-import * as GitHubAccount from "@stargrep/github/account";
-import * as StarCount from "@stargrep/github/star-count";
+import * as GitHubViewer from "@stargrep/github/viewer";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
@@ -17,32 +16,21 @@ import * as Redacted from "effect/Redacted";
 
 const githubTimeout = Duration.seconds(5);
 
-const viewerRequest = HttpClientRequest.get("https://api.github.com/user").pipe(
-  HttpClientRequest.accept("application/vnd.github+json"),
-);
+const unavailable = (step: ViewerUnavailable["step"]) => () => Effect.fail(new ViewerUnavailable({ step }));
 
-const github = (request: HttpClientRequest.HttpClientRequest, token: Redacted.Redacted<string>) =>
-  HttpClient.execute(
-    request.pipe(
-      HttpClientRequest.setHeaders({ "x-github-api-version": "2022-11-28", "user-agent": "stargrep" }),
-      HttpClientRequest.bearerToken(Redacted.value(token)),
-    ),
-  ).pipe(
+const readViewer = (token: Redacted.Redacted<string>) =>
+  HttpClient.execute(GitHubViewer.request.pipe(HttpClientRequest.bearerToken(Redacted.value(token)))).pipe(
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.flatMap((response) => response.text),
+    Effect.flatMap(GitHubViewer.decodeResponse),
     Effect.timeout(githubTimeout),
   );
 
-const unavailable = (step: ViewerUnavailable["step"]) => () => Effect.fail(new ViewerUnavailable({ step }));
-
 export const importViewer = Effect.fn("Viewers.import")(
   function* (userId: UserId, token: Redacted.Redacted<string>) {
-    const facts = GitHubAccount.toAccount(
-      yield* github(viewerRequest, token).pipe(Effect.flatMap(GitHubAccount.decodeUser)),
-    );
-    const counted = yield* github(StarCount.request(facts.login), token).pipe(Effect.flatMap(StarCount.decodeResponse));
-    const starredCount = counted.data?.user?.starredRepositories.totalCount;
-    if (starredCount === undefined) return yield* new ViewerUnavailable({ step: "github" });
+    const read = yield* readViewer(token);
+    if (!read.data) return yield* new ViewerUnavailable({ step: "github" });
+    const { account: facts, starredCount } = GitHubViewer.toViewer(read.data.viewer);
     const db = yield* Db.Db;
     yield* db.accounts.claim({ facts, userId, starredCount });
     yield* SyncRequests.SyncRequests.use((requests) => requests.request(facts.login)).pipe(

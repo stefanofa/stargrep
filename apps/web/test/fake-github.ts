@@ -22,6 +22,7 @@ export interface TokenExchange {
 }
 
 const exchanges: Array<TokenExchange> = [];
+const viewerReads = { count: 0 };
 
 const basicSecret = (authorization: string | null) =>
   authorization?.startsWith("Basic ") ? (atob(authorization.slice(6)).split(":")[1] ?? null) : null;
@@ -30,7 +31,11 @@ const signedIn = (request: Request) => request.headers.get("authorization") === 
 
 export const fakeGitHub = async (request: Request): Promise<Response> => {
   const url = new URL(request.url);
-  if (url.hostname === "fake-github.test") return Response.json(exchanges.splice(0));
+  if (url.hostname === "fake-github.test") {
+    const report = { exchanges: exchanges.splice(0), viewerReads: viewerReads.count };
+    viewerReads.count = 0;
+    return Response.json(report);
+  }
   if (url.href === "https://github.com/login/oauth/access_token") {
     const form = new URLSearchParams(await request.text());
     exchanges.push({
@@ -48,7 +53,20 @@ export const fakeGitHub = async (request: Request): Promise<Response> => {
     return Response.json([{ email: ada.email, primary: true, verified: true }]);
   }
   if (url.href === "https://api.github.com/graphql") {
-    return Response.json({ data: { user: { starredRepositories: { totalCount: ada.starredCount } } } });
+    viewerReads.count++;
+    return Response.json({
+      data: {
+        viewer: {
+          databaseId: ada.user.id,
+          login: ada.user.login,
+          name: ada.user.name,
+          avatarUrl: ada.user.avatar_url,
+          followers: { totalCount: ada.user.followers },
+          repositories: { totalCount: ada.user.public_repos },
+          starredRepositories: { totalCount: ada.starredCount },
+        },
+      },
+    });
   }
   return Response.json({ message: "Not Found" }, { status: 404 });
 };
