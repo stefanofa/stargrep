@@ -40,13 +40,14 @@ export const afterFailure = (error: Failure, now: number): Settlement =>
     // The login, repo, or README is gone. A later sync enqueues a repo again while it still exists.
     NotFound: deadLetter,
     // GraphQL errors other than NOT_FOUND and RATE_LIMITED include GitHub's transient INTERNAL errors.
+    // A 403 can be a rate limit GitHub words in a way the client does not recognize, so it gets the queue's retries.
     GitHubRequestFailed: (failure) =>
-      failure.reason === "status" && failure.status !== null && failure.status < 500
+      failure.reason === "status" && failure.status !== null && failure.status < 500 && failure.status !== 403
         ? deadLetter(failure)
         : retry(failure),
     // A body that broke while it was read can arrive whole next time. A body with the wrong shape cannot.
     GitHubResponseInvalid: (failure) => (failure.reason === "unreadable-body" ? retry(failure) : deadLetter(failure)),
-    // A constraint error can come from a race with another message's writes. A query error repeats.
+    // A conflict or a constraint error can come from a race with another message's writes. A query error repeats.
     DbQueryFailed: (failure) => (failure.reason === "query" ? deadLetter(failure) : retry(failure)),
     DbRowInvalid: deadLetter,
     EnrichQueueFailed: retry,

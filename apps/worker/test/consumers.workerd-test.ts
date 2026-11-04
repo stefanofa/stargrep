@@ -25,6 +25,7 @@ import {
   Unauthorized,
 } from "@stargrep/github/errors";
 import * as GitHub from "@stargrep/github/github";
+import * as GitHubFake from "@stargrep/github/github.fixture";
 import { GitHubAccountId, RepoId } from "@stargrep/github/schemas";
 import * as TokenGate from "@stargrep/github/token-gate";
 import { RuntimeContext } from "alchemy/RuntimeContext";
@@ -32,11 +33,13 @@ import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vitest";
 import * as EnrichRepoConsumer from "../src/consumers/enrich-repo.ts";
 import * as Settle from "../src/consumers/settle.ts";
@@ -134,10 +137,11 @@ describe("sync-stars consumer", () => {
     expect(result.retryMessages).toEqual([]);
   });
 
+  const unusedDb = Layer.succeed(Db.Db, Db.Db.of({} as Db.Db["Service"]));
+
   it("dead-letters a sync on a stage with no GitHub token on its first attempt", async () => {
     const { queues, deadLetters } = recordingQueues();
     const batch = batchOf("sync-stars", [{ login: "octocat", mode: "full" }]);
-    const unusedDb = Layer.succeed(Db.Db, Db.Db.of({} as Db.Db["Service"]));
     const layer = StarSync.layer.pipe(
       Layer.provide(GitHub.layer.pipe(Layer.provide(TokenGate.layerMissing))),
       Layer.provide(unusedDb),
@@ -147,6 +151,34 @@ describe("sync-stars consumer", () => {
     expect(deadLetters).toEqual([{ login: "octocat", mode: "full" }]);
     expect(result.explicitAcks).toEqual(["m0"]);
     expect(result.retryMessages).toEqual([]);
+  });
+
+  it("defers a sync that hits GitHub's secondary rate limit with quota left, instead of dead-lettering it", async () => {
+    const { queues, later, deadLetters } = recordingQueues();
+    const batch = batchOf("sync-stars", [{ login: "octocat", mode: "full" }]);
+    const github = GitHubFake.layer(() => ({
+      status: 403,
+      body: { message: "You have exceeded a secondary rate limit. Please wait a few minutes before you try again." },
+      headers: GitHubFake.rateLimitHeaders(4900, 3600),
+    }));
+    const layer = StarSync.layer.pipe(
+      Layer.provide(github.layer),
+      Layer.provide(unusedDb),
+      Layer.provide(EnrichQueue.layerMemory().layer),
+    );
+    const ctx = createExecutionContext();
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkChild(Settle.processBatch(SyncStarsConsumer.pipeline, queues, batch.messages));
+        yield* TestClock.adjust("3 minutes");
+        yield* Fiber.join(fiber);
+      }).pipe(Effect.provide(Layer.merge(layer, TestClock.layer()))),
+    );
+    const result = await getQueueResult(batch, ctx);
+    expect(deadLetters).toEqual([]);
+    expect(later).toEqual([{ body: { login: "octocat", mode: "full" }, delaySeconds: 65 }]);
+    expect(github.sent).toHaveLength(4);
+    expect(result.explicitAcks).toEqual(["m0"]);
   });
 
   it("retries a message whose deferred send failed and logs the send error", async () => {
@@ -280,6 +312,7 @@ describe("settlement table", () => {
       [new GitHubRequestFailed({ ...endpoint, status: null, reason: "timeout" }), "Retry"],
       [new GitHubRequestFailed({ ...endpoint, status: 503, reason: "status" }), "Retry"],
       [new GitHubRequestFailed({ ...endpoint, status: null, reason: "graphql-errors" }), "Retry"],
+      [new GitHubRequestFailed({ ...endpoint, status: 403, reason: "status" }), "Retry"],
       [new GitHubRequestFailed({ ...endpoint, status: 422, reason: "status" }), "DeadLetter"],
     ],
     GitHubResponseInvalid: [
@@ -290,6 +323,8 @@ describe("settlement table", () => {
     DbQueryFailed: [
       [new DbQueryFailed({ operation: "stars.upsert", reason: "transport", sqlState: null }), "Retry"],
       [new DbQueryFailed({ operation: "stars.upsert", reason: "timeout", sqlState: null }), "Retry"],
+      [new DbQueryFailed({ operation: "stars.upsert", reason: "conflict", sqlState: "40P01" }), "Retry"],
+      [new DbQueryFailed({ operation: "stars.upsert", reason: "conflict", sqlState: "40001" }), "Retry"],
       [new DbQueryFailed({ operation: "stars.upsert", reason: "constraint", sqlState: "23503" }), "Retry"],
       [new DbQueryFailed({ operation: "stars.upsert", reason: "query", sqlState: "42601" }), "DeadLetter"],
     ],

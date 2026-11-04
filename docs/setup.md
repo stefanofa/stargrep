@@ -136,7 +136,7 @@ Four workflows run the stages, and their jobs skip until the steps below are don
 
 3. Create a fine-grained GitHub token with read access to public repositories and no other permission. Each stage's Worker syncs stars and fetches READMEs with it, and uses half of each hourly window.
 
-4. Add the tokens, the Neon key, and the AI Gateway key as GitHub Actions secrets, and the Cloudflare account ID as a variable. The variable turns the deploy jobs on. Each deploy binds `AI_GATEWAY_API_KEY` and `STARGREP_GITHUB_TOKEN` to the Worker as secrets. A `prod` deploy fails without either secret. A pull request stage or a local stage deploys without them. There, every GitHub call fails with `GitHubTokenMissing` and every model call with `AiKeyMissing`, so pipeline messages retry and then reach the dead-letter queue.
+4. Add the tokens, the Neon key, and the AI Gateway key as GitHub Actions secrets, and the Cloudflare account ID as a variable. The variable turns the deploy jobs on. Each deploy binds `AI_GATEWAY_API_KEY` and `STARGREP_GITHUB_TOKEN` to the Worker as secrets. A `prod` deploy fails without either secret. A pull request stage or a local stage deploys without them. There, every GitHub call fails with `GitHubTokenMissing` and every model call with `AiKeyMissing`, so each pipeline message goes to the dead-letter queue on its first attempt.
 
    ```sh
    gh secret set CLOUDFLARE_API_TOKEN
