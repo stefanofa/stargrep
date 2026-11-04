@@ -1,5 +1,4 @@
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { pickReadme, TreeEntry } from "./readme.ts";
 import { GraphQLError, Login, type RepoFacts, RepoId, RepoName, RepoNodeId } from "./schemas.ts";
@@ -53,32 +52,20 @@ const RepoNode = Schema.Struct({
 });
 type RepoNode = typeof RepoNode.Type;
 
-export const decodeResponse = Schema.decodeEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      data: Schema.optionalKey(Schema.NullOr(Schema.Struct({ nodes: Schema.Array(Schema.NullOr(RepoNode)) }))),
-      errors: Schema.optionalKey(Schema.Array(GraphQLError)),
-    }),
-  ),
-);
+const Response = Schema.Struct({
+  data: Schema.optionalKey(Schema.NullOr(Schema.Struct({ nodes: Schema.Array(Schema.NullOr(RepoNode)) }))),
+  errors: Schema.optionalKey(Schema.Array(GraphQLError)),
+});
+type Response = typeof Response.Type;
 
-const unreadableTypes = new Set(["NOT_FOUND", "FORBIDDEN"]);
-
-export const unreadableNode = (
-  error: GraphQLError,
-): Result.Result<{ readonly index: number; readonly type: string }, GraphQLError> => {
-  const [field, index] = error.path ?? [];
-  return field === "nodes" && typeof index === "number" && error.type !== undefined && unreadableTypes.has(error.type)
-    ? Result.succeed({ index, type: error.type })
-    : Result.fail(error);
-};
+export const decodeResponse = Schema.decodeEffect(Schema.fromJsonString(Response));
 
 export const request = (ids: ReadonlyArray<RepoNodeId>) =>
   HttpClientRequest.post("https://api.github.com/graphql").pipe(
     HttpClientRequest.bodyJsonUnsafe({ query, variables: { ids } }),
   );
 
-export const toFacts = (node: RepoNode): RepoFacts => ({
+const toFacts = (node: RepoNode): RepoFacts => ({
   id: node.databaseId,
   nodeId: node.id,
   owner: node.owner.login,
@@ -96,3 +83,26 @@ export const toFacts = (node: RepoNode): RepoFacts => ({
   forks: node.forkCount,
   readme: pickReadme(node.root?.entries ?? []),
 });
+
+interface NodeError {
+  readonly kind: "NOT_FOUND" | "FORBIDDEN";
+  readonly index: number;
+}
+
+const nodeError = (error: GraphQLError): NodeError | null => {
+  const [field, index] = error.path ?? [];
+  if (field !== "nodes" || typeof index !== "number") return null;
+  return error.type === "NOT_FOUND" || error.type === "FORBIDDEN" ? { kind: error.type, index } : null;
+};
+
+export const settle = (ids: ReadonlyArray<RepoNodeId>, body: Response) => {
+  const classified = (body.errors ?? []).map((error) => ({ error, node: nodeError(error) }));
+  const forbidden = new Set(classified.flatMap(({ node }) => (node?.kind === "FORBIDDEN" ? [node.index] : [])));
+  return {
+    facts: (body.data?.nodes ?? []).flatMap((node, index) =>
+      node === null || forbidden.has(index) ? [] : [toFacts(node)],
+    ),
+    forbidden: ids.filter((_, index) => forbidden.has(index)),
+    errors: classified.flatMap(({ error, node }) => (node === null ? [error] : [])),
+  };
+};

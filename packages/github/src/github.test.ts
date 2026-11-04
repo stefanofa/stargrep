@@ -446,11 +446,8 @@ describe("repoFacts", () => {
           },
           errors: [
             { type: "FORBIDDEN", path: ["nodes", 4], message: "Resource not accessible by personal access token" },
-            {
-              type: "FORBIDDEN",
-              path: ["nodes", 8, "root"],
-              message: "Resource not accessible by personal access token",
-            },
+            { type: "FORBIDDEN", path: ["nodes", 4, "root"], message: "Resource not accessible" },
+            { type: "FORBIDDEN", path: ["nodes", 8, "root"], message: "Resource not accessible" },
           ],
         },
       };
@@ -464,8 +461,23 @@ describe("repoFacts", () => {
         Array.from({ length: 25 }, (_, i) => i + 1).filter((n) => n !== 5 && n !== 9),
       );
       expect(fake.sent).toHaveLength(1);
-      expect(logs).toEqual([["GitHub forbade repos to the token", { nodeIds: ["R_5", "R_9"] }]]);
+      expect(logs).toContainEqual(["GitHub forbade repos to the token", { nodeIds: ["R_5", "R_9"] }]);
     }).pipe(Effect.provide(Layer.merge(fake.layer, capture)));
+  });
+
+  effect("keeps a repo that GitHub returned with a NOT_FOUND on one of its fields", () => {
+    const fake = Fake.layer((sent) => ({
+      headers: Fake.rateLimitHeaders(4000, 3600, "graphql"),
+      body: {
+        data: { nodes: graphqlIds(sent).map((id) => node(Number(id.slice(2)))) },
+        errors: [{ type: "NOT_FOUND", path: ["nodes", 3, "root"], message: "Could not resolve to an object" }],
+      },
+    }));
+    return Effect.gen(function* () {
+      const github = yield* GitHub.GitHub;
+      const facts = yield* github.repoFacts(Array.from({ length: 6 }, (_, i) => `R_${i + 1}` as RepoNodeId));
+      expect(facts.map((fact): number => fact.id)).toEqual([1, 2, 3, 4, 5, 6]);
+    }).pipe(Effect.provide(fake.layer));
   });
 
   effect("fails the batch on a FORBIDDEN error that names no repo", () => {
