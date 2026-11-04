@@ -115,7 +115,7 @@ const unauthenticated = Effect.gen(function* () {
         unexpected: results
           .filter(({ status }) => status !== 401)
           .slice(0, 3)
-          .map(({ status, body }) => `${status} ${body.slice(0, 120)}`),
+          .map(({ status, body }) => `${status} ${/<title>([^<]*)<\/title>/i.exec(body)?.[1] ?? body.slice(0, 120)}`),
       },
     ),
     check("unauthenticated calls change no counter", counterAfter.count === counterBefore.count, {
