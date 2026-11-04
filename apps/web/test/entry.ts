@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { layerSyncLimiter } from "../src/server/adapters.ts";
+import { withHealth } from "../src/server/health.ts";
 import { makeServer } from "../src/server/serve.ts";
 
 export const repo: Db.Repo = {
@@ -95,5 +96,5 @@ const serve = makeServer(
 );
 
 export default {
-  fetch: (request) => serve(request) ?? Promise.resolve(new Response("Not found", { status: 404 })),
+  fetch: withHealth(env, (request) => serve(request) ?? Promise.resolve(new Response("Not found", { status: 404 }))),
 } satisfies ExportedHandler<Cloudflare.Env>;
