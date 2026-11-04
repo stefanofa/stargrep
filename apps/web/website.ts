@@ -18,9 +18,11 @@ const signInBindings = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;
   const signIn = yield* githubSignIn;
   if (stage === "prod") {
-    const github = Option.filter(signIn, (config) => config._tag === "direct");
+    const github = Option.filter(signIn, (config) => config._tag === "direct" && Option.isSome(config.proxySecret));
     if (Option.isNone(github)) {
-      return yield* Effect.die(`prod signs in directly, so it needs ${names.clientId} and no ${names.proxyOrigin}`);
+      return yield* Effect.die(
+        `prod signs in directly and forwards previews' sign-ins, so it needs ${names.clientId}, ${names.proxySecret}, and no ${names.proxyOrigin}`,
+      );
     }
     return { ...bindings(github.value), [names.secret]: yield* required(names.secret) };
   }

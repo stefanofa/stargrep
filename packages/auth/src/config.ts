@@ -39,6 +39,23 @@ const optionalText = (name: string) =>
 export const optionalSecret = (name: string) =>
   Config.Redacted(name).pipe(Config.option, Config.map(Option.filter((value) => Redacted.value(value) !== "")));
 
+// A proxy origin is where GitHub sends previews back, so it is an https origin with nothing after the host.
+const Origin = Schema.String.check(
+  Schema.makeFilter((value: string) => {
+    const url = URL.parse(value);
+    return (
+      (url !== null && url.protocol === "https:" && url.origin === value) ||
+      "an https origin with no path, such as https://stargrep.com"
+    );
+  }),
+);
+
+const optionalOrigin = (name: string) =>
+  Config.schema(Schema.Union([Schema.Literal(""), Origin]), name).pipe(
+    Config.option,
+    Config.map(Option.filter((value) => value !== "")),
+  );
+
 const direct = (clientId: string) =>
   Config.all({ clientSecret: required(names.clientSecret), proxySecret: optionalSecret(names.proxySecret) }).pipe(
     Config.map(
@@ -53,7 +70,7 @@ const proxied = (clientId: string, productionOrigin: string) =>
 
 export const githubSignIn: Config.Config<Option.Option<GitHubSignIn>> = Config.all({
   clientId: optionalText(names.clientId),
-  proxyOrigin: optionalText(names.proxyOrigin),
+  proxyOrigin: optionalOrigin(names.proxyOrigin),
 }).pipe(
   Config.flatMap(({ clientId, proxyOrigin }) =>
     Option.match(clientId, {

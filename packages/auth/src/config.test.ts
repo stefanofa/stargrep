@@ -77,6 +77,20 @@ describe("auth config", () => {
     }),
   );
 
+  it.effect("refuses a proxy origin that is not a bare https origin", () =>
+    Effect.gen(function* () {
+      for (const origin of [
+        "stargrep.com",
+        "http://stargrep.com",
+        "https://stargrep.com/",
+        "https://stargrep.com/auth",
+      ]) {
+        const env = { [names.clientId]: "Iv1.app", [names.proxyOrigin]: origin, [names.proxySecret]: "proxy" };
+        expect([origin, (yield* Effect.flip(read(authConfig, env)))._tag]).toEqual([origin, "ConfigError"]);
+      }
+    }),
+  );
+
   it.effect("reads back the bindings it writes", () =>
     Effect.gen(function* () {
       for (const env of [
