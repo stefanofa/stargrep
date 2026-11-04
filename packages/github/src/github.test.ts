@@ -226,6 +226,36 @@ describe("account", () => {
   });
 });
 
+describe("starCount", () => {
+  effect("reads a user's starred repository total through GraphQL", () => {
+    const fake = Fake.layer(() => Fake.starCountReply(2936));
+    return Effect.gen(function* () {
+      expect(yield* (yield* GitHub.GitHub).starCount(login)).toBe(2936);
+      expect(fake.sent.map((sent) => [sent.url.pathname, JSON.parse(sent.body ?? "{}").variables])).toEqual([
+        ["/graphql", { login: "octocat" }],
+      ]);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("fails with NotFound when GraphQL has no such user", () => {
+    const fake = Fake.layer(() => ({
+      body: { data: { user: null }, errors: [{ type: "NOT_FOUND", message: "Could not resolve" }] },
+    }));
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip((yield* GitHub.GitHub).starCount(login));
+      expect(error).toMatchObject({ _tag: "NotFound", operation: "star-count" });
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("fails with GitHubRequestFailed on other GraphQL errors", () => {
+    const fake = Fake.layer(() => ({ body: { data: null, errors: [{ type: "INTERNAL", message: "boom" }] } }));
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip((yield* GitHub.GitHub).starCount(login));
+      expect(error).toMatchObject({ _tag: "GitHubRequestFailed", operation: "star-count", reason: "graphql-errors" });
+    }).pipe(Effect.provide(fake.layer));
+  });
+});
+
 describe("rate limits", () => {
   effect("waits until x-ratelimit-reset on a primary rate limit, then retries", () => {
     const fake = Fake.layer((sent, index) =>

@@ -87,3 +87,9 @@ export const RateLimit = Schema.Struct({
 export type RateLimit = typeof RateLimit.Type;
 
 export const IntFromString = Schema.NumberFromString.pipe(Schema.check(Schema.isInt()));
+
+export const GraphQLError = Schema.Struct({
+  type: Schema.optionalKey(Schema.String),
+  message: Schema.String,
+});
+export type GraphQLError = typeof GraphQLError.Type;

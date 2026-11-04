@@ -66,6 +66,11 @@ export const starPage = (stars: ReadonlyArray<FakeStar>, sent: Sent): Reply => {
   };
 };
 
+export const starCountReply = (totalCount: number): Reply => ({
+  body: { data: { user: { starredRepositories: { totalCount } } } },
+  headers: rateLimitHeaders(4000, 3600, "graphql"),
+});
+
 const streamed = (kind: "broken" | "hang", onRead: () => void) =>
   new ReadableStream<Uint8Array>(
     {
