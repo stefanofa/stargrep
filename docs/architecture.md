@@ -51,6 +51,8 @@ TanStack DB owns all client state, so the browser has no Effect atoms or second 
 
 App code talks to Postgres through Hyperdrive with a standard driver and uses no Neon-only APIs, so moving to another Postgres host is a dump and restore. Development and preview branches scale to zero. Production does not scale to zero, because a woken compute starts with an empty cache and the first vector searches then read from remote storage.
 
+Every stage's database runs in `aws-us-east-1`, and the main Worker has the placement hint `aws:us-east-1`, so Cloudflare runs its `fetch` handler in the data center nearest that region. A request crosses the distance to the caller once, and its queries stay near the database. Placement moves only `fetch` handlers. Cron triggers, queue consumers, and Durable Objects run where Cloudflare starts them, and the debug Worker has no placement.
+
 ## Repo layout
 
 ```
