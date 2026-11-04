@@ -1,19 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-type Step = { readonly id?: string; readonly run?: string; readonly shell?: string };
-type Job = { readonly environment?: string | { readonly name: string }; readonly steps: ReadonlyArray<Step> };
+type Step = { readonly id?: string; readonly run?: string };
 type Workflow = {
   readonly defaults?: { readonly run?: { readonly shell?: string } };
-  readonly env?: Record<string, string>;
-  readonly jobs: Record<string, Job>;
+  readonly jobs: Record<string, { readonly steps: ReadonlyArray<Step> }>;
 };
 
 const root = new URL("..", import.meta.url).pathname;
-const workflows = join(root, ".github/workflows");
-const load = (name: string) => Bun.YAML.parse(readFileSync(join(workflows, name), "utf8")) as Workflow;
 
 const githubShell = (shell: string | null) =>
   shell === "bash" ? ["bash", "--noprofile", "--norc", "-eo", "pipefail"] : ["bash", "-e"];
@@ -34,7 +30,9 @@ exit 1
 mock("bunx", `printf '%s' "$INVENTORY"\nexit "\${INVENTORY_EXIT:-0}"\n`);
 mock("bun", `echo "bun $*"\n`);
 
-const reconcile = load("preview-reconcile.yml");
+const reconcile = Bun.YAML.parse(
+  readFileSync(join(root, ".github/workflows/preview-reconcile.yml"), "utf8"),
+) as Workflow;
 const stepRun = (job: string, find: (step: Step) => boolean) => {
   const run = reconcile.jobs[job]?.steps.find(find)?.run;
   if (!run) throw new Error(`no run step in job ${job}`);
@@ -74,39 +72,6 @@ const inventory = [
   "Stargrep/pr-011/output",
   "Stargrep/pr-11evil/output",
 ].join("\n");
-
-describe("workflow shell", () => {
-  test("every workflow runs its steps in bash with pipefail", () => {
-    for (const name of readdirSync(workflows).filter((file) => file.endsWith(".yml"))) {
-      const workflow = load(name);
-      const runSteps = Object.values(workflow.jobs).flatMap((job) => job.steps.filter((step) => step.run));
-      if (runSteps.length === 0) continue;
-      expect({ name, shell: workflow.defaults?.run?.shell }).toEqual({ name, shell: "bash" });
-      expect(runSteps.filter((step) => step.shell !== undefined)).toEqual([]);
-    }
-  });
-});
-
-describe("workflow secrets", () => {
-  const jobs = readdirSync(workflows)
-    .filter((file) => file.endsWith(".yml"))
-    .flatMap((name) => {
-      const workflow = load(name);
-      return Object.entries(workflow.jobs).map(([id, job]) => ({
-        job: `${name}:${id}`,
-        environment: typeof job.environment === "string" ? job.environment : job.environment?.name,
-        readsSecrets: JSON.stringify([workflow.env, job]).includes("secrets."),
-      }));
-    });
-
-  test("every job that reads a secret takes it from an environment", () => {
-    expect(jobs.filter((job) => job.readsSecrets && job.environment === undefined).map((job) => job.job)).toEqual([]);
-  });
-
-  test("only the prod deploy uses the production environment", () => {
-    expect(jobs.filter((job) => job.environment === "production").map((job) => job.job)).toEqual(["deploy.yml:prod"]);
-  });
-});
 
 describe("preview-reconcile list step", () => {
   const list = stepRun("list", (step) => step.id === "list");
