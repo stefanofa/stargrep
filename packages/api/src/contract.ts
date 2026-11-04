@@ -48,6 +48,9 @@ export const SearchResult = Schema.Struct({
   reason: Schema.String.annotate({
     description: "Why the repo matched, such as 'keyword match #2, +38% contributors in 90 days'.",
   }),
+  rankedBy: Schema.Array(Schema.String).annotate({
+    description: "The values that ranked the repo, such as '+38% contributors in 90 days'.",
+  }),
   metrics: Schema.Array(Schema.Struct({ metric: MetricRegistry.MetricId, value: Schema.NullOr(Schema.Finite) })),
 });
 
@@ -98,7 +101,6 @@ export const LibraryRepo = Schema.Struct({
 
 export const Library = Schema.Struct({ repos: Schema.Array(LibraryRepo) });
 
-// The signed-in procedures read the session cookie, which MCP clients do not send.
 export const signedIn = new Set(["viewer", "library"]);
 
 const procedure = oc.errors(errors);

@@ -1,7 +1,7 @@
 import "@orpc/effect/extensions/effect";
 import { middlewareGen, type WithEffectContext } from "@orpc/effect";
 import { implement } from "@orpc/server";
-import { Search } from "@stargrep/core/search";
+import { MetricRegistry, Search } from "@stargrep/core/search";
 import { SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import type { DbQueryFailed, DbRowInvalid, RepoNotFound } from "@stargrep/db/errors";
@@ -131,6 +131,9 @@ export const router = implementer.router({
           results: outcome.results.map((result) => ({
             ...repoFields(result.repo),
             reason: Search.reasonLine(result),
+            rankedBy: result.metrics.flatMap(({ metric, value }) =>
+              value === null ? [] : [MetricRegistry.registry[metric].format(value)],
+            ),
             metrics: result.metrics,
           })),
         };

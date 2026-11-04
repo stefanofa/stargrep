@@ -168,6 +168,7 @@ describe("search", () => {
           archived: false,
           pushedAt: "2026-10-01T08:00:00.000Z",
           reason: "keyword match #2, meaning match #1, 18K stars",
+          rankedBy: ["18K stars"],
           metrics: [{ metric: "stars", value: 18_000 }],
         },
       ],
