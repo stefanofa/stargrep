@@ -6,6 +6,7 @@
     ".": "./src/worker.ts",
     "./debug": "./src/debug-worker.ts",
     "./database": "./src/database.ts",
+    "./domain": "./src/domain.ts",
     "./queues": "./src/queues.ts",
     "./readmes": "./src/readmes.ts"
   },
