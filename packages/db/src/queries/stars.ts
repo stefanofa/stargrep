@@ -54,7 +54,11 @@ const column = (target: PgColumn) => sql.identifier(target.name);
 const insertStars = (accountId: GitHubAccountId, starred: string, observedAt: SQL, filter: SQL) => sql`
   insert into ${stars} (${column(stars.accountId)}, ${column(stars.repoId)}, ${column(stars.starredAt)}, ${column(stars.observedAt)}, ${column(stars.source)})
   select ${accountId}, starred."repoId", starred."starredAt", ${observedAt}, starred.source
-  from jsonb_to_recordset(${starred}::jsonb) as starred("repoId" bigint, "starredAt" timestamptz, source star_source)
+  from (
+    select distinct on ("repoId") "repoId", "starredAt", source
+    from jsonb_to_recordset(${starred}::jsonb) as listed("repoId" bigint, "starredAt" timestamptz, source star_source)
+    order by "repoId", "starredAt" desc
+  ) as starred
   where ${filter}
   on conflict (${column(stars.accountId)}, ${column(stars.repoId)}) do update set
     ${column(stars.starredAt)} = ${excluded(stars.starredAt)},
@@ -77,7 +81,7 @@ export const make = Effect.gen(function* () {
                   with account as (
                     select ${githubAccounts.starsFullSyncedAt} as synced from ${githubAccounts}
                     where ${githubAccounts.id} = ${input.accountId}
-                    for update
+                    for no key update
                   )
                   ${insertStars(
                     input.accountId,

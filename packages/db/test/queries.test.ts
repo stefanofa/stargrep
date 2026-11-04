@@ -583,6 +583,51 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     }),
   );
 
+  test.effect("keeps each repo's newest star when one star event batch repeats a repo", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const id = accountId(9361);
+      const [repeated, other] = [repoId(9361), repoId(9362)];
+      yield* db.accounts.upsert(account(id));
+      yield* db.repos.upsertRefs([ref(repeated), ref(other)]);
+      yield* db.stars.upsert({
+        accountId: id,
+        stars: [
+          starred(repeated, "2026-10-03T00:00:00Z"),
+          starred(other, "2026-10-02T00:00:00Z"),
+          starred(repeated, "2026-10-04T00:00:00Z"),
+        ],
+      });
+
+      const listed = yield* db.stars.list(id);
+      expect(listed.map((star) => [star.repoId, iso(star.starredAt)])).toEqual([
+        [repeated, "2026-10-04T00:00:00.000Z"],
+        [other, "2026-10-02T00:00:00.000Z"],
+      ]);
+    }),
+  );
+
+  test.effect("keeps each repo's newest star when a full snapshot lists a repo twice", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const id = accountId(9371);
+      const repeated = repoId(9371);
+      yield* db.accounts.upsert(account(id));
+      yield* db.repos.upsertRefs([ref(repeated)]);
+
+      const unstarred = yield* db.stars.applySnapshot({
+        accountId: id,
+        stars: [starred(repeated, "2026-10-03T00:00:00Z"), starred(repeated, "2026-10-04T00:00:00Z")],
+        at: at("2026-10-05T00:00:00Z"),
+      });
+
+      expect(unstarred).toBe(0);
+      expect((yield* db.stars.list(id)).map((star) => [star.repoId, iso(star.starredAt)])).toEqual([
+        [repeated, "2026-10-04T00:00:00.000Z"],
+      ]);
+    }),
+  );
+
   test.effect("keeps a write committed beside a transaction that fails", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
@@ -702,10 +747,13 @@ const settingsCases = (test: { readonly effect: it.Tester<TestDatabase.TestDatab
   );
 };
 
-it.layer(TestDatabase.layerMemory({ embeddingModel: model }))("PGlite embedding settings", settingsCases);
+it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 30_000 })(
+  "PGlite embedding settings",
+  settingsCases,
+);
 it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgres embedding settings", settingsCases);
 
-it.layer(TestDatabase.layerMemory({ embeddingModel: model }))("PGlite Db", sharedCases);
+it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 30_000 })("PGlite Db", sharedCases);
 it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgres Db", (test) => {
   sharedCases(test);
 

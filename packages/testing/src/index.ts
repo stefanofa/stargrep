@@ -82,7 +82,7 @@ export const effect = makeTester<Scope.Scope | TestServices>((self) =>
 export const live = makeTester<Scope.Scope>(Effect.scoped);
 
 export const layer =
-  <ROut, E>(self: Layer.Layer<ROut, E>) =>
+  <ROut, E>(self: Layer.Layer<ROut, E>, options: { readonly timeout?: number } = {}) =>
   (name: string, f: (it: { readonly effect: Tester<ROut | Scope.Scope | TestServices> }) => void) =>
     describe(name, () => {
       const scope = Scope.makeUnsafe();
@@ -91,8 +91,8 @@ export const layer =
         Effect.cached,
         Effect.runSync,
       );
-      beforeAll(() => runOrThrow(context));
-      afterAll(() => runOrThrow(Scope.close(scope, Exit.void)));
+      beforeAll(() => runOrThrow(context), options.timeout);
+      afterAll(() => runOrThrow(Scope.close(scope, Exit.void)), options.timeout);
       f({
         effect: makeTester((self) =>
           Effect.flatMap(context, (services) => self.pipe(Effect.scoped, Effect.provide(services))),
