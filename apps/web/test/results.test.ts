@@ -55,6 +55,18 @@ describe("mergeResults", () => {
     expect(merged[1]?.matches).toEqual([[6, 13]]);
   });
 
+  test("takes a semantic tile's summary from the search reply, which can be newer than the library", () => {
+    const stale: LibraryEntry = { ...bottom, summary: null, description: null };
+    const merged = mergeResults({
+      matched: [],
+      terms: [],
+      hits: [hit(bottom, ["11.6K stars"])],
+      find: () => stale,
+      at,
+    });
+    expect(merged[0]?.reason).toBe("A system monitor for the terminal. · 11.6K stars");
+  });
+
   test("shows only semantic hits when the query has no keyword", () => {
     const merged = mergeResults({ matched: [ratatui, tuiRs, bottom], terms: [], hits: [hit(bottom)], find, at });
     expect(merged.map((result) => result.name)).toEqual(["bottom"]);

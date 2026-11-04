@@ -27,7 +27,7 @@ import { Wordmark } from "../components/wordmark.tsx";
 import { keywordTerms } from "../lib/keyword.ts";
 import { getLibrary, useRecoveries } from "../lib/library-collection.ts";
 import { formatCount, now, stars, syncedAgo, toDetail } from "../lib/present.ts";
-import { mergeResults } from "../lib/results.ts";
+import { mergeResults, withReply } from "../lib/results.ts";
 import { api, signedOut, type Viewer } from "../lib/rpc.ts";
 import { useSemanticSearch } from "../lib/use-semantic.ts";
 import { useSync } from "../lib/use-sync.ts";
@@ -232,8 +232,10 @@ function Stars({ viewer }: { viewer: Viewer }) {
     setOpener(link);
     navigate({ search: (previous) => ({ ...previous, repo: `${result.owner}/${result.name}` }) });
   };
-  const opened =
-    params.repo === undefined ? undefined : entries.find((entry) => `${entry.owner}/${entry.name}` === params.repo);
+  const entry =
+    params.repo === undefined ? undefined : entries.find((repo) => `${repo.owner}/${repo.name}` === params.repo);
+  const hit = semantic.results.find((result) => result.id === entry?.id);
+  const opened = entry && (hit ? withReply(entry, hit) : entry);
 
   const searching = terms.length > 0 || semantic.pending || semantic.results.length > 0;
   const results = useMemo(
