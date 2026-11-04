@@ -3,8 +3,18 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 type Step = { readonly run?: string; readonly shell?: string };
-type Job = { readonly environment?: string | { readonly name: string }; readonly steps: ReadonlyArray<Step> };
+type Concurrency = {
+  readonly group: string;
+  readonly queue?: string;
+  readonly "cancel-in-progress"?: boolean | string;
+};
+type Job = {
+  readonly environment?: string | { readonly name: string };
+  readonly concurrency?: Concurrency;
+  readonly steps: ReadonlyArray<Step>;
+};
 type Workflow = {
+  readonly concurrency?: Concurrency;
   readonly defaults?: { readonly run?: { readonly shell?: string } };
   readonly env?: Record<string, string>;
   readonly jobs: Record<string, Job>;
@@ -50,5 +60,34 @@ describe("workflow secrets", () => {
 
   test("only the prod deploy uses the production environment", () => {
     expect(jobs.filter((job) => job.environment === "production").map((job) => job.job)).toEqual(["deploy.yml:prod"]);
+  });
+});
+
+describe("workflow concurrency", () => {
+  const groups = names.flatMap((name) => {
+    const workflow = load(name);
+    return [
+      { at: name, concurrency: workflow.concurrency },
+      ...Object.entries(workflow.jobs).map(([id, job]) => ({ at: `${name}:${id}`, concurrency: job.concurrency })),
+    ].flatMap(({ at, concurrency }) => (concurrency === undefined ? [] : [{ at, ...concurrency }]));
+  });
+
+  test("a newer push to a pull request cancels its ci and preview runs", () => {
+    const cancelling = groups.filter((group) => group["cancel-in-progress"] !== undefined);
+    expect(Object.fromEntries(cancelling.map((group) => [group.at, group["cancel-in-progress"]]))).toEqual({
+      "ci.yml": "${{ github.event_name == 'pull_request' }}",
+      "preview.yml": true,
+    });
+  });
+
+  test("every deploy and destroy queues in a deploy group that nothing cancels", () => {
+    const deploys = groups.filter(({ group }) => group.startsWith("deploy-"));
+    expect(deploys.map(({ at }) => at).sort()).toEqual([
+      "deploy.yml:prod",
+      "preview-destroy.yml:destroy",
+      "preview-reconcile.yml:destroy",
+      "preview.yml:preview",
+    ]);
+    expect(deploys.filter((group) => group.queue !== "max" || group["cancel-in-progress"] !== undefined)).toEqual([]);
   });
 });

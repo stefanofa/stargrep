@@ -77,20 +77,19 @@ const unauthenticated = Effect.gen(function* () {
     ["POST", "/transaction"],
     ["GET", "/budget"],
   ] as const;
-  const results = yield* Effect.forEach(
-    Array.from({ length: 1000 }, (_, i) => i),
-    (i) => {
-      const [method, path] = routes[i % routes.length] ?? routes[0];
-      return call(method, path, i % 2 === 0 ? null : "Bearer wrong-token");
-    },
-    { concurrency: 50 },
+  // One call without a token and one with a wrong token per route reach every branch of the gate. A single call that
+  // got through fails the 401, counter, or budget check below, so a bigger burst proves nothing more. The flood proves
+  // the cap, and the traffic checks prove the queue.
+  const results = yield* Effect.all(
+    routes.flatMap(([method, path]) => [call(method, path, null), call(method, path, "Bearer wrong-token")]),
+    { concurrency: "unbounded" },
   );
   const budgetAfter = yield* read(Budget, "GET", "/budget");
   const counterAfter = yield* read(Count, "GET", `/counter/${probe}`);
   const statuses = Object.groupBy(results, ({ status }) => status);
   return [
     check(
-      "1000 unauthenticated calls answer 401",
+      "every route answers 401 without a token and with a wrong one",
       results.every(({ status }) => status === 401),
       {
         statuses: Object.fromEntries(Object.entries(statuses).map(([status, calls]) => [status, calls?.length])),
