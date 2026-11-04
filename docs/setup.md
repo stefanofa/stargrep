@@ -67,11 +67,13 @@ For other editors, run `bunx effect-tsgo setup --help` to see the setup for Neov
    curl -X POST -H "authorization: Bearer $TOKEN" http://localhost:1338/counter/demo
    curl -X POST -H "authorization: Bearer $TOKEN" http://localhost:1338/transaction
    curl -H "authorization: Bearer $TOKEN" http://localhost:1338/budget
+   curl -X POST -H "authorization: Bearer $TOKEN" -d '{"login":"octocat","mode":"full"}' http://localhost:1338/queue/sync-stars
+   curl -X POST -H "authorization: Bearer $TOKEN" -d '{"repoId":1300192}' http://localhost:1338/queue/enrich-repo
    curl "http://localhost:1338/cdn-cgi/handler/scheduled?cron=0+*+*+*+*"
    bun scripts/stage-smoke.ts "dev_$USER" --backend local
    ```
 
-   The routes spend from a budget of 300 units a minute: one per counter read, counter increment, or transaction, and one per queued job. `/budget` is free. `scripts/stage-smoke.ts` checks the token, the budget, the queue, the counter, and pooled transactions. It waits for the next minute and then spends that minute's budget.
+   The routes spend from a budget of 300 units a minute: one per counter read, counter increment, or transaction, one per queued job, and one per message sent to `sync-stars` or `enrich-repo`. Those two routes send the request body as it is, so they also send malformed messages. `/budget` is free. `scripts/stage-smoke.ts` checks the token, the budget, the queue, the counter, and pooled transactions. It waits for the next minute and then spends that minute's budget.
 
 5. Run the Worker tests. They run on workerd and need the Postgres container from step 1.
 
@@ -132,17 +134,21 @@ Four workflows run the stages, and their jobs skip until the steps below are don
 
 2. Create a Neon API key in the Neon console.
 
-3. Add the token and key as GitHub Actions secrets, and the Cloudflare account ID as a variable. The variable turns the deploy jobs on.
+3. Create a fine-grained GitHub token with read access to public repositories and no other permission. Each stage's Worker syncs stars and fetches READMEs with it, and uses half of each hourly window.
+
+4. Add the tokens, the Neon key, and the AI Gateway key as GitHub Actions secrets, and the Cloudflare account ID as a variable. The variable turns the deploy jobs on. Each deploy binds `AI_GATEWAY_API_KEY` and `STARGREP_GITHUB_TOKEN` to the Worker as secrets.
 
    ```sh
    gh secret set CLOUDFLARE_API_TOKEN
    gh secret set NEON_API_KEY
+   gh secret set AI_GATEWAY_API_KEY
+   gh secret set STARGREP_GITHUB_TOKEN
    gh variable set CLOUDFLARE_ACCOUNT_ID --body <account id>
    ```
 
-4. Create Alchemy's state store in the account, as described in the next section.
+5. Create Alchemy's state store in the account, as described in the next section.
 
-5. Push to `main`. That deploy creates the Neon projects in stage `shared`, and then `prod`. A pull request stage fails with a missing reference until it has run.
+6. Push to `main`. That deploy creates the Neon projects in stage `shared`, and then `prod`. A pull request stage fails with a missing reference until it has run.
 
 Every stage gets its own Neon branch. Prod's branch is in the project `stargrep-us-east`, and each preview stage's branch is in `stargrep-previews-us-east`. Neon deletes a preview branch about two weeks after its last deploy, in case its destroy job never ran.
 

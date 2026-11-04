@@ -82,7 +82,7 @@ type Summarizer = (
 const batchSize = 250;
 const batchConcurrency = 4;
 const planConcurrency = 4;
-const summaryConcurrency = 4;
+const summaryConcurrency = 8;
 const embedBatchSize = 128;
 
 const decodeEmbedding = Schema.decodeUnknownEffect(Embedding);
