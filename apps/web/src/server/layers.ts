@@ -12,7 +12,6 @@ import { layerSearchCache, layerSyncLimiter, layerSyncQueue, layerSyncRequestLog
 import type { WebEnv } from "./env.ts";
 import type { Timing } from "./serve.ts";
 
-// Search makes at most two queries in a row, and each request opens its own pool.
 const maxDatabaseConnections = 2;
 
 const adopted = Ref.makeUnsafe(false);

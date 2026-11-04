@@ -10,7 +10,6 @@ export interface WebEnv {
   readonly AI_GATEWAY_API_KEY?: string;
 }
 
-// Fails to compile when website.ts stops binding something the server reads.
 type BindsWhatTheServerReads<Env extends WebEnv> = Env;
 
 export type DeclaredEnv = BindsWhatTheServerReads<WebsiteEnv>;

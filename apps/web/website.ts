@@ -18,7 +18,6 @@ const namespaceId = (stage: string, name: string) => {
 
 export class Website extends Cloudflare.Website.Vite<Website>()(
   "Web",
-  // The placement region matches the Neon projects, so the queries of one search stay in one region.
   Effect.gen(function* () {
     const { stage } = yield* Alchemy.Stack;
     const key = yield* aiGatewayKey;

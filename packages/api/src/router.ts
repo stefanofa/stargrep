@@ -29,8 +29,6 @@ export class ApiServicesUnavailable extends Schema.TaggedError<
   }
 }
 
-// The services are built only once a procedure has validated its input, so a database outage
-// fails a search with a wire error and leaves validation, the MCP tool list, and the spec working.
 export interface ApiContext extends WithEffectContext<never> {
   readonly transport: Transport;
   readonly services: Effect.Effect<Context.Context<ApiServices>, ApiServicesUnavailable>;

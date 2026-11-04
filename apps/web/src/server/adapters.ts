@@ -78,7 +78,6 @@ export interface SyncLimits {
 const within = (limit: RateLimit, key: string) =>
   Effect.tryPromise(() => limit.limit({ key })).pipe(Effect.map((outcome) => outcome.success));
 
-// A caller spends its own allowance first, so one busy caller cannot use up the overall one.
 export const layerSyncLimiter = (limits: SyncLimits, caller: string) =>
   Layer.succeed(
     SyncLimiter,

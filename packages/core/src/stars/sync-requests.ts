@@ -27,12 +27,8 @@ export class SyncRequests extends Context.Service<
   }
 >()("@stargrep/core/stars/sync-requests/SyncRequests") {}
 
-// A request or a sync this recent makes another request return the current status instead of
-// sending a message, so repeated triggers for one login cost the GitHub budget nothing.
 export const cooldown = Duration.minutes(10);
 
-// The GitHub budget can hold a message back until the hourly window resets, so a request stays
-// queued for a day before the log forgets it.
 export const requestLifetime = Duration.days(1);
 
 const within = (window: Duration.Duration, now: DateTime.Utc) => (at: DateTime.Utc) =>
@@ -54,23 +50,17 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const statusAt = Effect.fn("SyncRequests.statusAt")(function* (login: Login, now: DateTime.Utc) {
+  const statusAt = Effect.fn("SyncRequests.statusAt")(function* (
+    login: Login,
+    now: DateTime.Utc,
+  ): Effect.fn.Return<SyncStatus, SyncStatusError> {
     const account = yield* db.accounts.byLogin(login);
-    const syncedAt = Option.flatMapNullishOr(account, (found) => found.starsSyncedAt);
+    const syncedAt = Option.getOrNull(Option.flatMapNullishOr(account, (found) => found.starsSyncedAt));
     const requestedAt = yield* lastRequest(login, now);
-    if (
-      Option.isSome(requestedAt) &&
-      Option.match(syncedAt, {
-        onNone: () => true,
-        onSome: (synced) => DateTime.isLessThan(synced, requestedAt.value),
-      })
-    ) {
-      return { state: "queued", requestedAt: requestedAt.value, syncedAt: Option.getOrNull(syncedAt) } as const;
+    if (Option.isSome(requestedAt) && (syncedAt === null || DateTime.isLessThan(syncedAt, requestedAt.value))) {
+      return { state: "queued", requestedAt: requestedAt.value, syncedAt };
     }
-    return Option.match(syncedAt, {
-      onNone: (): SyncStatus => ({ state: "unknown" }),
-      onSome: (synced): SyncStatus => ({ state: "done", syncedAt: synced }),
-    });
+    return syncedAt === null ? { state: "unknown" } : { state: "done", syncedAt };
   });
 
   const normalized = (login: Login) => Login.make(login.toLowerCase());
