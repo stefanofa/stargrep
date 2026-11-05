@@ -497,6 +497,7 @@ const searchCases = (test: {
           scope: { kind: "stars", accountId: GitHubAccountId.make(907) },
           text: "orm",
           embedding,
+          maxDistance: 2,
           limit: 10,
           name: null,
           metrics: [metric],

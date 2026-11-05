@@ -127,6 +127,7 @@ export interface HybridSearch {
   readonly scope: SearchScope;
   readonly text: string;
   readonly embedding: Embedding;
+  readonly maxDistance: number;
   readonly limit: number;
   readonly name: string | null;
   readonly metrics: ReadonlyArray<SearchMetric>;
@@ -229,7 +230,7 @@ const ranked = (search: HybridSearch, vector: EmbeddingVector, model: EmbeddingM
   ),
   vector_hits as (
     select id, row_number() over (order by distance, id) as rank from (
-      select id, distance from scored where distance is not null
+      select id, distance from scored where distance <= ${search.maxDistance}::float8
       order by distance, id
       limit ${rankDepth}
     ) top

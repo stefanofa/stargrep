@@ -57,6 +57,21 @@ it.effect("answers a keyword or exact-name query without calling the model", () 
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("plans a keyword query with the model when asked to, and caches that plan", () => {
+  const { prompts, layer } = planner(() => encode(goYaml));
+  return Effect.gen(function* () {
+    const planWithModel = (query: string) =>
+      Effect.flatMap(Effect.service(QueryPlanner.QueryPlanner), (service) => service.planWithModel(query));
+    expect((yield* plan("ratatui")).source).toBe("keyword");
+    expect(yield* planWithModel("ratatui")).toEqual({
+      plan: QueryPlan.fromPlannerOutput("ratatui", goYaml),
+      source: "model",
+    });
+    expect((yield* planWithModel(" Ratatui ")).source).toBe("cache");
+    expect(prompts).toEqual([PlannerPrompt.prompt({ today: "1970-01-01", query: "ratatui" })]);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("asks the model once per query and answers repeats from the cache", () => {
   const { prompts, layer } = planner(() => encode(goYaml));
   return Effect.gen(function* () {

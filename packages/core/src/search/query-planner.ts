@@ -23,6 +23,7 @@ export class QueryPlanner extends Context.Service<
   QueryPlanner,
   {
     readonly plan: (query: string) => Effect.Effect<Planned>;
+    readonly planWithModel: (query: string) => Effect.Effect<Planned>;
   }
 >()("@stargrep/core/search/query-planner/QueryPlanner") {}
 
@@ -52,11 +53,7 @@ const make = Effect.gen(function* () {
     ttl: SearchCache.stableTtl,
   });
 
-  const plan = Effect.fn("QueryPlanner.plan")(function* (typed: string) {
-    const query = QueryPlan.normalize(typed);
-    const kind = QueryPlan.queryKind(query);
-    if (kind !== "sentence") return { plan: QueryPlan.asTyped(query, kind), source: "keyword" } satisfies Planned;
-
+  const askModel = Effect.fnUntraced(function* (query: string, kind: QueryPlan.QueryKind) {
     const now = yield* DateTime.now;
     const today = DateTime.formatIsoDate(now);
     const key = query.toLowerCase();
@@ -83,9 +80,21 @@ const make = Effect.gen(function* () {
           ),
         ),
       );
+  });
+
+  const plan = Effect.fn("QueryPlanner.plan")(function* (typed: string) {
+    const query = QueryPlan.normalize(typed);
+    const kind = QueryPlan.queryKind(query);
+    if (kind !== "sentence") return { plan: QueryPlan.asTyped(query, kind), source: "keyword" } satisfies Planned;
+    return yield* askModel(query, kind);
   }, Effect.tap(recordPlan));
 
-  return QueryPlanner.of({ plan });
+  const planWithModel = Effect.fn("QueryPlanner.planWithModel")(function* (typed: string) {
+    const query = QueryPlan.normalize(typed);
+    return yield* askModel(query, QueryPlan.queryKind(query));
+  }, Effect.tap(recordPlan));
+
+  return QueryPlanner.of({ plan, planWithModel });
 });
 
 export const layer = Layer.effect(QueryPlanner, make);

@@ -65,4 +65,4 @@ export const starred = (id: RepoId, starredAt: string, observedAt = starredAt): 
 
 export const hybrid = (
   search: Pick<Db.HybridSearch, "scope" | "text" | "embedding" | "limit"> & Partial<Db.HybridSearch>,
-): Db.HybridSearch => ({ name: null, metrics: [], filters: Db.noFilters, rankBy: null, ...search });
+): Db.HybridSearch => ({ maxDistance: 2, name: null, metrics: [], filters: Db.noFilters, rankBy: null, ...search });

@@ -203,7 +203,7 @@ const measure = Effect.gen(function* () {
   const timed = <A, E>(effect: Effect.Effect<ReadonlyArray<A>, E>) =>
     Effect.timed(effect).pipe(Effect.map(([duration, rows]): Sample => [Duration.toMillis(duration), rows.length]));
   const scope: Db.SearchScope = { kind: "stars", accountId };
-  const plain = { scope, limit: 20, name: null, metrics: [], filters: Db.noFilters, rankBy: null };
+  const plain = { scope, limit: 20, maxDistance: 2, name: null, metrics: [], filters: Db.noFilters, rankBy: null };
 
   yield* Console.log(
     `${rounds} interleaved rounds after ${warmup} warmup rounds, ${starCount} stars of ${repoCount} repos`,

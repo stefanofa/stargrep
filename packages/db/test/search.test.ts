@@ -254,6 +254,49 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
     }),
   );
 
+  test.effect("drops meaning matches past the max distance and keeps the ranks of the rest", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const owner = accountId(809);
+      const [same, near, far, worded] = [repoId(8801), repoId(8802), repoId(8803), repoId(8804)];
+      yield* seed(owner, [
+        { id: same, weights: { 0: 1 } },
+        { id: near, weights: { 0: 1, 1: 1 } },
+        { id: far, weights: { 0: 1, 1: 2 } },
+        { id: worded, summary: "terminal dashboard", weights: { 1: 1 } },
+      ]);
+      const query = { scope: stars(owner), text: "terminal dashboard", embedding: embedding({ 0: 1 }), limit: 10 };
+      const ranks = (maxDistance: number) =>
+        db.search
+          .hybrid(hybrid({ ...query, maxDistance }))
+          .pipe(Effect.map((hits) => hits.map((hit) => [hit.repo.id, hit.textRank, hit.vectorRank]).sort()));
+
+      expect(yield* ranks(2)).toEqual([
+        [same, null, 1],
+        [near, null, 2],
+        [far, null, 3],
+        [worded, 1, 4],
+      ]);
+      expect(yield* ranks(0.4)).toEqual([
+        [same, null, 1],
+        [near, null, 2],
+        [worded, 1, null],
+      ]);
+    }),
+  );
+
+  test.effect("returns nothing for words no star has when every star is past the max distance", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const owner = accountId(810);
+      yield* seed(owner, [{ id: repoId(8901) }, { id: repoId(8902), weights: { 0: 1, 1: 2 } }]);
+      const hits = yield* db.search.hybrid(
+        hybrid({ scope: stars(owner), text: "dfsfgdsrg", embedding: embedding({ 0: 1 }), maxDistance: 0.4, limit: 10 }),
+      );
+      expect(hits).toEqual([]);
+    }),
+  );
+
   test.effect("dies when a ranking names a metric the search does not compute", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;

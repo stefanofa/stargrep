@@ -1,5 +1,6 @@
 import * as Embeddings from "@stargrep/ai/embeddings";
 import { type AiError, AiOutputInvalid } from "@stargrep/ai/errors";
+import { maxMatchDistance } from "@stargrep/ai/models";
 import * as Db from "@stargrep/db";
 import { Embedding, type EmbeddingModelMismatch, Float32Vector } from "@stargrep/db/embedding";
 import type { DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
@@ -140,32 +141,43 @@ export const make = Effect.gen(function* () {
     return { kind: "stars", accountId: account.value.id } satisfies Db.SearchScope;
   });
 
-  const search = Effect.fn("Search.search")(function* (request: SearchRequest) {
-    const scope = yield* dbScope(request.scope);
-    const { plan, source } = yield* planner.plan(request.query);
+  const find = Effect.fn("Search.find")(function* (scope: Db.SearchScope, plan: QueryPlan.QueryPlan, limit: number) {
     const metrics = planMetrics(plan);
     const hits = yield* db.search.hybrid({
       scope,
       text: plan.textQuery,
       embedding: yield* embedQuery(plan.semanticText),
-      limit: request.limit,
+      maxDistance: maxMatchDistance,
+      limit,
       name: plan.exactName,
       metrics: metrics.map((id) => registry[id]),
       filters: { ...plan.filters, languages: Vocabulary.matchNames(plan.filters.languages) },
       rankBy: plan.ranking._tag === "metric" ? plan.ranking : null,
     });
+    return hits.map(
+      (hit): SearchResult => ({
+        repo: hit.repo,
+        nameMatch: hit.nameMatch,
+        textRank: hit.textRank,
+        vectorRank: hit.vectorRank,
+        metrics: metrics.map((metric, index) => ({ metric, value: hit.metrics[index] ?? null })),
+      }),
+    );
+  });
+
+  const search = Effect.fn("Search.search")(function* (request: SearchRequest) {
+    const scope = yield* dbScope(request.scope);
+    const typed = yield* planner.plan(request.query);
+    const results = yield* find(scope, typed.plan, request.limit);
+    if (results.length > 0 || typed.source !== "keyword") {
+      return { plan: typed.plan, planSource: typed.source, results } satisfies SearchOutcome;
+    }
+    // Typed words that match nothing are often a misspelled name, which the planner can read past.
+    const read = yield* planner.planWithModel(request.query);
     return {
-      plan,
-      planSource: source,
-      results: hits.map(
-        (hit): SearchResult => ({
-          repo: hit.repo,
-          nameMatch: hit.nameMatch,
-          textRank: hit.textRank,
-          vectorRank: hit.vectorRank,
-          metrics: metrics.map((metric, index) => ({ metric, value: hit.metrics[index] ?? null })),
-        }),
-      ),
+      plan: read.plan,
+      planSource: read.source,
+      results: yield* find(scope, read.plan, request.limit),
     } satisfies SearchOutcome;
   });
 
