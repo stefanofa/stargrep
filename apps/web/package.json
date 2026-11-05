@@ -6,6 +6,7 @@
     "./website": "./website.ts"
   },
   "scripts": {
+    "budget": "bun scripts/landing-budget.ts",
     "test": "vitest run",
     "typecheck": "effect-tsgo tsc -p . && effect-tsgo tsc -p test/tsconfig.json",
     "favicon": "bun scripts/favicon.ts"
