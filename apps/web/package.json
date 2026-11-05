@@ -7,7 +7,8 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "effect-tsgo tsc -p . && effect-tsgo tsc -p test/tsconfig.json"
+    "typecheck": "effect-tsgo tsc -p . && effect-tsgo tsc -p test/tsconfig.json",
+    "favicon": "bun scripts/favicon.ts"
   },
   "dependencies": {
     "@base-ui/react": "1.9.0",
@@ -44,6 +45,7 @@
     "@happy-dom/global-registrator": "21.0.4",
     "@modelcontextprotocol/core": "2.4.0",
     "@orpc/contract": "2.0.0-beta.48",
+    "@resvg/resvg-js": "2.6.2",
     "@stargrep/config": "workspace:*",
     "@stargrep/testing": "workspace:*",
     "@tailwindcss/vite": "4.3.4",
