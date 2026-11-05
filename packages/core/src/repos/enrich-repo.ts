@@ -194,7 +194,7 @@ const make = Effect.gen(function* () {
         ? [step.failure.id]
         : [],
     );
-    yield* db.repos.recordEnrichFailures({ ids: unreadable, at: now });
+    yield* db.repos.recordEnrichFailures({ ids: unreadable, at: yield* DateTime.now });
     return steps;
   });
 

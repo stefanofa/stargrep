@@ -8,6 +8,7 @@ import * as Db from "@stargrep/db";
 import { EmbeddingModelId } from "@stargrep/db/embedding";
 import { DbQueryFailed } from "@stargrep/db/errors";
 import * as TestDatabase from "@stargrep/db/test-database";
+import * as GitHub from "@stargrep/github/github";
 import * as GitHubFake from "@stargrep/github/github.fixture";
 import { ObjectId, Repo } from "@stargrep/github/schemas";
 import { collectSpans } from "@stargrep/telemetry/collector";
@@ -711,6 +712,26 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       );
       expect(outcomes.map((outcome) => outcome._tag)).toEqual(numbers.map(() => "Summarized"));
       expect(reads.peak).toBe(4);
+    }),
+  );
+  it.effect("stamps a failure when GitHub answers, so a wait at the token gate does not shorten the backoff", () =>
+    Effect.gen(function* () {
+      const ids = yield* store([260]);
+      const slowGitHub = Layer.mock(GitHub.GitHub, {
+        repoFacts: () => Effect.sleep("15 minutes").pipe(Effect.as([])),
+      });
+      yield* TestClock.setTime(Date.parse("2026-11-07T12:00:00Z"));
+      const fiber = yield* Effect.forkChild(
+        Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) => enricher.enrichRepos(ids)).pipe(
+          Effect.provide(Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(slowGitHub))),
+        ),
+      );
+      yield* TestClock.adjust("15 minutes");
+      expect((yield* Fiber.join(fiber)).map((outcome) => outcome._tag)).toEqual(["Gone"]);
+      const stored = yield* Effect.flatMap(TestDatabase.TestDatabase, (database) =>
+        database.query("select enrich_failed_at::text as failed_at from repos where id = 260"),
+      );
+      expect(stored).toEqual([{ failed_at: expect.stringContaining("2026-11-07 12:15:00") }]);
     }),
   );
 });
