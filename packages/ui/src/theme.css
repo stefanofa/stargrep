@@ -1,8 +1,10 @@
 @import "./fonts.css";
+@import "blobatar/motion.css";
 
 @source "./";
 
 @custom-variant list (&:is(.view-list, .view-list *));
+@custom-variant tiles (&:is(.view-tiles, .view-tiles *));
 
 @theme static {
   --color-*: initial;
@@ -90,11 +92,14 @@
 
   --shadow-*: initial;
   --shadow-panel: -16px 0 48px #1e1b2e1a;
+  --shadow-dock:
+    0 10px 32px light-dark(#1e1b2e1f, #0009), 0 1px 3px light-dark(#1e1b2e0f, #0006),
+    0 0 0 1px light-dark(transparent, oklch(1 0 0 / 0.08));
 
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --animate-tile-in: tile-in 200ms var(--ease-spring) both;
-  --animate-blink: blink 220ms ease-in-out 1;
-  --animate-bounce-once: bounce-once 420ms var(--ease-spring) 1;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --animate-tile-in: tile-in 200ms var(--ease-out) both;
+  --animate-fade-in: fade-in 150ms ease-out both;
+  --animate-skeleton: skeleton 1.2s ease-in-out infinite alternate;
 
   @keyframes tile-in {
     from {
@@ -103,21 +108,15 @@
     }
   }
 
+  @keyframes skeleton {
+    to {
+      background-color: var(--skullet-highlight);
+    }
+  }
+
   @keyframes fade-in {
     from {
       opacity: 0;
-    }
-  }
-
-  @keyframes blink {
-    50% {
-      scale: 1 0.1;
-    }
-  }
-
-  @keyframes bounce-once {
-    40% {
-      translate: 0 -8%;
     }
   }
 }
@@ -151,7 +150,15 @@
   }
 }
 
+/* skullet paints a placeholder's icon slot as a round rectangle from its computed radius and ignores corner-shape,
+   so a loading slot keeps the round radius that cuts as deep as the squircle. */
+[skullet-reveal] [data-slot="repo-icon"] {
+  --corner-scale: 1;
+}
+
 @utility butter {
+  --skullet-base: color-mix(in oklab, var(--color-ink) 10%, transparent);
+  --skullet-highlight: color-mix(in oklab, var(--color-ink) 5%, transparent);
   --color-foreground: var(--color-ink);
   --color-secondary-foreground: var(--color-ink-secondary);
   --color-muted-foreground: var(--color-ink-secondary);
@@ -164,6 +171,14 @@
 @layer base {
   :root {
     color-scheme: light dark;
+  }
+
+  :root {
+    --skullet-base: var(--color-muted);
+    --skullet-highlight: var(--color-accent-soft);
+    --skullet-animation: pulse;
+    --skullet-speed: fast;
+    --skullet-radius: 999px;
   }
 
   :root {
@@ -201,8 +216,7 @@
   @media (prefers-reduced-motion: reduce) {
     :root {
       --animate-tile-in: fade-in 200ms ease-out both;
-      --animate-blink: none;
-      --animate-bounce-once: none;
+      --animate-skeleton: none;
     }
   }
 }

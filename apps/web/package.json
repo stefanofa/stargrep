@@ -6,6 +6,7 @@
     "./website": "./website.ts"
   },
   "scripts": {
+    "budget": "bun scripts/landing-budget.ts",
     "test": "vitest run",
     "typecheck": "effect-tsgo tsc -p . && effect-tsgo tsc -p test/tsconfig.json",
     "favicon": "bun scripts/favicon.ts"
@@ -51,6 +52,7 @@
     "@tailwindcss/vite": "4.3.4",
     "@testing-library/dom": "10.4.2",
     "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.8",
     "@types/bun": "catalog:",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",

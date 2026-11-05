@@ -223,7 +223,7 @@ Any branch's workflow can read the `preview` environment, so the design assumes 
 
 The web app loads the signed-in user's whole library into a TanStack DB collection, one snapshot per load. For 3,000 stars that is about 200 KB compressed. Filtering, sorting, and keyword search then run in the browser on each keystroke, through a live query that matches every word of the query. Semantic results come from the server through an Effect `Stream` that waits for typing to pause and interrupts the request for a query typed over. They append after the keyword results, so no tile the user can see moves. While a sync runs, the page reloads the library every two seconds. Each library repo carries `read`, which says whether search by meaning can find it yet. To keep those flags fresh, a client polls `syncStatus` every few seconds while `state` is `queued` or `enrichment.read + enrichment.failed < enrichment.total`, and reloads the library when `enrichment.read` changes. The total is 0 until the sync writes stars, so the `state` check keeps the poll going. Each poll runs two small reads and one aggregate over the account's stars, at the same time.
 
-The landing page loads no Effect code. The search route renders only in the browser, in its own chunk, which holds Effect, TanStack DB, and the oRPC client.
+The landing page loads no Effect code. The search route renders only in the browser, in its own chunk, which holds Effect, TanStack DB, and the oRPC client. `bun run --cwd apps/web budget` enforces it in `bun run check` and in CI: it builds the client, takes every chunk the entry and the index route load, and fails when their JS passes 130,000 bytes gzipped or when any of them holds a module from Effect, TanStack DB, skullet, or oRPC.
 
 ## API and MCP
 

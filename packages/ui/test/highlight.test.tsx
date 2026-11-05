@@ -69,9 +69,12 @@ describe("matched words", () => {
       stars: 11_600,
       starred: "Aug 2, 2025",
       network: [],
+      visual: { kind: "monogram", letters: "cl" },
+      language: "Rust",
+      unread: false,
     };
     const { container } = render(<ResultItem result={result} />);
-    const marks = [...container.querySelectorAll("article > p mark")].map((mark) => mark.textContent);
+    const marks = [...container.querySelectorAll("article p mark")].map((mark) => mark.textContent);
     expect(marks).toEqual(["dashboard", "terminal"]);
     expect(container.querySelectorAll("mark")).toHaveLength(2);
     expect(container.querySelector("h3 a")?.getAttribute("href")).toBe("?repo=ClementTsang/bottom");
@@ -88,6 +91,9 @@ describe("matched words", () => {
       stars: null,
       starred: "Mar 14, 2025",
       network: [],
+      visual: { kind: "monogram", letters: "ra" },
+      language: "Rust",
+      unread: false,
     };
     const { container } = render(<ResultItem result={result} />);
     const terms = [...container.querySelectorAll("dt")].map((term) => term.textContent);

@@ -17,6 +17,9 @@ const results: Result[] = [
     stars: 16_400,
     starred: "Mar 14, 2025",
     network: [{ login: "kofi" }],
+    visual: { kind: "monogram", letters: "ra" },
+    language: "Rust",
+    unread: false,
   },
   {
     owner: "fdehau",
@@ -28,6 +31,9 @@ const results: Result[] = [
     stars: 11_100,
     starred: "Feb 21, 2025",
     network: [],
+    visual: { kind: "monogram", letters: "fd" },
+    language: "Rust",
+    unread: false,
   },
 ];
 
@@ -36,7 +42,7 @@ function Search() {
   return (
     <>
       <ViewToggle value={view} onValueChange={setView} />
-      <Results view={view} results={results} />
+      <Results view={view} groups={[{ key: "all", results }]} />
     </>
   );
 }
@@ -66,14 +72,15 @@ describe("view toggle", () => {
     const user = userEvent.setup();
     render(<Search />);
     const list = page().getByRole("list", { name: "Results" });
+    const wrapper = list.closest(".view-tiles");
     const before = list.outerHTML;
-    expect(list.parentElement?.classList.contains("view-tiles")).toBe(true);
+    expect(wrapper).not.toBeNull();
 
     await user.click(page().getByRole("button", { name: "List view" }));
 
     expect(list.outerHTML).toBe(before);
-    expect(list.parentElement?.classList.contains("view-list")).toBe(true);
-    expect(list.parentElement?.classList.contains("view-tiles")).toBe(false);
+    expect(wrapper?.classList.contains("view-list")).toBe(true);
+    expect(wrapper?.classList.contains("view-tiles")).toBe(false);
   });
 
   test("server rendering never reads storage and renders the default view", () => {

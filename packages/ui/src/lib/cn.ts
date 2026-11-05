@@ -11,9 +11,9 @@ const merge = extendTailwindMerge({
       tracking: ["tight", "snug", "caps"],
       font: ["display", "sans", "mono"],
       container: ["page", "narrow"],
-      shadow: ["panel"],
-      ease: ["spring"],
-      animate: ["tile-in", "blink", "bounce-once"],
+      shadow: ["panel", "dock"],
+      ease: ["out"],
+      animate: ["tile-in", "fade-in", "skeleton"],
     },
   },
 });

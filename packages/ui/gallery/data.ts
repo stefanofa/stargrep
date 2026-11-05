@@ -13,18 +13,39 @@ const people = {
   mtsk: { login: "mtsk" },
 } satisfies Record<string, Person>;
 
+const svg = (body: string, size = 64) =>
+  `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 64 64">${body}</svg>`)}`;
+
+export const icons = {
+  ratatui: svg('<rect width="64" height="64" fill="#fff"/><path d="M14 46 30 14l6 14 14-6-10 24z" fill="#1e1b2e"/>'),
+  console: svg(
+    '<circle cx="32" cy="32" r="20" fill="none" stroke="#1e1b2e" stroke-width="4"/><path d="M32 4v12M32 48v12M4 32h12M48 32h12" stroke="#1e1b2e" stroke-width="4"/>',
+  ),
+  ghost: svg(
+    '<path d="M16 54V28a16 16 0 0 1 32 0v26l-6-5-5 5-5-5-5 5-5-5z" fill="#fff"/><circle cx="26" cy="30" r="3" fill="#1e1b2e"/><circle cx="38" cy="30" r="3" fill="#1e1b2e"/>',
+  ),
+  favicon: svg(
+    '<rect width="64" height="64" rx="14" fill="#2bb673"/><path d="M18 34l10 10 18-22" stroke="#fff" stroke-width="7" fill="none"/>',
+    16,
+  ),
+};
+
 const result = (
   owner: string,
   name: string,
   reason: string,
   words: string[],
-  rest: Pick<Result, "activity" | "stars" | "starred" | "network">,
+  rest: Pick<Result, "activity" | "stars" | "starred" | "network"> &
+    Partial<Pick<Result, "visual" | "language" | "unread">>,
 ): Result => ({
   owner,
   name,
   href: `?repo=${owner}/${name}`,
   reason,
   matches: marks(reason, ...words),
+  visual: { kind: "monogram", letters: owner.slice(0, 2).toLowerCase() },
+  language: "Rust",
+  unread: false,
   ...rest,
 });
 
@@ -36,6 +57,7 @@ export const results: Result[] = [
     stars: 16_400,
     starred: "Mar 14, 2025",
     network: [people.lena, people.kofi, people.jprd, people.mtsk],
+    visual: { kind: "icon", url: icons.ratatui, plate: "light", size: 128, letters: "ra" },
   }),
   result(
     "ClementTsang",
@@ -47,6 +69,7 @@ export const results: Result[] = [
       stars: 11_600,
       starred: "Aug 2, 2025",
       network: [people.kofi, people.mtsk],
+      visual: { kind: "avatar", url: "https://github.com/ClementTsang.png?size=88", letters: "cl" },
     },
   ),
   result(
@@ -59,6 +82,8 @@ export const results: Result[] = [
       stars: 4_100,
       starred: "Nov 19, 2025",
       network: [people.lena],
+      visual: { kind: "icon", url: icons.console, plate: "none", size: 128, letters: "to" },
+      unread: true,
     },
   ),
   result(
@@ -71,6 +96,8 @@ export const results: Result[] = [
       stars: 4_600,
       starred: "Jan 9, 2025",
       network: [],
+      visual: { kind: "icon", url: icons.favicon, plate: "none", size: 16, letters: "gy" },
+      unread: true,
     },
   ),
   result("fdehau", "tui-rs", "Where ratatui came from. Archived in 2023, so ratatui is the one to use.", [], {
@@ -78,6 +105,7 @@ export const results: Result[] = [
     stars: 11_100,
     starred: "Feb 21, 2025",
     network: [people.lena, people.kofi, people.mtsk],
+    visual: { kind: "icon", url: icons.ghost, plate: "dark", size: 128, letters: "fd" },
   }),
 ];
 

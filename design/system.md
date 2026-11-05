@@ -10,7 +10,7 @@ The four experience principles from `docs/product.md` turn into these rules.
 
 - **Fast enough to feel local.** Keyword results render on each keystroke from the local library. Semantic results only append tiles after the ones already on screen. They never reorder a tile the user can see. The loading state is a skeleton in the final grid, shown for milliseconds, never a spinner.
 - **Show only what helps the next decision.** A result tile shows the repo, the reason it matched with the matched words marked, whether it is alive, stars, when you starred it, and who you follow starred it. Everything else lives in the repo detail panel.
-- **Crafted, not busy.** One butter tile per page. The mascot at most once per screen. No taglines, helper text, or captions. Copy exists only where a string has to exist.
+- **Crafted, not busy.** One butter tile per page. The star mark sits in the header and at most once more per screen. No taglines, helper text, or captions. Copy exists only where a string has to exist.
 - **No login wall.** Every page in the inventory works signed out except Library and Network. Signed out, the top bar shows "Sign in with GitHub" and network lines are hidden, not replaced with a prompt.
 
 ## Tokens
@@ -108,34 +108,32 @@ Every component is a stock shadcn component on Base UI, restyled with the tokens
 | Filter chip | `Badge` + `Button` (icon, size xs) | `accent-soft` fill. The x button removes the filter. Backspace in an empty input removes the last chip. |
 | Scope switch | Base UI `Tabs` | Your stars, Network, Everyone. A white pill track, the active tab on `accent`. Each tab is a link, so the scope is in the URL. |
 | View toggle | Base UI `ToggleGroup` | Two icon toggles, tiles and list, `aria-label` on each. The choice persists per user (local storage signed out, profile setting signed in) and in `?view=`. |
-| Deep search | Base UI `Switch` | Off by default. It adds about a second. When on, the hero tile shows the mascot thinking until results rerank. |
-| Result tile | `Card` | Repo name as an `h3` link, owner under it, the reason line with `<mark>`, then the footer: stars (Fredoka), starred date, alive dot and text, network avatars and "N you follow". |
-| Result row (list view) | `Card` with `--radius-md` | The same data in one row with fixed lanes for alive, stars, starred date, and network, so columns align. |
+| Deep search | Base UI `Switch` | Off by default. It adds about a second. When on, the mark in the header thinks until results rerank. |
+| Result tile | `Card` | The icon slot left of the repo name, an `h3` link, with "owner · language" under it, the reason line with `<mark>`, then the footer: stars (Fredoka), starred date, alive dot and text, network avatars and "N you follow". In search results, a repo not read yet shows its GitHub description under a "not read yet" chip. A repo whose facts have not arrived yet, with no stars and no push date, shows "reading…" and skeleton text instead of "no pushes yet", and fills in place when they land. |
+| Result row (list view) | `Card` with `--radius-md` | The same data in one row. The icon slot has its own lane, so text starts at the same x in every row, and alive, stars and starred date have fixed lanes. |
+| Repo icon slot | Custom | 44px in tiles, 36px in rows, a squircle with `--radius-sm` and a 1.5px `border` edge. One policy function in `apps/web/src/lib/repo-visual.ts` picks what fills it: the repo's own icon on its plate, then the owner's avatar for orgs, then a monogram of two lowercase owner letters in Fredoka on #DCD0FF. An image under 64px is never upscaled; it sits at its own size, at most 24px, on a `muted` tile. An image that fails shows the monogram. |
 | Matched words | `<mark>` | Styled as `accent-strong`, weight 600, no background. Screen readers and agents get the same spans. |
 | Network avatars | shadcn `Avatar`, stacked with -6px overlap | At most four, then "N you follow". `Tooltip` on hover lists handles. Never "friends". |
 | Alive | Text with an 8px dot | `success` dot for pushed in the last 30 days, `muted-foreground` dot after that. Archived and deprecated get a label instead. |
 | Repo detail panel | shadcn `Sheet` (Base UI `Dialog`), side right, 520px | Opens on tile click, with its own URL (`?repo=ratatui/ratatui`). Escape closes it. Contents: summary, one big star count, alive, release, license, who you follow starred it, three "also starred", Open on GitHub, Add to collection. |
-| Sort | Base UI `Menu` (shadcn `DropdownMenu`) | Recently starred, most stars, recently pushed. |
+| Search tile strip | Custom, inside the search tile | One status line on the left, sort and the view toggle on the right, 64px tall, the same in every state, so the controls never move. A 3px rail along the tile's bottom edge shows real progress: stars imported on the first sync, then stars read. The rail is a `progressbar` with the counts as its value text, and only the status label is a live region, so screen readers hear a state change, not every poll. A later sync only says "checking for new stars", and a few new stars read as "2 new stars · reading…" with no rail. On phones the tile docks at the bottom with the strip above the input and one line of detail, and the rail runs along the tile's top edge, inset 32px from each side so the squircle never clips its ends. |
+| Sort | Base UI `Menu` (shadcn `DropdownMenu`) | Recently starred, most stars, recently pushed, and best match while searching. |
 | Buttons | shadcn `Button` | `primary` (ink), `secondary` (accent-soft), `ghost` (white pill). Heights 36 and 44. Always `--radius-full`. |
-| Progress (syncing) | Base UI `Progress` | A 4px bar in `accent` on `muted`, with "1,204 of 2,431" and the time left in text. |
-| Skeleton | shadcn `Skeleton` | `muted` blocks in the exact grid of the final result. |
+| Skeleton | skullet | skullet measures the real card with a sample repo and draws one bar per text line, so a placeholder is the size of the card that replaces it. The bars pulse between `muted` and `accent-soft` and hold still under reduced motion. |
 | Language bar | Custom, divs in a flex row | Segments in ink, `accent`, `highlight`, then `muted` for the rest. A text legend under it, so color is never the only carrier. |
 | Starred-by-week grid | Custom, an SVG or CSS grid | 52 columns by 7 rows, five steps from `muted` to `accent-strong`, with one ink step for the busiest weeks. `role="img"` with a text summary, and the counts available as a hidden table. |
-| Mascot | Custom React component, inline SVG | `<Mascot mood="happy" size={…} />`. See below. `aria-hidden`. |
+| Mark | Custom React component, inline SVG | `<Pip pose="idle" size={…} />`. See below. `aria-hidden`. |
 | Sponsored | `Card` variant `quiet` + `Badge` "sponsored" | Never butter, never first, one per page at most. Never in API or MCP results. |
 
 ## The mascot
 
-The SVG is in `design/assets/mascot.svg`: a five-point star in `highlight` with a `highlight-edge` outline, two dot eyes, and a small smile. It has no name yet. "Pip", its working name, collides with Python's package manager in a developer product, so copy never names it until the name is settled.
+The mark is a five-point star in `highlight` with a `highlight-edge` outline and two eyes. Its working name, Pip, collides with Python's package manager in a developer product, so copy never names it until the name is settled.
 
-- **At most once per screen,** inside one tile or one state. Never on a list row or a result tile.
-- **Moods change only the face.** The body stays identical.
-  - Happy smile: results, profile milestone.
-  - Closed happy eyes: syncing, saved, shared.
-  - Magnifying glass at its side: landing, network search, loading.
-  - Flat mouth: empty results.
-  - Round "o" mouth: errors, the unclaimed "is this you?" tile.
-- **Motion:** one blink when results land. One small bounce on a milestone. No idle animation, and none at all under `prefers-reduced-motion`.
+The star is ours. The eyes, the poses and the idle motion come from [Blobatar](https://github.com/Alain00/blobatar), which has no star silhouette. `packages/ui/scripts/bake-pip.ts` gives the star its own face, a circle inside the drawn star, and fits the eyes to it with Blobatar's `faceFit` and `superellipse`. Blobatar keeps those two private, so they are vendored from 2.7.0 in `packages/ui/scripts/blobatar-face.ts` with its MIT license. The bake writes the eyes, the idle timings from the public `idleSeeds` and each pose's CSS variables to `packages/ui/src/mark/pip.gen.ts`. Blobatar's `motion.css` animates markup that follows its class contract (`mo-root`, `mo-breathe`, `mo-bob`, `mo-eyes`, `mo-eye`). A pose changes only CSS variables on the root, so the stylesheet morphs between poses and the page ships no Blobatar JavaScript. Blobatar is pinned to one exact version. `packages/ui/test/pip.test.tsx` fails if an upgrade changes the mark, `pip-geometry.test.ts` keeps every eye inside the star in every pose, and `motion-contract.test.tsx` fails if `motion.css` stops styling a class or variable Pip uses.
+
+- **One pose per state.** Idle while browsing and on results. Happy while stars import. Thinking while they are read, and while a search waits on the server. Surprised for a moment when results by meaning land. Unsure when nothing matches yet but reading continues. Sad when nothing matches at all. Scared when a sync or search fails.
+- **Where it appears.** The header, beside the wordmark: 40px on desktop, 30px on phones. The count tile, the empty tiles and the landing tile. Never on a list row or a result tile.
+- **Motion:** it breathes, bobs, blinks and glances, with timings drawn from its seed. `prefers-reduced-motion` stops all of it and keeps the pose.
 
 ## Voice
 
@@ -159,8 +157,9 @@ Proper nouns keep their case inside lowercase copy (Rust, TypeScript, GitHub in 
 
 ## Motion
 
-- Tiles enter with opacity and a 6px rise, 200ms, spring easing, 30ms stagger, once per query.
-- Semantic results append at the end of the grid with the same entrance. Tiles already on screen never move.
+- Library tiles enter with opacity and a 6px rise, 200ms, ease-out, when they first appear.
+- Search results do not replay an entrance per query. While the next answer is pending the previous results stay, and a result new to the set fades in over 150ms with no stagger. Tiles already on screen never move.
+- Loading frames have the final layout: an avatar-sized placeholder in the header, the strip with its controls, and the count, languages and month tiles at their final size, so a reload moves nothing.
 - The repo panel slides in from the right in 220ms over a 160ms scrim fade.
 - Toggles and tabs: 120ms color change, no movement.
 - `prefers-reduced-motion` removes all movement and keeps the opacity fades.

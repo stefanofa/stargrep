@@ -53,10 +53,11 @@ describe("mergeResults", () => {
       find,
       at,
     });
-    expect(merged.map((result) => result.name)).toEqual(["ratatui", "tui-rs", "bottom"]);
-    expect(merged[2]?.reason).toBe("A system monitor for the terminal. · 11.6K stars");
-    expect(merged[0]?.matches).toEqual([]);
-    expect(merged[1]?.matches).toEqual([[6, 13]]);
+    expect(merged.words.map((result) => result.name)).toEqual(["ratatui", "tui-rs"]);
+    expect(merged.meaning.map((result) => result.name)).toEqual(["bottom"]);
+    expect(merged.meaning[0]?.reason).toBe("A system monitor for the terminal. · 11.6K stars");
+    expect(merged.words[0]?.matches).toEqual([]);
+    expect(merged.words[1]?.matches).toEqual([[6, 13]]);
   });
 
   test("takes a semantic tile's summary from the search reply, which can be newer than the library", () => {
@@ -68,11 +69,12 @@ describe("mergeResults", () => {
       find: () => stale,
       at,
     });
-    expect(merged[0]?.reason).toBe("A system monitor for the terminal. · 11.6K stars");
+    expect(merged.meaning[0]?.reason).toBe("A system monitor for the terminal. · 11.6K stars");
   });
 
   test("shows only semantic hits when the query has no keyword", () => {
     const merged = mergeResults({ matched: [ratatui, tuiRs, bottom], terms: [], hits: [hit(bottom)], find, at });
-    expect(merged.map((result) => result.name)).toEqual(["bottom"]);
+    expect(merged.words).toEqual([]);
+    expect(merged.meaning.map((result) => result.name)).toEqual(["bottom"]);
   });
 });
