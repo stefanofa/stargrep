@@ -1,4 +1,5 @@
 import type * as Cloudflare from "@alchemy.run/cloudflare";
+import type { FetchIcon } from "@stargrep/core/icons";
 import type { EnrichRepo } from "@stargrep/core/repos";
 import type { StarSync } from "@stargrep/core/stars";
 import * as Arr from "effect/Array";
@@ -13,13 +14,19 @@ import * as Layers from "../layers.ts";
 
 type Message = Cloudflare.Queues.Message<unknown>;
 
-export type Failure = StarSync.StarSyncError | EnrichRepo.EnrichRepoError | EnrichRepo.EnrichRepoAbort;
+export type Failure =
+  | StarSync.StarSyncError
+  | EnrichRepo.EnrichRepoError
+  | EnrichRepo.EnrichRepoAbort
+  | FetchIcon.FetchIconError
+  | FetchIcon.BackfillError;
 
 type Reason = Failure["_tag"] | "SchemaError" | "Stale";
 
 export type Settlement = Data.TaggedEnum<{
   Done: Record<never, never>;
   Retry: { readonly error: Reason };
+  RetryLater: { readonly error: Reason; readonly until: number };
   Defer: { readonly error: Reason; readonly until: number };
   DeadLetter: { readonly error: Reason };
 }>;
@@ -60,6 +67,14 @@ export const afterFailure = (error: Failure, now: number): Settlement =>
     AiUnavailable: retry,
     // The SDK marks this not retryable, such as a 400 for the request itself.
     AiRequestFailed: deadLetter,
+    // A raw.githubusercontent.com 429 can come from another tenant on the same egress IP, so it waits and never
+    // becomes "no icon". The wait spends a queue retry, so a host that keeps answering 429 dead-letters.
+    IconFetchFailed: (failure) =>
+      failure.retryAfterMillis !== null
+        ? Settlement.RetryLater({ error: failure._tag, until: now + failure.retryAfterMillis })
+        : retry(failure),
+    IconStoreFailed: retry,
+    IconQueueFailed: retry,
   });
 
 const maxDelaySeconds = 12 * 60 * 60;
@@ -137,6 +152,15 @@ export const settle = Effect.fn("Consumer.settle")(function* (
     case "Retry":
       message.retry();
       return yield* Effect.logWarning("Queue message failed, retrying", { ...fields, error: settlement.error });
+    case "RetryLater": {
+      const delay = delaySeconds(settlement.until, now);
+      message.retry({ delaySeconds: delay });
+      return yield* Effect.logWarning("Queue message failed, retrying later", {
+        ...fields,
+        error: settlement.error,
+        delay,
+      });
+    }
     case "Defer": {
       const delay = delaySeconds(settlement.until, now);
       yield* Effect.logInfo("Queue message deferred", { ...fields, error: settlement.error, delay });

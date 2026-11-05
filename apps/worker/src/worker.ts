@@ -13,6 +13,7 @@ import { Database, DatabaseMigrations } from "./database.ts";
 import { prodWorkerHosting } from "./domain.ts";
 import { tokenGate } from "./github-gate.ts";
 import { healthResponse } from "./health.ts";
+import { Icons } from "./icons/bucket.ts";
 import * as Layers from "./layers.ts";
 import * as Queues from "./queues.ts";
 import { Readmes } from "./readmes.ts";
@@ -39,10 +40,13 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
   }),
   Effect.gen(function* () {
     const database = yield* Cloudflare.Hyperdrive.Connect(Database);
+    const iconQueue = yield* Cloudflare.Queues.WriteQueue(yield* Queues.FetchIcons);
     const runtime = Layers.layerRuntime({
       database: database.connectionString,
       readmes: yield* Cloudflare.R2.ReadWriteBucket(Readmes),
+      icons: yield* Cloudflare.R2.ReadWriteBucket(Icons),
       enrichQueue: yield* Cloudflare.Queues.WriteQueue(yield* Queues.EnrichRepos),
+      iconQueue,
       tokenGate: yield* tokenGate,
       ai: yield* Effect.orDie(Layers.aiModels),
       adopted: yield* Ref.make(false),

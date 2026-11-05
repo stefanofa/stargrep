@@ -10,6 +10,7 @@ import {
   AiUnavailable,
 } from "@stargrep/ai/errors";
 import * as Summarize from "@stargrep/ai/summarize";
+import { FetchIcon, IconQueue, IconStore } from "@stargrep/core/icons";
 import { BlobStore, EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
 import { StarSync } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
@@ -26,7 +27,7 @@ import {
 } from "@stargrep/github/errors";
 import * as GitHub from "@stargrep/github/github";
 import * as GitHubFake from "@stargrep/github/github.fixture";
-import { GitHubAccountId, RepoId } from "@stargrep/github/schemas";
+import { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
 import * as TokenGate from "@stargrep/github/token-gate";
 import { aiGatewayKey } from "@stargrep/runtime/config";
 import { RuntimeContext } from "alchemy/RuntimeContext";
@@ -46,6 +47,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { assert, describe, expect, it } from "vitest";
 import * as BudgetShare from "../src/budget-share.ts";
 import * as EnrichRepoConsumer from "../src/consumers/enrich-repo.ts";
+import * as FetchIconConsumer from "../src/consumers/fetch-icon.ts";
 import * as Settle from "../src/consumers/settle.ts";
 import * as SyncStarsConsumer from "../src/consumers/sync-stars.ts";
 import * as EnrichSweep from "../src/jobs/enrich-sweep.ts";
@@ -249,6 +251,74 @@ describe("sync-stars consumer", () => {
   });
 });
 
+describe("fetch-icon consumer", () => {
+  const iconRequest = IconQueue.IconRequest.make({
+    repoId: repoId(7),
+    owner: Schema.decodeSync(Login)("acme"),
+    name: Schema.decodeSync(RepoName)("kit"),
+    homepage: "https://kit.dev",
+    iconFiles: [],
+    readmeOid: null,
+  });
+
+  const attempt = (attempts: number) =>
+    createMessageBatch("fetch-icon", [{ id: "m0", timestamp: 0, attempts, body: iconRequest }]);
+
+  it("retries a host's 429 on the same message, so the attempt cap applies, and never re-sends it", async () => {
+    const { queues, later, deadLetters } = recordingQueues();
+    const layer = Layer.mock(FetchIcon.FetchIcon, {
+      fetchIcon: () =>
+        Effect.fail(
+          new FetchIcon.IconFetchFailed({ host: "kit.dev", reason: "status", status: 429, retryAfterMillis: 65_000 }),
+        ),
+    });
+    const retried: Array<QueueRetryOptions | undefined> = [];
+    for (const attempts of [1, 2]) {
+      const batch = attempt(attempts);
+      for (const message of batch.messages) {
+        const retry = message.retry.bind(message);
+        message.retry = (options) => {
+          retried.push(options);
+          retry(options);
+        };
+      }
+      const result = await run(
+        Settle.processBatch(FetchIconConsumer.pipeline, queues, batch.messages).pipe(Effect.provide(layer)),
+        batch,
+      );
+      expect(result.retryMessages).toEqual([{ msgId: "m0" }]);
+      expect(result.explicitAcks).toEqual([]);
+    }
+    expect(retried).toEqual([{ delaySeconds: 70 }, { delaySeconds: 70 }]);
+    expect(later).toEqual([]);
+    expect(deadLetters).toEqual([]);
+  });
+
+  it("dispatches an icon request and a backfill page by tag", async () => {
+    const { queues } = recordingQueues();
+    const calls: Array<string> = [];
+    const layer = Layer.mock(FetchIcon.FetchIcon, {
+      fetchIcon: (request) =>
+        Effect.sync(() => {
+          calls.push(`icon ${request.repoId}`);
+          return FetchIcon.IconOutcome.NoIcon({ id: request.repoId });
+        }),
+      backfill: (after) =>
+        Effect.sync(() => {
+          calls.push(`backfill ${after}`);
+          return { queued: 0, next: null };
+        }),
+    });
+    const batch = batchOf("fetch-icon", [iconRequest, IconQueue.BackfillIcons.make({ after: 42 }), { repoId: 7 }]);
+    const result = await run(
+      Settle.processBatch(FetchIconConsumer.pipeline, queues, batch.messages).pipe(Effect.provide(layer)),
+      batch,
+    );
+    expect(calls.toSorted()).toEqual(["backfill 42", "icon 7"]);
+    expect(result.explicitAcks.toSorted()).toEqual(["m0", "m1", "m2"]);
+  });
+});
+
 describe("enrich-repo consumer", () => {
   it("settles each message by its position in the batch", async () => {
     const { queues, deadLetters } = recordingQueues();
@@ -401,6 +471,15 @@ describe("enrich sweep cron", () => {
 
 describe("settlement table", () => {
   const now = 1_000_000;
+  const iconFetchFailed = (
+    fields: Partial<{ reason: "status" | "timeout" | "transport" | "stale"; status: number; retryAfterMillis: number }>,
+  ) =>
+    new FetchIcon.IconFetchFailed({
+      host: "raw.githubusercontent.com",
+      reason: fields.reason ?? "status",
+      status: fields.status ?? null,
+      retryAfterMillis: fields.retryAfterMillis ?? null,
+    });
   const model = Schema.decodeSync(EmbeddingModelId)("voyage/voyage-4");
   const endpoint = { operation: "list-stars", method: "GET", path: "/users/octocat/starred" } as const;
   const budgetExhausted = new TokenBudgetExhausted({ resource: "core", resetAt: now + 5_000 });
@@ -443,6 +522,15 @@ describe("settlement table", () => {
     AiTimeout: [[new AiTimeout({ operation: "embed", model: "m", timeoutMillis: 30_000 }), "Retry"]],
     AiUnavailable: [[new AiUnavailable({ operation: "generate", model: "m", detail: "503" }), "Retry"]],
     AiRequestFailed: [[new AiRequestFailed({ operation: "generate", model: "m", detail: "400" }), "DeadLetter"]],
+    IconFetchFailed: [
+      [iconFetchFailed({ status: 429, retryAfterMillis: 60_000 }), "RetryLater"],
+      [iconFetchFailed({ status: 503 }), "Retry"],
+      [iconFetchFailed({ reason: "timeout" }), "Retry"],
+      [iconFetchFailed({ reason: "transport" }), "Retry"],
+      [iconFetchFailed({ reason: "stale" }), "Retry"],
+    ],
+    IconStoreFailed: [[new IconStore.IconStoreFailed({ operation: "put", key: "git/x.webp", cause: null }), "Retry"]],
+    IconQueueFailed: [[new IconQueue.IconQueueFailed({ messages: 2, cause: null }), "Retry"]],
   } satisfies {
     readonly [Tag in Settle.Failure["_tag"]]: ReadonlyArray<
       readonly [Extract<Settle.Failure, { readonly _tag: Tag }>, Settle.Settlement["_tag"]]
@@ -454,6 +542,12 @@ describe("settlement table", () => {
       .flat()
       .map(([error, expected]) => [error._tag, Settle.afterFailure(error, now)._tag, expected]);
     expect(settled.filter(([, actual, expected]) => actual !== expected)).toEqual([]);
+  });
+
+  it("defers an icon host's 429 by its retry-after, and never settles it as done", () => {
+    expect(Settle.afterFailure(iconFetchFailed({ status: 429, retryAfterMillis: 120_000 }), now)).toEqual(
+      Settle.Settlement.RetryLater({ error: "IconFetchFailed", until: now + 120_000 }),
+    );
   });
 
   it("defers to the reset time or the retry-after interval", () => {
@@ -512,6 +606,37 @@ describe("production layers", () => {
       ).pipe(Effect.provide(Layers.layerEnrichQueue(queue.client).pipe(Layer.provide(runtimeContext)))),
     );
     expect(queue.batches).toEqual([100, 100, 50]);
+  });
+
+  it("keeps an icon's plate and size in R2 metadata with immutable caching, and reads an object without them as absent", async () => {
+    const objects = new Map<string, { readonly body: unknown; readonly options: R2PutOptions | undefined }>();
+    const bucket = {
+      put: (key: string, body: unknown, options?: R2PutOptions) =>
+        Effect.sync(() => {
+          objects.set(key, { body, options });
+          return {};
+        }),
+      head: (key: string) =>
+        Effect.succeed(objects.has(key) ? { customMetadata: objects.get(key)?.options?.customMetadata } : null),
+    } as unknown as Cloudflare.R2.ReadWriteBucketClient;
+    objects.set("v1/git/old.webp", { body: new Uint8Array(), options: { customMetadata: { plate: "dark" } } });
+    const read = await Effect.runPromise(
+      Effect.flatMap(IconStore.IconStore, (store) =>
+        Effect.gen(function* () {
+          yield* store.put("v1/git/new.webp", new Uint8Array([1]), { plate: "light", size: 32 });
+          return yield* Effect.all([
+            store.head("v1/git/new.webp"),
+            store.head("v1/git/old.webp"),
+            store.head("v1/git/none.webp"),
+          ]);
+        }),
+      ).pipe(Effect.provide(Layers.layerIconStore(bucket).pipe(Layer.provide(runtimeContext)))),
+    );
+    expect(read).toEqual([Option.some({ plate: "light", size: 32 }), Option.none(), Option.none()]);
+    expect(objects.get("v1/git/new.webp")?.options?.httpMetadata).toEqual({
+      contentType: "image/webp",
+      cacheControl: "public, max-age=31536000, immutable",
+    });
   });
 
   it("reads a missing R2 object as None and a stored one as its text", async () => {
