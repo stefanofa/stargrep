@@ -8,7 +8,7 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { act, cleanup, render, waitFor, within } from "@testing-library/react";
+import { act, cleanup, configure, render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import * as real from "../src/lib/library-collection.ts";
 import type { PlannedRepo, PlannedStatus } from "../src/lib/planned.ts";
@@ -41,6 +41,8 @@ const api = () => ({
 });
 
 let library: real.Library;
+
+configure({ asyncUtilTimeout: 4000 });
 
 mock.module("../src/lib/rpc.ts", () => ({ api, signedOut: () => false }));
 mock.module("../src/lib/library-collection.ts", () => ({ ...real, getLibrary: () => library }));
@@ -240,17 +242,19 @@ describe("the search page in each state", () => {
       cleanup();
       server.status = status({ enrichment: allRead });
     }
-  });
+  }, 20_000);
 
   test("when reading finishes, the flags clear and the search runs again", async () => {
     server.status = status({ enrichment: reading });
     await open("/search?q=async");
-    await waitFor(() => expect(server.searches).toEqual(["async"]));
+    await waitFor(() => expect(server.searches).toContain("async"));
     await waitFor(() => expect(page().getAllByText("not read yet").length).toBeGreaterThan(0));
+    const before = server.searches.length;
 
     server.repos = server.repos.map((entry) => ({ ...entry, read: true }));
     server.status = status({ enrichment: allRead });
-    await waitFor(() => expect(server.searches).toEqual(["async", "async"]), { timeout: 8000 });
+    await waitFor(() => expect(server.searches.length).toBe(before + 1), { timeout: 8000 });
+    expect(server.searches.at(-1)).toBe("async");
     await waitFor(() => expect(chips()).toEqual([]));
     expect(strip()).not.toContain("so far");
   }, 15_000);

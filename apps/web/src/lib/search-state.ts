@@ -198,17 +198,37 @@ export const headingsOf = (stage: Stage, words: number, meaning: number): Headin
   };
 };
 
-export interface Unread {
-  readonly read: number;
-  readonly unread: number;
-  readonly total: number;
+export interface EmptyCopy {
+  readonly heading: string;
+  readonly body: string;
+  readonly meta?: string;
 }
 
-export const unreadOf = (stage: Stage): Unread | undefined => {
-  if (stage.name === "reading") return { read: stage.read, unread: stage.total - stage.read, total: stage.total };
-  if (stage.name === "importing" && stage.total !== null)
-    return { read: stage.read ?? 0, unread: stage.total - (stage.read ?? 0), total: stage.total };
-  return undefined;
+export const emptyCopy = (stage: Stage, timeLeft: string, rephrased: boolean): EmptyCopy => {
+  if (stage.name === "ready")
+    return {
+      heading: `nothing in all ${stars(stage.total)}`,
+      body: rephrased
+        ? "i've read all of them, and none matches that. maybe you starred it under different words. try one of these:"
+        : "i've read all of them, and none matches that. maybe you starred it under different words.",
+    };
+  const meta = `i'll search again when reading finishes · ${timeLeft}`;
+  const read = stage.read ?? 0;
+  if (read === 0)
+    return {
+      heading: "i haven't read your stars yet",
+      body: "names and descriptions already match. the rest can match once i've read them.",
+      meta,
+    };
+  const unread = stage.total === null ? undefined : stage.total - read;
+  return {
+    heading: `not in the ${n(read)} i've read yet`,
+    body:
+      unread === undefined
+        ? "it might be in the stars still arriving."
+        : `it might be in the ${stars(unread)} i'm still reading.`,
+    meta,
+  };
 };
 
 // Shorter phrasings of a query that found nothing, from its own words: each adjacent pair, then the longest single

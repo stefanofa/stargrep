@@ -107,7 +107,7 @@ export function ResultItem({
         tileVariants(),
         hero && "tiles:butter",
         "grid h-full grid-cols-[1fr_auto] grid-rows-[auto_auto_auto_1fr_auto] gap-y-3 pt-6 pr-tile-sm pb-tile-sm pl-6 [grid-template-areas:'head_head'_'reason_reason'_'network_network'_'stars_starred'_'alive_alive']",
-        "list:grid-cols-[auto_1fr] list:grid-rows-none list:gap-y-2 list:rounded-md list:py-gap list:pr-tile list:pl-[74px] list:[grid-template-areas:'head_head'_'reason_reason'_'alive_stars'] list:sm:grid-cols-[180px_100px_190px_1fr] list:sm:[grid-template-areas:'head_head_head_head'_'reason_reason_reason_reason'_'alive_stars_starred_network']",
+        "list:grid-cols-[auto_1fr] list:grid-rows-none list:gap-x-4 list:gap-y-2 list:sm:gap-x-0 list:rounded-md list:py-gap list:pr-tile list:pl-[74px] list:[grid-template-areas:'head_head'_'reason_reason'_'alive_stars'] list:sm:grid-cols-[180px_100px_190px_1fr] list:sm:[grid-template-areas:'head_head_head_head'_'reason_reason_reason_reason'_'alive_stars_starred_network']",
       )}
     >
       <header className="[grid-area:head] flex min-w-0 items-center gap-3 list:items-baseline">

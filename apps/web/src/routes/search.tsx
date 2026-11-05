@@ -40,13 +40,13 @@ import { mergeResults, withReply } from "../lib/results.ts";
 import { api, signedOut, type Viewer } from "../lib/rpc.ts";
 import {
   answerOf,
+  emptyCopy,
   headingsOf,
   rephrasings,
   type SearchView,
   type Stage,
   searchView,
   stageOf,
-  unreadOf,
 } from "../lib/search-state.ts";
 import { useSemanticSearch } from "../lib/use-semantic.ts";
 import { useSync } from "../lib/use-sync.ts";
@@ -330,7 +330,7 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
             ? [{ key: "meaning", heading: headings.meaning, results: merged.meaning, pending }]
             : []),
         ];
-  const unread = unreadOf(stage);
+  const phrases = rephrasings(terms);
 
   return (
     <>
@@ -396,24 +396,10 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
         ) : state.body === "results" ? (
           <Results view={view} groups={groups} onOpen={open} />
         ) : state.body === "empty-reading" ? (
-          <EmptyTile
-            pose={pose}
-            ring={state.rail}
-            heading={unread ? `not in the ${formatCount(unread.read)} i've read yet` : "not in what has arrived yet"}
-            body={
-              unread
-                ? `it might be in the ${formatCount(unread.unread)} stars i'm still reading.`
-                : "more stars are still arriving."
-            }
-            meta={`i'll search again when reading finishes · ${timeLeft}`}
-          />
+          <EmptyTile pose={pose} ring={state.rail} {...emptyCopy(stage, timeLeft, false)} />
         ) : state.body === "empty" ? (
-          <EmptyTile
-            pose={pose}
-            heading={`nothing in all ${formatCount(entries.length)} stars`}
-            body="i've read all of them, and none matches that. maybe you starred it under different words. try one of these:"
-          >
-            <RephraseChips phrases={rephrasings(terms)} onPick={search} />
+          <EmptyTile pose={pose} {...emptyCopy(stage, timeLeft, phrases.length > 0)}>
+            <RephraseChips phrases={phrases} onPick={search} />
           </EmptyTile>
         ) : (
           <EmptyTile

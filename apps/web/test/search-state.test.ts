@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   type Answer,
+  emptyCopy,
   headingsOf,
   rephrasings,
   type Stage,
   searchView,
   stageOf,
-  unreadOf,
 } from "../src/lib/search-state.ts";
 
 const importing = stageOf({ importing: true, imported: 1204, starred: 1776, enrichment: null });
@@ -176,10 +176,29 @@ describe("group headings", () => {
   });
 });
 
-describe("the empty states' numbers", () => {
-  test("reading reports what is read and what is left", () => {
-    expect(unreadOf(reading)).toEqual({ read: 412, unread: 1364, total: 1776 });
-    expect(unreadOf(ready)).toBeUndefined();
+describe("empty state copy", () => {
+  test("while reading, the answer could still be in the unread part", () => {
+    expect(emptyCopy(reading, "about 6 minutes left", false)).toEqual({
+      heading: "not in the 412 i've read yet",
+      body: "it might be in the 1,364 stars i'm still reading.",
+      meta: "i'll search again when reading finishes · about 6 minutes left",
+    });
+  });
+
+  test("before anything is read, it says so instead of counting zero", () => {
+    const fresh = stageOf({
+      importing: false,
+      imported: 6,
+      starred: 6,
+      enrichment: { total: 6, read: 0, failed: 0 },
+    });
+    expect(emptyCopy(fresh, "starting", false).heading).toBe("i haven't read your stars yet");
+  });
+
+  test("after everything is read, it offers other words only when it has some", () => {
+    expect(emptyCopy(ready, "", true).body).toEndWith("try one of these:");
+    expect(emptyCopy(ready, "", false).body).not.toContain("try one of these");
+    expect(emptyCopy(ready, "", true).heading).toBe("nothing in all 1,776 stars");
   });
 });
 
