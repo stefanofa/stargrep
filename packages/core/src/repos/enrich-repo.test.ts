@@ -156,6 +156,11 @@ const enrich = (n: number) =>
 
 const get = (n: number) => Effect.flatMap(Db.Db, (db) => Effect.map(db.repos.get(id(n)), Option.getOrThrow));
 
+const failuresOf = (n: number) =>
+  Effect.flatMap(TestDatabase.TestDatabase, (database) =>
+    database.query("select enrich_failures from repos where id = $1", [n]),
+  );
+
 const countsOf = (n: number) =>
   Effect.flatMap(TestDatabase.TestDatabase, (database) =>
     database.query("select stars, forks from repo_metrics where repo_id = $1", [n]),
@@ -367,6 +372,7 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       const sent = github.sent.length;
       expect(yield* (yield* EnrichRepo.EnrichRepo).enrichRepo(repoId)).toEqual({ _tag: "NoNodeId", id: repoId });
       expect(github.sent.length).toBe(sent);
+      expect(yield* failuresOf(9)).toEqual([{ enrich_failures: 1 }]);
     }),
   );
 
@@ -530,6 +536,36 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       expect(outcomes.map((outcome): [number, string] => [outcome.id, outcome._tag])).toEqual(
         numbers.map((n): [number, string] => [n, n === 130 ? "Gone" : "Summarized"]),
       );
+    }),
+  );
+
+  it.effect("counts a failure each time GitHub forbids a repo, and clears the count once the repo is read", () =>
+    Effect.gen(function* () {
+      remotes.set(240, { description: "Private now", forbidden: true });
+      remotes.set(241, { description: "Public" });
+      const enricher = yield* EnrichRepo.EnrichRepo;
+      const batch = yield* store([240, 241]);
+      yield* TestClock.setTime(Date.parse("2026-11-05T12:00:00Z"));
+      expect((yield* enricher.enrichRepos(batch)).map((outcome) => outcome._tag)).toEqual(["Gone", "Summarized"]);
+      yield* TestClock.adjust("10 minutes");
+      expect((yield* enricher.enrichRepos(batch)).map((outcome) => outcome._tag)).toEqual(["Gone", "Unchanged"]);
+      const database = yield* TestDatabase.TestDatabase;
+      const stored = () =>
+        database.query(
+          "select id::int, enrich_failures, enrich_failed_at::text as failed_at from repos where id = any($1) order by id",
+          [[240, 241]],
+        );
+      expect(yield* stored()).toEqual([
+        { id: 240, enrich_failures: 2, failed_at: expect.stringContaining("2026-11-05 12:10:00") },
+        { id: 241, enrich_failures: 0, failed_at: null },
+      ]);
+
+      remotes.set(240, { description: "Public again" });
+      expect((yield* enricher.enrichRepos([id(240)])).map((outcome) => outcome._tag)).toEqual(["Summarized"]);
+      expect(yield* stored()).toEqual([
+        { id: 240, enrich_failures: 0, failed_at: null },
+        { id: 241, enrich_failures: 0, failed_at: null },
+      ]);
     }),
   );
 

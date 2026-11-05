@@ -8,19 +8,23 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as EnrichRetry from "../repos/enrich-retry.ts";
 import * as SyncQueue from "./sync-queue.ts";
 
 export const SyncState = Schema.Literals(["unknown", "queued", "failed", "done"]);
 export type SyncState = typeof SyncState.Type;
 
-export type SyncStatus =
+export type SyncStatus = (
   | { readonly state: "unknown" }
   | {
       readonly state: "queued" | "failed";
       readonly requestedAt: DateTime.Utc;
       readonly syncedAt: DateTime.Utc | null;
     }
-  | { readonly state: "done"; readonly syncedAt: DateTime.Utc };
+  | { readonly state: "done"; readonly syncedAt: DateTime.Utc }
+) & { readonly enrichment: Db.EnrichmentProgress };
+
+const nothingRead: Db.EnrichmentProgress = { total: 0, read: 0, failed: 0 };
 
 type Equals<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 
@@ -56,13 +60,16 @@ const make = Effect.gen(function* () {
     const [account, stored] = yield* Effect.all([db.accounts.byLogin(login), db.syncRequests.get(login)], {
       concurrency: 2,
     });
+    const enrichment = Option.isSome(account)
+      ? yield* db.stars.enrichment({ accountId: account.value.id, maxFailures: EnrichRetry.maxFailures })
+      : nothingRead;
     const syncedAt = Option.getOrNull(Option.flatMapNullishOr(account, (found) => found.starsSyncedAt));
     const request = Option.filter(stored, (found) => within(requestLifetime, now)(found.requestedAt));
     if (Option.isSome(request) && (syncedAt === null || DateTime.isLessThan(syncedAt, request.value.requestedAt))) {
       const state = request.value.outcome === "failed" ? "failed" : "queued";
-      return { state, requestedAt: request.value.requestedAt, syncedAt };
+      return { state, requestedAt: request.value.requestedAt, syncedAt, enrichment };
     }
-    return syncedAt === null ? { state: "unknown" } : { state: "done", syncedAt };
+    return syncedAt === null ? { state: "unknown", enrichment } : { state: "done", syncedAt, enrichment };
   });
 
   const status = Effect.fn("SyncRequests.status")(function* (login: Login) {
@@ -83,6 +90,7 @@ const make = Effect.gen(function* () {
       state: "queued",
       requestedAt: now,
       syncedAt: current.state === "unknown" ? null : current.syncedAt,
+      enrichment: current.enrichment,
     } satisfies SyncStatus;
   });
 

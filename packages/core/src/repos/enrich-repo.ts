@@ -11,6 +11,7 @@ import type { ObjectId, RepoFacts, RepoId } from "@stargrep/github/schemas";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -176,7 +177,7 @@ const make = Effect.gen(function* () {
     const nodeIds = located.flatMap((step) => (Result.isSuccess(step) ? [step.success.nodeId] : []));
     const facts = nodeIds.length === 0 ? [] : yield* github.repoFacts(nodeIds);
     const factsById = new Map<number, RepoFacts>(facts.map((entry) => [entry.id, entry]));
-    return yield* Effect.forEach(
+    const steps = yield* Effect.forEach(
       located,
       (step) =>
         Result.isFailure(step)
@@ -184,6 +185,13 @@ const make = Effect.gen(function* () {
           : planOne(step.success, factsById.get(step.success.id)),
       { concurrency: planConcurrency },
     );
+    const unreadable = steps.flatMap((step) =>
+      Result.isFailure(step) && (step.failure._tag === "Gone" || step.failure._tag === "NoNodeId")
+        ? [step.failure.id]
+        : [],
+    );
+    yield* db.repos.recordEnrichFailures({ ids: unreadable, at: yield* DateTime.now });
+    return steps;
   });
 
   const keepSummary = (job: Job, answer: Result.Result<Summarize.RepoSummary, AiError>) =>
