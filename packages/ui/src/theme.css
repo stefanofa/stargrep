@@ -153,6 +153,12 @@
   }
 }
 
+@supports (corner-shape: squircle) {
+  [skullet-rect] {
+    corner-shape: squircle;
+  }
+}
+
 @utility butter {
   --color-foreground: var(--color-ink);
   --color-secondary-foreground: var(--color-ink-secondary);

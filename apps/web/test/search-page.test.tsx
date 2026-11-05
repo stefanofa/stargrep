@@ -170,15 +170,23 @@ describe("the search page in each state", () => {
     expect(document.querySelectorAll("ol > li > [aria-busy=true]").length).toBe(2);
   });
 
-  test("reading: the rail follows the read count and unread repos carry a chip with their description", async () => {
+  test("reading: the rail follows the read count and the library shows unread repos by their description", async () => {
     server.status = status({ enrichment: reading });
     await open("/search");
     await waitFor(() => expect(strip()).toContain("reading your stars"));
     expect(strip()).toContain("4 of 6 understood");
     expect(rail()?.style.width).toBe("66.7%");
     expect(mark()).toBe("thinking");
-    expect(page().getByText("A debugger for async rust.")).toBeTruthy();
-    expect(page().getAllByText("not read yet").length).toBeGreaterThan(0);
+    await waitFor(() => expect(page().getByText("A debugger for async rust.")).toBeTruthy());
+    expect(page().queryAllByText("not read yet")).toEqual([]);
+  });
+
+  test("an unread repo in search results carries a not read yet chip", async () => {
+    server.status = status({ enrichment: reading });
+    await open("/search?q=async");
+    const card = await waitFor(() => page().getByRole("link", { name: "console" }).closest("article"));
+    expect(card?.textContent).toContain("not read yet");
+    expect(card?.textContent).toContain("A debugger for async rust.");
   });
 
   test("searching while reading: grouped results and a partial count", async () => {

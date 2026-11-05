@@ -178,7 +178,7 @@ export function LibraryView({
             </h2>
             <ResultGrid
               view={view}
-              results={members.map((entry) => toResult(entry, [], at))}
+              results={members.map((entry) => ({ ...toResult(entry, [], at), unread: false }))}
               pending={pending}
               onOpen={onOpen}
             />
