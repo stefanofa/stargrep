@@ -297,6 +297,28 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
     }),
   );
 
+  test.effect("matches the last typed word as a prefix of a word in the account's stars", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const owner = accountId(811);
+      yield* seed(owner, [{ id: repoId(8951), name: "ratatui", summary: "rust library for terminal dashboards" }]);
+      const matches = (text: string, scope = stars(owner)) => db.search.matchesAsPrefix({ scope, text });
+
+      expect(
+        yield* Effect.all([matches("rata"), matches("termi"), matches("rust termi"), matches("Terminal Dash")]),
+      ).toEqual([true, true, true, true]);
+      expect(
+        yield* Effect.all([
+          matches("zust"),
+          matches("rest termi"),
+          matches(""),
+          matches("rata", stars(accountId(812))),
+        ]),
+      ).toEqual([false, false, false, false]);
+      expect(yield* matches("termi:* | nothing")).toBe(false);
+    }),
+  );
+
   test.effect("dies when a ranking names a metric the search does not compute", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;

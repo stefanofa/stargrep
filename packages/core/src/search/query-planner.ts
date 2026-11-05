@@ -4,7 +4,6 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
@@ -27,17 +26,11 @@ export class QueryPlanner extends Context.Service<
   }
 >()("@stargrep/core/search/query-planner/QueryPlanner") {}
 
-export const plansMade = Metric.counter("stargrep_search_plans", {
-  description: "Query plans, by source, and by the planner failure that made search fall back to the typed text.",
-});
+export const planAttributes = (planned: Planned): Readonly<Record<string, string>> =>
+  planned.source === "fallback" ? { source: planned.source, failure: planned.failure } : { source: planned.source };
 
-const recordPlan = (planned: Planned) => {
-  const attributes: Readonly<Record<string, string>> =
-    planned.source === "fallback" ? { source: planned.source, failure: planned.failure } : { source: planned.source };
-  return Effect.annotateCurrentSpan(Record.mapKeys(attributes, (key) => `search.plan.${key}`)).pipe(
-    Effect.andThen(Metric.update(Metric.withAttributes(plansMade, attributes), 1)),
-  );
-};
+const annotatePlan = (planned: Planned) =>
+  Effect.annotateCurrentSpan(Record.mapKeys(planAttributes(planned), (key) => `search.plan.${key}`));
 
 const CachedPlan = Schema.Struct({ plannedOn: Schema.String, output: QueryPlan.PlannerOutput });
 
@@ -87,12 +80,12 @@ const make = Effect.gen(function* () {
     const kind = QueryPlan.queryKind(query);
     if (kind !== "sentence") return { plan: QueryPlan.asTyped(query, kind), source: "keyword" } satisfies Planned;
     return yield* askModel(query, kind);
-  }, Effect.tap(recordPlan));
+  }, Effect.tap(annotatePlan));
 
   const planWithModel = Effect.fn("QueryPlanner.planWithModel")(function* (typed: string) {
     const query = QueryPlan.normalize(typed);
     return yield* askModel(query, QueryPlan.queryKind(query));
-  }, Effect.tap(recordPlan));
+  }, Effect.tap(annotatePlan));
 
   return QueryPlanner.of({ plan, planWithModel });
 });

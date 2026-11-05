@@ -7,6 +7,7 @@ import * as Port from "@stargrep/ai/port";
 import * as Summarize from "@stargrep/ai/summarize";
 import * as SummarizeFake from "@stargrep/ai/summarize.fake";
 import type * as TextGeneration from "@stargrep/ai/text-generation";
+import { anyDistance } from "@stargrep/db/embedding";
 import type * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
@@ -30,7 +31,7 @@ const embeddingCandidates: ReadonlyArray<Models.EmbeddingModel> = [
   "voyage/voyage-4",
   "cohere/embed-v5.0-fast",
   "alibaba/qwen3-embedding-8b",
-].map((id) => ({ id, dimensions: 1024 }));
+].map((id) => ({ id, dimensions: 1024, maxMatchDistance: anyDistance }));
 
 const summaryCandidates = ["anthropic/claude-haiku-5.5", "openai/gpt-6-luna", "google/gemini-3.1-flash-lite"];
 

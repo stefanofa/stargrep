@@ -31,6 +31,7 @@ export const Operation = Schema.Literals([
   "stars.library",
   "stars.enrichment",
   "search.hybrid",
+  "search.matchesAsPrefix",
   "syncRequests.get",
   "syncRequests.claim",
   "syncRequests.prune",

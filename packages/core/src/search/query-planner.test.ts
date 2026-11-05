@@ -9,7 +9,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Metric from "effect/Metric";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as PlannerPrompt from "./planner-prompt.ts";
@@ -165,9 +164,7 @@ it.effect("searches the query as typed when the planner stalls past its timeout,
   );
   const layer = QueryPlanner.layer.pipe(Layer.provide(stalled), Layer.provide(SearchCache.layerMemory));
   const collected = collectSpans();
-  const timeouts = Metric.withAttributes(QueryPlanner.plansMade, { source: "fallback", failure: "AiTimeout" });
   return Effect.gen(function* () {
-    const before = (yield* Metric.value(timeouts)).count;
     const query = "go library for parsing yaml";
     const fiber = yield* Effect.forkChild(plan(query));
     yield* TestClock.adjust("4 seconds");
@@ -182,7 +179,6 @@ it.effect("searches the query as typed when the planner stalls past its timeout,
         ["search.plan.failure", "AiTimeout"],
       ]),
     );
-    expect((yield* Metric.value(timeouts)).count).toBe(before + 1);
     expect(collected.text()).not.toContain("yaml");
   }).pipe(Effect.provide(layer), Effect.withTracer(collected.tracer));
 });

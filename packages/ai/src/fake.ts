@@ -46,7 +46,14 @@ export const layerTextGeneration = (respond: (prompt: string) => unknown, model 
     }),
   );
 
-export const layerEmbeddings = (model: EmbeddingModel = { id: "fake/hash-embedding", dimensions: 1024 }) =>
+// Hash embeddings count shared words, so 0.5 keeps a repo whose words overlap the query's by about half or more.
+export const hashEmbeddingModel: EmbeddingModel = {
+  id: "fake/hash-embedding",
+  dimensions: 1024,
+  maxMatchDistance: 0.5,
+};
+
+export const layerEmbeddings = (model: EmbeddingModel = hashEmbeddingModel) =>
   Layer.succeed(
     Embeddings.Embeddings,
     Embeddings.make({

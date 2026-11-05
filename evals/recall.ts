@@ -7,7 +7,7 @@ import { tokensSpent } from "@stargrep/ai/port";
 import * as TextGeneration from "@stargrep/ai/text-generation";
 import { QueryPlanner, Search, SearchCache } from "@stargrep/core/search";
 import * as Db from "@stargrep/db";
-import { Embedding, EmbeddingModelId } from "@stargrep/db/embedding";
+import { anyDistance, Embedding, EmbeddingModelId } from "@stargrep/db/embedding";
 import { createMigratedDatabase } from "@stargrep/db/local-database";
 import * as Memory from "@stargrep/db/memory";
 import { GitHubAccountId, Login, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
@@ -388,14 +388,6 @@ class RecallBelowBar extends Schema.TaggedError<RecallBelowBar>()("RecallBelowBa
   }
 }
 
-const withMaxDistance = (maxDistance: number) =>
-  Layer.effect(
-    Db.Db,
-    Effect.map(Effect.service(Db.Db), (db) =>
-      Db.Db.of({ ...db, search: { hybrid: (search) => db.search.hybrid({ ...search, maxDistance }) } }),
-    ),
-  );
-
 const sweep = Effect.fn("Recall.sweep")(function* (
   sets: Sets<ReadonlyArray<Corpus.Query>>,
   maxDistances: ReadonlyArray<number>,
@@ -404,7 +396,13 @@ const sweep = Effect.fn("Recall.sweep")(function* (
   for (const maxDistance of maxDistances) {
     const results = yield* runSets(sets).pipe(
       Effect.provide(
-        layerSearch(Gateway.layerPlannerTextGeneration, fileCache).pipe(Layer.provide(withMaxDistance(maxDistance))),
+        layerSearch(Gateway.layerPlannerTextGeneration, fileCache).pipe(
+          Layer.provide(
+            Gateway.layerEmbeddings({ ...Models.embeddingModel, maxMatchDistance: maxDistance }).pipe(
+              Layer.provide(Gateway.layerProviderConfig),
+            ),
+          ),
+        ),
         { local: true },
       ),
     );
@@ -460,17 +458,27 @@ const fixture = Effect.gen(function* () {
   yield* checkTyposAndNonsense(results);
 });
 
+const MaxDistances = Schema.NonEmptyArray(
+  Schema.FiniteFromString.check(Schema.isBetween({ minimum: 0, maximum: anyDistance, exclusiveMinimum: true })),
+);
+
 const args = Bun.argv.slice(2);
 const summaryIndex = args.indexOf("--summary-model");
 const maxDistancesIndex = args.indexOf("--max-distances");
+const maxDistances =
+  maxDistancesIndex === -1
+    ? Effect.succeed<ReadonlyArray<number>>([])
+    : Schema.decodeUnknownEffect(MaxDistances)((args[maxDistancesIndex + 1] ?? "").split(","));
 
 const main = args.includes("--fixture")
   ? fixture
-  : real({
-      summaryModel: summaryIndex === -1 ? Models.summaryModel : (args[summaryIndex + 1] ?? Models.summaryModel),
-      writeFixture: args.includes("--write-fixture"),
-      maxDistances: maxDistancesIndex === -1 ? [] : (args[maxDistancesIndex + 1] ?? "").split(",").map(Number),
-    }).pipe(
+  : Effect.flatMap(maxDistances, (distances) =>
+      real({
+        summaryModel: summaryIndex === -1 ? Models.summaryModel : (args[summaryIndex + 1] ?? Models.summaryModel),
+        writeFixture: args.includes("--write-fixture"),
+        maxDistances: distances,
+      }),
+    ).pipe(
       Effect.provide(Gateway.layerEmbeddings(Models.embeddingModel).pipe(Layer.provide(Gateway.layerProviderConfig))),
     );
 

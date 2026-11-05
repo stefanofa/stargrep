@@ -1,6 +1,5 @@
 import * as Embeddings from "@stargrep/ai/embeddings";
 import { type AiError, AiOutputInvalid } from "@stargrep/ai/errors";
-import { maxMatchDistance } from "@stargrep/ai/models";
 import * as Db from "@stargrep/db";
 import { Embedding, type EmbeddingModelMismatch, Float32Vector } from "@stargrep/db/embedding";
 import type { DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
@@ -8,6 +7,7 @@ import type { Login } from "@stargrep/github/schemas";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { type MetricId, registry } from "./metric-registry.ts";
@@ -85,6 +85,11 @@ export class Search extends Context.Service<
   }
 >()("@stargrep/core/search/search") {}
 
+export const plansMade = Metric.counter("stargrep_search_plans", {
+  description:
+    "Searches, by the source of the plan each one ran, and by the planner failure that made search fall back to the typed text.",
+});
+
 const decodeEmbedding = Schema.decodeUnknownEffect(Embedding);
 
 const planMetrics = (plan: QueryPlan.QueryPlan): ReadonlyArray<MetricId> => [
@@ -147,7 +152,7 @@ export const make = Effect.gen(function* () {
       scope,
       text: plan.textQuery,
       embedding: yield* embedQuery(plan.semanticText),
-      maxDistance: maxMatchDistance,
+      maxDistance: embeddings.model.maxMatchDistance,
       limit,
       name: plan.exactName,
       metrics: metrics.map((id) => registry[id]),
@@ -165,20 +170,22 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const outcome = (planned: QueryPlanner.Planned, results: ReadonlyArray<SearchResult>) =>
+    Metric.update(Metric.withAttributes(plansMade, QueryPlanner.planAttributes(planned)), 1).pipe(
+      Effect.as<SearchOutcome>({ plan: planned.plan, planSource: planned.source, results }),
+    );
+
   const search = Effect.fn("Search.search")(function* (request: SearchRequest) {
     const scope = yield* dbScope(request.scope);
     const typed = yield* planner.plan(request.query);
     const results = yield* find(scope, typed.plan, request.limit);
-    if (results.length > 0 || typed.source !== "keyword") {
-      return { plan: typed.plan, planSource: typed.source, results } satisfies SearchOutcome;
-    }
-    // Typed words that match nothing are often a misspelled name, which the planner can read past.
+    if (results.length > 0 || typed.source !== "keyword") return yield* outcome(typed, results);
+    // Typed words that match nothing are often a misspelled name, which the planner can read past. Words that still
+    // match as a prefix are most likely a word the user is still typing, so they skip the planner.
+    if (yield* db.search.matchesAsPrefix({ scope, text: typed.plan.textQuery })) return yield* outcome(typed, results);
     const read = yield* planner.planWithModel(request.query);
-    return {
-      plan: read.plan,
-      planSource: read.source,
-      results: yield* find(scope, read.plan, request.limit),
-    } satisfies SearchOutcome;
+    if (read.source === "fallback") return yield* outcome(read, results);
+    return yield* outcome(read, yield* find(scope, read.plan, request.limit));
   });
 
   return Search.of({ search });

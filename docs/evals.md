@@ -141,7 +141,7 @@ Two baselines frame these numbers. The raw query with no planner reaches 0.988 w
 
 On 2026-11-05 the query "dfsfgdsrg" found 20 of an account's 1,780 stars. The eval corpus shows the same thing. There the query returns 20 results, each a meaning match and none a word or name match. Full text needs the query's words in the repo, and a name match needs the exact name, but the vector side always returns the nearest repos however far they are. Rank fusion scores by rank alone, so the nearest repo to gibberish scored like the nearest repo to a real query.
 
-The vector side now keeps only repos within a cosine distance of `maxMatchDistance` from the query. Cosine distances on this corpus set its value.
+The vector side now keeps only repos within the embedding model's `maxMatchDistance`, a cosine distance from the query. Cosine distances on this corpus set its value.
 
 | Query | Distance to the best repo |
 |---|---|
@@ -173,7 +173,12 @@ max distance  recall@10  typos found  nonsense answered
 
 Every max distance from 0.32 to 0.40 keeps recall, finds every typo, and answers no nonsense. Search uses 0.36, the middle, which leaves 0.04 before the first loss on either side. At 0.30, "neovm" and one eval query lose a repo. At 0.42, the planner's reading of "plumber" matches `pathwaycom/pathway`. At 0.50, "typsense" finds a near repo as typed, so it is never planned and misses `typesense/typesense`.
 
-The value belongs to the embedding model. After a model change, rerun the sweep and move `maxMatchDistance` to the middle of the new plateau.
+The range that works is narrow, from 0.32 to 0.40, and the same 54 typo and nonsense queries both chose the value and test it. No held-out set checks it. Two risks are known and unmeasured.
+
+- **Larger accounts.** A nonsense query's nearest repo gets closer as an account stars more repos. A fit of nearest distance against the log of the star count, over subsamples of this corpus, projects that 2 of the 23 planner rewrites of short gibberish come within 0.36 at 5,000 stars, and 9 at 20,000. Such an account could get 1 to 3 results for gibberish again, not 20. This is an extrapolation, not a measurement.
+- **Obscure typos.** All 16 typos name projects the planner knows, such as Zustand and ripgrep. A typo of a star the planner cannot identify likely finds nothing now. Before, the typed vector often ranked it first. A follow-up adds typos of niche repos and a check on a larger corpus.
+
+The value belongs to the embedding model. After a model change, rerun the sweep and set the new model's `maxMatchDistance` to the middle of its plateau.
 
 ### In CI
 
