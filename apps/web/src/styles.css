@@ -1,3 +1,9 @@
 @import "tailwindcss";
 @import "@stargrep/ui/theme.css";
 @source "./";
+
+@layer base {
+  html {
+    scrollbar-gutter: stable;
+  }
+}
