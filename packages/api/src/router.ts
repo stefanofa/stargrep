@@ -112,6 +112,7 @@ const syncStatus = (login: Login, status: SyncRequests.SyncStatus) => ({
   state: status.state,
   requestedAt: status.state === "queued" || status.state === "failed" ? iso(status.requestedAt) : null,
   syncedAt: status.state === "unknown" ? null : iso(status.syncedAt),
+  enrichment: status.enrichment,
 });
 
 const implementer = implement(contract).$context<ApiContext>();
@@ -184,6 +185,7 @@ export const router = implementer.router({
             keywords: entry.repo.keywords,
             starredAt: DateTime.formatIso(entry.starredAt),
             stars: entry.stars,
+            read: entry.read,
           })),
         };
       }),

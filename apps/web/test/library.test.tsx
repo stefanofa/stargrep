@@ -23,6 +23,7 @@ const repo = (id: number): LibraryRepo => ({
   keywords: [],
   starredAt: "2026-01-01T00:00:00.000Z",
   stars: null,
+  read: false,
 });
 
 // A server whose library reads the starred repos at the moment the request arrives and answers a few ms later.

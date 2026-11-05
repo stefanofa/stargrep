@@ -85,6 +85,8 @@ const searchAda = (request: Search.SearchRequest) =>
       ? Effect.succeed(searchOutcome(request))
       : Effect.fail(new Search.AccountNotSynced({ login: request.scope.login }));
 
+const reading = { total: 1776, read: 412, failed: 3 };
+
 const services = (fakes: Fakes): Context.Context<ApiServices> => {
   const db = {
     repos: {
@@ -92,7 +94,7 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
     },
     stars: {
       library: (accountId: GitHubAccountId) =>
-        Effect.succeed(accountId === ada.account.id ? [{ repo, starredAt, stars: 16_400 }] : []),
+        Effect.succeed(accountId === ada.account.id ? [{ repo, starredAt, stars: 16_400, read: false }] : []),
     },
   } as unknown as Db.Db["Service"];
   const requests =
@@ -101,9 +103,9 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
       request: (login) =>
         Effect.sync(() => {
           fakes.sent?.push(login);
-          return { state: "queued", requestedAt: pushedAt, syncedAt: null };
+          return { state: "queued", requestedAt: pushedAt, syncedAt: null, enrichment: reading };
         }),
-      status: () => Effect.succeed({ state: "failed", requestedAt: pushedAt, syncedAt: null }),
+      status: () => Effect.succeed({ state: "failed", requestedAt: pushedAt, syncedAt: null, enrichment: reading }),
     });
   return Context.make(Db.Db, db).pipe(
     Context.add(
@@ -254,6 +256,7 @@ describe("sync", () => {
       state: "queued",
       requestedAt: "2026-10-01T08:00:00.000Z",
       syncedAt: null,
+      enrichment: reading,
     });
     expect(sent).toEqual(["octocat" as Login]);
     expect(await api.syncStatus({ login: "octocat" })).toEqual({
@@ -261,6 +264,7 @@ describe("sync", () => {
       state: "failed",
       requestedAt: "2026-10-01T08:00:00.000Z",
       syncedAt: null,
+      enrichment: reading,
     });
   });
 
@@ -277,7 +281,7 @@ describe("sync", () => {
     const { api } = client({
       requests: SyncRequests.SyncRequests.of({
         request: () => Effect.fail(new SyncQueue.SyncQueueFailed({ cause: "down" })),
-        status: () => Effect.succeed({ state: "unknown" }),
+        status: () => Effect.succeed({ state: "unknown", enrichment: { total: 0, read: 0, failed: 0 } }),
       }),
     });
     expect((await failure(api.triggerSync({ login: "octocat" }))).code).toBe("SERVICE_UNAVAILABLE");
@@ -323,6 +327,7 @@ describe("signed-in procedures", () => {
           keywords: ["tui"],
           starredAt: "2025-03-14T10:00:00.000Z",
           stars: 16_400,
+          read: false,
         }),
       ],
     });
