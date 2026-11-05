@@ -9,5 +9,6 @@ declare namespace Cloudflare {
     readonly SYNC_PER_CALLER: RateLimit;
     readonly SYNC_OVERALL: RateLimit;
     readonly WORKER: Fetcher;
+    readonly ICONS: R2Bucket;
   }
 }

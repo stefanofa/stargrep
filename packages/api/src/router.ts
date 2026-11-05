@@ -12,11 +12,12 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { contract, type RepoInput, type SearchInput, type SyncInput } from "./contract.ts";
 import { errorStatus, type WireCode, wireError } from "./errors.ts";
+import { IconHost, iconUrl } from "./icon-host.ts";
 import { instrumentation, type ProcedureTime, type Transport } from "./middleware/instrumentation.ts";
 import { SyncLimiter, type SyncLimiterUnavailable, type SyncRateLimited } from "./sync-limiter.ts";
 import { type ViewerError, Viewers } from "./viewers.ts";
 
-export type ApiServices = Db.Db | Search.Search | SyncRequests.SyncRequests | SyncLimiter | Viewers;
+export type ApiServices = Db.Db | Search.Search | SyncRequests.SyncRequests | SyncLimiter | Viewers | IconHost;
 
 export class ApiServicesUnavailable extends Schema.TaggedError<
   ApiServicesUnavailable,
@@ -92,7 +93,7 @@ const provideServices = middlewareGen<ApiContext & { readonly traceId: string },
 
 const iso = (time: DateTime.Utc | null) => (time === null ? null : DateTime.formatIso(time));
 
-const repoFields = (repo: Db.Repo) => ({
+const repoFields = (repo: Db.Repo, icons: IconHost["Service"]) => ({
   id: repo.id,
   owner: repo.owner,
   name: repo.name,
@@ -105,6 +106,9 @@ const repoFields = (repo: Db.Repo) => ({
   kind: repo.kind,
   archived: repo.archived,
   pushedAt: iso(repo.pushedAt),
+  icon: repo.icon && { url: iconUrl(icons, repo.icon.key), plate: repo.icon.plate, size: repo.icon.size },
+  ownerType: repo.ownerType,
+  ownerAvatarUrl: repo.ownerAvatarUrl,
 });
 
 const syncStatus =
@@ -134,10 +138,11 @@ export const router = implementer.router({
         const scope: Search.Scope =
           input.scope === "global" ? { _tag: "global" } : { _tag: input.scope, login: input.login };
         const outcome = yield* (yield* Search.Search).search({ scope, query: input.q, limit: input.limit });
+        const icons = yield* IconHost;
         return {
           planSource: outcome.planSource,
           results: outcome.results.map((result) => ({
-            ...repoFields(result.repo),
+            ...repoFields(result.repo, icons),
             reason: Search.reasonLine(result),
             rankedBy: result.metrics.flatMap(({ metric, value }) =>
               value === null ? [] : [MetricRegistry.registry[metric].format(value)],
@@ -188,9 +193,10 @@ export const router = implementer.router({
       Effect.gen(function* () {
         const { account } = yield* (yield* Viewers).current;
         const entries = yield* (yield* Db.Db).stars.library(account.id);
+        const icons = yield* IconHost;
         return {
           repos: entries.map((entry) => ({
-            ...repoFields(entry.repo),
+            ...repoFields(entry.repo, icons),
             keywords: entry.repo.keywords,
             starredAt: DateTime.formatIso(entry.starredAt),
             stars: entry.stars,
@@ -203,9 +209,9 @@ export const router = implementer.router({
 
   getRepo: os.getRepo.use(provideServices).effect(
     handle((input: typeof RepoInput.Type) =>
-      Db.Db.use((db) => db.repos.require(input.id)).pipe(
-        Effect.map((repo) => ({
-          ...repoFields(repo),
+      Effect.all([Db.Db.use((db) => db.repos.require(input.id)), IconHost]).pipe(
+        Effect.map(([repo, icons]) => ({
+          ...repoFields(repo, icons),
           keywords: repo.keywords,
           homepage: repo.homepage,
           createdAt: iso(repo.createdAt),

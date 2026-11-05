@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Tracer from "effect/Tracer";
+import { IconHost } from "./icon-host.ts";
 import type { Transport } from "./middleware/instrumentation.ts";
 import { type ApiContext, type ApiServices, ApiServicesUnavailable, router } from "./router.ts";
 import { SyncLimiter, SyncLimiterUnavailable, SyncRateLimited } from "./sync-limiter.ts";
@@ -41,6 +42,19 @@ const repo: Db.Repo = {
   summaryReadmeOid: null,
   keywords: ["tui"],
   embeddingModel: null,
+  icon: { key: "v1/git/abc.webp", source: "repo-file", plate: "dark", size: 96 },
+  iconCheckedAt: pushedAt,
+  ownerType: "org",
+  ownerAvatarUrl: "https://avatars.githubusercontent.com/u/1",
+};
+
+const unchecked: Db.Repo = {
+  ...repo,
+  id: 44 as RepoId,
+  icon: null,
+  iconCheckedAt: null,
+  ownerType: null,
+  ownerAvatarUrl: null,
 };
 
 interface Fakes {
@@ -90,7 +104,12 @@ const reading = { total: 1776, read: 412, failed: 3 };
 const services = (fakes: Fakes): Context.Context<ApiServices> => {
   const db = {
     repos: {
-      require: (id: RepoId) => (id === repo.id ? Effect.succeed(repo) : Effect.fail(new RepoNotFound({ repoId: id }))),
+      require: (id: RepoId) =>
+        id === repo.id
+          ? Effect.succeed(repo)
+          : id === unchecked.id
+            ? Effect.succeed(unchecked)
+            : Effect.fail(new RepoNotFound({ repoId: id })),
     },
     stars: {
       enrichment: () => Effect.succeed(reading),
@@ -118,6 +137,7 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
     Context.add(SyncRequests.SyncRequests, requests),
     Context.add(SyncLimiter, SyncLimiter.of({ acquire: fakes.limiter ?? Effect.void })),
     Context.add(Viewers, Viewers.of({ current: fakes.viewer ?? Effect.fail(new NotSignedIn()) })),
+    Context.add(IconHost, IconHost.of({ origin: "https://stargrep.test" })),
   );
 };
 
@@ -170,6 +190,9 @@ describe("search", () => {
           kind: "library",
           archived: false,
           pushedAt: "2026-10-01T08:00:00.000Z",
+          icon: { url: "https://stargrep.test/icons/v1/git/abc.webp", plate: "dark", size: 96 },
+          ownerType: "org",
+          ownerAvatarUrl: "https://avatars.githubusercontent.com/u/1",
           reason: "keyword match #2, meaning match #1, 18K stars",
           rankedBy: ["18K stars"],
           metrics: [{ metric: "stars", value: 18_000 }],
@@ -300,6 +323,20 @@ describe("getRepo", () => {
     });
     expect((await failure(api.getRepo({ id: 43 as RepoId }))).code).toBe("REPO_NOT_FOUND");
   });
+
+  test("serves the icon on the icon host, and null icon and owner facts before the icon check", async () => {
+    const { api } = client();
+    expect(await api.getRepo({ id: 42 as RepoId })).toMatchObject({
+      icon: { url: "https://stargrep.test/icons/v1/git/abc.webp", plate: "dark", size: 96 },
+      ownerType: "org",
+      ownerAvatarUrl: "https://avatars.githubusercontent.com/u/1",
+    });
+    expect(await api.getRepo({ id: 44 as RepoId })).toMatchObject({
+      icon: null,
+      ownerType: null,
+      ownerAvatarUrl: null,
+    });
+  });
 });
 
 describe("signed-in procedures", () => {
@@ -329,6 +366,8 @@ describe("signed-in procedures", () => {
           starredAt: "2025-03-14T10:00:00.000Z",
           stars: 16_400,
           read: false,
+          icon: { url: "https://stargrep.test/icons/v1/git/abc.webp", plate: "dark", size: 96 },
+          ownerType: "org",
         }),
       ],
     });

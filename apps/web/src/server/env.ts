@@ -7,6 +7,7 @@ export interface WebEnv {
   readonly SYNC_PER_CALLER: RateLimit;
   readonly SYNC_OVERALL: RateLimit;
   readonly WORKER: Fetcher;
+  readonly ICONS: R2Bucket;
   readonly AI_GATEWAY_API_KEY?: string;
 }
 

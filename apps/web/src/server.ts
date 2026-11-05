@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
 import type { DeclaredEnv } from "./server/env.ts";
 import { withHealth } from "./server/health.ts";
+import { serveIcon, workerCache } from "./server/icons.ts";
 import { layerAuthRequest, layerRequest } from "./server/layers.ts";
 import { makeAuthServer, makeServer } from "./server/serve.ts";
 
@@ -36,5 +37,17 @@ const serve = makeServer((request) => {
 }, Tracing.tracer);
 
 export default {
-  fetch: withHealth(bindings, (request) => serveAuth(request) ?? serve(request) ?? start.fetch(request)),
+  fetch: (request: Request, _env: unknown, context: ExecutionContext) =>
+    withHealth(
+      bindings,
+      (incoming) =>
+        serveIcon(incoming, {
+          bucket: bindings.ICONS,
+          cache: workerCache(),
+          waitUntil: (promise) => context.waitUntil(promise),
+        }) ??
+        serveAuth(incoming) ??
+        serve(incoming) ??
+        start.fetch(incoming),
+    )(request),
 };

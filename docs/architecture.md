@@ -252,6 +252,7 @@ The procedures are `search`, `triggerSync`, `syncStatus`, `getRepo`, `viewer`, a
 | KV | Query plans and query embeddings, through the `SearchCache` port |
 | Postgres | Summaries and embeddings, shared across accounts |
 | R2 | README text by object ID, so GitHub serves each README once |
+| R2 and the Workers cache | Repo icons as WebP, keyed by output version plus the git blob ID or the SHA-256 of the source bytes. The web Worker serves them at `/icons/<key>` on its own origin, through `caches.default`, with `immutable` caching. A change to the normalized output bumps the version, so an icon URL never shows other bytes |
 
 ## Everything as code
 

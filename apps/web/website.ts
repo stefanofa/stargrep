@@ -5,6 +5,7 @@ import { aiGatewayKey } from "@stargrep/runtime/config";
 import MainWorker from "@stargrep/worker";
 import { Database, DatabaseMigrations } from "@stargrep/worker/database";
 import { prodWebHosting } from "@stargrep/worker/domain";
+import { Icons } from "@stargrep/worker/icons";
 import { SyncStars } from "@stargrep/worker/queues";
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
@@ -59,6 +60,7 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
         SEARCH_CACHE: SearchCache,
         SYNC_STARS: SyncStars,
         WORKER: MainWorker,
+        ICONS: yield* Icons,
         SYNC_PER_CALLER: Cloudflare.RateLimit("SYNC_PER_CALLER", {
           namespaceId: namespaceId(stage, "sync-per-caller"),
           simple: { limit: 5, period: 60 },
