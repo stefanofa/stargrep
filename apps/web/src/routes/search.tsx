@@ -376,6 +376,7 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
               label={state.status.label}
               detail={state.status.detail}
               continues={state.status.continues}
+              instant={state.status.instant}
               action={
                 state.status.retry && (
                   <Button

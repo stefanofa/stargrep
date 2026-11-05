@@ -2,6 +2,7 @@ export { Avatar, NetworkAvatars, type Person } from "./components/avatar.tsx";
 export { Badge } from "./components/badge.tsx";
 export { Button, buttonVariants } from "./components/button.tsx";
 export { DeepSearch } from "./components/deep-search.tsx";
+export { Digits } from "./components/digits.tsx";
 export { EmptyTile, RephraseChips } from "./components/empty-tile.tsx";
 export { LanguageBar, type LanguageShare } from "./components/language-bar.tsx";
 export { Monogram, type Plate, RepoIcon, type RepoVisual } from "./components/repo-icon.tsx";

@@ -1,5 +1,6 @@
 import {
   Button,
+  Digits,
   LanguageBar,
   type LanguageShare,
   type OpenResult,
@@ -53,7 +54,7 @@ function CountTile({
           {count === undefined ? (
             <Skeleton className="inline-block h-[0.7em] w-[2.4em] align-middle" />
           ) : (
-            formatCount(count)
+            <Digits>{formatCount(count)}</Digits>
           )}
         </p>
         <p className="font-display text-lg leading-6 font-semibold sm:text-2xl">
@@ -123,7 +124,7 @@ function MonthHeading({ heading, size, arriving }: { heading: string; size: numb
   return (
     <h2 className="flex items-baseline gap-2.5 pl-1.5">
       <span className="font-display text-2xl font-semibold tracking-snug">{heading}</span>
-      <span className="font-sans text-base text-muted-foreground">
+      <span className="font-sans text-base text-muted-foreground tabular-nums">
         {stars(size)}
         {arriving && " so far"}
       </span>
