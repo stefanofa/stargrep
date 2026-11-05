@@ -51,8 +51,9 @@ const ownError = (error: EnrichRepoError): boolean =>
     GitHubRequestFailed: (failure) =>
       failure.reason === "status" && failure.status !== null && failure.status < 500 && failure.status !== 403,
     GitHubResponseInvalid: (failure) => failure.reason !== "unreadable-body",
-    // Each answer is a paid model call, so a repo whose answers never decode must reach the cap.
-    AiOutputInvalid: () => true,
+    // A summary answer is one paid call for one repo, so a repo whose answers never decode must reach the cap. An
+    // embedding answer covers a whole batch, so its bad shape is the provider's fault, not any one repo's.
+    AiOutputInvalid: (failure) => failure.operation === "generate",
     RateLimited: () => false,
     TokenBudgetExhausted: () => false,
     Unauthorized: () => false,

@@ -123,6 +123,10 @@ const failingEmbeddings = embeddingsWith(() =>
   Effect.fail(new AiRequestFailed({ operation: "embed", model: embeddingModel, detail: "bad request" })),
 );
 
+const wrongSizeEmbeddings = embeddingsWith((values) =>
+  Effect.succeed({ vectors: values.map(() => Array.from({ length: 512 }, () => 0.1)), tokens: values.length }),
+);
+
 const vectors = (values: ReadonlyArray<string>) => ({
   vectors: values.map(() => Array.from({ length: 1024 }, (_, at) => (at === 0 ? 1 : 0))),
   tokens: values.length,
@@ -646,6 +650,9 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       expect(yield* counts()).toEqual(untouched);
 
       expect((yield* enrichWith(failingEmbeddings)).map((outcome) => outcome._tag)).toEqual(["Failed", "Failed"]);
+      expect(yield* counts()).toEqual(untouched);
+
+      expect((yield* enrichWith(wrongSizeEmbeddings)).map((outcome) => outcome._tag)).toEqual(["Failed", "Failed"]);
       expect(yield* counts()).toEqual(untouched);
 
       const outcomes = yield* (yield* EnrichRepo.EnrichRepo).enrichRepos(batch);
