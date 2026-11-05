@@ -32,6 +32,13 @@
       }
     }
   },
+  "linter": {
+    "rules": {
+      "correctness": {
+        "noUnusedImports": "error"
+      }
+    }
+  },
   "overrides": [
     {
       "includes": ["apps/web/src/server.ts", "apps/web/src/server/**", "apps/web/website.ts", "apps/web/test/**"],

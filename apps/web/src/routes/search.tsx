@@ -35,7 +35,7 @@ import { keywordTerms } from "../lib/keyword.ts";
 import { getLibrary, useRecoveries } from "../lib/library-collection.ts";
 import { orders } from "../lib/order.ts";
 import { enrichmentOf } from "../lib/planned.ts";
-import { formatCount, now, syncedAgo, toDetail } from "../lib/present.ts";
+import { now, syncedAgo, toDetail } from "../lib/present.ts";
 import { mergeResults, withReply } from "../lib/results.ts";
 import { api, signedOut, type Viewer } from "../lib/rpc.ts";
 import {
