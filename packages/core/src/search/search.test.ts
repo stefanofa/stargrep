@@ -97,6 +97,8 @@ const seed = Effect.fn("seed")(function* (account: number, repos: ReadonlyArray<
       pushedAt: null,
       archived: false,
       readmeOid: null,
+      ownerType: null,
+      ownerAvatarUrl: null,
     });
     yield* db.repos.saveSummary({
       id,

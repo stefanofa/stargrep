@@ -17,16 +17,20 @@ import * as Usage from "./queries/usage.ts";
 
 export type { Account, AccountClaim, AccountFacts, OwnedRepoStars, StarSync } from "./queries/accounts.ts";
 export type {
+  DueIcon,
   EnrichFailures,
+  IconCheck,
   Repo,
   RepoCounts,
   RepoEmbedding,
   RepoFacts,
+  RepoOwner,
   RepoRef,
   RepoSummary,
   StoredRepo,
   SweepQuery,
 } from "./queries/repos.ts";
+export { IconPlate, IconSource, maxIconSize, OwnerType, RepoIcon } from "./queries/repos.ts";
 export type {
   HybridSearch,
   MetricBound,

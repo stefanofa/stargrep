@@ -393,6 +393,75 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     }),
   );
 
+  test.effect("records an icon check without touching enrichment, and pages repos unchecked or due a refresh", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const [found, missing, unchecked, stale, noNode] = [
+        repoId(2801),
+        repoId(2802),
+        repoId(2803),
+        repoId(2805),
+        repoId(2804),
+      ];
+      yield* db.repos.upsertRefs([ref(found), ref(missing), ref(unchecked), ref(stale)]);
+      yield* db.repos.saveFacts(facts(noNode));
+      yield* embedSummarized(db, found, embedding({ 0: 1 }));
+      const checkedBefore = at("2020-01-01T00:00:00Z");
+      const page = (after: number) =>
+        Effect.map(db.repos.dueIcons({ after, limit: 4, checkedBefore }), (rows) => rows.map((row) => row.id));
+
+      expect(yield* page(2800)).toEqual([found, missing, unchecked, stale]);
+      expect(yield* page(found)).toEqual([missing, unchecked, stale]);
+
+      const icon = { key: "v1/git/abc.webp", source: "repo-file", plate: "dark", size: 96 } as const;
+      for (const id of [found, stale]) yield* db.repos.saveIcon({ id, icon });
+      yield* db.repos.saveIcon({ id: missing, icon: null });
+      yield* db.repos.saveIcon({ id: repoId(2899), icon });
+      yield* database.query("update repos set icon_checked_at = '2019-06-01' where id = $1", [stale]);
+
+      expect(yield* page(2800)).toEqual([unchecked, stale]);
+      const stored = Option.getOrThrow(yield* db.repos.get(found));
+      expect(stored).toMatchObject({ icon, summary: summaryOf(found) });
+      expect(stored).not.toHaveProperty("iconKey");
+      expect(Option.getOrThrow(yield* db.repos.get(missing))).toMatchObject({ icon: null });
+      expect(Option.getOrThrow(yield* db.repos.get(missing)).iconCheckedAt).not.toBeNull();
+      expect((yield* db.repos.getMany([found]))[0]).toMatchObject({ icon, pending: false });
+      expect(yield* db.repos.pendingEnrichment([found])).toEqual([]);
+      const torn = yield* database.query("update repos set icon_size = null where id = $1", [found]).pipe(
+        Effect.as("updated"),
+        Effect.catchCause(() => Effect.succeed("refused")),
+      );
+      expect(torn).toBe("refused");
+    }),
+  );
+
+  test.effect("saves owner facts with the repo facts and in one batch for the backfill", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const [org, user] = [repoId(2811), repoId(2812)];
+      const { pending } = yield* db.repos.saveFacts({
+        ...facts(org),
+        ownerType: "org",
+        ownerAvatarUrl: "https://avatars.githubusercontent.com/u/1",
+      });
+      yield* db.repos.upsertRefs([ref(user)]);
+      yield* db.repos.saveOwners([
+        { id: user, ownerType: "user", ownerAvatarUrl: "https://avatars.githubusercontent.com/u/2" },
+      ]);
+
+      expect(pending).toBe(true);
+      expect(Option.getOrThrow(yield* db.repos.get(org))).toMatchObject({
+        ownerType: "org",
+        ownerAvatarUrl: "https://avatars.githubusercontent.com/u/1",
+      });
+      expect(Option.getOrThrow(yield* db.repos.get(user))).toMatchObject({
+        ownerType: "user",
+        ownerAvatarUrl: "https://avatars.githubusercontent.com/u/2",
+      });
+    }),
+  );
+
   test.effect("saves star and fork counts and replaces them on the next save", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
