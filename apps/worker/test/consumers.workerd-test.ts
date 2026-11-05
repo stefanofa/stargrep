@@ -295,6 +295,53 @@ describe("enrich-repo consumer", () => {
   });
 });
 
+describe("enrichment outcome table", () => {
+  const summary = { summary: "s", keywords: [], kind: null };
+  const timeout = new AiTimeout({ operation: "generate", model: "test", timeoutMillis: 60_000 });
+  const request = new AiRequestFailed({ operation: "generate", model: "test", detail: "400" });
+  const cases = {
+    Unchanged: [[EnrichRepo.Enrichment.Unchanged({ id: repoId(1) }), "ack"]],
+    NotFound: [[EnrichRepo.Enrichment.NotFound({ id: repoId(2) }), "ack"]],
+    NoNodeId: [[EnrichRepo.Enrichment.NoNodeId({ id: repoId(3) }), "ack"]],
+    Gone: [[EnrichRepo.Enrichment.Gone({ id: repoId(4) }), "ack"]],
+    Stale: [[EnrichRepo.Enrichment.Stale({ id: repoId(5) }), "retry"]],
+    Failed: [
+      [EnrichRepo.Enrichment.Failed({ id: repoId(6), error: timeout }), "retry"],
+      [EnrichRepo.Enrichment.Failed({ id: repoId(7), error: request }), "dead-letter"],
+    ],
+    Summarized: [[EnrichRepo.Enrichment.Summarized({ id: repoId(8), summary }), "ack"]],
+    Embedded: [[EnrichRepo.Enrichment.Embedded({ id: repoId(9), summary }), "ack"]],
+  } satisfies {
+    readonly [Tag in EnrichRepo.Enrichment["_tag"]]: ReadonlyArray<
+      readonly [Extract<EnrichRepo.Enrichment, { readonly _tag: Tag }>, "ack" | "retry" | "dead-letter"]
+    >;
+  };
+
+  // Gone and NoNodeId ack, because EnrichRepo already counted the failure and the sweep owns the next try.
+  it("settles every enrichment outcome the way its row says", async () => {
+    const rows = Object.values(cases).flat();
+    const { queues, deadLetters } = recordingQueues();
+    const batch = batchOf(
+      "enrich-repo",
+      rows.map(([outcome]) => ({ repoId: outcome.id })),
+    );
+    const layer = Layer.mock(EnrichRepo.EnrichRepo, {
+      enrichRepos: () => Effect.succeed(rows.map(([outcome]) => outcome)),
+    });
+    const result = await run(
+      Settle.processBatch(EnrichRepoConsumer.pipeline, queues, batch.messages).pipe(Effect.provide(layer)),
+      batch,
+    );
+    const dead = new Set(deadLetters.map((body) => (body as { readonly repoId: number }).repoId));
+    const retried = new Set(result.retryMessages.map((message) => message.msgId));
+    const settled = rows.map(([outcome], index) => [
+      outcome._tag,
+      dead.has(outcome.id) ? "dead-letter" : retried.has(`m${index}`) ? "retry" : "ack",
+    ]);
+    expect(settled).toEqual(rows.map(([outcome, expected]) => [outcome._tag, expected]));
+  });
+});
+
 describe("settlement table", () => {
   const now = 1_000_000;
   const model = Schema.decodeSync(EmbeddingModelId)("voyage/voyage-4");
@@ -526,6 +573,58 @@ describe("dead letters", () => {
       ["Dead letter", { queue: "sync-stars", messageId: "m0", attempts: 1, bodyType: "string" }],
       ["Dead letter", { queue: "sync-stars", messageId: "m1", attempts: 1, login: "octocat", mode: "full" }],
     ]);
+  });
+
+  const recordingRepos = (failure?: DbQueryFailed) => {
+    const failed: Array<[ReadonlyArray<number>, number]> = [];
+    const layer = Layer.succeed(
+      Db.Db,
+      Db.Db.of({
+        repos: {
+          recordEnrichFailures: ({ ids, at }: Db.EnrichFailures) =>
+            failure === undefined
+              ? Effect.sync(() => void failed.push([ids, DateTime.toEpochMillis(at)]))
+              : Effect.fail(failure),
+        },
+      } as unknown as Db.Db["Service"]),
+    );
+    return { failed, layer };
+  };
+
+  const handleEnrich = (bodies: ReadonlyArray<unknown>, layer: Layer.Layer<Db.Db>, logs: Array<unknown> = []) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse("2026-11-05T12:00:00Z"));
+        yield* Settle.handleDeadLetters(
+          "enrich-repo",
+          EnrichRepoConsumer.pipeline,
+        )(Stream.fromIterable(batchOf("enrich-repo-dead-letters", bodies).messages));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(layer, TestClock.layer(), Logger.layer([Logger.make(({ message }) => logs.push(message))])),
+        ),
+      ),
+    );
+
+  it("counts a failed enrichment for each repo it dead-letters, and none for a body it cannot decode", async () => {
+    const db = recordingRepos();
+    await handleEnrich([{ repoId: 11 }, "not a repo", { repoId: 12 }], db.layer);
+    const at = Date.parse("2026-11-05T12:00:00Z");
+    expect(db.failed).toEqual([
+      [[11], at],
+      [[12], at],
+    ]);
+  });
+
+  it("logs a failure count it could not write and goes on to the next dead letter", async () => {
+    const logs: Array<unknown> = [];
+    const db = recordingRepos(
+      new DbQueryFailed({ operation: "repos.recordEnrichFailures", reason: "transport", sqlState: null }),
+    );
+    await handleEnrich([{ repoId: 11 }, { repoId: 12 }], db.layer, logs);
+    expect(
+      logs.filter((message) => JSON.stringify(message).includes("Could not count a dead-lettered enrichment")),
+    ).toHaveLength(2);
   });
 
   it("marks the request a login sync carries as failed, and leaves other syncs alone", async () => {

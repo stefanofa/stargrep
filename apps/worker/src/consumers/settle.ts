@@ -37,7 +37,8 @@ export const afterFailure = (error: Failure, now: number): Settlement =>
     AiKeyMissing: deadLetter,
     AccountNotFound: deadLetter,
     EmbeddingModelMismatch: deadLetter,
-    // The login, repo, or README is gone. A later sync enqueues a repo again while it still exists.
+    // The login, repo, or README is gone. The dead-letter consumer counts a repo's failure, and the sweep
+    // sends the repo again after a backoff until it reaches the cap.
     NotFound: deadLetter,
     // GraphQL errors other than NOT_FOUND and RATE_LIMITED include GitHub's transient INTERNAL errors.
     // A 403 can be a rate limit GitHub words in a way the client does not recognize, so it gets the queue's retries.
