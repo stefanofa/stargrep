@@ -1,5 +1,6 @@
 import { GitHubAccountId } from "@stargrep/github/schemas";
 import * as Console from "effect/Console";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Random from "effect/Random";
@@ -17,6 +18,9 @@ const rounds = 100;
 const warmup = 5;
 const model = Schema.decodeSync(EmbeddingModelId)("bench/random-1024");
 const accountId = Schema.decodeSync(GitHubAccountId)(1);
+const libraryAccountId = Schema.decodeSync(GitHubAccountId)(accountCount + 1);
+const libraryStars = 3_000;
+const maxFailures = 3;
 const words = [
   "terminal",
   "dashboard",
@@ -126,6 +130,28 @@ const prepare = createMigratedDatabase(adminUrl, benchDatabase).pipe(
   ),
 );
 
+// One account with a typical library, where a tenth of all repos wait for a new README and a hundredth failed.
+// Every statement converges, so a rerun leaves the database as it found it.
+const prepareLibrary = withClient(benchUrl, async (client) => {
+  await client.query("set statement_timeout = 0");
+  await client.query(
+    "insert into github_accounts (id, type, login) values ($1, 'user', 'bench-library') on conflict do nothing",
+    [libraryAccountId],
+  );
+  await client.query(
+    `insert into stars (account_id, repo_id, starred_at, observed_at, source)
+     select $1, id, now() - (id % 1000) * interval '1 day', now(), 'api'
+     from repos where id % ($3::int / $2::int) = 0 order by id limit $2
+     on conflict do nothing`,
+    [libraryAccountId, libraryStars, repoCount],
+  );
+  await client.query("update repos set readme_oid = repeat('a', 40) where id % 10 = 0 and readme_oid is null");
+  await client.query(
+    "update repos set enrich_failures = 3, enrich_failed_at = now() where id % 100 = 0 and enrich_failures = 0",
+  );
+  await client.query("vacuum analyze repos, stars");
+});
+
 const decodeEmbedding = Schema.decodeEffect(Embedding);
 
 const randomEmbedding = Effect.gen(function* () {
@@ -158,6 +184,34 @@ const measure = Effect.gen(function* () {
   const nearest = (embedding: Embedding) => timed(db.search.hybrid({ ...plain, text: "", embedding }));
   const hybrid = (embedding: Embedding, text: string) => timed(db.search.hybrid({ ...plain, text, embedding }));
 
+  const progress = timed(
+    db.stars.enrichment({ accountId: libraryAccountId, maxFailures }).pipe(Effect.map((counts) => [counts])),
+  );
+  const library = timed(db.stars.library(libraryAccountId));
+  const cutoffs = [
+    DateTime.subtract(yield* DateTime.now, { minutes: 10 }),
+    DateTime.subtract(yield* DateTime.now, { hours: 1 }),
+  ];
+  const sweep = timed(db.repos.sweepable({ cutoffs, limit: 100 }));
+  const libraryResults = { progress: [] as Array<number>, library: [] as Array<number>, sweep: [] as Array<number> };
+  const libraryCounts = { progress: [] as Array<number>, library: [] as Array<number>, sweep: [] as Array<number> };
+  for (let round = 0; round < warmup + rounds; round++) {
+    const [progressMs, progressRows] = yield* progress;
+    const [libraryMs, libraryRows] = yield* library;
+    const [sweepMs, sweepRows] = yield* sweep;
+    if (round < warmup) continue;
+    libraryResults.progress.push(progressMs);
+    libraryResults.library.push(libraryMs);
+    libraryResults.sweep.push(sweepMs);
+    libraryCounts.progress.push(progressRows);
+    libraryCounts.library.push(libraryRows);
+    libraryCounts.sweep.push(sweepRows);
+  }
+  const progressCounts = yield* db.stars.enrichment({ accountId: libraryAccountId, maxFailures });
+  yield* Console.log(
+    `progress counts total ${progressCounts.total}, read ${progressCounts.read}, failed ${progressCounts.failed}`,
+  );
+
   const results = { lookup: [] as Array<number>, nearest: [] as Array<number>, hybrid: [] as Array<number> };
   const counts = { lookup: [] as Array<number>, nearest: [] as Array<number>, hybrid: [] as Array<number> };
   for (let round = 0; round < warmup + rounds; round++) {
@@ -181,6 +235,10 @@ const measure = Effect.gen(function* () {
   yield* Console.log(summarize("pk lookup", results.lookup, counts.lookup));
   yield* Console.log(summarize("vector only", results.nearest, counts.nearest));
   yield* Console.log(summarize("hybrid rrf", results.hybrid, counts.hybrid));
+  yield* Console.log(`${rounds} rounds after ${warmup} warmup rounds, one library of ${libraryStars} stars`);
+  yield* Console.log(summarize("progress", libraryResults.progress, libraryCounts.progress));
+  yield* Console.log(summarize("library", libraryResults.library, libraryCounts.library));
+  yield* Console.log(summarize("sweep", libraryResults.sweep, libraryCounts.sweep));
 }).pipe(Effect.provide(Db.layerNodePostgres({ connectionString: Redacted.make(benchUrl), embeddingModel: model })));
 
 const bench = Effect.gen(function* () {
@@ -190,6 +248,7 @@ const bench = Effect.gen(function* () {
       ? `seeded ${repoCount} repos and ${starCount} stars for each of ${accountCount} accounts`
       : "reused the seeded database",
   );
+  yield* prepareLibrary;
   yield* measure;
 });
 

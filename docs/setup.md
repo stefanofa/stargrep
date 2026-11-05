@@ -148,7 +148,7 @@ Name the database in `DATABASE_URL`, because `migrate` has no default. The first
 
 Deployed stages apply the same migrations through the stage's `Neon.Branch` in `apps/worker/src/database.ts`, before the Worker deploys. Alchemy records them in `__alchemy_migrations`, so never run `bun run migrate` against a stage branch.
 
-To time the search queries, run `bun run --cwd packages/db bench`. It seeds 100,000 repos with random embeddings and 50 accounts of 5,000 stars into a `stargrep_bench` database, then prints the median and p95 of 100 interleaved runs of each query.
+To time the search queries, run `bun run --cwd packages/db bench`. It seeds 100,000 repos with random embeddings and 50 accounts of 5,000 stars into a `stargrep_bench` database, then prints the median and p95 of 100 interleaved runs of each query. It also adds one account of 3,000 stars, where a tenth of all repos are pending and a hundredth failed, and times its enrichment progress, its library, and one sweep.
 
 ## Enrich repos locally
 
