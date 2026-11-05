@@ -205,9 +205,9 @@ function useTimeLeft(done: number, total: number | null, stage: Stage["name"]) {
     if (!active) setFirst(undefined);
     else setFirst((current) => (current?.stage === stage ? current : { stage, at: now(), done }));
   }, [active, stage, done]);
-  if (!active || first === undefined || total === null) return "starting";
+  if (!active || first === undefined || total === null) return undefined;
   const perSecond = (done - first.done) / Math.max(1, (now() - first.at) / 1000);
-  if (perSecond <= 0) return "starting";
+  if (perSecond <= 0) return undefined;
   const seconds = Math.ceil((total - done) / perSecond);
   if (seconds <= 5) return "almost done";
   return seconds < 90 ? `about ${seconds} seconds left` : `about ${Math.round(seconds / 60)} minutes left`;

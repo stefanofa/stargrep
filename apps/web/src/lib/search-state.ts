@@ -93,7 +93,15 @@ const railOf = (stage: Stage) => {
   return undefined;
 };
 
-const browsing = (stage: Stage, synced: string | undefined, syncFailed: boolean, timeLeft: string): Status => {
+const withTime = (text: string, timeLeft: string | undefined) =>
+  timeLeft === undefined ? text : `${text} · ${timeLeft}`;
+
+const browsing = (
+  stage: Stage,
+  synced: string | undefined,
+  syncFailed: boolean,
+  timeLeft: string | undefined,
+): Status => {
   if (stage.name === "importing")
     return {
       icon: "busy",
@@ -101,7 +109,7 @@ const browsing = (stage: Stage, synced: string | undefined, syncFailed: boolean,
       detail:
         stage.total === null
           ? `${n(stage.done)} imported so far`
-          : `${n(stage.done)} of ${n(stage.total)} · ${timeLeft}`,
+          : withTime(`${n(stage.done)} of ${n(stage.total)}`, timeLeft),
     };
   if (stage.name === "reading")
     return {
@@ -167,7 +175,7 @@ export const searchView = ({
   answer: Answer;
   synced: string | undefined;
   syncFailed: boolean;
-  timeLeft: string;
+  timeLeft: string | undefined;
 }): SearchView => ({
   status: answer.kind === "browsing" ? browsing(stage, synced, syncFailed, timeLeft) : answered(stage, answer),
   rail: railOf(stage),
@@ -204,15 +212,16 @@ export interface EmptyCopy {
   readonly meta?: string;
 }
 
-export const emptyCopy = (stage: Stage, timeLeft: string, rephrased: boolean): EmptyCopy => {
-  if (stage.name === "ready")
+export const emptyCopy = (stage: Stage, timeLeft: string | undefined, rephrased: boolean): EmptyCopy => {
+  if (stage.name === "ready") {
+    const read = stage.failed === 0 ? "i've read all of them" : "i've read every one i could";
+    const others = rephrased ? " try one of these:" : "";
     return {
       heading: `nothing in all ${stars(stage.total)}`,
-      body: rephrased
-        ? "i've read all of them, and none matches that. maybe you starred it under different words. try one of these:"
-        : "i've read all of them, and none matches that. maybe you starred it under different words.",
+      body: `${read}, and none matches that. maybe you starred it under different words.${others}`,
     };
-  const meta = `i'll search again when reading finishes · ${timeLeft}`;
+  }
+  const meta = withTime("i'll search again when reading finishes", timeLeft);
   const read = stage.read ?? 0;
   if (read === 0)
     return {

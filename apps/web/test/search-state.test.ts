@@ -192,13 +192,24 @@ describe("empty state copy", () => {
       starred: 6,
       enrichment: { total: 6, read: 0, failed: 0 },
     });
-    expect(emptyCopy(fresh, "starting", false).heading).toBe("i haven't read your stars yet");
+    expect(emptyCopy(fresh, undefined, false)).toEqual({
+      heading: "i haven't read your stars yet",
+      body: "names and descriptions already match. the rest can match once i've read them.",
+      meta: "i'll search again when reading finishes",
+    });
   });
 
   test("after everything is read, it offers other words only when it has some", () => {
     expect(emptyCopy(ready, "", true).body).toEndWith("try one of these:");
     expect(emptyCopy(ready, "", false).body).not.toContain("try one of these");
     expect(emptyCopy(ready, "", true).heading).toBe("nothing in all 1,776 stars");
+    const someFailed = stageOf({
+      importing: false,
+      imported: 1776,
+      starred: 1776,
+      enrichment: { total: 1776, read: 1770, failed: 6 },
+    });
+    expect(emptyCopy(someFailed, "", false).body).toStartWith("i've read every one i could");
   });
 });
 

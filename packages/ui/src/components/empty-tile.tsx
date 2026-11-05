@@ -10,17 +10,19 @@ function Ring({ progress }: { progress: number }) {
   return (
     <svg aria-hidden viewBox="0 0 168 168" className="absolute inset-0 size-full" fill="none">
       <circle cx="84" cy="84" r="78" stroke="var(--color-accent-soft)" strokeWidth="7" />
-      <circle
-        cx="84"
-        cy="84"
-        r="78"
-        transform="rotate(-90 84 84)"
-        stroke="var(--color-accent)"
-        strokeWidth="7"
-        strokeLinecap="round"
-        strokeDasharray={`${length} ${circumference}`}
-        className="transition-[stroke-dasharray] duration-500 ease-out"
-      />
+      {length > 0 && (
+        <circle
+          cx="84"
+          cy="84"
+          r="78"
+          transform="rotate(-90 84 84)"
+          stroke="var(--color-accent)"
+          strokeWidth="7"
+          strokeLinecap="round"
+          strokeDasharray={`${length} ${circumference}`}
+          className="transition-[stroke-dasharray] duration-500 ease-out"
+        />
+      )}
     </svg>
   );
 }
