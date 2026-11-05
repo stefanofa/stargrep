@@ -17,6 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as Schema from "effect/Schema";
+import * as IconQueue from "../src/icons/icon-queue.ts";
 import * as BlobStore from "../src/repos/blob-store.ts";
 import * as EnrichRepo from "../src/repos/enrich-repo.ts";
 
@@ -98,6 +99,7 @@ export const layerEnrich = EnrichRepo.layer.pipe(
   Layer.provideMerge(Local.layer),
   Layer.provideMerge(layerGitHub),
   Layer.provideMerge(BlobStore.layerKeyValueStore.pipe(Layer.provide(KeyValueStore.layerFileSystem(".cache/blobs")))),
+  Layer.provideMerge(IconQueue.layerMemory().layer),
 );
 
 export const storeRefs = Effect.fn("scripts.storeRefs")(function* (repos: ReadonlyArray<Repo>) {

@@ -1,0 +1,424 @@
+import { expect } from "bun:test";
+import * as Db from "@stargrep/db";
+import { EmbeddingModelId } from "@stargrep/db/embedding";
+import * as TestDatabase from "@stargrep/db/test-database";
+import * as GitHubFake from "@stargrep/github/github.fixture";
+import { ObjectId, Repo, type RepoFile, type RepoId } from "@stargrep/github/schemas";
+import * as it from "@stargrep/testing";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as BlobStore from "../repos/blob-store.ts";
+import * as FetchIcon from "./fetch-icon.ts";
+import * as IconHttp from "./icon-http.ts";
+import * as IconQueue from "./icon-queue.ts";
+import * as IconStore from "./icon-store.ts";
+import * as Keys from "./keys.ts";
+import * as Normalize from "./normalize.ts";
+
+const embeddingModel = Schema.decodeSync(EmbeddingModelId)("fake/hash-embedding");
+const oid = (digit: string) => Schema.decodeSync(ObjectId)(digit.repeat(40));
+const repo = (n: number) => Schema.decodeSync(Repo)({ id: n, nodeId: `R_${n}`, owner: "acme", name: `kit-${n}` });
+const idOf = (n: number) => repo(n).id;
+const blobOidOf = (text: string) => {
+  const bytes = new TextEncoder().encode(text);
+  return Schema.decodeSync(ObjectId)(
+    new Bun.CryptoHasher("sha1").update(`blob ${bytes.byteLength}\0`).update(bytes).digest("hex"),
+  );
+};
+const encode = (text: string) => new TextEncoder().encode(text);
+const templateFavicon = new Uint8Array(
+  await Bun.file(new URL("./fixtures/next-favicon-current.ico", import.meta.url)).arrayBuffer(),
+);
+
+const replies = new Map<string, IconHttp.Download>();
+const asked: Array<string> = [];
+const got = (text: string, url = "https://example.test/") => IconHttp.Download.Got({ bytes: encode(text), url });
+const http = Layer.succeed(
+  IconHttp.IconHttp,
+  IconHttp.IconHttp.of({
+    get: (url) =>
+      Effect.sync(() => {
+        asked.push(url);
+        return replies.get(url) ?? IconHttp.Download.Missing({ reason: "status" });
+      }),
+  }),
+);
+
+const normalized: Array<string> = [];
+const normalizer = Layer.succeed(
+  Normalize.IconNormalizer,
+  Normalize.IconNormalizer.of({
+    normalize: (bytes) =>
+      Effect.sync(() => {
+        const text = new TextDecoder().decode(bytes);
+        normalized.push(text);
+        return text.includes("banner")
+          ? Normalize.Normalized.Rejected({ reason: "not-square" })
+          : Normalize.Normalized.Accepted({ webp: bytes, plate: text.includes("white") ? "dark" : "none", size: 64 });
+      }),
+  }),
+);
+
+const remoteReadmes = new Map<number, { readonly oid: ObjectId; readonly logo: string }>();
+const github = GitHubFake.layer((sent) => {
+  if (sent.url.pathname !== "/graphql") return { status: 500 };
+  const ids: ReadonlyArray<string> = JSON.parse(sent.body ?? "{}").variables.ids;
+  return {
+    body: {
+      data: {
+        nodes: ids.map((nodeId) => {
+          const n = Number(nodeId.slice(2));
+          const readme = remoteReadmes.get(n);
+          return n % 7 === 0
+            ? null
+            : {
+                databaseId: n,
+                id: nodeId,
+                name: `kit-${n}`,
+                owner: {
+                  __typename: "Organization",
+                  login: "acme",
+                  avatarUrl: "https://avatars.githubusercontent.com/u/7",
+                },
+                description: null,
+                homepageUrl: "https://kit.dev",
+                primaryLanguage: null,
+                licenseInfo: null,
+                repositoryTopics: { nodes: [] },
+                createdAt: "2020-01-01T00:00:00Z",
+                pushedAt: null,
+                isArchived: false,
+                isFork: false,
+                stargazerCount: 1,
+                forkCount: 0,
+                root: { entries: readme === undefined ? [] : [{ name: "README.md", type: "blob", oid: readme.oid }] },
+              };
+        }),
+      },
+    },
+  };
+});
+
+const queue = IconQueue.layerMemory();
+const store = IconStore.layerMemory();
+
+const layer = FetchIcon.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      TestDatabase.layerMemory({ embeddingModel }),
+      github.layer,
+      BlobStore.layerMemory,
+      http,
+      normalizer,
+      queue.layer,
+      store.layer,
+    ),
+  ),
+);
+
+const reset = Effect.sync(() => {
+  replies.clear();
+  asked.length = 0;
+  normalized.length = 0;
+  queue.sent.length = 0;
+});
+
+const seed = (numbers: ReadonlyArray<number>) =>
+  Effect.gen(function* () {
+    yield* reset;
+    yield* (yield* Db.Db).repos.upsertRefs(numbers.map(repo));
+  });
+
+const stored = (id: RepoId) => Effect.flatMap(Db.Db, (db) => Effect.map(db.repos.get(id), Option.getOrThrow));
+
+const raw = (n: number, path: string) => `https://raw.githubusercontent.com/acme/kit-${n}/HEAD/${path}`;
+
+const request = (
+  n: number,
+  facts: { readonly iconFiles?: ReadonlyArray<RepoFile>; readonly readmeOid?: ObjectId; readonly homepage?: string },
+) =>
+  IconQueue.IconRequest.make({
+    repoId: idOf(n),
+    owner: repo(n).owner,
+    name: repo(n).name,
+    homepage: facts.homepage ?? null,
+    iconFiles: facts.iconFiles ?? [],
+    readmeOid: facts.readmeOid ?? null,
+  });
+
+const fetchIcon = (message: IconQueue.IconRequest) =>
+  Effect.flatMap(FetchIcon.FetchIcon, (icons) => icons.fetchIcon(message));
+
+const unavailable = (status: number | null, retryAfterMillis: number | null = null) =>
+  IconHttp.Download.Unavailable({ reason: status === null ? "transport" : "status", status, retryAfterMillis });
+
+it.layer(layer, { timeout: 30_000 })("fetchIcon", (it) => {
+  it.effect("builds candidates from the facts and the stored README, and keeps the first the normalizer accepts", () =>
+    Effect.gen(function* () {
+      yield* seed([1]);
+      yield* (yield* BlobStore.BlobStore).put(BlobStore.readmeKey(oid("e")), "# Kit\n\n![logo](docs/logo-white.svg)");
+      replies.set(raw(1, "logo.png"), got("wide banner"));
+      replies.set(raw(1, "docs/logo-white.svg"), got("<svg>logo white</svg>"));
+      const outcome = yield* fetchIcon(
+        request(1, {
+          iconFiles: [{ name: "logo.png", oid: blobOidOf("wide banner") }],
+          readmeOid: oid("e"),
+          homepage: "https://kit.dev",
+        }),
+      );
+
+      expect(outcome._tag).toBe("Found");
+      expect(asked).toEqual([raw(1, "logo.png"), raw(1, "docs/logo-white.svg")]);
+      const { icon, iconCheckedAt } = yield* stored(idOf(1));
+      expect(icon).toMatchObject({ source: "readme-image", plate: "dark", size: 64 });
+      expect(icon?.key).toMatch(/^v1\/sha256\/[0-9a-f]{64}\.webp$/);
+      expect(iconCheckedAt).not.toBeNull();
+      expect(store.objects.get(icon?.key ?? "")?.stored).toEqual({ plate: "dark", size: 64 });
+    }),
+  );
+
+  it.effect("retries through the settlement table when the README read fails, and records nothing", () => {
+    const failing = Layer.succeed(
+      BlobStore.BlobStore,
+      BlobStore.BlobStore.of({
+        get: (key) => Effect.fail(new BlobStore.BlobStoreFailed({ operation: "get", key, cause: null })),
+        put: () => Effect.void,
+      }),
+    );
+    return Effect.gen(function* () {
+      yield* seed([11]);
+      const error = yield* fetchIcon(request(11, { readmeOid: oid("f"), homepage: "https://kit.dev" })).pipe(
+        Effect.provide(Layer.fresh(FetchIcon.layer).pipe(Layer.provide(failing))),
+        Effect.flip,
+      );
+
+      expect(error._tag).toBe("BlobStoreFailed");
+      expect(asked).toEqual([]);
+      expect((yield* stored(idOf(11))).iconCheckedAt).toBeNull();
+    });
+  });
+
+  it.effect("reuses a repo file R2 already holds, without downloading or normalizing it again", () =>
+    Effect.gen(function* () {
+      yield* seed([2]);
+      yield* (yield* IconStore.IconStore).put(Keys.gitKey(oid("b")), encode("webp"), { plate: "light", size: 32 });
+      yield* fetchIcon(request(2, { iconFiles: [{ name: "logo.svg", oid: oid("b") }] }));
+
+      expect(asked).toEqual([]);
+      expect(normalized).toEqual([]);
+      expect((yield* stored(idOf(2))).icon).toEqual({
+        key: `v1/git/${"b".repeat(40)}.webp`,
+        source: "repo-file",
+        plate: "light",
+        size: 32,
+      });
+    }),
+  );
+
+  it.effect("skips a homepage that serves a template favicon, by the blob ID of the bytes", () =>
+    Effect.gen(function* () {
+      yield* seed([3]);
+      replies.set("https://kit.dev/", got(`<link rel="icon" href="/favicon.ico">`, "https://kit.dev/"));
+      replies.set(
+        "https://kit.dev/favicon.ico",
+        IconHttp.Download.Got({ bytes: templateFavicon, url: "https://kit.dev/favicon.ico" }),
+      );
+      const outcome = yield* fetchIcon(request(3, { homepage: "https://kit.dev" }));
+
+      expect(outcome._tag).toBe("NoIcon");
+      expect(normalized).toEqual([]);
+      expect((yield* stored(idOf(3))).iconCheckedAt).not.toBeNull();
+    }),
+  );
+
+  it.effect("fails on a raw 429 without trying a lower candidate, and leaves the repo unchecked", () =>
+    Effect.gen(function* () {
+      yield* seed([4]);
+      replies.set(raw(4, "logo.svg"), unavailable(429, 30_000));
+      const error = yield* fetchIcon(
+        request(4, { iconFiles: [{ name: "logo.svg", oid: oid("c") }], homepage: "https://kit.dev" }),
+      ).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "IconFetchFailed",
+        host: "raw.githubusercontent.com",
+        status: 429,
+        retryAfterMillis: 30_000,
+      });
+      expect(asked).toEqual([raw(4, "logo.svg")]);
+      expect((yield* stored(idOf(4))).iconCheckedAt).toBeNull();
+    }),
+  );
+
+  it.effect("reads a dead homepage as a miss with one request, and a homepage 503 as try later", () =>
+    Effect.gen(function* () {
+      yield* seed([5, 6]);
+      replies.set("https://dead.dev/", unavailable(null));
+      replies.set("https://busy.dev/", unavailable(503));
+
+      expect((yield* fetchIcon(request(5, { homepage: "https://dead.dev" })))._tag).toBe("NoIcon");
+      expect(asked).toEqual(["https://dead.dev/"]);
+      expect((yield* stored(idOf(5))).iconCheckedAt).not.toBeNull();
+
+      const error = yield* fetchIcon(request(6, { homepage: "https://busy.dev" })).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "IconFetchFailed", status: 503 });
+      expect((yield* stored(idOf(6))).iconCheckedAt).toBeNull();
+    }),
+  );
+
+  it.effect("ends a homepage 429 with no Retry-After as a miss, and retries one that names a time", () =>
+    Effect.gen(function* () {
+      yield* seed([12, 13]);
+      replies.set("https://challenge.dev/", unavailable(429));
+      replies.set("https://limited.dev/", unavailable(429, 120_000));
+
+      expect((yield* fetchIcon(request(12, { homepage: "https://challenge.dev" })))._tag).toBe("NoIcon");
+      expect(asked).toEqual(["https://challenge.dev/"]);
+      expect((yield* stored(idOf(12))).iconCheckedAt).not.toBeNull();
+
+      const error = yield* fetchIcon(request(13, { homepage: "https://limited.dev" })).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "IconFetchFailed", status: 429, retryAfterMillis: 120_000 });
+    }),
+  );
+});
+
+it.layer(layer, { timeout: 30_000 })("refresh", (it) => {
+  it.effect(
+    "keeps an icon found earlier when the homepage times out or answers a bare 429, and drops it once gone",
+    () =>
+      Effect.gen(function* () {
+        yield* seed([21, 22, 23]);
+        for (const [n, site] of [
+          [21, "https://slow.dev"],
+          [22, "https://challenge.dev"],
+          [23, "https://gone.dev"],
+        ] as const) {
+          replies.set(`${site}/`, got(`<link rel="icon" href="/icon.svg">`, `${site}/`));
+          replies.set(`${site}/icon.svg`, got(`<svg>${site}</svg>`));
+          expect((yield* fetchIcon(request(n, { homepage: site })))._tag).toBe("Found");
+        }
+        const before = [(yield* stored(idOf(21))).icon, (yield* stored(idOf(22))).icon];
+
+        replies.set(
+          "https://slow.dev/",
+          IconHttp.Download.Unavailable({ reason: "timeout", status: null, retryAfterMillis: null }),
+        );
+        replies.set("https://challenge.dev/", unavailable(429));
+        replies.set("https://gone.dev/", got("<html><head></head></html>", "https://gone.dev/"));
+        replies.delete("https://gone.dev/icon.svg");
+
+        expect(yield* fetchIcon(request(21, { homepage: "https://slow.dev" }))).toMatchObject({ _tag: "Kept" });
+        expect(yield* fetchIcon(request(22, { homepage: "https://challenge.dev" }))).toMatchObject({ _tag: "Kept" });
+        expect((yield* fetchIcon(request(23, { homepage: "https://gone.dev" })))._tag).toBe("NoIcon");
+        expect([(yield* stored(idOf(21))).icon, (yield* stored(idOf(22))).icon]).toEqual(before);
+        expect((yield* stored(idOf(23))).icon).toBeNull();
+      }),
+  );
+});
+
+it.layer(layer, { timeout: 30_000 })("redirected homepage", (it) => {
+  it.effect("resolves relative icon links against the page the redirect landed on", () =>
+    Effect.gen(function* () {
+      yield* seed([8]);
+      replies.set("https://kit.dev/home", got(`<link rel="icon" href="logo.svg">`, "https://kit.dev/docs/"));
+      replies.set("https://kit.dev/docs/logo.svg", got("<svg>docs logo</svg>"));
+
+      expect((yield* fetchIcon(request(8, { homepage: "https://kit.dev/home" })))._tag).toBe("Found");
+      expect(asked).toEqual(["https://kit.dev/home", "https://kit.dev/docs/logo.svg"]);
+    }),
+  );
+
+  it.effect("takes no icon from a page that redirects to a package registry", () =>
+    Effect.gen(function* () {
+      yield* seed([9]);
+      replies.set(
+        "https://kit.dev/pypi",
+        got(`<link rel="icon" href="/favicon.ico">`, "https://pypi.org/project/kit/"),
+      );
+
+      expect((yield* fetchIcon(request(9, { homepage: "https://kit.dev/pypi" })))._tag).toBe("NoIcon");
+      expect(asked).toEqual(["https://kit.dev/pypi"]);
+    }),
+  );
+});
+
+it.layer(layer, { timeout: 30_000 })("stale raw cache", (it) => {
+  it.effect(
+    "retries when raw serves bytes that are not the tree's blob, and stores nothing under that blob's key",
+    () =>
+      Effect.gen(function* () {
+        yield* seed([7]);
+        const changed = blobOidOf("<svg>new logo</svg>");
+        replies.set(raw(7, "logo.svg"), got("<svg>old logo</svg>"));
+        const error = yield* fetchIcon(request(7, { iconFiles: [{ name: "logo.svg", oid: changed }] })).pipe(
+          Effect.flip,
+        );
+
+        expect(error).toMatchObject({ _tag: "IconFetchFailed", reason: "stale", retryAfterMillis: null });
+        expect(store.objects.has(Keys.gitKey(changed))).toBe(false);
+        expect(normalized).toEqual([]);
+        expect((yield* stored(idOf(7))).iconCheckedAt).toBeNull();
+      }),
+  );
+});
+
+it.layer(layer, { timeout: 30_000 })("backfill", (it) => {
+  it.effect(
+    "queues facts for due repos, writes owners, settles gone repos, and leaves summaries and embeddings alone",
+    () =>
+      Effect.gen(function* () {
+        const database = yield* TestDatabase.TestDatabase;
+        const db = yield* Db.Db;
+        yield* seed([10, 11, 12, 14]);
+        const [summarized, fresh, checked, gone] = [idOf(10), idOf(11), idOf(12), idOf(14)];
+        remoteReadmes.set(10, { oid: oid("d"), logo: "img/logo.svg" });
+        yield* database.query(
+          `update repos set summary = 'kept', summary_readme_oid = $2, readme_oid = $2, embedding_model = $3,
+           embedding = ('[' || array_to_string(array_fill(0.5::float4, array[1024]), ',') || ']')::halfvec
+         where id = $1`,
+          [summarized, oid("d"), embeddingModel],
+        );
+        yield* db.repos.saveIcon({ id: checked, icon: null });
+        const before = yield* stored(summarized);
+
+        const result = yield* (yield* FetchIcon.FetchIcon).backfill(9);
+
+        expect(result).toEqual({ queued: 2, next: null });
+        expect(queue.sent).toEqual([
+          request(10, { readmeOid: oid("d"), homepage: "https://kit.dev" }),
+          request(11, { homepage: "https://kit.dev" }),
+        ]);
+        expect(github.sent.map((sent) => sent.url.pathname)).toEqual(["/graphql"]);
+        expect(yield* stored(summarized)).toEqual({
+          ...before,
+          ownerType: "org",
+          ownerAvatarUrl: "https://avatars.githubusercontent.com/u/7",
+        });
+        expect((yield* stored(fresh)).ownerType).toBe("org");
+        expect((yield* stored(gone)).iconCheckedAt).not.toBeNull();
+        expect(
+          yield* database.query("select embedding is not null as embedded from repos where id = $1", [summarized]),
+        ).toEqual([{ embedded: true }]);
+        expect(yield* db.repos.pendingEnrichment([summarized])).toEqual([]);
+      }),
+  );
+
+  it.effect("pages by repo ID and chains the next page until a short page ends it", () =>
+    Effect.gen(function* () {
+      const numbers = Array.from({ length: FetchIcon.backfillPage + 1 }, (_, index) => 1001 + index);
+      yield* seed(numbers);
+      const lastOfPage = idOf(1000 + FetchIcon.backfillPage);
+      const backfill = (yield* FetchIcon.FetchIcon).backfill;
+
+      const first = yield* backfill(1000);
+      expect(first.next).toBe(lastOfPage);
+      expect(queue.sent.at(-1)).toEqual(IconQueue.BackfillIcons.make({ after: lastOfPage }));
+
+      queue.sent.length = 0;
+      expect(yield* backfill(first.next ?? 0)).toEqual({ queued: 1, next: null });
+      expect(queue.sent).toEqual([expect.objectContaining({ repoId: idOf(1001 + FetchIcon.backfillPage) })]);
+    }),
+  );
+});

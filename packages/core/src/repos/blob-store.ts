@@ -1,3 +1,4 @@
+import type { ObjectId } from "@stargrep/github/schemas";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -25,6 +26,8 @@ export class BlobStore extends Context.Service<
     readonly put: (key: string, value: string) => Effect.Effect<void, BlobStoreFailed>;
   }
 >()("@stargrep/core/repos/blob-store/BlobStore") {}
+
+export const readmeKey = (oid: ObjectId) => `readmes/${oid}`;
 
 export const layerKeyValueStore = Layer.effect(
   BlobStore,

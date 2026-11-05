@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test";
+import { expect } from "bun:test";
 import * as Embeddings from "@stargrep/ai/embeddings";
 import { AiKeyMissing, AiRequestFailed, AiUnavailable } from "@stargrep/ai/errors";
 import * as Fake from "@stargrep/ai/fake";
@@ -24,6 +24,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import * as IconQueue from "../icons/icon-queue.ts";
 import * as BlobStore from "./blob-store.ts";
 import * as EnrichRepo from "./enrich-repo.ts";
 
@@ -49,7 +50,7 @@ const node = (n: number, remote: Remote) => ({
   databaseId: n,
   id: `R_${n}`,
   name: `repo-${n}`,
-  owner: { login: "owner" },
+  owner: { __typename: "Organization", login: "owner", avatarUrl: "https://avatars.githubusercontent.com/u/9?v=4" },
   description: remote.description,
   homepageUrl: `https://repo-${n}.dev`,
   primaryLanguage: { name: "Rust" },
@@ -87,6 +88,8 @@ const github = GitHubFake.layer((sent) => {
 });
 
 const readmeRequests = () => github.sent.filter((sent) => sent.url.pathname.includes("/git/blobs/")).length;
+
+const iconQueue = IconQueue.layerMemory();
 
 const prompts: Array<string> = [];
 const respond = (prompt: string) => {
@@ -139,6 +142,7 @@ const enrichment = <E>(database: Layer.Layer<Db.Db | Db.Transactions | TestDatab
       database,
       github.layer,
       BlobStore.layerMemory,
+      iconQueue.layer,
       Fake.layerTextGeneration(respond),
       Fake.layerEmbeddings(),
     ),
@@ -209,7 +213,7 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       expect(stored.summary).toContain("Parses web server logs.");
       expect(prompts.at(-1)).not.toContain("logo.png");
       const blobs = yield* BlobStore.BlobStore;
-      expect(Option.getOrThrow(yield* blobs.get(EnrichRepo.readmeKey(oid("a"))))).toContain("![logo](logo.png)");
+      expect(Option.getOrThrow(yield* blobs.get(BlobStore.readmeKey(oid("a"))))).toContain("![logo](logo.png)");
       expect(yield* db.repos.pendingEnrichment([id(1)])).toEqual([]);
     }),
   );
@@ -346,6 +350,76 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
     }),
   );
 
+  it.effect("queues icon work when the icon was never checked or its README changed, not on an embed-only rerun", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      remotes.set(50, { description: "Icons", readme: { oid: oid("5"), text: "# Icons" } });
+      iconQueue.sent.length = 0;
+      expect(yield* enrich(50)).toMatchObject({ _tag: "Summarized" });
+      expect(iconQueue.sent).toEqual([
+        IconQueue.IconRequest.make({
+          repoId: id(50),
+          owner: repo(50).owner,
+          name: repo(50).name,
+          homepage: "https://repo-50.dev",
+          iconFiles: [],
+          readmeOid: oid("5"),
+        }),
+      ]);
+      expect(yield* get(50)).toMatchObject({
+        ownerType: "org",
+        ownerAvatarUrl: "https://avatars.githubusercontent.com/u/9?v=4",
+      });
+
+      yield* db.repos.saveIcon({ id: id(50), icon: null });
+      yield* resummarize(50);
+      expect(yield* enrich(50)).toMatchObject({ _tag: "Embedded" });
+      expect(iconQueue.sent).toHaveLength(1);
+
+      remotes.set(50, { description: "Icons", readme: { oid: oid("6"), text: "# Icons, renamed" } });
+      yield* resummarize(50);
+      expect(yield* enrich(50)).toMatchObject({ _tag: "Summarized" });
+      expect(iconQueue.sent.at(-1)).toMatchObject({ repoId: id(50), readmeOid: oid("6") });
+    }),
+  );
+
+  it.effect("queues icon work for a changed README even when the README read then fails the plan", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      remotes.set(51, { description: "Icons", readme: { oid: wideOid(5101), text: "# Icons" } });
+      yield* enrich(51);
+      yield* db.repos.saveIcon({ id: id(51), icon: null });
+      iconQueue.sent.length = 0;
+
+      remotes.set(51, { description: "Icons", readme: { oid: wideOid(5102), text: missingBlob } });
+      yield* resummarize(51);
+      expect((yield* Effect.flip(enrich(51)))._tag).toBe("NotFound");
+      expect(iconQueue.sent).toEqual([expect.objectContaining({ repoId: id(51), readmeOid: wideOid(5102) })]);
+    }),
+  );
+
+  it.effect("saves no facts when the icon send fails, so the retry still sees the change", () =>
+    Effect.gen(function* () {
+      const failing = Layer.succeed(
+        IconQueue.IconQueue,
+        IconQueue.IconQueue.of({
+          send: (messages) => Effect.fail(new IconQueue.IconQueueFailed({ messages: messages.length, cause: null })),
+        }),
+      );
+      remotes.set(52, { description: "Queue down", readme: { oid: wideOid(5201), text: "# Queue down" } });
+      expect(
+        (yield* Effect.flip(
+          enrich(52).pipe(Effect.provide(Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(failing)))),
+        ))._tag,
+      ).toBe("IconQueueFailed");
+      expect(yield* get(52)).toMatchObject({ readmeOid: null, summary: null });
+
+      iconQueue.sent.length = 0;
+      expect(yield* enrich(52)).toMatchObject({ _tag: "Summarized" });
+      expect(iconQueue.sent).toEqual([expect.objectContaining({ repoId: id(52), readmeOid: wideOid(5201) })]);
+    }),
+  );
+
   it.effect("keeps a new summary when its embedding fails, then embeds it with no model call", () =>
     Effect.gen(function* () {
       remotes.set(8, { description: "Chat app", readme: { oid: oid("2"), text: "# Chat" } });
@@ -377,6 +451,8 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
         pushedAt: null,
         archived: false,
         readmeOid: null,
+        ownerType: null,
+        ownerAvatarUrl: null,
       });
       const sent = github.sent.length;
       expect(yield* (yield* EnrichRepo.EnrichRepo).enrichRepo(repoId)).toEqual({ _tag: "NoNodeId", id: repoId });
@@ -781,11 +857,5 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       );
       expect(stored).toEqual([{ retry_at: expect.stringContaining("2026-11-07 12:25:00") }]);
     }),
-  );
-});
-
-describe("readmeKey", () => {
-  it.effect("names a README blob by its object id", () =>
-    Effect.sync(() => expect(EnrichRepo.readmeKey(oid("f"))).toBe(`readmes/${"f".repeat(40)}`)),
   );
 });
