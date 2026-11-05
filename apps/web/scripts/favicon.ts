@@ -1,5 +1,6 @@
 // Writes the favicons and the web manifest into public/ from Pip's star: bun run favicon
 import { Resvg } from "@resvg/resvg-js";
+import { themeColor } from "./theme.ts";
 
 // Pip's star, and the eyes Pip draws at small sizes, so the tab icon matches the header mark.
 const starPoints =
@@ -10,7 +11,12 @@ const eyes = [
   "M62.74 52.38C62.39 59.29 62.39 59.29 59.87 59.16C57.36 59.03 57.36 59.03 57.71 52.13C58.06 45.22 58.06 45.22 60.57 45.35C63.08 45.47 63.08 45.47 62.74 52.38Z",
 ];
 
-const colors = { highlight: "#ffd84d", edge: "#e9b826", ink: "#1e1b2e", background: "#f5f2ff" };
+const colors = {
+  highlight: themeColor("highlight").light,
+  edge: themeColor("highlight-edge").light,
+  ink: themeColor("ink").light,
+  background: themeColor("background").light,
+};
 
 // A round join reaches half the stroke past each vertex, so the star's box is the points' box grown by that much.
 const coords = starPoints.split(" ").map((pair) => pair.split(",").map(Number) as [number, number]);

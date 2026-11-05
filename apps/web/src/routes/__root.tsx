@@ -10,8 +10,6 @@ export const Route = createRootRoute({
       { name: "viewport", content: "width=device-width, initial-scale=1, viewport-fit=cover" },
       { title: "Stargrep" },
       { name: "description", content: "Search your GitHub stars in plain words." },
-      { name: "theme-color", content: "#f5f2ff", media: "(prefers-color-scheme: light)" },
-      { name: "theme-color", content: "#15131f", media: "(prefers-color-scheme: dark)" },
     ],
     links: [
       { rel: "preload", href: fredoka, as: "font", type: "font/woff2", crossOrigin: "anonymous" },
@@ -27,6 +25,9 @@ export const Route = createRootRoute({
     <html lang="en">
       <head>
         <HeadContent />
+        {/* HeadContent keeps one meta per name, so the two theme colors render here instead. */}
+        <meta name="theme-color" content="#f5f2ff" media="(prefers-color-scheme: light)" />
+        <meta name="theme-color" content="#15131f" media="(prefers-color-scheme: dark)" />
       </head>
       <body>
         <Outlet />
