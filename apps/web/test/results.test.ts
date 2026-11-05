@@ -21,6 +21,7 @@ const entry = (id: number, name: string, stars: number, summary: string): Librar
     keywords: [],
     starredAt: "2026-01-01T00:00:00.000Z",
     stars,
+    read: true,
   };
   return { ...repo, text: searchText(repo) };
 };

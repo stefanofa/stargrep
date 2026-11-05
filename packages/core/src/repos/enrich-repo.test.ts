@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test";
 import * as Embeddings from "@stargrep/ai/embeddings";
-import { AiRequestFailed, AiUnavailable } from "@stargrep/ai/errors";
+import { AiKeyMissing, AiRequestFailed, AiUnavailable } from "@stargrep/ai/errors";
 import * as Fake from "@stargrep/ai/fake";
 import * as SummarizeFake from "@stargrep/ai/summarize.fake";
 import * as TextGeneration from "@stargrep/ai/text-generation";
@@ -8,6 +8,8 @@ import * as Db from "@stargrep/db";
 import { EmbeddingModelId } from "@stargrep/db/embedding";
 import { DbQueryFailed } from "@stargrep/db/errors";
 import * as TestDatabase from "@stargrep/db/test-database";
+import { GitHubTokenMissing } from "@stargrep/github/errors";
+import * as GitHub from "@stargrep/github/github";
 import * as GitHubFake from "@stargrep/github/github.fixture";
 import { ObjectId, Repo } from "@stargrep/github/schemas";
 import { collectSpans } from "@stargrep/telemetry/collector";
@@ -121,6 +123,10 @@ const failingEmbeddings = embeddingsWith(() =>
   Effect.fail(new AiRequestFailed({ operation: "embed", model: embeddingModel, detail: "bad request" })),
 );
 
+const wrongSizeEmbeddings = embeddingsWith((values) =>
+  Effect.succeed({ vectors: values.map(() => Array.from({ length: 512 }, () => 0.1)), tokens: values.length }),
+);
+
 const vectors = (values: ReadonlyArray<string>) => ({
   vectors: values.map(() => Array.from({ length: 1024 }, (_, at) => (at === 0 ? 1 : 0))),
   tokens: values.length,
@@ -155,6 +161,11 @@ const enrich = (n: number) =>
   });
 
 const get = (n: number) => Effect.flatMap(Db.Db, (db) => Effect.map(db.repos.get(id(n)), Option.getOrThrow));
+
+const failuresOf = (n: number) =>
+  Effect.flatMap(TestDatabase.TestDatabase, (database) =>
+    database.query("select enrich_failures from repos where id = $1", [n]),
+  );
 
 const countsOf = (n: number) =>
   Effect.flatMap(TestDatabase.TestDatabase, (database) =>
@@ -313,8 +324,11 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       expect(Exit.isFailure(failed) && Cause.pretty(failed.cause)).toContain("at EnrichRepo.enrichRepo (definition)");
       expect(yield* get(5)).toMatchObject({ license: "MIT", readmeOid: oid("e"), summary: null, embeddingModel: null });
       expect(yield* db.repos.pendingEnrichment([id(5)])).toEqual([id(5)]);
+      expect(yield* failuresOf(5)).toEqual([{ enrich_failures: 1 }]);
 
       const readmes = readmeRequests();
+      expect(yield* enrich(5)).toMatchObject({ _tag: "Backoff" });
+      yield* TestClock.adjust("10 minutes");
       expect(yield* enrich(5)).toMatchObject({ _tag: "Summarized" });
       expect(readmeRequests()).toBe(readmes);
     }),
@@ -367,6 +381,7 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       const sent = github.sent.length;
       expect(yield* (yield* EnrichRepo.EnrichRepo).enrichRepo(repoId)).toEqual({ _tag: "NoNodeId", id: repoId });
       expect(github.sent.length).toBe(sent);
+      expect(yield* failuresOf(9)).toEqual([{ enrich_failures: 1 }]);
     }),
   );
 
@@ -491,35 +506,37 @@ for (const [adapter, database] of adapters) {
 }
 
 it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30_000 })("enrichRepos", (it) => {
-  it.effect("enriches a batch, reports each outcome in input order, and summarizes nothing twice on a rerun", () =>
-    Effect.gen(function* () {
-      for (const n of [30, 31, 32, 34]) {
-        remotes.set(n, { description: `Tool ${n}`, readme: { oid: oid(String(n % 10)), text: `# Tool ${n}` } });
-      }
-      const batch = [...(yield* store([34, 33, 32, 31, 30])), id(35)];
-      const enricher = yield* EnrichRepo.EnrichRepo;
-      expect(
-        (yield* enricher.enrichRepos(batch)).map((outcome): [number, string] => [outcome.id, outcome._tag]),
-      ).toEqual([
-        [34, "Failed"],
-        [33, "Gone"],
-        [32, "Summarized"],
-        [31, "Summarized"],
-        [30, "Summarized"],
-        [35, "NotFound"],
-      ]);
+  it.effect(
+    "enriches a batch, reports each outcome in input order, and neither summarizes nor looks up anything twice on a rerun",
+    () =>
+      Effect.gen(function* () {
+        for (const n of [30, 31, 32, 34]) {
+          remotes.set(n, { description: `Tool ${n}`, readme: { oid: oid(String(n % 10)), text: `# Tool ${n}` } });
+        }
+        const batch = [...(yield* store([34, 33, 32, 31, 30])), id(35)];
+        const enricher = yield* EnrichRepo.EnrichRepo;
+        expect(
+          (yield* enricher.enrichRepos(batch)).map((outcome): [number, string] => [outcome.id, outcome._tag]),
+        ).toEqual([
+          [34, "Failed"],
+          [33, "Gone"],
+          [32, "Summarized"],
+          [31, "Summarized"],
+          [30, "Summarized"],
+          [35, "NotFound"],
+        ]);
 
-      const calls = prompts.length;
-      expect((yield* enricher.enrichRepos(batch)).map((outcome) => outcome._tag)).toEqual([
-        "Failed",
-        "Gone",
-        "Unchanged",
-        "Unchanged",
-        "Unchanged",
-        "NotFound",
-      ]);
-      expect(prompts.slice(calls).map((prompt) => prompt.split("\n")[0])).toEqual(["Repository: owner/repo-34"]);
-    }),
+        const calls = prompts.length;
+        expect((yield* enricher.enrichRepos(batch)).map((outcome) => outcome._tag)).toEqual([
+          "Backoff",
+          "Backoff",
+          "Unchanged",
+          "Unchanged",
+          "Unchanged",
+          "NotFound",
+        ]);
+        expect(prompts.slice(calls)).toEqual([]);
+      }),
   );
 
   it.effect("enriches the rest of a batch when GitHub forbids one of its repos", () =>
@@ -530,6 +547,116 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       expect(outcomes.map((outcome): [number, string] => [outcome.id, outcome._tag])).toEqual(
         numbers.map((n): [number, string] => [n, n === 130 ? "Gone" : "Summarized"]),
       );
+    }),
+  );
+
+  it.effect("counts a failure each time GitHub forbids a repo, and clears the count once the repo is read", () =>
+    Effect.gen(function* () {
+      remotes.set(240, { description: "Private now", forbidden: true });
+      remotes.set(241, { description: "Public" });
+      const enricher = yield* EnrichRepo.EnrichRepo;
+      const batch = yield* store([240, 241]);
+      yield* TestClock.setTime(Date.parse("2026-11-05T12:00:00Z"));
+      expect((yield* enricher.enrichRepos(batch)).map((outcome) => outcome._tag)).toEqual(["Gone", "Summarized"]);
+      yield* TestClock.adjust("10 minutes");
+      expect((yield* enricher.enrichRepos(batch)).map((outcome) => outcome._tag)).toEqual(["Gone", "Unchanged"]);
+      const database = yield* TestDatabase.TestDatabase;
+      const stored = () =>
+        database.query(
+          "select id::int, enrich_failures, enrich_retry_at::text as retry_at from repos where id = any($1) order by id",
+          [[240, 241]],
+        );
+      expect(yield* stored()).toEqual([
+        { id: 240, enrich_failures: 2, retry_at: expect.stringContaining("2026-11-05 13:10:00") },
+        { id: 241, enrich_failures: 0, retry_at: null },
+      ]);
+
+      remotes.set(240, { description: "Public again" });
+      yield* TestClock.adjust("1 hour");
+      expect((yield* enricher.enrichRepos([id(240)])).map((outcome) => outcome._tag)).toEqual(["Summarized"]);
+      expect(yield* stored()).toEqual([
+        { id: 240, enrich_failures: 0, retry_at: null },
+        { id: 241, enrich_failures: 0, retry_at: null },
+      ]);
+    }),
+  );
+
+  it.effect(
+    "skips a repo in its backoff with no GitHub call and no new failure, and tries it once the delay passes",
+    () =>
+      Effect.gen(function* () {
+        remotes.set(250, { description: "Private now", forbidden: true });
+        const enricher = yield* EnrichRepo.EnrichRepo;
+        const batch = yield* store([250]);
+        const lookups = () => github.sent.filter((sent) => sent.url.pathname === "/graphql").length;
+        const tags = Effect.map(enricher.enrichRepos(batch), (outcomes) => outcomes.map((outcome) => outcome._tag));
+        yield* TestClock.setTime(Date.parse("2026-11-06T12:00:00Z"));
+
+        const tries: Array<[string, ReadonlyArray<string>, number]> = [];
+        const attempt = (label: string) =>
+          Effect.gen(function* () {
+            const before = lookups();
+            tries.push([label, yield* tags, lookups() - before]);
+          });
+        yield* attempt("first try");
+        yield* attempt("a queue retry a minute later");
+        yield* TestClock.adjust("10 minutes");
+        yield* attempt("the sweep 10 minutes after the first failure");
+        yield* TestClock.adjust("59 minutes");
+        yield* attempt("a copy 59 minutes after the second failure");
+        yield* TestClock.adjust("1 minute");
+        yield* attempt("the sweep an hour after the second failure");
+        yield* attempt("a full sync after the cap");
+
+        expect(tries).toEqual([
+          ["first try", ["Gone"], 1],
+          ["a queue retry a minute later", ["Backoff"], 0],
+          ["the sweep 10 minutes after the first failure", ["Gone"], 1],
+          ["a copy 59 minutes after the second failure", ["Backoff"], 0],
+          ["the sweep an hour after the second failure", ["Gone"], 1],
+          ["a full sync after the cap", ["Gone"], 1],
+        ]);
+        expect(yield* failuresOf(250)).toEqual([{ enrich_failures: 4 }]);
+      }),
+  );
+
+  it.effect("counts no failure when enrichment fails for a reason every repo shares", () =>
+    Effect.gen(function* () {
+      for (const n of [270, 271]) remotes.set(n, { description: `Shared outage ${n}` });
+      const batch = yield* store([270, 271]);
+      const enrichWith = <ROut, E>(layer: Layer.Layer<ROut, E>) =>
+        Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) => enricher.enrichRepos(batch)).pipe(
+          Effect.provide(Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(layer))),
+        );
+      const counts = () => Effect.map(Effect.all([failuresOf(270), failuresOf(271)]), (rows) => rows.flat());
+      const untouched = [{ enrich_failures: 0 }, { enrich_failures: 0 }];
+
+      const tokenMissing = Layer.mock(GitHub.GitHub, {
+        repoFacts: () => Effect.fail(new GitHubTokenMissing({ operation: "repo-facts" })),
+      });
+      expect((yield* Effect.flip(enrichWith(tokenMissing)))._tag).toBe("GitHubTokenMissing");
+      expect(yield* counts()).toEqual(untouched);
+
+      const keyMissing = Layer.succeed(
+        TextGeneration.TextGeneration,
+        TextGeneration.make({
+          provider: "test",
+          model: "test/text",
+          timeout: Duration.seconds(5),
+          run: () => Effect.fail(new AiKeyMissing({ operation: "generate", model: "test/text" })),
+        }),
+      );
+      expect((yield* enrichWith(keyMissing)).map((outcome) => outcome._tag)).toEqual(["Failed", "Failed"]);
+      expect(yield* counts()).toEqual(untouched);
+
+      expect((yield* enrichWith(failingEmbeddings)).map((outcome) => outcome._tag)).toEqual(["Failed", "Failed"]);
+      expect(yield* counts()).toEqual(untouched);
+
+      expect((yield* enrichWith(wrongSizeEmbeddings)).map((outcome) => outcome._tag)).toEqual(["Failed", "Failed"]);
+      expect(yield* counts()).toEqual(untouched);
+
+      const outcomes = yield* (yield* EnrichRepo.EnrichRepo).enrichRepos(batch);
+      expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Embedded", "Embedded"]);
     }),
   );
 
@@ -633,6 +760,26 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       );
       expect(outcomes.map((outcome) => outcome._tag)).toEqual(numbers.map(() => "Summarized"));
       expect(reads.peak).toBe(4);
+    }),
+  );
+  it.effect("starts the backoff when GitHub answers, so a wait at the token gate does not shorten it", () =>
+    Effect.gen(function* () {
+      const ids = yield* store([260]);
+      const slowGitHub = Layer.mock(GitHub.GitHub, {
+        repoFacts: () => Effect.sleep("15 minutes").pipe(Effect.as([])),
+      });
+      yield* TestClock.setTime(Date.parse("2026-11-07T12:00:00Z"));
+      const fiber = yield* Effect.forkChild(
+        Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) => enricher.enrichRepos(ids)).pipe(
+          Effect.provide(Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(slowGitHub))),
+        ),
+      );
+      yield* TestClock.adjust("15 minutes");
+      expect((yield* Fiber.join(fiber)).map((outcome) => outcome._tag)).toEqual(["Gone"]);
+      const stored = yield* Effect.flatMap(TestDatabase.TestDatabase, (database) =>
+        database.query("select enrich_retry_at::text as retry_at from repos where id = 260"),
+      );
+      expect(stored).toEqual([{ retry_at: expect.stringContaining("2026-11-07 12:25:00") }]);
     }),
   );
 });

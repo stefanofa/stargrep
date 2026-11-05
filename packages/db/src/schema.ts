@@ -1,5 +1,6 @@
 import { type SQL, sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   bigint,
   boolean,
   check,
@@ -61,6 +62,25 @@ export const githubAccounts = pgTable(
   (table) => [uniqueIndex("github_accounts_claimed_by_key").on(table.claimedBy)],
 );
 
+// A repo with this many of its own failed enrichments counts as failed, and the sweep stops sending it.
+export const enrichFailureCap = 3;
+
+interface EnrichmentColumns {
+  readonly summary: AnyPgColumn;
+  readonly summaryReadmeOid: AnyPgColumn;
+  readonly readmeOid: AnyPgColumn;
+  readonly embeddingModel: AnyPgColumn;
+  readonly enrichFailures: AnyPgColumn;
+}
+
+// A repo is read once it has a summary of its current README and an embedding of that summary.
+export const pendingEnrichment = (table: EnrichmentColumns) =>
+  sql<boolean>`(${table.summary} is null or ${table.summaryReadmeOid} is distinct from ${table.readmeOid} or ${table.embeddingModel} is null)`;
+
+// The cap is a literal, not a parameter, so Postgres can match a query to the partial index on this predicate.
+export const retryableEnrichment = (table: EnrichmentColumns) =>
+  sql<boolean>`${pendingEnrichment(table)} and ${table.enrichFailures} < ${sql.raw(String(enrichFailureCap))}`;
+
 export const repos = pgTable(
   "repos",
   {
@@ -83,6 +103,8 @@ export const repos = pgTable(
     keywords: jsonb("keywords").notNull().default([]),
     embedding: halfvec("embedding", { dimensions: embeddingDimensions }),
     embeddingModel: text("embedding_model"),
+    enrichFailures: integer("enrich_failures").notNull().default(0),
+    enrichRetryAt: time("enrich_retry_at"),
     search: tsvector("search")
       .notNull()
       .generatedAlwaysAs(
@@ -94,7 +116,10 @@ export const repos = pgTable(
           setweight(to_tsvector('english', coalesce(${repos.summary}, '')), 'C')`,
       ),
   },
-  (table) => [index("repos_search_idx").using("gin", table.search)],
+  (table) => [
+    index("repos_search_idx").using("gin", table.search),
+    index("repos_retryable_enrichment_idx").on(table.enrichRetryAt, table.id).where(retryableEnrichment(table)),
+  ],
 );
 
 export const repoMetrics = pgTable("repo_metrics", {

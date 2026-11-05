@@ -2,6 +2,8 @@ import { Repo as GitHubRepo, Login, ObjectId, RepoId, RepoName, RepoNodeId } fro
 import { and, eq, getColumns, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import * as Arr from "effect/Array";
+import type * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -9,8 +11,8 @@ import * as Struct from "effect/Struct";
 import { type Embedding, EmbeddingModelId, type EmbeddingModelMismatch, requireModel } from "../embedding.ts";
 import { type DbQueryFailed, type DbRowInvalid, RepoNotFound } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
-import { excluded, NullableTime, requireRow, rowsDecoder, writeEncoder } from "../rows.ts";
-import { repoMetrics, repos } from "../schema.ts";
+import { excluded, NullableTime, requireRow, rowsDecoder, timeParam, writeEncoder } from "../rows.ts";
+import { pendingEnrichment, repoMetrics, repos, retryableEnrichment } from "../schema.ts";
 
 const RepoRow = createSelectSchema(repos, {
   id: RepoId,
@@ -24,13 +26,16 @@ const RepoRow = createSelectSchema(repos, {
   summaryReadmeOid: Schema.NullOr(ObjectId),
   keywords: Schema.Array(Schema.String),
   embeddingModel: Schema.NullOr(EmbeddingModelId),
+  enrichRetryAt: NullableTime,
 });
 
-export const Repo = Schema.Struct(Struct.omit(RepoRow.fields, ["embedding", "search"]));
+// Columns the pipeline reads but a Repo leaves out: the vector, the full-text column, and the retry state.
+const internalColumns = ["embedding", "search", "enrichFailures", "enrichRetryAt"] as const;
+
+export const Repo = Schema.Struct(Struct.omit(RepoRow.fields, internalColumns));
 export type Repo = typeof Repo.Type;
 
-const { embedding: _embedding, search: _search, ...columns } = getColumns(repos);
-export const repoColumns = columns;
+export const repoColumns = Struct.omit(getColumns(repos), internalColumns);
 
 const RepoRef = GitHubRepo;
 export type RepoRef = typeof RepoRef.Type;
@@ -73,8 +78,24 @@ export interface RepoEmbedding {
   readonly readmeOid: ObjectId | null;
 }
 
-const StoredRepo = Schema.Struct({ ...Repo.fields, pending: Schema.Boolean });
+const StoredRepo = Schema.Struct({
+  ...Repo.fields,
+  ...Struct.pick(RepoRow.fields, ["enrichFailures", "enrichRetryAt"]),
+  pending: Schema.Boolean,
+});
 export type StoredRepo = typeof StoredRepo.Type;
+
+export interface EnrichFailures {
+  readonly ids: ReadonlyArray<RepoId>;
+  readonly at: DateTime.Utc;
+  /** The wait after each failure, in order. A failure past the last delay leaves no retry time. */
+  readonly retryDelays: ReadonlyArray<Duration.Duration>;
+}
+
+export interface SweepQuery {
+  readonly now: DateTime.Utc;
+  readonly limit: number;
+}
 
 export interface Queries {
   readonly upsertRefs: (refs: ReadonlyArray<RepoRef>) => Effect.Effect<void, DbQueryFailed>;
@@ -92,6 +113,8 @@ export interface Queries {
   readonly getMany: (
     ids: ReadonlyArray<RepoId>,
   ) => Effect.Effect<ReadonlyArray<StoredRepo>, DbQueryFailed | DbRowInvalid>;
+  readonly recordEnrichFailures: (failures: EnrichFailures) => Effect.Effect<void, DbQueryFailed>;
+  readonly sweepable: (query: SweepQuery) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
 }
 
 const batchSize = 1000;
@@ -100,7 +123,7 @@ const decodeIds = rowsDecoder(Schema.Struct({ id: RepoId }));
 const decodeStored = rowsDecoder(StoredRepo);
 const decodePending = rowsDecoder(Schema.Struct({ pending: Schema.Boolean }));
 
-const needsEnrichment = sql<boolean>`(${repos.summary} is null or ${repos.summaryReadmeOid} is distinct from ${repos.readmeOid} or ${repos.embeddingModel} is null)`;
+const needsEnrichment = pendingEnrichment(repos);
 const encodeRefs = writeEncoder(Schema.Array(RepoRef));
 const encodeFacts = writeEncoder(RepoFacts);
 const encodeSummary = writeEncoder(RepoSummary);
@@ -199,7 +222,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           run("repos.saveEmbedding", (db) =>
             db
               .update(repos)
-              .set({ embedding: [...vector], embeddingModel: configuredModel })
+              .set({ embedding: [...vector], embeddingModel: configuredModel, enrichFailures: 0, enrichRetryAt: null })
               .where(
                 and(
                   eq(repos.id, input.id),
@@ -228,9 +251,44 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
     getMany: (ids) =>
       run("repos.getMany", (db) =>
         db
-          .select({ ...repoColumns, pending: needsEnrichment })
+          .select({
+            ...repoColumns,
+            pending: needsEnrichment,
+            enrichFailures: repos.enrichFailures,
+            enrichRetryAt: repos.enrichRetryAt,
+          })
           .from(repos)
           .where(sql`${repos.id} = any(${sql.param([...ids])}::bigint[])`),
       ).pipe(Effect.flatMap(decodeStored("repos.getMany"))),
+    // A copy of an attempt already counted, such as a second message for the same repo, finds the retry time in
+    // the future and changes nothing. The array index past the last delay reads null, so a capped repo has none.
+    recordEnrichFailures: ({ ids, at, retryDelays }) =>
+      Arr.isReadonlyArrayEmpty(ids)
+        ? Effect.void
+        : run("repos.recordEnrichFailures", (db) =>
+            db
+              .update(repos)
+              .set({
+                enrichFailures: sql`${repos.enrichFailures} + 1`,
+                enrichRetryAt: sql`${timeParam(at)} + (${sql.param(retryDelays.map(Duration.toMillis))}::float8[])[${repos.enrichFailures} + 1] * interval '1 millisecond'`,
+              })
+              .where(
+                sql`${repos.id} = any(${sql.param([...ids])}::bigint[]) and ${needsEnrichment} and (${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(at)})`,
+              ),
+          ),
+    sweepable: ({ now, limit }) =>
+      run("repos.sweepable", (db) =>
+        db
+          .select({ id: repos.id })
+          .from(repos)
+          .where(
+            sql`${retryableEnrichment(repos)} and (${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(now)})`,
+          )
+          .orderBy(sql`${repos.enrichRetryAt} nulls last`, repos.id)
+          .limit(limit),
+      ).pipe(
+        Effect.flatMap(decodeIds("repos.sweepable")),
+        Effect.map((rows) => rows.map((row) => row.id)),
+      ),
   } satisfies Queries;
 });

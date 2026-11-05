@@ -11,13 +11,16 @@ import type { ObjectId, RepoFacts, RepoId } from "@stargrep/github/schemas";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as BlobStore from "./blob-store.ts";
+import * as EnrichRetry from "./enrich-retry.ts";
 
 export interface Summary {
   readonly summary: string;
@@ -32,12 +35,49 @@ export type Enrichment = Data.TaggedEnum<{
   NotFound: { readonly id: RepoId };
   NoNodeId: { readonly id: RepoId };
   Gone: { readonly id: RepoId };
+  Backoff: { readonly id: RepoId };
   Stale: { readonly id: RepoId };
   Failed: { readonly id: RepoId; readonly error: EnrichRepoError };
   Summarized: { readonly id: RepoId; readonly summary: Summary };
   Embedded: { readonly id: RepoId; readonly summary: Summary };
 }>;
 export const Enrichment = Data.taggedEnum<Enrichment>();
+
+// Whether an error is the repo's own, so it counts toward the cap. An error every repo would hit, such as a missing
+// key, an outage, or a rate limit, never counts, and the sweep or the queue tries the repo again.
+const ownError = (error: EnrichRepoError): boolean =>
+  Match.valueTags(error, {
+    NotFound: () => true,
+    GitHubRequestFailed: (failure) =>
+      failure.reason === "status" && failure.status !== null && failure.status < 500 && failure.status !== 403,
+    GitHubResponseInvalid: (failure) => failure.reason !== "unreadable-body",
+    // A summary answer is one paid call for one repo, so a repo whose answers never decode must reach the cap. An
+    // embedding answer covers a whole batch, so its bad shape is the provider's fault, not any one repo's.
+    AiOutputInvalid: (failure) => failure.operation === "generate",
+    RateLimited: () => false,
+    TokenBudgetExhausted: () => false,
+    Unauthorized: () => false,
+    GitHubTokenMissing: () => false,
+    BlobStoreFailed: () => false,
+    AiKeyMissing: () => false,
+    AiModelNotFound: () => false,
+    AiRequestFailed: () => false,
+    AiTimeout: () => false,
+    AiUnavailable: () => false,
+  });
+
+const repoFailed = (outcome: Enrichment): boolean =>
+  Enrichment.$match(outcome, {
+    Gone: () => true,
+    NoNodeId: () => true,
+    Failed: ({ error }) => ownError(error),
+    Unchanged: () => false,
+    NotFound: () => false,
+    Backoff: () => false,
+    Stale: () => false,
+    Summarized: () => false,
+    Embedded: () => false,
+  });
 
 export type EnrichRepoAbort = DbQueryFailed | DbRowInvalid | EmbeddingModelMismatch | GitHubError;
 
@@ -166,10 +206,12 @@ const make = Effect.gen(function* () {
 
   const plan = Effect.fn("EnrichRepo.plan")(function* (ids: ReadonlyArray<RepoId>) {
     const rows = new Map<number, Db.StoredRepo>((yield* db.repos.getMany(ids)).map((row) => [row.id, row]));
+    const now = yield* DateTime.now;
     const located = ids.map((id): Step<Db.StoredRepo & { readonly nodeId: NonNullable<Db.Repo["nodeId"]> }> => {
       const row = rows.get(id);
       if (row === undefined) return Result.fail(Enrichment.NotFound({ id }));
       if (!row.pending) return Result.fail(Enrichment.Unchanged({ id }));
+      if (EnrichRetry.inBackoff(row, now)) return Result.fail(Enrichment.Backoff({ id }));
       if (row.nodeId === null) return Result.fail(Enrichment.NoNodeId({ id }));
       return Result.succeed({ ...row, nodeId: row.nodeId });
     });
@@ -265,8 +307,13 @@ const make = Effect.gen(function* () {
   ) {
     const planned = yield* plan(ids);
     const summarized = yield* summarizeAll(planned, summarizer);
-    const steps = yield* embedAll(summarized);
-    return steps.map(Result.merge);
+    const outcomes = (yield* embedAll(summarized)).map(Result.merge);
+    yield* db.repos.recordEnrichFailures({
+      ids: outcomes.flatMap((outcome) => (repoFailed(outcome) ? [outcome.id] : [])),
+      at: yield* DateTime.now,
+      retryDelays: EnrichRetry.retryDelays,
+    });
+    return outcomes;
   });
 
   const summarizeEach: Summarizer = (repos) =>

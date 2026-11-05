@@ -1,7 +1,7 @@
 import type { GitHubAccountId } from "@stargrep/github/schemas";
 import { eq, type SQL, sql } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
-import * as DateTime from "effect/DateTime";
+import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
@@ -13,7 +13,7 @@ import {
 } from "../embedding.ts";
 import type { DbQueryFailed, DbRowInvalid } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
-import { rowsDecoder } from "../rows.ts";
+import { rowsDecoder, timeParam } from "../rows.ts";
 import { repoMetrics, repos, stars } from "../schema.ts";
 import { Repo, repoColumns } from "./repos.ts";
 
@@ -165,8 +165,6 @@ const languageClause = (languages: ReadonlyArray<string>) => {
   return sql` and (lower(${repos.language}) = any(${names}::text[]) or jsonb_exists_any(${repos.topics}, ${names}::text[]))`;
 };
 
-const time = (value: DateTime.Utc) => sql`${DateTime.formatIso(value)}::timestamptz`;
-
 const ranked = (search: HybridSearch, vector: EmbeddingVector, model: EmbeddingModelId) => {
   const aliases = new Map(search.metrics.map((metric, index) => [metric.id, sql.raw(`m${index}`)]));
   const alias = (metricId: string) => {
@@ -214,8 +212,8 @@ const ranked = (search: HybridSearch, vector: EmbeddingVector, model: EmbeddingM
     ${anyOf(sql`${repos.kind}`, filters.kinds)}
     ${anyOf(sql`${repos.license}`, filters.licenses)}
     ${filters.archived === null ? sql`` : sql` and ${repos.archived} = ${filters.archived}`}
-    ${filters.starredAfter === null ? sql`` : sql` and ${stars.starredAt} >= ${time(filters.starredAfter)}`}
-    ${filters.starredBefore === null ? sql`` : sql` and ${stars.starredAt} < ${time(filters.starredBefore)}`}
+    ${filters.starredAfter === null ? sql`` : sql` and ${stars.starredAt} >= ${timeParam(filters.starredAfter)}`}
+    ${filters.starredBefore === null ? sql`` : sql` and ${stars.starredAt} < ${timeParam(filters.starredBefore)}`}
     ${sql.join(
       filters.metrics.map(
         (bound) => sql` and metric.${alias(bound.metric)} ${sql.raw(comparison[bound.op])} ${bound.value}::float8`,

@@ -1,0 +1,3 @@
+ALTER TABLE "repos" ADD COLUMN "enrich_failures" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "repos" ADD COLUMN "enrich_retry_at" timestamp with time zone;--> statement-breakpoint
+CREATE INDEX "repos_retryable_enrichment_idx" ON "repos" ("enrich_retry_at","id") WHERE ("summary" is null or "summary_readme_oid" is distinct from "readme_oid" or "embedding_model" is null) and "enrich_failures" < 3;

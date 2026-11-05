@@ -107,12 +107,20 @@ const repoFields = (repo: Db.Repo) => ({
   pushedAt: iso(repo.pushedAt),
 });
 
-const syncStatus = (login: Login, status: SyncRequests.SyncStatus) => ({
-  login,
-  state: status.state,
-  requestedAt: status.state === "queued" || status.state === "failed" ? iso(status.requestedAt) : null,
-  syncedAt: status.state === "unknown" ? null : iso(status.syncedAt),
-});
+const syncStatus =
+  (login: Login) =>
+  ([status, enrichment]: readonly [SyncRequests.SyncStatus, Db.EnrichmentProgress]) => ({
+    login,
+    state: status.state,
+    requestedAt: status.state === "queued" || status.state === "failed" ? iso(status.requestedAt) : null,
+    syncedAt: status.state === "unknown" ? null : iso(status.syncedAt),
+    enrichment,
+  });
+
+const withProgress = <E, R>(login: Login, status: Effect.Effect<SyncRequests.SyncStatus, E, R>) =>
+  Effect.all([status, Db.Db.use((db) => db.stars.enrichment(login))], { concurrency: 2 }).pipe(
+    Effect.map(syncStatus(login)),
+  );
 
 const implementer = implement(contract).$context<ApiContext>();
 // Router-level middleware such as instrumentation runs before input validation, so a validation error gets a trace ID.
@@ -145,20 +153,22 @@ export const router = implementer.router({
     handle((input: typeof SyncInput.Type) =>
       Effect.gen(function* () {
         yield* (yield* SyncLimiter).acquire;
-        return syncStatus(input.login, yield* (yield* SyncRequests.SyncRequests).request(input.login));
+        return yield* withProgress(
+          input.login,
+          SyncRequests.SyncRequests.use((requests) => requests.request(input.login)),
+        );
       }),
     ),
   ),
 
-  syncStatus: os.syncStatus
-    .use(provideServices)
-    .effect(
-      handle((input: typeof SyncInput.Type) =>
-        SyncRequests.SyncRequests.use((requests) => requests.status(input.login)).pipe(
-          Effect.map((status) => syncStatus(input.login, status)),
-        ),
+  syncStatus: os.syncStatus.use(provideServices).effect(
+    handle((input: typeof SyncInput.Type) =>
+      withProgress(
+        input.login,
+        SyncRequests.SyncRequests.use((requests) => requests.status(input.login)),
       ),
     ),
+  ),
 
   viewer: os.viewer.use(provideServices).effect(
     handle(() =>
@@ -184,6 +194,7 @@ export const router = implementer.router({
             keywords: entry.repo.keywords,
             starredAt: DateTime.formatIso(entry.starredAt),
             stars: entry.stars,
+            read: entry.read,
           })),
         };
       }),

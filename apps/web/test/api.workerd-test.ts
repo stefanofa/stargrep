@@ -305,6 +305,11 @@ describe("sync", () => {
     expect((await rest("/sync/hubot")).body).toMatchObject({ login: "hubot", state: "failed", syncedAt: null });
   });
 
+  it("reports how many of a login's stars are read, and zeros for a login Stargrep does not know", async () => {
+    expect((await rest("/sync/ada")).body.enrichment).toEqual({ total: 1, read: 1, failed: 0 });
+    expect((await rest("/sync/nobody-known")).body.enrichment).toEqual({ total: 0, read: 0, failed: 0 });
+  });
+
   it("rejects a login GitHub would not issue", async () => {
     expect((await rest("/sync/a..b", { method: "POST" })).status).toBe(400);
   });

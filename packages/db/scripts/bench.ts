@@ -1,5 +1,6 @@
-import { GitHubAccountId } from "@stargrep/github/schemas";
+import { GitHubAccountId, Login } from "@stargrep/github/schemas";
 import * as Console from "effect/Console";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Random from "effect/Random";
@@ -17,6 +18,9 @@ const rounds = 100;
 const warmup = 5;
 const model = Schema.decodeSync(EmbeddingModelId)("bench/random-1024");
 const accountId = Schema.decodeSync(GitHubAccountId)(1);
+const libraryLogin = Schema.decodeSync(Login)("bench-library");
+const libraryAccountId = Schema.decodeSync(GitHubAccountId)(accountCount + 1);
+const libraryStars = 3_000;
 const words = [
   "terminal",
   "dashboard",
@@ -126,6 +130,33 @@ const prepare = createMigratedDatabase(adminUrl, benchDatabase).pipe(
   ),
 );
 
+// One account with a typical library. Half of all repos wait for a new README, and 44,000 of those are capped,
+// the case where a sweep could slow down as failed repos pile up. Every statement converges, so a rerun changes
+// nothing. The hour of backoff stands in for EnrichRetry.retryDelays, which packages/db cannot import.
+const prepareLibrary = withClient(benchUrl, async (client) => {
+  await client.query("set statement_timeout = 0");
+  await client.query("insert into github_accounts (id, type, login) values ($1, 'user', $2) on conflict do nothing", [
+    libraryAccountId,
+    libraryLogin,
+  ]);
+  await client.query(
+    `insert into stars (account_id, repo_id, starred_at, observed_at, source)
+     select $1, id, now() - (id % 1000) * interval '1 day', now(), 'api'
+     from repos where id % ($3::int / $2::int) = 0 order by id limit $2
+     on conflict do nothing`,
+    [libraryAccountId, libraryStars, repoCount],
+  );
+  await client.query("update repos set readme_oid = repeat('a', 40) where id % 2 = 0 and readme_oid is null");
+  await client.query(
+    "update repos set enrich_failures = $1 where id % 2 = 0 and id % 100 < 88 and enrich_failures = 0",
+    [Db.enrichFailureCap],
+  );
+  await client.query(
+    "update repos set enrich_failures = 1, enrich_retry_at = now() + interval '1 hour' where id % 2 = 0 and id % 100 between 88 and 91 and enrich_failures = 0",
+  );
+  await client.query("vacuum analyze repos, stars");
+});
+
 const decodeEmbedding = Schema.decodeEffect(Embedding);
 
 const randomEmbedding = Effect.gen(function* () {
@@ -147,40 +178,61 @@ const summarize = (name: string, samples: ReadonlyArray<number>, rows: ReadonlyA
   return `${name.padEnd(13)} median ${fixed(at(0.5))} ms  p95 ${fixed(at(0.95))} ms  min ${fixed(sorted[0] ?? 0)} ms  max ${fixed(sorted.at(-1) ?? 0)} ms  rows ${Math.min(...rows)}-${Math.max(...rows)}`;
 };
 
+type Sample = readonly [millis: number, rows: number];
+
+const measureRounds = Effect.fn("bench.measureRounds")(function* <E>(
+  round: Effect.Effect<Readonly<Record<string, Sample>>, E>,
+) {
+  const results: Record<string, { readonly millis: Array<number>; readonly rows: Array<number> }> = {};
+  for (let index = 0; index < warmup + rounds; index++) {
+    const samples = yield* round;
+    if (index < warmup) continue;
+    for (const [name, [millis, rows]] of Object.entries(samples)) {
+      const result = results[name] ?? { millis: [], rows: [] };
+      results[name] = result;
+      result.millis.push(millis);
+      result.rows.push(rows);
+    }
+  }
+  for (const [name, { millis, rows }] of Object.entries(results)) yield* Console.log(summarize(name, millis, rows));
+});
+
 const measure = Effect.gen(function* () {
   const db = yield* Db.Db;
 
   const timed = <A, E>(effect: Effect.Effect<ReadonlyArray<A>, E>) =>
-    Effect.timed(effect).pipe(Effect.map(([duration, rows]) => [Duration.toMillis(duration), rows.length] as const));
-  const lookup = timed(db.accounts.get(accountId).pipe(Effect.map((account) => [account])));
+    Effect.timed(effect).pipe(Effect.map(([duration, rows]): Sample => [Duration.toMillis(duration), rows.length]));
   const scope: Db.SearchScope = { kind: "stars", accountId };
   const plain = { scope, limit: 20, name: null, metrics: [], filters: Db.noFilters, rankBy: null };
-  const nearest = (embedding: Embedding) => timed(db.search.hybrid({ ...plain, text: "", embedding }));
-  const hybrid = (embedding: Embedding, text: string) => timed(db.search.hybrid({ ...plain, text, embedding }));
-
-  const results = { lookup: [] as Array<number>, nearest: [] as Array<number>, hybrid: [] as Array<number> };
-  const counts = { lookup: [] as Array<number>, nearest: [] as Array<number>, hybrid: [] as Array<number> };
-  for (let round = 0; round < warmup + rounds; round++) {
-    const embedding = yield* randomEmbedding;
-    const text = yield* randomText;
-    const [lookupMs, lookupRows] = yield* lookup;
-    const [nearestMs, nearestRows] = yield* nearest(embedding);
-    const [hybridMs, hybridRows] = yield* hybrid(embedding, text);
-    if (round < warmup) continue;
-    results.lookup.push(lookupMs);
-    results.nearest.push(nearestMs);
-    results.hybrid.push(hybridMs);
-    counts.lookup.push(lookupRows);
-    counts.nearest.push(nearestRows);
-    counts.hybrid.push(hybridRows);
-  }
 
   yield* Console.log(
     `${rounds} interleaved rounds after ${warmup} warmup rounds, ${starCount} stars of ${repoCount} repos`,
   );
-  yield* Console.log(summarize("pk lookup", results.lookup, counts.lookup));
-  yield* Console.log(summarize("vector only", results.nearest, counts.nearest));
-  yield* Console.log(summarize("hybrid rrf", results.hybrid, counts.hybrid));
+  yield* measureRounds(
+    Effect.gen(function* () {
+      const embedding = yield* randomEmbedding;
+      const text = yield* randomText;
+      return {
+        "pk lookup": yield* timed(db.accounts.get(accountId).pipe(Effect.map((account) => [account]))),
+        "vector only": yield* timed(db.search.hybrid({ ...plain, text: "", embedding })),
+        "hybrid rrf": yield* timed(db.search.hybrid({ ...plain, text, embedding })),
+      };
+    }),
+  );
+
+  const progress = yield* db.stars.enrichment(libraryLogin);
+  yield* Console.log(
+    `${rounds} rounds after ${warmup} warmup rounds, one library of ${progress.total} stars, ${progress.read} read and ${progress.failed} failed`,
+  );
+  yield* measureRounds(
+    Effect.gen(function* () {
+      return {
+        progress: yield* timed(db.stars.enrichment(libraryLogin).pipe(Effect.map((counts) => [counts]))),
+        library: yield* timed(db.stars.library(libraryAccountId)),
+        sweep: yield* timed(db.repos.sweepable({ now: yield* DateTime.now, limit: 100 })),
+      };
+    }),
+  );
 }).pipe(Effect.provide(Db.layerNodePostgres({ connectionString: Redacted.make(benchUrl), embeddingModel: model })));
 
 const bench = Effect.gen(function* () {
@@ -190,6 +242,7 @@ const bench = Effect.gen(function* () {
       ? `seeded ${repoCount} repos and ${starCount} stars for each of ${accountCount} accounts`
       : "reused the seeded database",
   );
+  yield* prepareLibrary;
   yield* measure;
 });
 

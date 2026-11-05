@@ -1,4 +1,4 @@
-import { GitHubAccountId, RepoId } from "@stargrep/github/schemas";
+import { GitHubAccountId, type Login, RepoId } from "@stargrep/github/schemas";
 import { and, desc, eq, isNull, type SQL, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import type { PgColumn } from "drizzle-orm/pg-core";
@@ -11,7 +11,7 @@ import * as Struct from "effect/Struct";
 import { AccountNotFound, type DbQueryFailed, type DbRowInvalid } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
 import { excluded, NullableTime, requireRow, rowsDecoder, writeEncoder } from "../rows.ts";
-import { githubAccounts, repoMetrics, repos, stars } from "../schema.ts";
+import { enrichFailureCap, githubAccounts, pendingEnrichment, repoMetrics, repos, stars } from "../schema.ts";
 import { Repo, repoColumns } from "./repos.ts";
 
 export const Star = createSelectSchema(stars, {
@@ -33,8 +33,12 @@ const LibraryEntry = Schema.Struct({
   repo: Repo,
   starredAt: Schema.DateTimeUtcFromDate,
   stars: Schema.NullOr(Schema.Int),
+  read: Schema.Boolean,
 });
 export type LibraryEntry = typeof LibraryEntry.Type;
+
+const EnrichmentProgress = Schema.Struct({ total: Schema.Int, read: Schema.Int, failed: Schema.Int });
+export type EnrichmentProgress = typeof EnrichmentProgress.Type;
 
 export interface StarsUpsert {
   readonly accountId: GitHubAccountId;
@@ -61,10 +65,12 @@ export interface Queries {
   readonly library: (
     accountId: GitHubAccountId,
   ) => Effect.Effect<ReadonlyArray<LibraryEntry>, DbQueryFailed | DbRowInvalid>;
+  readonly enrichment: (login: Login) => Effect.Effect<EnrichmentProgress, DbQueryFailed | DbRowInvalid>;
 }
 
 const decodeStars = rowsDecoder(Star);
 const decodeLibrary = rowsDecoder(LibraryEntry);
+const decodeProgress = rowsDecoder(EnrichmentProgress);
 const decodeChanged = rowsDecoder(Schema.Struct({ repoId: RepoId }));
 const encodeEvents = writeEncoder(
   Schema.fromJsonString(
@@ -84,6 +90,8 @@ const resultRows = (result: unknown) => (Predicate.hasProperty(result, "rows") ?
 const column = (target: PgColumn) => sql.identifier(target.name);
 
 const noChanges: SnapshotChanges = { starred: [], unstarred: [] };
+
+const needsEnrichment = pendingEnrichment(repos);
 
 const writeStarsReturningVisibleChanges = (accountId: GitHubAccountId, events: string, filter: SQL) => sql`
   prior as (
@@ -209,12 +217,46 @@ export const make = Effect.gen(function* () {
     library: (accountId) =>
       run("stars.library", (db) =>
         db
-          .select({ repo: repoColumns, starredAt: stars.starredAt, stars: repoMetrics.stars })
+          .select({
+            repo: repoColumns,
+            starredAt: stars.starredAt,
+            stars: repoMetrics.stars,
+            read: sql<boolean>`not ${needsEnrichment}`,
+          })
           .from(stars)
           .innerJoin(repos, eq(repos.id, stars.repoId))
           .leftJoin(repoMetrics, eq(repoMetrics.repoId, stars.repoId))
           .where(and(eq(stars.accountId, accountId), isNull(stars.unstarredAt)))
           .orderBy(desc(stars.starredAt), stars.repoId),
       ).pipe(Effect.flatMap(decodeLibrary("stars.library"))),
+    // The account is chosen as accounts.byLogin chooses it, so the progress and the sync status describe one account.
+    enrichment: (login) =>
+      run("stars.enrichment", (db) =>
+        db
+          .select({
+            total: sql<number>`count(*)::int`,
+            read: sql<number>`(count(*) filter (where not ${needsEnrichment}))::int`,
+            failed: sql<number>`(count(*) filter (where ${needsEnrichment} and ${repos.enrichFailures} >= ${enrichFailureCap}))::int`,
+          })
+          .from(stars)
+          .innerJoin(repos, eq(repos.id, stars.repoId))
+          .where(
+            and(
+              eq(
+                stars.accountId,
+                sql`(${db
+                  .select({ id: githubAccounts.id })
+                  .from(githubAccounts)
+                  .where(sql`lower(${githubAccounts.login}) = lower(${login})`)
+                  .orderBy(sql`${githubAccounts.starsSyncedAt} desc nulls last`, githubAccounts.id)
+                  .limit(1)})`,
+              ),
+              isNull(stars.unstarredAt),
+            ),
+          ),
+      ).pipe(
+        Effect.flatMap(decodeProgress("stars.enrichment")),
+        Effect.flatMap((rows) => Effect.orDie(Effect.fromNullishOr(rows[0]))),
+      ),
   } satisfies Queries;
 });

@@ -1,5 +1,6 @@
 import { type SQL, sql } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
@@ -7,6 +8,8 @@ import * as SchemaIssue from "effect/SchemaIssue";
 import { DbRowInvalid, type Operation } from "./errors.ts";
 
 export const NullableTime = Schema.NullOr(Schema.DateTimeUtcFromDate);
+
+export const timeParam = (value: DateTime.Utc): SQL => sql`${DateTime.formatIso(value)}::timestamptz`;
 
 export const excluded = (column: PgColumn): SQL => sql`excluded.${sql.identifier(column.name)}`;
 

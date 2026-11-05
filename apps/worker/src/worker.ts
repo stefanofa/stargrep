@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import { budgetShareName, stageBudgetShare } from "./budget-share.ts";
+import * as Crons from "./crons.ts";
 import { Database, DatabaseMigrations } from "./database.ts";
 import { prodWorkerHosting } from "./domain.ts";
 import { tokenGate } from "./github-gate.ts";
@@ -47,6 +48,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
       adopted: yield* Ref.make(false),
     });
     yield* Queues.consumeAll(runtime);
+    yield* Crons.scheduleAll(runtime);
     return {
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest;
@@ -63,6 +65,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
         Cloudflare.R2.ReadWriteBucketBinding,
         Cloudflare.Queues.WriteQueueBinding,
         Cloudflare.Queues.EventSourceLive,
+        Cloudflare.Workers.CronEventSourceLive,
         Tracing.layer,
       ),
     ),

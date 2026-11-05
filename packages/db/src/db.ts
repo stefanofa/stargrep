@@ -17,6 +17,7 @@ import * as Usage from "./queries/usage.ts";
 
 export type { Account, AccountClaim, AccountFacts, OwnedRepoStars, StarSync } from "./queries/accounts.ts";
 export type {
+  EnrichFailures,
   Repo,
   RepoCounts,
   RepoEmbedding,
@@ -24,6 +25,7 @@ export type {
   RepoRef,
   RepoSummary,
   StoredRepo,
+  SweepQuery,
 } from "./queries/repos.ts";
 export type {
   HybridSearch,
@@ -36,6 +38,7 @@ export type {
 } from "./queries/search.ts";
 export { MetricFamily, MetricVariant, noFilters } from "./queries/search.ts";
 export type {
+  EnrichmentProgress,
   LibraryEntry,
   SnapshotChanges,
   Star,
@@ -46,6 +49,7 @@ export type {
 } from "./queries/stars.ts";
 export type { SyncClaim, SyncRequest } from "./queries/sync-requests.ts";
 export type { UsageCall, UsageCounts, UsageDay } from "./queries/usage.ts";
+export { enrichFailureCap } from "./schema.ts";
 
 export class Db extends Context.Service<
   Db,

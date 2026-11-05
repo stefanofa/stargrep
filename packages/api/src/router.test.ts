@@ -85,14 +85,17 @@ const searchAda = (request: Search.SearchRequest) =>
       ? Effect.succeed(searchOutcome(request))
       : Effect.fail(new Search.AccountNotSynced({ login: request.scope.login }));
 
+const reading = { total: 1776, read: 412, failed: 3 };
+
 const services = (fakes: Fakes): Context.Context<ApiServices> => {
   const db = {
     repos: {
       require: (id: RepoId) => (id === repo.id ? Effect.succeed(repo) : Effect.fail(new RepoNotFound({ repoId: id }))),
     },
     stars: {
+      enrichment: () => Effect.succeed(reading),
       library: (accountId: GitHubAccountId) =>
-        Effect.succeed(accountId === ada.account.id ? [{ repo, starredAt, stars: 16_400 }] : []),
+        Effect.succeed(accountId === ada.account.id ? [{ repo, starredAt, stars: 16_400, read: false }] : []),
     },
   } as unknown as Db.Db["Service"];
   const requests =
@@ -254,6 +257,7 @@ describe("sync", () => {
       state: "queued",
       requestedAt: "2026-10-01T08:00:00.000Z",
       syncedAt: null,
+      enrichment: reading,
     });
     expect(sent).toEqual(["octocat" as Login]);
     expect(await api.syncStatus({ login: "octocat" })).toEqual({
@@ -261,6 +265,7 @@ describe("sync", () => {
       state: "failed",
       requestedAt: "2026-10-01T08:00:00.000Z",
       syncedAt: null,
+      enrichment: reading,
     });
   });
 
@@ -323,6 +328,7 @@ describe("signed-in procedures", () => {
           keywords: ["tui"],
           starredAt: "2025-03-14T10:00:00.000Z",
           stars: 16_400,
+          read: false,
         }),
       ],
     });

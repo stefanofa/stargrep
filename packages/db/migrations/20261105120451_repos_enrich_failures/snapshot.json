@@ -1,0 +1,133 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "487a5e43-f8a2-4501-be28-46feb41d1480",
+  "prevIds": [
+    "037f3dc1-3076-4aca-88b4-a5cae3fe3549"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "enrich_failures"
+      ],
+      "writes": [
+        "s|col|public.repos.enrich_failures",
+        "n|col|public.repos.enrich_failures",
+        "e|col|public.repos.enrich_failures"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "enrich_retry_at"
+      ],
+      "writes": [
+        "s|col|public.repos.enrich_retry_at",
+        "n|col|public.repos.enrich_retry_at",
+        "e|col|public.repos.enrich_retry_at"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repos",
+        "repos_retryable_enrichment_idx"
+      ],
+      "writes": [
+        "s|idx|public.repos_retryable_enrichment_idx",
+        "n|idx|public.repos_retryable_enrichment_idx",
+        "e|idx|public.repos_retryable_enrichment_idx",
+        "n|rel|public.repos_retryable_enrichment_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.repos.enrich_retry_at",
+        "n|col|public.repos.id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "enrich_failures",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "0",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "enrich_retry_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "repos_retryable_enrichment_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "enrich_retry_at",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": "(\"summary\" is null or \"summary_readme_oid\" is distinct from \"readme_oid\" or \"embedding_model\" is null) and \"enrich_failures\" < 3",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    }
+  ]
+}
