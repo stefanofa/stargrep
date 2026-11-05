@@ -2,18 +2,14 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { useEffect, useState } from "react";
-import { enrichmentOf } from "./planned.ts";
 import { api, type SyncStatus } from "./rpc.ts";
 
 const importing = Duration.seconds(2);
 const reading = Duration.seconds(5);
 
-const stillReading = (status: SyncStatus) => {
-  const enrichment = enrichmentOf(status);
-  return enrichment !== null && enrichment.read + enrichment.failed < enrichment.total;
-};
+const stillReading = ({ enrichment }: SyncStatus) => enrichment.read + enrichment.failed < enrichment.total;
 
-const readCount = (status: SyncStatus | undefined) => enrichmentOf(status)?.read;
+const readCount = (status: SyncStatus | undefined) => status?.enrichment.read;
 
 // Polls while stars import and then while they are read. Each round that imported stars or read more of them
 // reloads the library, so new repos appear and the "not read yet" flags clear as reading goes on.

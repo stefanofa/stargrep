@@ -1,5 +1,5 @@
 import type { PipPose, StatusIcon } from "@stargrep/ui";
-import type { Enrichment } from "./planned.ts";
+import type { EnrichmentProgress } from "./rpc.ts";
 
 const count = new Intl.NumberFormat("en");
 const n = (value: number) => count.format(value);
@@ -19,7 +19,7 @@ export const stageOf = ({
   importing: boolean;
   imported: number;
   starred: number | null;
-  enrichment: Enrichment | null;
+  enrichment: EnrichmentProgress | null;
 }): Stage => {
   if (importing)
     return {

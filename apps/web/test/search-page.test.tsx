@@ -11,16 +11,15 @@ import {
 import { act, cleanup, configure, render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import * as real from "../src/lib/library-collection.ts";
-import type { PlannedRepo, PlannedStatus } from "../src/lib/planned.ts";
 import type { LibraryRepo, SearchResult, SyncStatus, Viewer } from "../src/lib/rpc.ts";
 import type {} from "../src/routeTree.gen.ts";
 
-type Repo = LibraryRepo & PlannedRepo;
+type Repo = LibraryRepo;
 
 interface Server {
   viewer: Viewer;
   repos: Array<Repo>;
-  status: SyncStatus & PlannedStatus;
+  status: SyncStatus;
   search: (q: string) => Array<SearchResult>;
   searches: Array<string>;
 }
@@ -89,17 +88,18 @@ const repos = (): Array<Repo> => [
   repo(6, "rhysd", "tui-textarea", "A multi-line text editor widget."),
 ];
 
+const reading = { total: 6, read: 4, failed: 0 };
+const allRead = { total: 6, read: 6, failed: 0 };
+const arriving = { total: 6, read: 0, failed: 0 };
+
 const status = (extra: Partial<Server["status"]>): Server["status"] => ({
   login: "junodev",
   state: "done",
   requestedAt: "2026-11-05T10:00:00.000Z",
   syncedAt: "2026-11-05T10:00:00.000Z",
+  enrichment: allRead,
   ...extra,
 });
-
-const reading = { total: 6, read: 4, failed: 0 };
-const allRead = { total: 6, read: 6, failed: 0 };
-
 const hit = (repo: Repo): SearchResult => ({ ...repo, reason: "meaning match", rankedBy: [], metrics: [] });
 
 beforeEach(() => {
@@ -159,7 +159,7 @@ describe("the search page in each state", () => {
 
   test("importing: real counts on the strip and the rail, and placeholders where stars will land", async () => {
     server.viewer = { ...server.viewer, starredCount: 10 };
-    server.status = status({ state: "queued", enrichment: null });
+    server.status = status({ state: "queued", enrichment: arriving });
     await open("/search");
     await waitFor(() => expect(strip()).toContain("importing your stars"));
     expect(strip()).toContain("6 of 10");
@@ -228,7 +228,7 @@ describe("the search page in each state", () => {
   test("the sort menu and view toggle stay inside the search tile in every state", async () => {
     const states: Array<[string, () => void]> = [
       ["/search", () => {}],
-      ["/search", () => (server.status = status({ state: "queued", enrichment: null }))],
+      ["/search", () => (server.status = status({ state: "queued", enrichment: arriving }))],
       ["/search?q=terminal", () => (server.status = status({ enrichment: reading }))],
       ["/search?q=nothing%20like%20this", () => (server.status = status({ enrichment: reading }))],
       ["/search?q=nothing%20like%20this", () => {}],

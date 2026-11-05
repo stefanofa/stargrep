@@ -1,5 +1,5 @@
 import type { RepoVisual } from "@stargrep/ui";
-import type { OwnerType, RepoFacts } from "./planned.ts";
+import type { LibraryRepo, OwnerType } from "./rpc.ts";
 
 // Owners whose GitHub avatar stands in for a repo with no icon of its own. An org's avatar is usually the project's
 // logo; a person's is a face, so their repos get a monogram. Adding "user" here switches people to their avatar.
@@ -19,7 +19,7 @@ const sized = (url: string) => {
 };
 
 export const repoVisual = (
-  repo: Pick<RepoFacts, "icon" | "ownerType" | "ownerAvatarUrl"> & { readonly owner: string },
+  repo: Pick<LibraryRepo, "owner" | "icon" | "ownerType" | "ownerAvatarUrl">,
   owners: ReadonlySet<OwnerType> = avatarOwners,
 ): RepoVisual => {
   const letters = repo.owner.slice(0, 2).toLowerCase();

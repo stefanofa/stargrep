@@ -8,6 +8,8 @@ export type Viewer = Outputs["viewer"];
 export type LibraryRepo = Outputs["library"]["repos"][number];
 export type SearchResult = Outputs["search"]["results"][number];
 export type SyncStatus = Outputs["syncStatus"];
+export type EnrichmentProgress = SyncStatus["enrichment"];
+export type OwnerType = NonNullable<LibraryRepo["ownerType"]>;
 
 let client: ContractRouterClient<typeof contract> | undefined;
 

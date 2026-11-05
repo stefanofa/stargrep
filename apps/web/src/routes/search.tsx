@@ -34,7 +34,6 @@ import { Wordmark } from "../components/wordmark.tsx";
 import { keywordTerms } from "../lib/keyword.ts";
 import { getLibrary, useRecoveries } from "../lib/library-collection.ts";
 import { orders } from "../lib/order.ts";
-import { enrichmentOf } from "../lib/planned.ts";
 import { now, syncedAgo, toDetail } from "../lib/present.ts";
 import { mergeResults, withReply } from "../lib/results.ts";
 import { api, signedOut, type Viewer } from "../lib/rpc.ts";
@@ -258,7 +257,7 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
   const semantic = useSemanticSearch(viewer.login, query, round);
   const { status: sync, retry } = useSync(viewer.login, reload);
 
-  const enrichment = enrichmentOf(sync);
+  const enrichment = sync?.enrichment ?? null;
   const stage = stageOf({
     importing: sync?.state === "queued",
     imported: entries.length,

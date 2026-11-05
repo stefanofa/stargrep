@@ -1,10 +1,9 @@
 import { createCollection } from "@tanstack/db";
 import { useEffect, useState } from "react";
 import { searchText } from "./keyword.ts";
-import type { PlannedRepo } from "./planned.ts";
 import { api, type LibraryRepo } from "./rpc.ts";
 
-export interface LibraryEntry extends LibraryRepo, PlannedRepo {
+export interface LibraryEntry extends LibraryRepo {
   readonly text: string;
 }
 
