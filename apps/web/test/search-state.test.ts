@@ -185,7 +185,12 @@ describe("browsing", () => {
 describe("searching", () => {
   test("before any answer, placeholders hold the meaning group", () => {
     const state = view(reading, { terms: ["tui"], pending: true });
-    expect(state.status).toEqual({ icon: "busy", label: "searching", detail: "1,364 stars not read yet" });
+    expect(state.status).toEqual({
+      icon: "busy",
+      label: "searching",
+      detail: "1,364 stars not read yet",
+      instant: true,
+    });
     expect(state.pose).toBe("thinking");
     expect(state.body).toEqual({
       kind: "results",
@@ -202,7 +207,12 @@ describe("searching", () => {
 
   test("results while reading are grouped and say they are partial", () => {
     const state = view(reading, { terms: ["tui"], words: results("w", 2), meaning: results("m", 1) });
-    expect(state.status).toEqual({ icon: "busy", label: "found 3 so far", detail: "1,364 stars not read yet" });
+    expect(state.status).toEqual({
+      icon: "busy",
+      label: "found 3 so far",
+      detail: "1,364 stars not read yet",
+      instant: true,
+    });
     expect(state.body.kind === "results" && state.body.groups.map((group) => group.heading)).toEqual([
       { label: "matching words", detail: "2 from all 1,776" },
       { label: "matching meaning", detail: "1 from the 412 read so far" },
@@ -218,7 +228,13 @@ describe("searching", () => {
 
   test("results once everything is read are one list with a plain count", () => {
     const state = view(ready, { terms: ["tui"], words: results("w", 2), meaning: results("m", 4), pending: true });
-    expect(state.status).toEqual({ icon: "found", label: "found 6", detail: "of 1,776", continues: true });
+    expect(state.status).toEqual({
+      icon: "found",
+      label: "found 6",
+      detail: "of 1,776",
+      continues: true,
+      instant: true,
+    });
     expect(state.progress).toBeUndefined();
     expect(state.pose).toBe("idle");
     expect(state.body).toEqual({
@@ -229,7 +245,12 @@ describe("searching", () => {
 
   test("nothing yet while reading could still be in the unread part", () => {
     const state = view(reading, query);
-    expect(state.status).toEqual({ icon: "busy", label: "nothing yet", detail: "1,364 stars not read yet" });
+    expect(state.status).toEqual({
+      icon: "busy",
+      label: "nothing yet",
+      detail: "1,364 stars not read yet",
+      instant: true,
+    });
     expect(state.pose).toBe("unsure");
     expect(state.body).toEqual({
       kind: "empty-reading",
@@ -258,7 +279,12 @@ describe("searching", () => {
 
   test("nothing after everything is read is a real no, with rephrasings from the query's words", () => {
     const state = view(ready, query);
-    expect(state.status).toEqual({ icon: "done", label: "nothing found", detail: "all 1,776 stars read" });
+    expect(state.status).toEqual({
+      icon: "done",
+      label: "nothing found",
+      detail: "all 1,776 stars read",
+      instant: true,
+    });
     expect(state.pose).toBe("sad");
     expect(state.body).toEqual({
       kind: "empty",

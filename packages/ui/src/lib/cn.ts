@@ -13,7 +13,7 @@ const merge = extendTailwindMerge({
       container: ["page", "narrow"],
       shadow: ["panel", "dock"],
       ease: ["out"],
-      animate: ["tile-in", "fade-in", "skeleton"],
+      animate: ["settle", "skeleton"],
     },
   },
 });

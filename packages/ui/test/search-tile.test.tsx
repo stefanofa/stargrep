@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { type Filter, SearchTile } from "../src/index.ts";
+import { type Filter, SearchTile, StatusLine } from "../src/index.ts";
 import { page } from "./dom.ts";
 
 const initial: Filter[] = [
@@ -83,5 +83,24 @@ describe("filter chips", () => {
     await user.keyboard("/");
     expect(document.activeElement).toBe(page().getByRole("searchbox"));
     expect(page().getByRole<HTMLInputElement>("searchbox").value).toBe("");
+  });
+});
+
+describe("status line", () => {
+  const label = () => page().getByRole("status").firstElementChild;
+
+  test("a new sync state settles its label in, once", () => {
+    const { rerender } = render(<StatusLine icon="busy" label="loading your stars" />);
+    expect(label()?.className).not.toContain("animate-settle");
+    rerender(<StatusLine icon="synced" label="24 stars" />);
+    expect(label()?.className).toContain("animate-settle");
+  });
+
+  test("search answers swap in place while you type", () => {
+    const { rerender } = render(<StatusLine icon="synced" label="24 stars" />);
+    rerender(<StatusLine icon="busy" label="searching" instant />);
+    rerender(<StatusLine icon="found" label="found 3" instant />);
+    expect(label()?.textContent).toBe("found 3");
+    expect(label()?.className).not.toContain("animate-settle");
   });
 });

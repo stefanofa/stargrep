@@ -67,6 +67,7 @@ export interface Status {
   readonly detail?: string;
   readonly continues?: boolean;
   readonly retry?: boolean;
+  readonly instant?: boolean;
 }
 
 export interface Progress {
@@ -326,7 +327,8 @@ export const searchView = ({
   const answer = answerOf(search);
   const progress = progressOf(stage);
   return {
-    status: answer.kind === "browsing" ? browsing(stage, synced, timeLeft) : answered(stage, answer),
+    status:
+      answer.kind === "browsing" ? browsing(stage, synced, timeLeft) : { ...answered(stage, answer), instant: true },
     progress,
     pose: poseOf(stage, answer),
     body: bodyOf(stage, answer, search, progress, timeLeft),

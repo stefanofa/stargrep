@@ -1,4 +1,4 @@
-import { type MouseEvent, type ReactNode, useId } from "react";
+import { type MouseEvent, type ReactNode, useId, useLayoutEffect, useRef, useState } from "react";
 import { Skeleton as Measured } from "skullet/react";
 import { cn } from "../lib/cn.ts";
 import { NetworkAvatars, type Person } from "./avatar.tsx";
@@ -177,7 +177,7 @@ export function ResultItem({
             className={cn(
               "[grid-area:stars] mt-2.5 flex items-center gap-[5px] self-end justify-self-start",
               dim && "text-muted-foreground",
-              "list:mt-0 list:self-center",
+              "list:mt-0 list:self-center list:sm:justify-self-end list:sm:pr-6",
             )}
           >
             <dt className="sr-only">stars</dt>
@@ -284,6 +284,43 @@ export function GroupHeading({ id, label, detail }: { id: string; label: string;
   );
 }
 
+type Entrance = "tile-in" | "fade-in";
+
+const entrances: Record<Entrance, { full: Keyframe[]; reduced: Keyframe[] | null; timing: KeyframeAnimationOptions }> =
+  {
+    "tile-in": {
+      full: [{ opacity: 0, translate: "0 6px" }, {}],
+      reduced: [{ opacity: 0 }, {}],
+      timing: { duration: 200, easing: "cubic-bezier(0.2, 0, 0, 1)" },
+    },
+    "fade-in": { full: [{ opacity: 0 }, {}], reduced: null, timing: { duration: 150, easing: "ease-out" } },
+  };
+
+// Script animations, unlike CSS ones, keep running when React moves a reordered item's node, so typing never replays them.
+function Entry({
+  entrance,
+  className,
+  children,
+}: {
+  entrance: Entrance | null;
+  className?: string;
+  children: ReactNode;
+}) {
+  const item = useRef<HTMLLIElement>(null);
+  const [onMount] = useState(entrance);
+  useLayoutEffect(() => {
+    if (onMount === null) return;
+    const { full, reduced, timing } = entrances[onMount];
+    const frames = matchMedia("(prefers-reduced-motion: reduce)").matches ? reduced : full;
+    if (frames) item.current?.animate(frames, timing);
+  }, [onMount]);
+  return (
+    <li ref={item} className={className}>
+      {children}
+    </li>
+  );
+}
+
 export function ResultList({
   results,
   pending = 0,
@@ -298,12 +335,11 @@ export function ResultList({
   pending?: number;
   heroFirst?: boolean;
   entering?: (key: string) => boolean;
-  enter: "tile-in" | "fade-in";
+  enter: Entrance;
   label?: string | undefined;
   view?: View | undefined;
   onOpen?: OpenResult | undefined;
 }) {
-  const animation = enter === "tile-in" ? "animate-tile-in" : "motion-safe:animate-fade-in";
   return (
     <ol
       aria-busy={pending > 0}
@@ -317,9 +353,9 @@ export function ResultList({
         const key = `${result.owner}/${result.name}`;
         const hero = heroFirst && index === 0;
         return (
-          <li key={key} className={cn(entering(key) && animation, hero && "sm:col-span-2")}>
+          <Entry key={key} entrance={entering(key) ? enter : null} className={cn(hero && "sm:col-span-2")}>
             <ResultItem result={result} hero={hero} onOpen={onOpen} />
-          </li>
+          </Entry>
         );
       })}
       {Array.from({ length: pending }, (_, index) => {

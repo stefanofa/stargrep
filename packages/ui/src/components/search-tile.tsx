@@ -119,7 +119,7 @@ export function SearchTile({
 
   return (
     <div className={cn("relative", className)}>
-      <Tile className="flex flex-col overflow-clip p-0">
+      <Tile className="flex flex-col overflow-clip p-0 has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-accent">
         <search className="flex flex-col gap-[18px] px-[22px] pt-4 pb-5 sm:px-8 sm:pt-7 sm:pb-6">
           <form onSubmit={submit} className="flex items-center gap-3 sm:gap-4">
             <SearchIcon className="size-[22px] shrink-0 sm:size-[26px]" />
@@ -131,7 +131,7 @@ export function SearchTile({
               value={current}
               onValueChange={change}
               onKeyDown={removeLastOnBackspace}
-              className="min-w-0 flex-1 bg-transparent font-sans text-[16px] leading-6 font-medium text-foreground placeholder:text-muted-foreground sm:text-xl sm:tracking-snug [&::-webkit-search-cancel-button]:appearance-none"
+              className="min-w-0 flex-1 bg-transparent font-sans outline-none text-[16px] leading-6 font-medium text-foreground placeholder:text-muted-foreground sm:text-xl sm:tracking-snug [&::-webkit-search-cancel-button]:appearance-none"
             />
             <kbd className="flex h-[30px] shrink-0 items-center rounded-[8px] bg-muted px-2.5 font-sans text-sm font-semibold text-secondary-foreground max-sm:hidden">
               /
@@ -169,12 +169,14 @@ export function SearchTile({
 
 export type StatusIcon = "busy" | "synced" | "found" | "done" | "failed";
 
-function Glyph({ icon }: { icon: StatusIcon }) {
+const statusIcons: ReadonlyArray<StatusIcon> = ["busy", "synced", "found", "done", "failed"];
+
+function Glyph({ icon, shown }: { icon: StatusIcon; shown: boolean }) {
   const common = { viewBox: "0 0 16 16", fill: "none", className: "size-4" } as const;
   switch (icon) {
     case "busy":
       return (
-        <svg aria-hidden {...common} className="size-4 animate-spin motion-reduce:animate-none">
+        <svg aria-hidden {...common} className={cn("size-4", shown && "animate-spin motion-reduce:animate-none")}>
           <circle cx="8" cy="8" r="6" stroke="var(--color-accent-soft)" strokeWidth="2.2" />
           <path d="M8 2a6 6 0 0 1 6 6" stroke="var(--color-accent-strong)" strokeWidth="2.2" strokeLinecap="round" />
         </svg>
@@ -226,24 +228,50 @@ function Glyph({ icon }: { icon: StatusIcon }) {
   }
 }
 
+function Glyphs({ icon, instant }: { icon: StatusIcon; instant: boolean }) {
+  return (
+    <span className="grid size-[18px] shrink-0 place-items-center max-sm:hidden">
+      {statusIcons.map((each) => (
+        <span
+          key={each}
+          className={cn(
+            "[grid-area:1/1]",
+            !instant &&
+              "transition-[opacity,scale,filter] duration-200 ease-(--ease-out) motion-reduce:transition-none",
+            each !== icon && "scale-25 opacity-0 blur-[4px]",
+          )}
+        >
+          <Glyph icon={each} shown={each === icon} />
+        </span>
+      ))}
+    </span>
+  );
+}
+
 export function StatusLine({
   icon,
   label,
   detail,
   continues = false,
+  instant = false,
   action,
 }: {
   icon: StatusIcon;
   label: string;
   detail?: string | undefined;
   continues?: boolean | undefined;
+  instant?: boolean | undefined;
   action?: ReactNode;
 }) {
+  const [settled, setSettled] = useState(icon);
+  const [settles, setSettles] = useState(false);
+  if (settled !== icon) {
+    setSettled(icon);
+    setSettles(!instant);
+  }
   return (
     <div className="flex min-w-0 items-center gap-2.5">
-      <span className="flex size-[18px] shrink-0 items-center justify-center max-sm:hidden">
-        <Glyph icon={icon} />
-      </span>
+      <Glyphs icon={icon} instant={instant} />
       <div className="flex min-h-9 min-w-0 flex-col items-start justify-start gap-0.5 sm:flex-row sm:items-center sm:justify-center sm:gap-2.5">
         <p
           className={cn(
@@ -252,7 +280,12 @@ export function StatusLine({
           )}
         >
           <span role="status" className="text-meta font-semibold text-foreground max-sm:truncate sm:text-base">
-            {label}
+            <span
+              key={icon}
+              className={cn("inline-block max-sm:block max-sm:truncate", settles && "motion-safe:animate-settle")}
+            >
+              {label}
+            </span>
           </span>
           {detail && (
             <span

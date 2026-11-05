@@ -1,5 +1,5 @@
 import "./register.ts";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import {
   type AnyRoute,
   createMemoryHistory,
@@ -28,6 +28,17 @@ interface Server {
 let server: Server;
 
 const page = () => within(document.body);
+
+const entrances = () => {
+  const animate = spyOn(Element.prototype, "animate");
+  return {
+    of: (name: RegExp) =>
+      animate.mock.contexts.filter(
+        (item) => item instanceof HTMLLIElement && name.test(item.querySelector("h3")?.textContent ?? ""),
+      ).length,
+    [Symbol.dispose]: () => animate.mockRestore(),
+  };
+};
 
 const api = () => ({
   viewer: async () => server.viewer,
@@ -311,18 +322,18 @@ describe("the search page in each state", () => {
   }, 10_000);
 
   test("changing the sort keeps the library still instead of replaying its entrance", async () => {
+    using played = entrances();
     const user = userEvent.setup();
     await open("/search");
     await waitFor(() => expect(page().getByRole("link", { name: "tui-rs" })).toBeTruthy());
     await settle(50);
+    const before = played.of(/tui-rs|ratatui|bottom/);
+    expect(before).toBeGreaterThan(0);
     await user.click(within(tile()).getByRole("button", { name: /Sort by/ }));
     await user.click(await page().findByRole("menuitemradio", { name: "most stars" }));
     await waitFor(() => expect(within(tile()).getByRole("button", { name: "Sort by most stars" })).toBeTruthy());
-    const tiles = page()
-      .getAllByRole("link", { name: /tui-rs|ratatui|bottom/ })
-      .map((link) => link.closest("li"));
-    expect(tiles.length).toBeGreaterThan(0);
-    for (const tile of tiles) expect(tile?.className).not.toContain("tile-in");
+    expect(page().getAllByRole("link", { name: /tui-rs|ratatui|bottom/ }).length).toBeGreaterThan(0);
+    expect(played.of(/tui-rs|ratatui|bottom/)).toBe(before);
   });
 
   test("searching while reading: grouped results and a partial count", async () => {
@@ -342,11 +353,12 @@ describe("the search page in each state", () => {
     server.search = () => [hit(server.repos[4] as Repo)];
     await open("/search?q=terminal");
     const tile = await waitFor(() => page().getByRole("link", { name: "tui-rs" }).closest("li"));
+    using played = entrances();
     await user.type(page().getByRole("searchbox"), "s");
     expect(tile?.isConnected).toBe(true);
     await waitFor(() => expect(server.searches.at(-1)).toBe("terminals"));
     expect(tile?.isConnected).toBe(true);
-    expect(tile?.className).not.toContain("tile-in");
+    expect(played.of(/./)).toBe(0);
   });
 
   test("results once everything is read: one list, a plain count, no rail", async () => {
