@@ -69,7 +69,7 @@ export function ViewToggle({
           key={option}
           value={option}
           aria-label={label}
-          className="flex h-[30px] w-9 items-center justify-center rounded-full text-muted-foreground transition-[color,background-color] duration-120 hover:text-foreground data-pressed:bg-accent data-pressed:text-ink sm:h-8 sm:w-10"
+          className="relative flex h-[30px] w-10 items-center justify-center rounded-full text-muted-foreground transition-[color,background-color] duration-120 after:absolute after:inset-x-0 after:-inset-y-[5px] hover:text-foreground data-pressed:bg-accent data-pressed:text-ink sm:h-8"
         >
           <Icon className="size-4" />
         </Toggle>

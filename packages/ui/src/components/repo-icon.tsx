@@ -43,8 +43,8 @@ export function Monogram({ letters }: { letters: string }) {
 }
 
 export function RepoIcon({ visual }: { visual: RepoVisual }) {
-  const [failed, setFailed] = useState(false);
-  if (visual.kind === "monogram" || failed) {
+  const [failedUrl, setFailedUrl] = useState<string>();
+  if (visual.kind === "monogram" || failedUrl === visual.url) {
     return <Monogram letters={visual.letters} />;
   }
   const plate = visual.kind === "icon" ? visual.plate : "none";
@@ -62,7 +62,7 @@ export function RepoIcon({ visual }: { visual: RepoVisual }) {
         height={small ?? 44}
         loading="lazy"
         decoding="async"
-        onError={() => setFailed(true)}
+        onError={() => setFailedUrl(visual.url)}
         className={cn("object-cover", small === undefined ? "size-full" : "shrink-0")}
         style={small === undefined ? undefined : { width: small, height: small }}
       />

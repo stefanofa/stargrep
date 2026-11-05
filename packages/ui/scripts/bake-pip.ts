@@ -1,7 +1,7 @@
 import { traits } from "blobatar";
 import { happy, idle, sad, scared, surprised, thinking, unsure } from "blobatar/expression";
 import { idleSeeds } from "blobatar/idle";
-import { smallMark, starPoints, starStroke } from "../src/mark/star.ts";
+import { starPoints, starStroke } from "../src/mark/star.ts";
 import { type Body, type Ellipse, type Eye, faceFit, superellipse } from "./blobatar-face.ts";
 
 const seed = "pip";
@@ -59,17 +59,19 @@ export const face: Ellipse = { cx: centre.x, cy: centre.y - eyeLift, rx: inscrib
 
 const largeMarkBodyScale = 0.82;
 
-export const bodyFor = (size: number): Body => {
-  const radius = traits(seed, true, pin).num("body.r", 31, 38) * (size <= smallMark ? 1 : largeMarkBodyScale);
+export type Mark = "small" | "large";
+
+export const bodyFor = (mark: Mark): Body => {
+  const radius = traits(seed, true, pin).num("body.r", 31, 38) * (mark === "small" ? 1 : largeMarkBodyScale);
   return { cx: centre.x, cy: centre.y, rx: radius, ry: radius, n: 2, rot: 0 };
 };
 
-export const fitEyes = (size: number): Array<Eye> => faceFit(traits(seed, true, pin), bodyFor(size), face);
+export const fitEyes = (mark: Mark): Array<Eye> => faceFit(traits(seed, true, pin), bodyFor(mark), face);
 
 const round = (value: number) => Math.round(value * 100) / 100;
 
-const bakeEyes = (size: number) =>
-  fitEyes(size).map((eye, index) => ({
+const bakeEyes = (mark: Mark) =>
+  fitEyes(mark).map((eye, index) => ({
     d: superellipse(eye),
     cx: round(eye.cx),
     cy: round(eye.cy),
@@ -95,7 +97,7 @@ const motionVars = () => {
 };
 
 export const bakePip = () => ({
-  eyes: { small: bakeEyes(smallMark), large: bakeEyes(smallMark + 1) },
+  eyes: { small: bakeEyes("small"), large: bakeEyes("large") },
   motion: motionVars(),
   poses: Object.fromEntries(
     Object.entries(expressions).map(([name, expression]) => [name, expression.vars(expression.p)]),

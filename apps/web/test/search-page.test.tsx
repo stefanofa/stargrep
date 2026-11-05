@@ -22,6 +22,7 @@ interface Server {
   status: SyncStatus;
   search: (q: string) => Array<SearchResult>;
   searches: Array<string>;
+  calls: { library: number; syncStatus: number };
 }
 
 let server: Server;
@@ -30,8 +31,14 @@ const page = () => within(document.body);
 
 const api = () => ({
   viewer: async () => server.viewer,
-  library: async () => ({ repos: server.repos }),
-  syncStatus: async () => server.status,
+  library: async () => {
+    server.calls.library += 1;
+    return { repos: server.repos };
+  },
+  syncStatus: async () => {
+    server.calls.syncStatus += 1;
+    return server.status;
+  },
   triggerSync: async () => server.status,
   search: async ({ q }: { q: string }) => {
     server.searches.push(q);
@@ -109,6 +116,7 @@ beforeEach(() => {
     status: status({ enrichment: allRead }),
     search: () => [],
     searches: [],
+    calls: { library: 0, syncStatus: 0 },
   };
   library = real.makeLibrary(() =>
     api()
@@ -132,12 +140,13 @@ const open = async (path: string) => {
   });
   render(<RouterProvider router={router} />);
   await page().findByRole("searchbox", { name: "Search your stars" });
-  await waitFor(() => expect(document.querySelector("[aria-live]")?.textContent).not.toContain("loading"));
+  await waitFor(() => expect(strip()).not.toContain("loading"));
 };
 
-const strip = () => document.querySelector("[aria-live]")?.textContent ?? "";
+const strip = () => document.querySelector("[role=status]")?.closest("p")?.textContent ?? "";
+const announced = () => page().getByRole("status").textContent;
 const tile = () => page().getByRole("searchbox").closest("[data-slot=tile]") as HTMLElement;
-const rail = () => document.querySelector("[data-slot=rail] > div") as HTMLElement | null;
+const rail = () => page().queryByRole("progressbar");
 const mark = () => document.querySelector("header svg[data-pose]")?.getAttribute("data-pose");
 const chips = () =>
   page()
@@ -154,7 +163,7 @@ describe("the search page in each state", () => {
     expect(within(tile()).getByRole("button", { name: /Sort by/ })).toBeTruthy();
     expect(within(tile()).getByRole("group", { name: "View" })).toBeTruthy();
     expect(rail()).toBeNull();
-    expect(mark()).toBe("idle");
+    await waitFor(() => expect(mark()).toBe("idle"));
   });
 
   test("importing: real counts on the strip and the rail, and placeholders where stars will land", async () => {
@@ -163,8 +172,14 @@ describe("the search page in each state", () => {
     await open("/search");
     await waitFor(() => expect(strip()).toContain("importing your stars"));
     expect(strip()).toContain("6 of 10");
-    expect(rail()?.style.transform).toBe("scaleX(0.6)");
-    expect(mark()).toBe("happy");
+    const bar = page().getByRole("progressbar", { name: "importing your stars" });
+    expect([
+      bar.getAttribute("aria-valuemin"),
+      bar.getAttribute("aria-valuenow"),
+      bar.getAttribute("aria-valuemax"),
+    ]).toEqual(["0", "6", "10"]);
+    expect(bar.getAttribute("aria-valuetext")).toBe("6 of 10 imported");
+    await waitFor(() => expect(mark()).toBe("happy"));
     await waitFor(() => expect(page().getAllByText(/stars so far/).length).toBeGreaterThan(0));
     expect(document.querySelectorAll("ol[aria-busy=true] > li").length).toBe(8);
     expect(document.querySelectorAll("ol > li > [aria-busy=true]").length).toBe(2);
@@ -175,8 +190,13 @@ describe("the search page in each state", () => {
     await open("/search");
     await waitFor(() => expect(strip()).toContain("reading your stars"));
     expect(strip()).toContain("4 of 6 understood");
-    expect(rail()?.style.transform).toBe("scaleX(0.667)");
-    expect(mark()).toBe("thinking");
+    const bar = page().getByRole("progressbar", { name: "reading your stars" });
+    expect([
+      bar.getAttribute("aria-valuenow"),
+      bar.getAttribute("aria-valuemax"),
+      bar.getAttribute("aria-valuetext"),
+    ]).toEqual(["4", "6", "4 of 6 read"]);
+    await waitFor(() => expect(mark()).toBe("thinking"));
     await waitFor(() => expect(page().getByText("A debugger for async rust.")).toBeTruthy());
     expect(page().queryAllByText("not read yet")).toEqual([]);
   });
@@ -238,6 +258,73 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(strip()).toContain("checking for new stars"));
   });
 
+  test("the live region announces the state, not every count the poll brings", async () => {
+    server.viewer = { ...server.viewer, starredCount: 10 };
+    server.status = status({ state: "queued", syncedAt: null, enrichment: arriving });
+    await open("/search");
+    await waitFor(() => expect(strip()).toContain("6 of 10"));
+    expect(announced()).toBe("importing your stars");
+    server.repos = [...server.repos, repo(7, "charmbracelet", "bubbletea", "A TUI framework.")];
+    await waitFor(() => expect(strip()).toContain("7 of 10"), { timeout: 5000 });
+    expect(announced()).toBe("importing your stars");
+  });
+
+  test("a failed check on a synced library says so and offers a retry", async () => {
+    server.status = status({ state: "failed" });
+    await open("/search");
+    await waitFor(() => expect(strip()).toContain("couldn't check for new stars"));
+    expect(within(tile()).getByRole("button", { name: "try again" })).toBeTruthy();
+    await waitFor(() => expect(mark()).toBe("scared"));
+  });
+
+  test("checking for new stars doesn't reload the library on every poll", async () => {
+    server.status = status({ state: "queued", enrichment: allRead });
+    await open("/search");
+    await waitFor(() => expect(strip()).toContain("checking for new stars"));
+    const polls = server.calls.syncStatus;
+    const loads = server.calls.library;
+    await settle(4500);
+    expect(server.calls.syncStatus).toBeGreaterThan(polls);
+    expect(server.calls.library).toBe(loads);
+  }, 10_000);
+
+  test("a hidden tab stops polling and checks at once when shown", async () => {
+    server.status = status({ state: "queued", syncedAt: null, enrichment: arriving });
+    await open("/search");
+    await waitFor(() => expect(strip()).toContain("importing your stars"));
+    const visibility = Object.getOwnPropertyDescriptor(Document.prototype, "visibilityState");
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+    try {
+      await settle(2200);
+      const polls = server.calls.syncStatus;
+      await settle(2500);
+      expect(server.calls.syncStatus).toBe(polls);
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+      await act(async () => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await waitFor(() => expect(server.calls.syncStatus).toBe(polls + 1), { timeout: 500 });
+    } finally {
+      if (visibility) Object.defineProperty(document, "visibilityState", visibility);
+      else Reflect.deleteProperty(document, "visibilityState");
+    }
+  }, 10_000);
+
+  test("changing the sort keeps the library still instead of replaying its entrance", async () => {
+    const user = userEvent.setup();
+    await open("/search");
+    await waitFor(() => expect(page().getByRole("link", { name: "tui-rs" })).toBeTruthy());
+    await settle(50);
+    await user.click(within(tile()).getByRole("button", { name: /Sort by/ }));
+    await user.click(await page().findByRole("menuitemradio", { name: "most stars" }));
+    await waitFor(() => expect(within(tile()).getByRole("button", { name: "Sort by most stars" })).toBeTruthy());
+    const tiles = page()
+      .getAllByRole("link", { name: /tui-rs|ratatui|bottom/ })
+      .map((link) => link.closest("li"));
+    expect(tiles.length).toBeGreaterThan(0);
+    for (const tile of tiles) expect(tile?.className).not.toContain("tile-in");
+  });
+
   test("searching while reading: grouped results and a partial count", async () => {
     server.status = status({ enrichment: reading });
     server.search = () => [hit(server.repos[4] as Repo)];
@@ -265,8 +352,7 @@ describe("the search page in each state", () => {
   test("results once everything is read: one list, a plain count, no rail", async () => {
     server.search = () => [hit(server.repos[4] as Repo)];
     await open("/search?q=terminal");
-    await waitFor(() => expect(strip()).toContain("found 3"));
-    expect(strip()).toContain("of 6");
+    await waitFor(() => expect(strip()).toContain("found 3 of 6"));
     expect(page().queryByRole("heading", { name: /matching words/ })).toBeNull();
     expect(page().getByRole("list", { name: "Results" })).toBeTruthy();
     expect(rail()).toBeNull();
@@ -278,7 +364,7 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(page().getByRole("heading", { name: "not in the 4 i've read yet" })).toBeTruthy());
     expect(page().getByText(/it might be in the 2 stars i'm still reading/)).toBeTruthy();
     expect(strip()).toContain("nothing yet");
-    expect(mark()).toBe("unsure");
+    await waitFor(() => expect(mark()).toBe("unsure"));
     expect(page().queryByText(/everyone/)).toBeNull();
   });
 
@@ -288,7 +374,7 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(page().getByRole("heading", { name: "nothing in all 6 stars" })).toBeTruthy());
     expect(strip()).toContain("nothing found");
     expect(strip()).toContain("all 6 stars read");
-    expect(mark()).toBe("sad");
+    await waitFor(() => expect(mark()).toBe("sad"));
     expect(page().queryByText(/everyone/)).toBeNull();
     await user.click(page().getByRole("button", { name: "terminal sessions" }));
     expect(page().getByRole<HTMLInputElement>("searchbox").value).toBe("terminal sessions");

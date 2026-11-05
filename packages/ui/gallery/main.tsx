@@ -23,28 +23,39 @@ import {
   type StatusIcon,
   StatusLine,
   Tile,
+  type TileProgress,
   useStoredView,
   ViewToggle,
 } from "../src/index.ts";
 import { detailFor, icons, results, weeks } from "./data.ts";
 
-const strips: ReadonlyArray<{ icon: StatusIcon; label: string; detail?: string; progress?: number }> = [
+const strips: ReadonlyArray<{ icon: StatusIcon; label: string; detail?: string; progress?: TileProgress }> = [
   { icon: "synced", label: "1,776 stars", detail: "synced 2 min ago" },
   {
     icon: "busy",
     label: "importing your stars",
     detail: "1,204 of 1,776 · about 20 seconds left",
-    progress: 1204 / 1776,
+    progress: { value: 1204, max: 1776, label: "progress", text: "1204 of 1,776" },
   },
   {
     icon: "busy",
     label: "reading your stars",
     detail: "412 of 1,776 understood · names and descriptions already searchable",
-    progress: 412 / 1776,
+    progress: { value: 412, max: 1776, label: "progress", text: "412 of 1,776" },
   },
-  { icon: "busy", label: "found 3 so far", detail: "1,364 stars not read yet", progress: 412 / 1776 },
+  {
+    icon: "busy",
+    label: "found 3 so far",
+    detail: "1,364 stars not read yet",
+    progress: { value: 412, max: 1776, label: "progress", text: "412 of 1,776" },
+  },
   { icon: "found", label: "found 6", detail: "of 1,776" },
-  { icon: "busy", label: "nothing yet", detail: "1,364 stars not read yet", progress: 412 / 1776 },
+  {
+    icon: "busy",
+    label: "nothing yet",
+    detail: "1,364 stars not read yet",
+    progress: { value: 412, max: 1776, label: "progress", text: "412 of 1,776" },
+  },
   { icon: "done", label: "nothing found", detail: "all 1,776 stars read" },
   { icon: "failed", label: "sync didn't finish", detail: "1,204 stars so far" },
 ];
@@ -180,7 +191,7 @@ function Gallery() {
           onRemoveFilter={(removed) => setFilters((current) => current.filter((filter) => filter.id !== removed.id))}
           status={<StatusLine icon="busy" label="found 3 so far" detail="1,364 stars not read yet" />}
           controls={controls}
-          progress={412 / 1776}
+          progress={{ value: 412, max: 1776, label: "reading your stars", text: "412 of 1,776 read" }}
         />
         <Results
           view={view}

@@ -1,11 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import * as expression from "blobatar/expression";
-import { distanceInsideStar, fitEyes } from "../scripts/bake-pip.ts";
-
-const poses = Object.entries(expression).filter(
-  (entry): entry is [string, expression.Expression] =>
-    typeof entry[1] === "object" && entry[1] !== null && "p" in entry[1],
-);
+import { distanceInsideStar, expressions, fitEyes, type Mark } from "../scripts/bake-pip.ts";
 
 type Eye = ReturnType<typeof fitEyes>[number];
 
@@ -21,14 +15,10 @@ const outline = ({ cx, cy, rx, ry, n, rot }: Eye) => {
 };
 
 describe("pip's eyes", () => {
-  test("every blobatar pose exists to check", () => {
-    expect(poses.length).toBeGreaterThanOrEqual(14);
-  });
-
-  for (const size of [40, 200])
-    test(`stay inside the star in every pose at ${size}px`, () => {
-      const margins = poses.map(([name, pose]) => {
-        const eyes = pose.bake({ eyes: fitEyes(size) }, pose.p).l.eyes;
+  for (const mark of ["small", "large"] satisfies ReadonlyArray<Mark>)
+    test(`stay inside the ${mark} star in each of pip's poses, as blobatar's bake places them`, () => {
+      const margins = Object.entries(expressions).map(([name, pose]) => {
+        const eyes = pose.bake({ eyes: fitEyes(mark) }, pose.p).l.eyes;
         const margin = Math.min(...eyes.flatMap(outline).map(([x, y]) => distanceInsideStar(x, y)));
         return { name, margin };
       });

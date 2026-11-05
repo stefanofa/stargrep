@@ -5,6 +5,7 @@ import { NetworkAvatars, type Person } from "./avatar.tsx";
 import { Badge } from "./badge.tsx";
 import { StarIcon } from "./icons.tsx";
 import { RepoIcon, type RepoVisual } from "./repo-icon.tsx";
+import { Skeleton } from "./skeleton.tsx";
 import { tileVariants } from "./tile.tsx";
 import type { View } from "./view-toggle.tsx";
 
@@ -78,7 +79,7 @@ function UnreadChip({ className }: { className?: string }) {
   return (
     <span
       className={cn(
-        "inline-flex h-6 w-fit shrink-0 items-center gap-1.5 rounded-full bg-muted pr-2.5 pl-2 font-sans text-[12px] leading-4 font-semibold whitespace-nowrap text-muted-foreground",
+        "inline-flex h-6 w-fit shrink-0 items-center gap-1.5 rounded-full bg-muted pr-2.5 pl-2 font-sans text-[12px] leading-4 font-semibold whitespace-nowrap text-secondary-foreground",
         className,
       )}
     >
@@ -154,8 +155,8 @@ export function ResultItem({
         {reading ? (
           <span className="flex w-full flex-col gap-2 py-1">
             <span className="sr-only">reading this repo</span>
-            <span aria-hidden className="h-3 w-full animate-pulse rounded-full bg-muted motion-reduce:animate-none" />
-            <span aria-hidden className="h-3 w-2/3 animate-pulse rounded-full bg-muted motion-reduce:animate-none" />
+            <Skeleton className="h-3 w-full" />
+            <Skeleton className="h-3 w-2/3" />
           </span>
         ) : (
           <p
@@ -283,6 +284,57 @@ export function GroupHeading({ id, label, detail }: { id: string; label: string;
   );
 }
 
+export function ResultList({
+  results,
+  pending = 0,
+  heroFirst = false,
+  entering = () => true,
+  enter,
+  label,
+  view,
+  onOpen,
+}: {
+  results: ReadonlyArray<Result>;
+  pending?: number;
+  heroFirst?: boolean;
+  entering?: (key: string) => boolean;
+  enter: "tile-in" | "fade-in";
+  label?: string | undefined;
+  view?: View | undefined;
+  onOpen?: OpenResult | undefined;
+}) {
+  const animation = enter === "tile-in" ? "animate-tile-in" : "motion-safe:animate-fade-in";
+  return (
+    <ol
+      aria-busy={pending > 0}
+      aria-label={label}
+      className={cn(
+        view === undefined ? undefined : view === "list" ? "view-list" : "view-tiles",
+        "grid grid-cols-1 gap-gap sm:grid-cols-2 lg:grid-cols-4 list:flex list:flex-col list:gap-3",
+      )}
+    >
+      {results.map((result, index) => {
+        const key = `${result.owner}/${result.name}`;
+        const hero = heroFirst && index === 0;
+        return (
+          <li key={key} className={cn(entering(key) && animation, hero && "sm:col-span-2")}>
+            <ResultItem result={result} hero={hero} onOpen={onOpen} />
+          </li>
+        );
+      })}
+      {Array.from({ length: pending }, (_, index) => {
+        const position = results.length + index;
+        const hero = heroFirst && position === 0;
+        return (
+          <li key={`pending-${position}`} className={cn(hero && "sm:col-span-2")}>
+            <ResultPlaceholder hero={hero} />
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 function Group({
   group,
   heroFirst,
@@ -293,33 +345,17 @@ function Group({
   onOpen?: OpenResult | undefined;
 }) {
   const headingId = useId();
-  const pending = group.pending ?? 0;
   return (
     <section aria-labelledby={group.heading ? headingId : undefined} className="flex flex-col gap-3 list:gap-3">
       {group.heading && <GroupHeading id={headingId} {...group.heading} />}
-      <ol
-        aria-busy={pending > 0}
-        aria-label={group.heading ? undefined : "Results"}
-        className="grid grid-cols-1 gap-gap sm:grid-cols-2 lg:grid-cols-4 list:flex list:flex-col list:gap-3"
-      >
-        {group.results.map((result, index) => (
-          <li
-            key={`${result.owner}/${result.name}`}
-            className={cn("motion-safe:animate-fade-in", heroFirst && index === 0 && "sm:col-span-2")}
-          >
-            <ResultItem result={result} hero={heroFirst && index === 0} onOpen={onOpen} />
-          </li>
-        ))}
-        {Array.from({ length: pending }, (_, index) => {
-          const position = group.results.length + index;
-          const hero = heroFirst && position === 0;
-          return (
-            <li key={`pending-${position}`} className={cn(hero && "sm:col-span-2")}>
-              <ResultPlaceholder hero={hero} />
-            </li>
-          );
-        })}
-      </ol>
+      <ResultList
+        results={group.results}
+        pending={group.pending ?? 0}
+        heroFirst={heroFirst}
+        enter="fade-in"
+        label={group.heading ? undefined : "Results"}
+        onOpen={onOpen}
+      />
     </section>
   );
 }

@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import { highlights } from "./keyword.ts";
 import type { LibraryEntry } from "./library-collection.ts";
 import { repoVisual } from "./repo-visual.ts";
+import { factsPending } from "./search-state.ts";
 
 const day = 86_400_000;
 const relative = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
@@ -35,7 +36,7 @@ export const syncedAgo = (iso: string, at: number) => {
 
 const activity = (repo: LibraryEntry, at: number): Activity => {
   if (repo.archived) return { state: "archived" };
-  if (repo.stars === null && repo.pushedAt === null) return { state: "reading" };
+  if (factsPending(repo)) return { state: "reading" };
   if (repo.pushedAt === null) return { state: "quiet", label: "no pushes yet" };
   const label = `pushed ${since(repo.pushedAt, at)}`;
   return at - millis(repo.pushedAt) <= 30 * day ? { state: "alive", label } : { state: "quiet", label };
@@ -45,11 +46,19 @@ export const starredOn = (iso: string) => dateFormat.format(millis(iso));
 
 export const monthOf = (iso: string) => monthFormat.format(millis(iso)).toLowerCase();
 
-const reasonOf = (repo: LibraryEntry, read: boolean) =>
-  (read ? (repo.summary ?? repo.description) : (repo.description ?? repo.summary)) ?? "";
+const reasonOf = (repo: LibraryEntry) =>
+  (repo.read ? (repo.summary ?? repo.description) : (repo.description ?? repo.summary)) ?? "";
 
-export const toResult = (repo: LibraryEntry, terms: ReadonlyArray<string>, at: number, values = ""): Result => {
-  const summary = reasonOf(repo, repo.read);
+export const toResult = (
+  repo: LibraryEntry,
+  at: number,
+  {
+    terms = [],
+    values = "",
+    flagUnread = true,
+  }: { terms?: ReadonlyArray<string>; values?: string; flagUnread?: boolean } = {},
+): Result => {
+  const summary = reasonOf(repo);
   const reason = values === "" ? summary : [summary, values].filter((part) => part !== "").join(" · ");
   return {
     owner: repo.owner,
@@ -63,7 +72,7 @@ export const toResult = (repo: LibraryEntry, terms: ReadonlyArray<string>, at: n
     network: [],
     visual: repoVisual(repo),
     language: repo.language,
-    unread: !repo.read,
+    unread: flagUnread && !repo.read,
   };
 };
 

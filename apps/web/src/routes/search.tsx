@@ -6,10 +6,10 @@ import {
   type PipPose,
   RephraseChips,
   RepoPanel,
-  type ResultGroup,
   Results,
   ScopeSwitch,
   SearchTile,
+  Skeleton,
   type Sort,
   SortMenu,
   StatusLine,
@@ -24,7 +24,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { AccountMenu } from "../components/account-menu.tsx";
 import { LibraryPlaceholder, LibraryView } from "../components/library-view.tsx";
 import { Page } from "../components/page.tsx";
@@ -36,16 +36,7 @@ import { orders } from "../lib/order.ts";
 import { now, syncedAgo, toDetail } from "../lib/present.ts";
 import { mergeResults, withReply } from "../lib/results.ts";
 import { api, signedOut, type Viewer } from "../lib/rpc.ts";
-import {
-  answerOf,
-  emptyCopy,
-  headingsOf,
-  rephrasings,
-  type SearchView,
-  type Stage,
-  searchView,
-  stageOf,
-} from "../lib/search-state.ts";
+import { type Body, type Stage, searchView, stageOf } from "../lib/search-state.ts";
 import { useSemanticSearch } from "../lib/use-semantic.ts";
 import { useSync } from "../lib/use-sync.ts";
 
@@ -60,9 +51,10 @@ interface Params {
 const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
 
 // The route's options stay in the entry chunk, so they import nothing from the UI package.
-const sortValues: ReadonlyArray<unknown> = ["best", "starred", "stars", "pushed"] satisfies ReadonlyArray<Sort>;
+const searchSorts: ReadonlyArray<Sort> = ["best", "starred", "stars", "pushed"];
+const librarySorts = searchSorts.filter((sort) => sort !== "best");
 
-const isSort = (value: unknown): value is Sort => sortValues.includes(value);
+const isSort = (value: unknown): value is Sort => searchSorts.some((sort) => sort === value);
 
 export const Route = createFileRoute("/search")({
   ssr: false,
@@ -112,7 +104,7 @@ function SearchPage() {
           {state.status === "ready" ? (
             <AccountMenu login={state.viewer.login} avatarUrl={state.viewer.avatarUrl} />
           ) : state.status === "loading" ? (
-            <span aria-hidden className="size-11 shrink-0 rounded-full bg-muted" />
+            <Skeleton className="size-11 shrink-0" />
           ) : (
             <SignInButton />
           )}
@@ -162,9 +154,6 @@ function Notice({
 
 const dock =
   "max-sm:fixed max-sm:inset-x-3 max-sm:bottom-[max(16px,env(safe-area-inset-bottom))] max-sm:z-30 max-sm:[&_[data-slot=tile]]:shadow-dock";
-
-const searchSorts: ReadonlyArray<Sort> = ["best", "starred", "stars", "pushed"];
-const librarySorts: ReadonlyArray<Sort> = ["starred", "stars", "pushed"];
 
 function useControls(searching: boolean) {
   const params = Route.useSearch();
@@ -231,17 +220,26 @@ const containsEvery = (text: Text, [first, ...rest]: readonly [string, ...Array<
   return second === undefined ? head : and(head, second, ...others);
 };
 
-function useTimeLeft(done: number, total: number | null, stage: Stage["name"]) {
+const measured = (stage: Stage) => {
+  if (stage.name === "importing") return { done: stage.done, total: stage.total };
+  if (stage.name === "reading") return { done: stage.settled, total: stage.total };
+  return undefined;
+};
+
+function useTimeLeft(stage: Stage) {
   const [stageStart, setStageStart] = useState<{
-    readonly stage: string;
+    readonly stage: Stage["name"];
     readonly at: number;
     readonly done: number;
   }>();
-  const active = stage !== "ready";
+  const progress = measured(stage);
+  const done = progress?.done ?? 0;
+  const total = progress?.total ?? null;
+  const active = progress !== undefined;
   useEffect(() => {
     if (!active) setStageStart(undefined);
-    else setStageStart((current) => (current?.stage === stage ? current : { stage, at: now(), done }));
-  }, [active, stage, done]);
+    else setStageStart((current) => (current?.stage === stage.name ? current : { stage: stage.name, at: now(), done }));
+  }, [active, stage.name, done]);
   if (!active || stageStart === undefined || total === null) return undefined;
   const perSecond = (done - stageStart.done) / Math.max(1, (now() - stageStart.at) / 1000);
   if (perSecond <= 0) return undefined;
@@ -278,7 +276,6 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
   const navigate = Route.useNavigate();
   const [query, setQuery] = useState(params.q ?? "");
   const [opener, setOpener] = useState<HTMLElement | null>(null);
-  const [rerun, setRerun] = useState(0);
   const terms = useMemo(() => keywordTerms(query), [query]);
 
   const { data: entries, isReady, isLoadingError } = useLiveQuery((q) => q.from({ repo: library }));
@@ -288,32 +285,10 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
       ? undefined
       : q.from({ repo: library }).where(({ repo }) => containsEvery(repo.text, [first, ...rest]));
   });
-  const semantic = useSemanticSearch(viewer.login, query, rerun);
   const { status: sync, retry } = useSync(viewer.login, reload);
-
-  const arriving = useMemo(
-    () => entries.filter((entry) => entry.stars === null && entry.pushedAt === null).length,
-    [entries],
-  );
-  const stage = stageOf({
-    syncing: sync?.state === "queued",
-    firstSync: sync?.state === "queued" && sync.syncedAt === null,
-    imported: entries.length,
-    starred: viewer.starredCount,
-    enrichment: sync?.enrichment ?? null,
-    arriving,
-  });
-  const timeLeft = useTimeLeft(
-    stage.name === "importing" ? stage.done : stage.name === "reading" ? stage.settled : 0,
-    stage.name === "ready" ? null : stage.total,
-    stage.name,
-  );
-
-  const partial = useRef(stage.name !== "ready");
-  useEffect(() => {
-    if (partial.current && stage.name === "ready") setRerun((value) => value + 1);
-    partial.current = stage.name !== "ready";
-  }, [stage.name]);
+  const stage = stageOf({ sync, entries, starred: viewer.starredCount });
+  const timeLeft = useTimeLeft(stage);
+  const semantic = useSemanticSearch(viewer.login, query, stage.name === "ready");
 
   const searching = terms.length > 0 || semantic.pending || semantic.results.length > 0;
   const { view, sort, controls } = useControls(searching);
@@ -322,13 +297,11 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
     () => mergeResults({ matched, terms, hits: semantic.results, find: (id) => library.get(id), at, order }),
     [matched, terms, semantic.results, library, at, order],
   );
-  const found = merged.words.length + merged.meaning.length;
 
-  const state: SearchView = searchView({
+  const state = searchView({
     stage,
-    answer: answerOf({ searching, found, pending: semantic.pending, failed: semantic.failed }),
+    search: { terms, ...merged, pending: semantic.pending, failed: semantic.failed },
     synced: sync?.syncedAt ? syncedAgo(sync.syncedAt, at) : undefined,
-    syncFailed: sync?.state === "failed",
     timeLeft,
   });
   const surprised = useSurprise(semantic.results.length);
@@ -352,18 +325,35 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
   const hit = semantic.results.find((result) => result.id === entry?.id);
   const opened = entry && (hit ? withReply(entry, hit) : entry);
 
-  const headings = headingsOf(stage, merged.words.length, merged.meaning.length);
-  const pending = semantic.pending ? (found === 0 ? 4 : 2) : 0;
-  const groups: ReadonlyArray<ResultGroup> =
-    headings === undefined
-      ? [{ key: "all", results: [...merged.words, ...merged.meaning], pending }]
-      : [
-          ...(merged.words.length > 0 ? [{ key: "words", heading: headings.words, results: merged.words }] : []),
-          ...(merged.meaning.length > 0 || pending > 0
-            ? [{ key: "meaning", heading: headings.meaning, results: merged.meaning, pending }]
-            : []),
-        ];
-  const phrases = rephrasings(terms);
+  const body = (current: Body) => {
+    switch (current.kind) {
+      case "library":
+        return (
+          <LibraryView
+            entries={entries}
+            at={at}
+            view={view}
+            sort={sort}
+            language={params.lang}
+            arriving={stage.name === "importing" ? { total: stage.total } : undefined}
+            pose={pose}
+            onOpen={open}
+          />
+        );
+      case "results":
+        return <Results view={view} groups={current.groups} onOpen={open} />;
+      case "empty-reading":
+        return <EmptyTile pose={pose} ring={current.ring} {...current.copy} />;
+      case "empty":
+        return (
+          <EmptyTile pose={pose} {...current.copy}>
+            <RephraseChips phrases={current.phrases} onPick={search} />
+          </EmptyTile>
+        );
+      case "failed":
+        return <EmptyTile pose={pose} {...current.copy} />;
+    }
+  };
 
   return (
     <>
@@ -373,7 +363,7 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
         label="Search your stars"
         placeholder={stage.name === "importing" ? "search what has arrived" : idlePlaceholder}
         className={dock}
-        progress={isReady ? state.rail : undefined}
+        progress={isReady ? state.progress : undefined}
         status={
           !isReady ? (
             loadingStatus
@@ -382,6 +372,7 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
               icon={state.status.icon}
               label={state.status.label}
               detail={state.status.detail}
+              continues={state.status.continues}
               action={
                 state.status.retry && (
                   <Button variant="bare" size="default" onClick={retry}>
@@ -408,31 +399,8 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
           />
         ) : !isReady ? (
           <Waiting view={view} searching={terms.length > 0} />
-        ) : state.body === "library" ? (
-          <LibraryView
-            entries={entries}
-            at={at}
-            view={view}
-            sort={sort}
-            language={params.lang}
-            arriving={stage.name === "importing" ? { total: stage.total } : undefined}
-            pose={pose}
-            onOpen={open}
-          />
-        ) : state.body === "results" ? (
-          <Results view={view} groups={groups} onOpen={open} />
-        ) : state.body === "empty-reading" ? (
-          <EmptyTile pose={pose} ring={state.rail} {...emptyCopy(stage, timeLeft, false)} />
-        ) : state.body === "empty" ? (
-          <EmptyTile pose={pose} {...emptyCopy(stage, timeLeft, phrases.length > 0)}>
-            <RephraseChips phrases={phrases} onPick={search} />
-          </EmptyTile>
         ) : (
-          <EmptyTile
-            pose={pose}
-            heading="stargrep couldn't search that"
-            body="the search didn't answer. try again in a moment."
-          />
+          body(state.body)
         )}
       </div>
       <RepoPanel

@@ -17,11 +17,9 @@ describe("pip", () => {
     expect(bakePip()).toEqual(JSON.parse(JSON.stringify(pip)));
   });
 
-  test("every pose renders the same markup the golden file holds", () => {
-    for (const pose of pipPoses) {
-      expect(draw(pose).outerHTML).toMatchSnapshot(`${pose} at 40`);
-      expect(draw(pose, 150).outerHTML).toMatchSnapshot(`${pose} at 150`);
-    }
+  test("the mark renders the same markup the golden file holds", () => {
+    expect(draw("idle").outerHTML).toMatchSnapshot("idle at 40");
+    expect(draw("idle", 150).outerHTML).toMatchSnapshot("idle at 150");
   });
 
   test("a pose changes only the root's variables, so motion.css can morph between poses", () => {

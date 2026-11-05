@@ -26,6 +26,10 @@ export interface Audit {
 }
 
 export const landingChunks = (chunks: ReadonlyArray<Chunk>): ReadonlyArray<Chunk> => {
+  const entries = chunks.filter((chunk) => chunk.isEntry);
+  if (entries.length !== 1) throw new Error(`expected one entry chunk, found ${entries.length}`);
+  const routes = chunks.filter((chunk) => chunk.moduleIds.some((id) => indexRoute.test(id)));
+  if (routes.length === 0) throw new Error("no chunk holds src/routes/index.tsx, so the landing route moved");
   const byName = new Map(chunks.map((chunk) => [chunk.fileName, chunk]));
   const loaded = new Set<string>();
   const visit = (chunk: Chunk) => {
@@ -36,7 +40,7 @@ export const landingChunks = (chunks: ReadonlyArray<Chunk>): ReadonlyArray<Chunk
       if (imported !== undefined) visit(imported);
     }
   };
-  for (const chunk of chunks) if (chunk.isEntry || chunk.moduleIds.some((id) => indexRoute.test(id))) visit(chunk);
+  for (const chunk of [...entries, ...routes]) visit(chunk);
   return chunks.filter((chunk) => loaded.has(chunk.fileName));
 };
 

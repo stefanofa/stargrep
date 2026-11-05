@@ -39,7 +39,7 @@ export const mergeResults = ({ matched, terms, hits, find, at, order }: Merge): 
   });
   const meaning = order === undefined ? appended : appended.toSorted((a, b) => order(a.entry, b.entry));
   return {
-    words: keyword.map((entry) => toResult(entry, terms, at)),
-    meaning: meaning.map(({ entry, values }) => toResult(entry, terms, at, values)),
+    words: keyword.map((entry) => toResult(entry, at, { terms })),
+    meaning: meaning.map(({ entry, values }) => toResult(entry, at, { terms, values })),
   };
 };

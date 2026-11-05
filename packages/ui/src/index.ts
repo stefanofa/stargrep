@@ -16,11 +16,20 @@ export {
   type Result,
   type ResultGroup,
   ResultItem,
+  ResultList,
   ResultPlaceholder,
   Results,
 } from "./components/results.tsx";
 export { type Scope, ScopeSwitch } from "./components/scope-switch.tsx";
-export { type Filter, FilterChip, SearchTile, type StatusIcon, StatusLine } from "./components/search-tile.tsx";
+export {
+  type Filter,
+  FilterChip,
+  SearchTile,
+  type StatusIcon,
+  StatusLine,
+  type TileProgress,
+} from "./components/search-tile.tsx";
+export { Skeleton } from "./components/skeleton.tsx";
 export { type Sort, SortMenu, sorts } from "./components/sort-menu.tsx";
 export { type StarredDay, type StarredWeek, StarredWeeks } from "./components/starred-weeks.tsx";
 export { Tile, type TileVariant } from "./components/tile.tsx";

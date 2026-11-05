@@ -24,7 +24,7 @@ describe("a repo whose facts have not arrived", () => {
     const { container } = render(<ResultItem result={arrived} />);
     expect(container.textContent).toContain("reading…");
     expect(container.textContent).not.toContain("no pushes yet");
-    expect(container.querySelectorAll("[aria-hidden].animate-pulse")).toHaveLength(2);
+    expect(container.querySelectorAll("[data-slot=skeleton]")).toHaveLength(2);
   });
 
   test("shows no star count and no not read yet chip", () => {

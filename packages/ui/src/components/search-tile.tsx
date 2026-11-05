@@ -29,12 +29,29 @@ const typing = (target: EventTarget | null) =>
     target.tagName === "TEXTAREA" ||
     target.tagName === "SELECT");
 
-function Rail({ progress, className }: { progress: number; className?: string }) {
+export interface TileProgress {
+  readonly value: number;
+  readonly max: number;
+  readonly label: string;
+  readonly text: string;
+}
+
+function Rail({ progress, className }: { progress: TileProgress; className?: string }) {
+  const fraction = Math.min(1, Math.max(0, progress.value / Math.max(1, progress.max)));
   return (
-    <div aria-hidden data-slot="rail" className={cn("h-[3px] overflow-hidden bg-accent-soft", className)}>
+    <div
+      role="progressbar"
+      aria-label={progress.label}
+      aria-valuemin={0}
+      aria-valuemax={progress.max}
+      aria-valuenow={progress.value}
+      aria-valuetext={progress.text}
+      data-slot="rail"
+      className={cn("h-[3px] overflow-hidden bg-accent-soft", className)}
+    >
       <div
         className="h-full origin-left bg-accent transition-transform duration-500 ease-out"
-        style={{ transform: `scaleX(${Math.round(Math.min(1, Math.max(0, progress)) * 1000) / 1000})` }}
+        style={{ transform: `scaleX(${Math.round(fraction * 1000) / 1000})` }}
       />
     </div>
   );
@@ -64,7 +81,7 @@ export function SearchTile({
   placeholder?: string | undefined;
   status?: ReactNode;
   controls?: ReactNode;
-  progress?: number | undefined;
+  progress?: TileProgress | undefined;
   className?: string;
 }) {
   const input = useRef<HTMLInputElement>(null);
@@ -133,9 +150,7 @@ export function SearchTile({
         {strip && (
           <div className="max-sm:order-first sm:pr-5 sm:pb-1.5 sm:pl-8">
             <div className="flex min-h-16 items-center justify-between gap-3 border-muted pr-3 pl-[22px] max-sm:pt-[3px] sm:gap-6 sm:border-t-[1.5px] sm:px-0">
-              <div aria-live="polite" className="min-w-0">
-                {status}
-              </div>
+              <div className="min-w-0">{status}</div>
               <div className="flex shrink-0 items-center gap-2.5">{controls}</div>
             </div>
             <div aria-hidden className="mx-[22px] h-[1.5px] bg-muted sm:hidden" />
@@ -215,11 +230,13 @@ export function StatusLine({
   icon,
   label,
   detail,
+  continues = false,
   action,
 }: {
   icon: StatusIcon;
   label: string;
   detail?: string | undefined;
+  continues?: boolean | undefined;
   action?: ReactNode;
 }) {
   return (
@@ -228,10 +245,12 @@ export function StatusLine({
         <Glyph icon={icon} />
       </span>
       <p className="flex min-h-9 min-w-0 flex-col gap-0.5 font-sans font-medium tabular-nums sm:block sm:min-h-0 sm:truncate sm:text-base sm:leading-5">
-        <span className="text-meta font-semibold text-foreground sm:text-base">{label}</span>
+        <span role="status" className="text-meta font-semibold text-foreground sm:text-base">
+          {label}
+        </span>
         {detail && (
           <span className="text-sm text-muted-foreground max-sm:line-clamp-1 sm:text-base">
-            <span className="max-sm:hidden"> · </span>
+            <span className="max-sm:hidden">{continues ? " " : " · "}</span>
             {detail}
           </span>
         )}

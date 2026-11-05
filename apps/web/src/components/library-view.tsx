@@ -5,15 +5,14 @@ import {
   type OpenResult,
   Pip,
   type PipPose,
-  type Result,
-  ResultItem,
-  ResultPlaceholder,
+  ResultList,
+  Skeleton,
   type Sort,
   Tile,
   type View,
 } from "@stargrep/ui";
 import { Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { LibraryEntry } from "../lib/library-collection.ts";
 import { libraryOrder } from "../lib/order.ts";
 import { formatCount, monthOf, stars, toResult } from "../lib/present.ts";
@@ -31,41 +30,9 @@ export const languageShares = (entries: ReadonlyArray<LibraryEntry>): ReadonlyAr
 
 const columns = 4;
 
-export function ResultGrid({
-  view,
-  results,
-  pending = 0,
-  onOpen,
-}: {
-  view: View;
-  results: ReadonlyArray<Result>;
-  pending?: number;
-  onOpen: OpenResult;
-}) {
-  return (
-    <ol
-      aria-busy={pending > 0}
-      className={`${view === "list" ? "view-list" : "view-tiles"} grid grid-cols-1 gap-gap sm:grid-cols-2 lg:grid-cols-4 list:flex list:flex-col list:gap-3`}
-    >
-      {results.map((result) => (
-        <li key={`${result.owner}/${result.name}`} className="animate-tile-in">
-          <ResultItem result={result} onOpen={onOpen} />
-        </li>
-      ))}
-      {Array.from({ length: pending }, (_, index) => `pending-${index}`).map((key) => (
-        <li key={key}>
-          <ResultPlaceholder />
-        </li>
-      ))}
-    </ol>
-  );
-}
-
 export interface Arriving {
   readonly total: number | null;
 }
-
-const bar = "inline-block rounded-full align-middle";
 
 function CountTile({
   count,
@@ -83,7 +50,11 @@ function CountTile({
     >
       <div className="relative z-10 flex flex-col">
         <p className="font-display text-[64px] leading-[64px] font-semibold tracking-tight sm:text-hero sm:leading-[120px]">
-          {count === undefined ? <span className={`${bar} h-[0.7em] w-[2.4em] bg-ink/10`} /> : formatCount(count)}
+          {count === undefined ? (
+            <Skeleton className="inline-block h-[0.7em] w-[2.4em] align-middle" />
+          ) : (
+            formatCount(count)
+          )}
         </p>
         <p className="font-display text-lg leading-6 font-semibold sm:text-2xl">
           {arriving === undefined
@@ -117,9 +88,9 @@ function LanguagesTile({
     <Tile className="flex flex-col justify-between gap-6 pt-tile-top pb-6 pl-tile-lg">
       <h2 className="font-display text-2xl font-semibold tracking-snug">languages</h2>
       {shares === undefined ? (
-        <div aria-hidden className="flex flex-col gap-3">
-          <span className="h-3 rounded-full bg-muted" />
-          <span className="h-4 w-56 rounded-full bg-muted" />
+        <div className="flex flex-col gap-3">
+          <Skeleton className="h-3" />
+          <Skeleton className="h-4 w-56" />
         </div>
       ) : (
         shares.length > 0 && <LanguageBar languages={shares} />
@@ -132,10 +103,7 @@ function LanguagesTile({
         >
           All
         </Link>
-        {shares === undefined &&
-          waitingChips.map((width) => (
-            <span key={width} aria-hidden className={`h-9 rounded-full bg-muted ${width}`} />
-          ))}
+        {shares === undefined && waitingChips.map((width) => <Skeleton key={width} className={`h-9 ${width}`} />)}
         {(shares ?? []).slice(0, 3).map((share) => (
           <Link
             key={share.name}
@@ -173,10 +141,10 @@ export function LibraryPlaceholder({ view }: { view: View }) {
       <section className="flex flex-col gap-gap pt-3">
         <div aria-hidden className="flex items-baseline gap-2.5 pl-1.5">
           <span className="font-display text-2xl font-semibold tracking-snug">
-            <span className={`${bar} h-6 w-48 bg-muted`} />
+            <Skeleton className="inline-block h-6 w-48 align-middle" />
           </span>
         </div>
-        <ResultGrid view={view} results={[]} pending={8} onOpen={() => {}} />
+        <ResultList view={view} results={[]} pending={8} enter="tile-in" />
       </section>
     </>
   );
@@ -202,6 +170,7 @@ export function LibraryView({
   onOpen: OpenResult;
 }) {
   const [shown, setShown] = useState(pageSize);
+  const seen = useRef(new Set<string>());
   const shares = useMemo(() => languageShares(entries), [entries]);
   const visible = useMemo(
     () => entries.filter((entry) => language === undefined || entry.language === language).toSorted(libraryOrder(sort)),
@@ -215,6 +184,9 @@ export function LibraryView({
   const counts = Map.groupBy(visible, (entry) => monthOf(entry.starredAt));
   const last = Array.from(groups.keys()).at(-1);
   const remaining = arriving?.total == null ? columns : Math.max(0, arriving.total - entries.length);
+  useEffect(() => {
+    for (const entry of page) seen.current.add(`${entry.owner}/${entry.name}`);
+  });
   return (
     <>
       <div className="grid gap-gap lg:grid-cols-2">
@@ -230,10 +202,12 @@ export function LibraryView({
         return (
           <section key={heading} aria-label={heading} className="flex flex-col gap-gap pt-3">
             <MonthHeading heading={heading} size={size} arriving={arriving !== undefined} />
-            <ResultGrid
+            <ResultList
               view={view}
-              results={members.map((entry) => ({ ...toResult(entry, [], at), unread: false }))}
+              results={members.map((entry) => toResult(entry, at, { flagUnread: false }))}
               pending={pending}
+              enter="tile-in"
+              entering={(key) => !seen.current.has(key)}
               onOpen={onOpen}
             />
           </section>

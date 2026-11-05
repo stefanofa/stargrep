@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { audit, budget, type Chunk } from "../scripts/landing-budget.ts";
+import { audit, type Chunk } from "../scripts/landing-budget.ts";
 
 const chunk = (fileName: string, moduleIds: Array<string>, extra: Partial<Chunk> = {}): Chunk => ({
   fileName,
@@ -34,6 +34,7 @@ describe("the landing budget", () => {
         "/repo/node_modules/.bun/skullet@0.0.3/node_modules/skullet/dist/react/index.mjs",
         "/repo/node_modules/.bun/@orpc+client@2.0.0/node_modules/@orpc/client/dist/index.mjs",
       ]),
+      chunk("routes.js", [`${app}/routes/index.tsx`]),
     ]);
     expect(report.found.map((hit) => [hit.name, hit.fileName])).toEqual([
       ["Effect", "index.js"],
@@ -53,11 +54,26 @@ describe("the landing budget", () => {
         ],
         { isEntry: true },
       ),
+      chunk("routes.js", [`${app}/routes/index.tsx`]),
     ]);
     expect(report.found).toEqual([]);
   });
 
-  test("the budget is 130,000 bytes of gzipped JS", () => {
-    expect(budget).toBe(130_000);
+  test("fails when no chunk holds the index route, so a renamed route can't pass on the entry alone", () => {
+    expect(() => audit([chunk("index.js", [`${app}/router.tsx`], { isEntry: true })])).toThrow(
+      "no chunk holds src/routes/index.tsx",
+    );
+  });
+
+  test("fails unless there is exactly one entry chunk", () => {
+    const route = chunk("routes.js", [`${app}/routes/index.tsx`]);
+    expect(() => audit([route])).toThrow("expected one entry chunk, found 0");
+    expect(() =>
+      audit([
+        chunk("index.js", [`${app}/router.tsx`], { isEntry: true }),
+        chunk("other.js", [`${app}/other.tsx`], { isEntry: true }),
+        route,
+      ]),
+    ).toThrow("expected one entry chunk, found 2");
   });
 });

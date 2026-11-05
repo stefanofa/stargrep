@@ -1,101 +1,123 @@
-import type { PipPose, StatusIcon } from "@stargrep/ui";
-import type { EnrichmentProgress } from "./rpc.ts";
+import type { PipPose, Result, ResultGroup, StatusIcon } from "@stargrep/ui";
+import type { EnrichmentProgress, LibraryRepo, SyncStatus } from "./rpc.ts";
 
 const count = new Intl.NumberFormat("en");
 const n = (value: number) => count.format(value);
 const stars = (value: number) => `${n(value)} ${value === 1 ? "star" : "stars"}`;
 
+export const factsPending = (repo: Pick<LibraryRepo, "stars" | "pushedAt">) =>
+  repo.stars === null && repo.pushedAt === null;
+
+export const readingIncomplete = (enrichment: EnrichmentProgress) =>
+  enrichment.read + enrichment.failed < enrichment.total;
+
+export const fewNewStars = 20;
+
+export type LastSync = "done" | "failed-first" | "failed-refresh";
+
 export type Stage =
   | { readonly name: "importing"; readonly done: number; readonly total: number | null; readonly read: number | null }
-  | {
-      readonly name: "reading";
-      readonly read: number;
-      readonly settled: number;
-      readonly total: number;
-      readonly arriving: number;
-    }
-  | {
-      readonly name: "ready";
-      readonly total: number;
-      readonly failed: number;
-      readonly syncing: boolean;
-      readonly arriving: number;
-    };
+  | { readonly name: "refreshing"; readonly total: number; readonly arriving: number }
+  | { readonly name: "reading"; readonly read: number; readonly settled: number; readonly total: number }
+  | { readonly name: "ready"; readonly total: number; readonly failed: number; readonly lastSync: LastSync };
 
 export const stageOf = ({
-  syncing,
-  firstSync,
-  imported,
+  sync,
+  entries,
   starred,
-  enrichment,
-  arriving = 0,
 }: {
-  syncing: boolean;
-  firstSync: boolean;
-  imported: number;
+  sync: SyncStatus | undefined;
+  entries: ReadonlyArray<Pick<LibraryRepo, "stars" | "pushedAt">>;
   starred: number | null;
-  enrichment: EnrichmentProgress | null;
-  arriving?: number;
 }): Stage => {
-  if (syncing && firstSync)
+  const enrichment = sync?.enrichment ?? null;
+  if (sync?.state === "queued" && sync.syncedAt === null)
     return {
       name: "importing",
-      done: imported,
-      total: starred === null ? null : Math.max(starred, imported),
+      done: entries.length,
+      total: starred === null ? null : Math.max(starred, entries.length),
       read: enrichment?.read ?? null,
     };
-  if (enrichment !== null && enrichment.read + enrichment.failed < enrichment.total)
+  const arriving = entries.filter(factsPending).length;
+  const backlog = enrichment === null ? 0 : enrichment.total - enrichment.read - enrichment.failed;
+  if (sync?.state === "queued" || (arriving > 0 && backlog > 0 && backlog <= fewNewStars))
+    return { name: "refreshing", total: entries.length, arriving };
+  if (enrichment !== null && readingIncomplete(enrichment))
     return {
       name: "reading",
       read: enrichment.read,
       settled: enrichment.read + enrichment.failed,
       total: enrichment.total,
-      arriving,
     };
-  return { name: "ready", total: imported, failed: enrichment?.failed ?? 0, syncing, arriving };
+  const lastSync: LastSync =
+    sync?.state !== "failed" ? "done" : sync.syncedAt === null ? "failed-first" : "failed-refresh";
+  return { name: "ready", total: entries.length, failed: enrichment?.failed ?? 0, lastSync };
 };
 
-export type Answer =
+type Answer =
   | { readonly kind: "browsing" }
   | { readonly kind: "searching" }
   | { readonly kind: "found"; readonly count: number }
   | { readonly kind: "none" }
   | { readonly kind: "failed" };
 
-export const answerOf = ({
-  searching,
-  found,
-  pending,
-  failed,
-}: {
-  searching: boolean;
-  found: number;
-  pending: boolean;
-  failed: boolean;
-}): Answer => {
-  if (!searching) return { kind: "browsing" };
-  if (found > 0) return { kind: "found", count: found };
-  if (pending) return { kind: "searching" };
-  return failed ? { kind: "failed" } : { kind: "none" };
-};
-
 export interface Status {
   readonly icon: StatusIcon;
   readonly label: string;
   readonly detail?: string;
+  readonly continues?: boolean;
   readonly retry?: boolean;
 }
 
-export type Body = "library" | "results" | "empty-reading" | "empty" | "failed";
+export interface Progress {
+  readonly value: number;
+  readonly max: number;
+  readonly label: string;
+  readonly text: string;
+}
+
+export interface EmptyCopy {
+  readonly heading: string;
+  readonly body: string;
+  readonly meta?: string;
+}
+
+export type Body =
+  | { readonly kind: "library" }
+  | { readonly kind: "results"; readonly groups: ReadonlyArray<ResultGroup> }
+  | { readonly kind: "empty-reading"; readonly copy: EmptyCopy; readonly ring: number | undefined }
+  | { readonly kind: "empty"; readonly copy: EmptyCopy; readonly phrases: ReadonlyArray<string> }
+  | { readonly kind: "failed"; readonly copy: EmptyCopy };
 
 export interface SearchView {
   readonly status: Status;
-  readonly rail: number | undefined;
+  readonly progress: Progress | undefined;
   readonly pose: PipPose;
   readonly body: Body;
 }
 
-const partial = (stage: Stage) => stage.name !== "ready";
+export interface Search {
+  readonly terms: ReadonlyArray<string>;
+  readonly words: ReadonlyArray<Result>;
+  readonly meaning: ReadonlyArray<Result>;
+  readonly pending: boolean;
+  readonly failed: boolean;
+}
+
+const placeholdersAlone = 4;
+const placeholdersAfter = 2;
+
+type Underway = Extract<Stage, { name: "importing" | "reading" }>;
+
+const partial = (stage: Stage): stage is Underway => stage.name === "importing" || stage.name === "reading";
+
+const answerOf = ({ terms, words, meaning, pending, failed }: Search): Answer => {
+  const found = words.length + meaning.length;
+  if (terms.length === 0 && !pending && meaning.length === 0) return { kind: "browsing" };
+  if (found > 0) return { kind: "found", count: found };
+  if (pending) return { kind: "searching" };
+  return failed ? { kind: "failed" } : { kind: "none" };
+};
 
 const unreadDetail = (stage: Stage) => {
   if (stage.name === "reading") return `${stars(stage.total - stage.read)} not read yet`;
@@ -104,53 +126,59 @@ const unreadDetail = (stage: Stage) => {
   return undefined;
 };
 
-export const fewNewStars = 20;
-
-const newStars = (stage: Stage) => {
-  if (stage.name === "ready") return stage.syncing || stage.arriving > 0 ? stage.arriving : undefined;
-  if (stage.name === "reading" && stage.arriving > 0 && stage.total - stage.settled <= fewNewStars)
-    return stage.arriving;
-  return undefined;
-};
-
-const railOf = (stage: Stage) => {
-  if (newStars(stage) !== undefined) return undefined;
-  if (stage.name === "importing") return stage.total === null ? undefined : stage.done / Math.max(1, stage.total);
-  if (stage.name === "reading") return stage.settled / Math.max(1, stage.total);
+const progressOf = (stage: Stage): Progress | undefined => {
+  if (stage.name === "importing" && stage.total !== null)
+    return {
+      value: stage.done,
+      max: stage.total,
+      label: "importing your stars",
+      text: `${n(stage.done)} of ${n(stage.total)} imported`,
+    };
+  if (stage.name === "reading")
+    return {
+      value: stage.settled,
+      max: stage.total,
+      label: "reading your stars",
+      text: `${n(stage.read)} of ${n(stage.total)} read`,
+    };
   return undefined;
 };
 
 const withTime = (text: string, timeLeft: string | undefined) =>
   timeLeft === undefined ? text : `${text} · ${timeLeft}`;
 
-const browsing = (
-  stage: Stage,
-  synced: string | undefined,
-  syncFailed: boolean,
-  timeLeft: string | undefined,
-): Status => {
-  if (stage.name === "importing")
-    return {
-      icon: "busy",
-      label: "importing your stars",
-      detail:
-        stage.total === null
-          ? `${n(stage.done)} imported so far`
-          : withTime(`${n(stage.done)} of ${n(stage.total)}`, timeLeft),
-    };
-  const fresh = newStars(stage);
-  if (fresh === 0) return { icon: "busy", label: "checking for new stars" };
-  if (fresh !== undefined)
-    return { icon: "busy", label: `${n(fresh)} new ${fresh === 1 ? "star" : "stars"}`, detail: "reading…" };
-  if (stage.name === "reading")
-    return {
-      icon: "busy",
-      label: "reading your stars",
-      detail: `${n(stage.read)} of ${n(stage.total)} understood · names and descriptions already searchable`,
-    };
-  if (syncFailed)
-    return { icon: "failed", label: "sync didn't finish", detail: `${stars(stage.total)} so far`, retry: true };
-  return { icon: "synced", label: stars(stage.total), ...(synced === undefined ? {} : { detail: synced }) };
+const browsing = (stage: Stage, synced: string | undefined, timeLeft: string | undefined): Status => {
+  switch (stage.name) {
+    case "importing":
+      return {
+        icon: "busy",
+        label: "importing your stars",
+        detail:
+          stage.total === null
+            ? `${n(stage.done)} imported so far`
+            : withTime(`${n(stage.done)} of ${n(stage.total)}`, timeLeft),
+      };
+    case "refreshing":
+      return stage.arriving === 0
+        ? { icon: "busy", label: "checking for new stars" }
+        : {
+            icon: "busy",
+            label: `${n(stage.arriving)} new ${stage.arriving === 1 ? "star" : "stars"}`,
+            detail: "reading…",
+          };
+    case "reading":
+      return {
+        icon: "busy",
+        label: "reading your stars",
+        detail: `${n(stage.read)} of ${n(stage.total)} understood · names and descriptions already searchable`,
+      };
+    case "ready":
+      if (stage.lastSync === "failed-refresh")
+        return { icon: "failed", label: "couldn't check for new stars", retry: true };
+      if (stage.lastSync === "failed-first")
+        return { icon: "failed", label: "sync didn't finish", detail: `${stars(stage.total)} so far`, retry: true };
+      return { icon: "synced", label: stars(stage.total), ...(synced === undefined ? {} : { detail: synced }) };
+  }
 };
 
 const answered = (stage: Stage, answer: Exclude<Answer, { kind: "browsing" }>): Status => {
@@ -160,16 +188,16 @@ const answered = (stage: Stage, answer: Exclude<Answer, { kind: "browsing" }>): 
     case "searching":
       return { icon: "busy", label: "searching", ...rest };
     case "found":
-      return stage.name === "ready"
-        ? { icon: "found", label: `found ${n(answer.count)}`, detail: `of ${n(stage.total)}` }
-        : { icon: "busy", label: `found ${n(answer.count)} so far`, ...rest };
+      return partial(stage)
+        ? { icon: "busy", label: `found ${n(answer.count)} so far`, ...rest }
+        : { icon: "found", label: `found ${n(answer.count)}`, detail: `of ${n(stage.total)}`, continues: true };
     case "none":
-      if (stage.name !== "ready") return { icon: "busy", label: "nothing yet", ...rest };
+      if (partial(stage)) return { icon: "busy", label: "nothing yet", ...rest };
       return {
         icon: "done",
         label: "nothing found",
         detail:
-          stage.failed > 0
+          stage.name === "ready" && stage.failed > 0
             ? `${n(stage.total - stage.failed)} of ${n(stage.total)} stars read`
             : `all ${stars(stage.total)} read`,
       };
@@ -178,8 +206,9 @@ const answered = (stage: Stage, answer: Exclude<Answer, { kind: "browsing" }>): 
   }
 };
 
-const poseOf = (stage: Stage, answer: Answer, syncFailed: boolean): PipPose => {
-  if (answer.kind === "failed" || (answer.kind === "browsing" && syncFailed && stage.name === "ready")) return "scared";
+const poseOf = (stage: Stage, answer: Answer): PipPose => {
+  if (answer.kind === "failed") return "scared";
+  if (answer.kind === "browsing" && stage.name === "ready" && stage.lastSync !== "done") return "scared";
   if (answer.kind === "searching") return "thinking";
   if (answer.kind === "none") return partial(stage) ? "unsure" : "sad";
   if (answer.kind === "found") return "idle";
@@ -188,70 +217,40 @@ const poseOf = (stage: Stage, answer: Answer, syncFailed: boolean): PipPose => {
   return "idle";
 };
 
-const bodyOf = (stage: Stage, answer: Answer): Body => {
-  if (answer.kind === "browsing") return "library";
-  if (answer.kind === "none") return partial(stage) ? "empty-reading" : "empty";
-  if (answer.kind === "failed") return "failed";
-  return "results";
-};
-
-export const searchView = ({
-  stage,
-  answer,
-  synced,
-  syncFailed,
-  timeLeft,
-}: {
-  stage: Stage;
-  answer: Answer;
-  synced: string | undefined;
-  syncFailed: boolean;
-  timeLeft: string | undefined;
-}): SearchView => ({
-  status: answer.kind === "browsing" ? browsing(stage, synced, syncFailed, timeLeft) : answered(stage, answer),
-  rail: railOf(stage),
-  pose: poseOf(stage, answer, syncFailed),
-  body: bodyOf(stage, answer),
-});
-
-export interface Headings {
-  readonly words: { readonly label: string; readonly detail: string };
-  readonly meaning: { readonly label: string; readonly detail: string };
-}
-
-export const headingsOf = (stage: Stage, words: number, meaning: number): Headings | undefined => {
-  if (stage.name === "ready") return undefined;
-  const read = stage.read;
-  return {
-    words: {
-      label: "matching words",
-      detail:
-        stage.name === "importing"
-          ? `${n(words)} from the ${n(stage.done)} imported so far`
-          : `${n(words)} from all ${n(stage.total)}`,
-    },
-    meaning: {
-      label: "matching meaning",
-      detail: read === null ? `${n(meaning)} so far` : `${n(meaning)} from the ${n(read)} read so far`,
-    },
+const groupsOf = (stage: Stage, { words, meaning, pending }: Search): ReadonlyArray<ResultGroup> => {
+  const found = words.length + meaning.length;
+  const placeholders = pending ? (found === 0 ? placeholdersAlone : placeholdersAfter) : 0;
+  if (!partial(stage)) return [{ key: "all", results: [...words, ...meaning], pending: placeholders }];
+  const wordsHeading = {
+    label: "matching words",
+    detail:
+      stage.name === "importing"
+        ? `${n(words.length)} from the ${n(stage.done)} imported so far`
+        : `${n(words.length)} from all ${n(stage.total)}`,
   };
+  const meaningHeading = {
+    label: "matching meaning",
+    detail:
+      stage.read === null
+        ? `${n(meaning.length)} so far`
+        : `${n(meaning.length)} from the ${n(stage.read)} read so far`,
+  };
+  return [
+    ...(words.length > 0 ? [{ key: "words", heading: wordsHeading, results: words }] : []),
+    ...(meaning.length > 0 || placeholders > 0
+      ? [{ key: "meaning", heading: meaningHeading, results: meaning, pending: placeholders }]
+      : []),
+  ];
 };
 
-export interface EmptyCopy {
-  readonly heading: string;
-  readonly body: string;
-  readonly meta?: string;
-}
+const rephrasings = (terms: ReadonlyArray<string>, limit = 3): ReadonlyArray<string> => {
+  if (terms.length < 2) return [];
+  const pairs = terms.length > 2 ? terms.slice(1).map((term, index) => `${terms[index]} ${term}`) : [];
+  const singles = terms.toSorted((a, b) => b.length - a.length);
+  return [...new Set([...pairs, ...singles])].slice(0, limit);
+};
 
-export const emptyCopy = (stage: Stage, timeLeft: string | undefined, rephrased: boolean): EmptyCopy => {
-  if (stage.name === "ready") {
-    const read = stage.failed === 0 ? "i've read all of them" : "i've read every one i could";
-    const others = rephrased ? " try one of these:" : "";
-    return {
-      heading: `nothing in all ${stars(stage.total)}`,
-      body: `${read}, and none matches that. maybe you starred it under different words.${others}`,
-    };
-  }
+const notYetCopy = (stage: Underway, timeLeft: string | undefined): EmptyCopy => {
   const meta = withTime("i'll search again when reading finishes", timeLeft);
   const read = stage.read ?? 0;
   if (read === 0)
@@ -271,9 +270,65 @@ export const emptyCopy = (stage: Stage, timeLeft: string | undefined, rephrased:
   };
 };
 
-export const rephrasings = (terms: ReadonlyArray<string>, limit = 3): ReadonlyArray<string> => {
-  if (terms.length < 2) return [];
-  const pairs = terms.length > 2 ? terms.slice(1).map((term, index) => `${terms[index]} ${term}`) : [];
-  const singles = terms.toSorted((a, b) => b.length - a.length);
-  return [...new Set([...pairs, ...singles])].slice(0, limit);
+const nothingCopy = (stage: Exclude<Stage, Underway>, rephrased: boolean): EmptyCopy => {
+  const read = stage.name === "ready" && stage.failed > 0 ? "i've read every one i could" : "i've read all of them";
+  const others = rephrased ? " try one of these:" : "";
+  return {
+    heading: `nothing in all ${stars(stage.total)}`,
+    body: `${read}, and none matches that. maybe you starred it under different words.${others}`,
+  };
+};
+
+const failedCopy: EmptyCopy = {
+  heading: "stargrep couldn't search that",
+  body: "the search didn't answer. try again in a moment.",
+};
+
+const bodyOf = (
+  stage: Stage,
+  answer: Answer,
+  search: Search,
+  progress: Progress | undefined,
+  timeLeft: string | undefined,
+): Body => {
+  switch (answer.kind) {
+    case "browsing":
+      return { kind: "library" };
+    case "searching":
+    case "found":
+      return { kind: "results", groups: groupsOf(stage, search) };
+    case "failed":
+      return { kind: "failed", copy: failedCopy };
+    case "none": {
+      if (partial(stage))
+        return {
+          kind: "empty-reading",
+          copy: notYetCopy(stage, timeLeft),
+          ring: progress === undefined ? undefined : progress.value / Math.max(1, progress.max),
+        };
+      const phrases = rephrasings(search.terms);
+      return { kind: "empty", copy: nothingCopy(stage, phrases.length > 0), phrases };
+    }
+  }
+};
+
+export const searchView = ({
+  stage,
+  search,
+  synced,
+  timeLeft,
+}: {
+  stage: Stage;
+  search: Search;
+  synced: string | undefined;
+  timeLeft: string | undefined;
+}): SearchView => {
+  const answer = answerOf(search);
+  const progress = progressOf(stage);
+  return {
+    status: answer.kind === "browsing" ? browsing(stage, synced, timeLeft) : answered(stage, answer),
+    progress,
+    pose: poseOf(stage, answer),
+    body: bodyOf(stage, answer, search, progress, timeLeft),
+  };
 };

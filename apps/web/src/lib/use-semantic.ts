@@ -14,11 +14,9 @@ export interface Semantic {
 
 const none: Semantic = { results: [], pending: false, failed: false };
 
-export function useSemanticSearch(login: string, query: string, rerun = 0): Semantic {
+export function useSemanticSearch(login: string, query: string, readDone: boolean): Semantic {
   const [answer, setAnswer] = useState<Answer<ReadonlyArray<SearchResult>, SearchFailed>>();
   const search = useRef<Search>(undefined);
-  const latest = useRef(query);
-  latest.current = query;
 
   useEffect(() => {
     const running = startSemanticSearch(
@@ -29,16 +27,19 @@ export function useSemanticSearch(login: string, query: string, rerun = 0): Sema
       setAnswer,
     );
     search.current = running;
-    if (rerun > 0) running.offer(latest.current);
     return () => {
       running.stop();
       search.current = undefined;
     };
-  }, [login, rerun]);
+  }, [login]);
 
   useEffect(() => {
     search.current?.offer(query);
   }, [query]);
+
+  useEffect(() => {
+    if (readDone) search.current?.refresh();
+  }, [readDone]);
 
   const wanted = normalize(query);
   const landed =
