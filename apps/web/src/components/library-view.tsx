@@ -2,29 +2,23 @@ import {
   Button,
   LanguageBar,
   type LanguageShare,
-  Mascot,
   type OpenResult,
+  Pip,
+  type PipPose,
   type Result,
   ResultItem,
+  ResultPlaceholder,
   type Sort,
-  SortMenu,
-  SyncProgress,
   Tile,
   type View,
-  ViewToggle,
 } from "@stargrep/ui";
 import { Link } from "@tanstack/react-router";
-import { type ReactNode, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { LibraryEntry } from "../lib/library-collection.ts";
+import { libraryOrder } from "../lib/order.ts";
 import { formatCount, monthOf, stars, toResult } from "../lib/present.ts";
 
 const pageSize = 48;
-
-const order: Record<Sort, (a: LibraryEntry, b: LibraryEntry) => number> = {
-  starred: (a, b) => b.starredAt.localeCompare(a.starredAt),
-  stars: (a, b) => (b.stars ?? -1) - (a.stars ?? -1),
-  pushed: (a, b) => (b.pushedAt ?? "").localeCompare(a.pushedAt ?? ""),
-};
 
 export const languageShares = (entries: ReadonlyArray<LibraryEntry>): ReadonlyArray<LanguageShare> => {
   const counts = new Map<string, number>();
@@ -35,56 +29,62 @@ export const languageShares = (entries: ReadonlyArray<LibraryEntry>): ReadonlyAr
   );
 };
 
+const columns = 4;
+
 export function ResultGrid({
   view,
   results,
+  pending = 0,
   onOpen,
 }: {
   view: View;
   results: ReadonlyArray<Result>;
+  pending?: number;
   onOpen: OpenResult;
 }) {
   return (
-    <div
+    <ol
+      aria-busy={pending > 0}
       className={`${view === "list" ? "view-list" : "view-tiles"} grid grid-cols-1 gap-gap sm:grid-cols-2 lg:grid-cols-4 list:flex list:flex-col list:gap-3`}
     >
-      <ol className="contents list:flex list:flex-col list:gap-3">
-        {results.map((result) => (
-          <li key={`${result.owner}/${result.name}`} className="animate-tile-in">
-            <ResultItem result={result} onOpen={onOpen} />
-          </li>
-        ))}
-      </ol>
-    </div>
+      {results.map((result) => (
+        <li key={`${result.owner}/${result.name}`} className="animate-tile-in">
+          <ResultItem result={result} onOpen={onOpen} />
+        </li>
+      ))}
+      {Array.from({ length: pending }, (_, index) => `pending-${index}`).map((key) => (
+        <li key={key}>
+          <ResultPlaceholder />
+        </li>
+      ))}
+    </ol>
   );
 }
 
-export interface Syncing {
-  readonly total: number;
-  readonly timeLeft: string;
+export interface Arriving {
+  readonly total: number | null;
 }
 
-function CountTile({ count, syncing, synced }: { count: number; syncing: Syncing | undefined; synced: ReactNode }) {
+function CountTile({ count, arriving, pose }: { count: number; arriving: Arriving | undefined; pose: PipPose }) {
   return (
     <Tile
       variant="highlight"
-      className="relative flex min-h-[236px] flex-col justify-between gap-6 overflow-hidden pt-tile-top pb-6 pl-tile-lg"
+      className="relative flex min-h-[148px] items-center justify-between gap-4 overflow-hidden pt-6 pr-5 pb-6 pl-6 sm:min-h-[236px] sm:pt-tile-top sm:pl-tile-lg"
     >
       <div className="relative z-10 flex flex-col">
-        <p className="font-display text-[88px] leading-[88px] font-semibold tracking-tight sm:text-hero sm:leading-[120px]">
+        <p className="font-display text-[64px] leading-[64px] font-semibold tracking-tight sm:text-hero sm:leading-[120px]">
           {formatCount(count)}
         </p>
-        <p className="font-display text-2xl font-semibold">stars</p>
+        <p className="font-display text-lg leading-6 font-semibold sm:text-2xl">
+          {arriving === undefined
+            ? "stars"
+            : arriving.total === null
+              ? "stars, still arriving"
+              : `of ${formatCount(arriving.total)} stars, still arriving`}
+        </p>
       </div>
-      <div className="relative z-10">
-        {syncing === undefined ? (
-          synced
-        ) : (
-          <SyncProgress done={count} total={syncing.total} timeLeft={syncing.timeLeft} />
-        )}
-      </div>
-      <div className="absolute top-1/2 right-6 flex size-[200px] -translate-y-1/2 items-center justify-center rounded-full bg-[#ffffff] max-sm:hidden">
-        <Mascot mood="delighted" size={150} />
+      <div className="flex size-[104px] shrink-0 items-center justify-center rounded-full bg-[#ffffff] sm:size-[200px]">
+        <Pip pose={pose} size={150} className="max-sm:size-[78px]" />
       </div>
     </Tile>
   );
@@ -126,63 +126,65 @@ export function LibraryView({
   entries,
   at,
   view,
-  onViewChange,
   sort,
-  onSortChange,
   language,
-  syncing,
-  synced,
+  arriving,
+  pose,
   onOpen,
 }: {
   entries: ReadonlyArray<LibraryEntry>;
   at: number;
   view: View;
-  onViewChange: (view: View) => void;
   sort: Sort;
-  onSortChange: (sort: Sort) => void;
   language: string | undefined;
-  syncing: Syncing | undefined;
-  synced: ReactNode;
+  arriving: Arriving | undefined;
+  pose: PipPose;
   onOpen: OpenResult;
 }) {
   const [shown, setShown] = useState(pageSize);
   const shares = useMemo(() => languageShares(entries), [entries]);
   const visible = useMemo(
-    () => entries.filter((entry) => language === undefined || entry.language === language).toSorted(order[sort]),
+    () => entries.filter((entry) => language === undefined || entry.language === language).toSorted(libraryOrder(sort)),
     [entries, language, sort],
   );
   const page = visible.slice(0, shown);
-  const groups =
-    sort === "starred"
-      ? Map.groupBy(page, (entry) => monthOf(entry.starredAt))
-      : new Map([[language === undefined ? "all stars" : language.toLowerCase(), page]]);
+  const byMonth = sort === "starred" || sort === "best";
+  const groups = byMonth
+    ? Map.groupBy(page, (entry) => monthOf(entry.starredAt))
+    : new Map([[language === undefined ? "all stars" : language.toLowerCase(), page]]);
   const counts = Map.groupBy(visible, (entry) => monthOf(entry.starredAt));
-  const controls = (
-    <div className="flex items-center gap-[10px]">
-      <SortMenu value={sort} onValueChange={onSortChange} />
-      <ViewToggle value={view} onValueChange={onViewChange} />
-    </div>
-  );
+  const last = Array.from(groups.keys()).at(-1);
+  const remaining = arriving?.total == null ? columns : Math.max(0, arriving.total - entries.length);
   return (
     <>
       <div className="grid gap-gap lg:grid-cols-2">
-        <CountTile count={entries.length} syncing={syncing} synced={synced} />
+        <CountTile count={entries.length} arriving={arriving} pose={pose} />
         <LanguagesTile shares={shares} language={language} />
       </div>
-      {Array.from(groups, ([heading, members], index) => (
-        <section key={heading} aria-label={heading} className="flex flex-col gap-gap pt-3">
-          <div className="flex flex-wrap items-center justify-between gap-3 pl-1.5">
-            <h2 className="flex items-baseline gap-2.5">
+      {Array.from(groups, ([heading, members]) => {
+        const pending =
+          arriving !== undefined && heading === last && visible.length <= shown
+            ? Math.min(remaining, columns - (members.length % columns))
+            : 0;
+        const size = byMonth ? (counts.get(heading)?.length ?? 0) : visible.length;
+        return (
+          <section key={heading} aria-label={heading} className="flex flex-col gap-gap pt-3">
+            <h2 className="flex items-baseline gap-2.5 pl-1.5">
               <span className="font-display text-2xl font-semibold tracking-snug">{heading}</span>
               <span className="font-sans text-base text-muted-foreground">
-                {stars(sort === "starred" ? (counts.get(heading)?.length ?? 0) : visible.length)}
+                {stars(size)}
+                {arriving !== undefined && " so far"}
               </span>
             </h2>
-            {index === 0 && controls}
-          </div>
-          <ResultGrid view={view} results={members.map((entry) => toResult(entry, [], at))} onOpen={onOpen} />
-        </section>
-      ))}
+            <ResultGrid
+              view={view}
+              results={members.map((entry) => toResult(entry, [], at))}
+              pending={pending}
+              onOpen={onOpen}
+            />
+          </section>
+        );
+      })}
       {visible.length > shown && (
         <Button variant="ghost" size="lg" className="self-center" onClick={() => setShown((count) => count + pageSize)}>
           Show more

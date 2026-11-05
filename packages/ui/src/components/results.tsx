@@ -1,10 +1,11 @@
 import { type MouseEvent, type ReactNode, useId } from "react";
+import { Skeleton as Measured } from "skullet/react";
 import { cn } from "../lib/cn.ts";
-import { Mascot, type MascotMotion, type Mood } from "../mascot.tsx";
 import { NetworkAvatars, type Person } from "./avatar.tsx";
 import { Badge } from "./badge.tsx";
 import { StarIcon } from "./icons.tsx";
-import { Skeleton } from "./skeleton.tsx";
+import { RepoIcon, type RepoVisual } from "./repo-icon.tsx";
+import { tileVariants } from "./tile.tsx";
 import type { View } from "./view-toggle.tsx";
 
 export type Activity =
@@ -25,6 +26,9 @@ export type Result = {
   readonly stars: number | null;
   readonly starred: string;
   readonly network: ReadonlyArray<Person>;
+  readonly visual: RepoVisual;
+  readonly language: string | null;
+  readonly unread: boolean;
 };
 
 const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
@@ -53,41 +57,9 @@ export const activityLabel = (activity: Activity) => ("label" in activity ? acti
 
 const retired = (activity: Activity) => activity.state === "archived" || activity.state === "deprecated";
 
-const footerCell = "border-t-[1.5px] border-foreground/12 pt-[14px]";
-
-const layouts = {
-  hero: {
-    article:
-      "butter sm:grid-cols-[auto_auto_1fr] sm:px-tile-lg sm:pt-tile-top sm:pb-6 sm:[grid-template-areas:'head_head_stars'_'reason_reason_reason'_'alive_starred_network']",
-    name: "sm:text-3xl sm:leading-[40px]",
-    owner: "text-base leading-gap text-secondary-foreground",
-    reason: "text-foreground sm:text-lg",
-    stars: "sm:gap-1.5",
-    starIcon: "sm:size-[26px]",
-    starCount: "sm:text-4xl",
-    starred: cn(footerCell, "sm:flex sm:items-center sm:gap-1 sm:pr-gap"),
-    starredText: "text-meta font-medium text-secondary-foreground",
-    starredLabel: "",
-    alive: "",
-    dot: "sm:size-[9px]",
-    network: "",
-  },
-  tile: {
-    article:
-      "sm:grid-cols-[1fr_auto] sm:grid-rows-[auto_auto_auto_1fr_auto] sm:gap-y-3 sm:pt-6 sm:pr-tile-sm sm:pb-tile-sm sm:pl-6 sm:[grid-template-areas:'head_head'_'reason_reason'_'network_network'_'stars_starred'_'alive_alive']",
-    name: "",
-    owner: "",
-    reason: "",
-    stars: "sm:mt-2.5 sm:self-end sm:justify-self-start",
-    starIcon: "",
-    starCount: "",
-    starred: "sm:mt-2.5 sm:flex sm:flex-col sm:items-end sm:gap-0.5 sm:self-end sm:pb-0.5",
-    starredText: "text-sm font-medium text-foreground",
-    starredLabel: "text-label leading-[13px] font-semibold tracking-caps text-muted-foreground uppercase",
-    alive: "sm:gap-1.5 sm:border-muted sm:pt-3 sm:pr-0 sm:text-sm sm:text-muted-foreground",
-    dot: "",
-    network: "sm:self-start sm:justify-start sm:border-0 sm:pt-0 sm:text-sm",
-  },
+const heroText = {
+  name: "tiles:sm:text-[34px] tiles:sm:leading-[40px]",
+  reason: "tiles:text-foreground tiles:sm:text-lg",
 };
 
 const listText = "list:text-sm list:text-muted-foreground";
@@ -98,6 +70,22 @@ export type OpenResult = (result: Result, opener: HTMLAnchorElement) => void;
 const plainClick = (event: MouseEvent) =>
   event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 
+function UnreadChip({ className }: { className?: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex h-6 w-fit shrink-0 items-center gap-1.5 rounded-full bg-muted pr-2.5 pl-2 font-sans text-[12px] leading-4 font-semibold whitespace-nowrap text-muted-foreground",
+        className,
+      )}
+    >
+      <svg aria-hidden viewBox="0 0 12 12" className="size-3" fill="none">
+        <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2 2" />
+      </svg>
+      not read yet
+    </span>
+  );
+}
+
 export function ResultItem({
   result,
   hero = false,
@@ -107,84 +95,83 @@ export function ResultItem({
   hero?: boolean;
   onOpen?: OpenResult | undefined;
 }) {
-  const layout = hero ? layouts.hero : layouts.tile;
   const dim = retired(result.activity);
   const open = (event: MouseEvent<HTMLAnchorElement>) => {
     if (!onOpen || !plainClick(event)) return;
     event.preventDefault();
     onOpen(result, event.currentTarget);
   };
-  const networkCell = cn(
-    "[grid-area:network] flex items-center justify-end",
-    footerCell,
-    layout.network,
-    "list:justify-start",
-    listCell,
-  );
   return (
     <article
       className={cn(
-        "relative grid h-full grid-cols-[1fr_auto] grid-rows-[auto_1fr_auto] gap-y-[14px] squircle rounded-tile bg-card px-tile-sm pt-tile-sm pb-gap text-foreground [grid-template-areas:'head_stars'_'reason_reason'_'alive_network']",
-        layout.article,
-        "list:gap-y-2 list:rounded-md list:px-tile list:py-gap list:sm:grid-cols-[180px_100px_190px_1fr] list:sm:grid-rows-none list:sm:[grid-template-areas:'head_head_head_head'_'reason_reason_reason_reason'_'alive_stars_starred_network']",
+        tileVariants(),
+        hero && "tiles:butter",
+        "grid h-full grid-cols-[1fr_auto] grid-rows-[auto_auto_auto_1fr_auto] gap-y-3 pt-6 pr-tile-sm pb-tile-sm pl-6 [grid-template-areas:'head_head'_'reason_reason'_'network_network'_'stars_starred'_'alive_alive']",
+        "list:grid-cols-[auto_1fr] list:grid-rows-none list:gap-y-2 list:rounded-md list:py-gap list:pr-tile list:pl-[74px] list:[grid-template-areas:'head_head'_'reason_reason'_'alive_stars'] list:sm:grid-cols-[180px_100px_190px_1fr] list:sm:[grid-template-areas:'head_head_head_head'_'reason_reason_reason_reason'_'alive_stars_starred_network']",
       )}
     >
-      <header className="[grid-area:head] grid grid-cols-[1fr_auto] items-start gap-x-2 gap-y-0.5 list:flex list:items-baseline list:gap-x-1.5">
-        <h3
-          className={cn(
-            "col-start-1 row-start-1 font-display text-name font-semibold tracking-snug",
-            dim && "text-muted-foreground",
-            layout.name,
-            "list:text-[22px] list:leading-tile",
-          )}
-        >
-          <a
-            href={result.href}
-            onClick={open}
-            className="rounded-sm after:absolute after:inset-0 after:rounded-[inherit]"
+      <header className="[grid-area:head] flex min-w-0 items-center gap-3 list:items-baseline">
+        <span className="shrink-0 list:absolute list:top-gap list:left-[22px]">
+          <RepoIcon visual={result.visual} />
+        </span>
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5 list:flex-row list:flex-wrap list:items-center list:gap-x-1.5 list:gap-y-0">
+          <h3
+            className={cn(
+              "min-w-0 font-display text-name font-semibold tracking-snug break-words",
+              dim && "text-muted-foreground",
+              hero && heroText.name,
+              "list:text-[22px] list:leading-[28px]",
+            )}
           >
-            {result.name}
-          </a>
-        </h3>
+            <a
+              href={result.href}
+              onClick={open}
+              className="rounded-sm after:absolute after:inset-0 after:rounded-[inherit]"
+            >
+              {result.name}
+            </a>
+          </h3>
+          <p
+            className={cn(
+              "min-w-0 font-sans text-meta font-medium break-words text-muted-foreground",
+              "list:order-first list:text-[16px] list:leading-[28px] list:font-normal list:after:content-['_/']",
+            )}
+          >
+            {result.owner}
+            {result.language && <span className="list:hidden"> · {result.language}</span>}
+          </p>
+          {result.unread && <UnreadChip className="hidden list:inline-flex" />}
+        </div>
+        {dim && <Badge className="self-start list:ml-1 list:self-center">{result.activity.state}</Badge>}
+      </header>
+      <div className="[grid-area:reason] flex flex-col items-start gap-2">
+        {result.unread && <UnreadChip className="list:hidden" />}
         <p
           className={cn(
-            "col-start-1 row-start-2 font-sans text-meta font-medium text-muted-foreground",
-            layout.owner,
-            "list:order-first list:text-[16px] list:leading-tile list:after:content-['_/']",
+            "font-sans text-base text-secondary-foreground",
+            dim && "text-muted-foreground",
+            hero && heroText.reason,
+            "list:text-base",
           )}
         >
-          {result.owner}
+          {highlight(result.reason, result.matches)}
         </p>
-        {dim && <Badge className="col-start-2 row-start-1 list:ml-1 list:self-center">{result.activity.state}</Badge>}
-      </header>
-      <p
-        className={cn(
-          "[grid-area:reason] font-sans text-base text-secondary-foreground",
-          layout.reason,
-          "list:text-base",
-        )}
-      >
-        {highlight(result.reason, result.matches)}
-      </p>
+      </div>
       <dl className="contents font-sans">
         {result.stars !== null && (
           <div
             className={cn(
-              "[grid-area:stars] flex items-center gap-[5px] self-start justify-self-end",
+              "[grid-area:stars] mt-2.5 flex items-center gap-[5px] self-end justify-self-start",
               dim && "text-muted-foreground",
-              layout.stars,
-              "list:mt-0 list:self-center list:justify-self-start",
+              "list:mt-0 list:self-center",
             )}
           >
             <dt className="sr-only">stars</dt>
             <dd className="flex items-center gap-[inherit]">
-              <StarIcon
-                className={cn("size-5", dim && "opacity-(--opacity-archived)", layout.starIcon, "list:size-[15px]")}
-              />
+              <StarIcon className={cn("size-5", dim && "opacity-(--opacity-archived)", "list:size-[15px]")} />
               <span
                 className={cn(
                   "font-display text-2xl font-semibold tracking-tight",
-                  layout.starCount,
                   "list:text-lg list:leading-gap list:tracking-normal",
                 )}
               >
@@ -195,25 +182,18 @@ export function ResultItem({
         )}
         <div
           className={cn(
-            "[grid-area:starred] hidden",
-            layout.starred,
-            "list:flex list:flex-row list:items-center list:gap-1 list:pb-0",
+            "[grid-area:starred] mt-2.5 flex items-center gap-1 self-end justify-self-end pb-1.5 text-sm font-medium text-muted-foreground",
+            "list:hidden list:justify-self-start list:font-normal list:sm:flex",
             listCell,
           )}
         >
-          <dt
-            className={cn(layout.starredText, layout.starredLabel, "list:tracking-normal list:normal-case", listText)}
-          >
-            starred
-          </dt>
-          <dd className={cn(layout.starredText, listText)}>{result.starred}</dd>
+          <dt>starred</dt>
+          <dd>{result.starred}</dd>
         </div>
         <div
           className={cn(
-            "[grid-area:alive] flex items-center gap-[7px] pr-gap text-meta font-medium text-secondary-foreground",
-            footerCell,
-            layout.alive,
-            listText,
+            "[grid-area:alive] flex items-center gap-1.5 border-t-[1.5px] border-foreground/8 pt-3 text-sm font-medium text-muted-foreground",
+            "list:font-normal",
             listCell,
           )}
         >
@@ -225,151 +205,129 @@ export function ResultItem({
                 "size-2 shrink-0 rounded-full",
                 result.activity.state === "alive" ? "bg-success" : "bg-muted-foreground",
                 dim && "opacity-(--opacity-archived)",
-                layout.dot,
-                "list:size-2",
               )}
             />
             {activityLabel(result.activity)}
           </dd>
         </div>
         {result.network.length > 0 && (
-          <div className={networkCell}>
+          <div
+            className={cn(
+              "[grid-area:network] flex items-center justify-start self-start text-sm",
+              listCell,
+              "list:max-sm:hidden",
+            )}
+          >
             <dt className="sr-only">network</dt>
             <dd className="relative z-10">
-              <NetworkAvatars
-                people={result.network}
-                className={cn("text-meta text-secondary-foreground", layout.network, listText)}
-              />
+              <NetworkAvatars people={result.network} className={cn("text-meta text-secondary-foreground", listText)} />
             </dd>
           </div>
         )}
       </dl>
-      {result.network.length === 0 && <span aria-hidden className={networkCell} />}
     </article>
   );
 }
 
-export function ResultSkeleton({ hero = false }: { hero?: boolean }) {
+const sample: Result = {
+  owner: "ratatui",
+  name: "ratatui",
+  href: "#",
+  reason: "Widgets for charts, gauges, sparklines, and tables. The maintained fork of tui-rs.",
+  matches: [],
+  activity: { state: "alive", label: "pushed 2 days ago" },
+  stars: 16_400,
+  starred: "Mar 14, 2025",
+  network: [],
+  visual: { kind: "monogram", letters: "ra" },
+  language: "Rust",
+  unread: false,
+};
+
+export function ResultPlaceholder({ hero = false }: { hero?: boolean }) {
   return (
-    <div
-      data-slot="result-skeleton"
-      className={cn(
-        "flex h-full min-h-[240px] flex-col gap-3 squircle rounded-tile bg-card p-6 list:min-h-0 list:rounded-md list:px-tile list:py-gap",
-        hero && "sm:px-tile-lg sm:pt-tile-lg",
-      )}
-    >
-      <div className="flex justify-between">
-        <Skeleton className={cn("h-6 w-[118px]", hero && "sm:h-8 sm:w-[168px]")} />
-        {hero && <Skeleton className="h-9 w-28 max-sm:hidden list:hidden" />}
-      </div>
-      <Skeleton className="h-3 w-[84px] list:hidden" />
-      <Skeleton className="mt-3 h-3 w-full" />
-      <Skeleton className="h-3 w-[88%] list:hidden" />
-      <Skeleton className="h-3 w-[52%] list:hidden" />
-      <div className="mt-auto flex items-end justify-between border-t-[1.5px] border-muted pt-3 list:border-0 list:pt-0">
-        <Skeleton className="h-3 w-[116px]" />
-        <Skeleton className="h-3 w-[72px]" />
-      </div>
-    </div>
+    <Measured loading label="Loading a result" className="h-full">
+      <ResultItem result={sample} hero={hero} />
+    </Measured>
   );
 }
 
-function Sparkle({ className }: { className: string }) {
+export type ResultGroup = {
+  readonly key: string;
+  readonly heading?: { readonly label: string; readonly detail: string } | undefined;
+  readonly results: ReadonlyArray<Result>;
+  readonly pending?: number;
+};
+
+export function GroupHeading({ id, label, detail }: { id: string; label: string; detail: string }) {
   return (
-    <svg viewBox="0 0 20 20" aria-hidden className={cn("absolute fill-highlight list:hidden", className)}>
-      <path d="M10 1c.6 4.6 3.4 7.4 9 9-5.6 1.6-8.4 4.4-9 9-.6-4.6-3.4-7.4-9-9 5.6-1.6 8.4-4.4 9-9z" />
-    </svg>
+    <h2 id={id} className="flex items-baseline gap-2 px-2 pt-2">
+      <span className="font-sans text-label leading-[14px] font-bold tracking-caps text-secondary-foreground uppercase">
+        {label}
+      </span>
+      <span className="font-sans text-sm font-medium text-muted-foreground">{detail}</span>
+    </h2>
   );
 }
 
-export function ResultsSummary({
-  heading,
-  detail,
-  controls,
-  mood,
-  motion,
-  reranking = false,
+function Group({
+  group,
+  heroFirst,
+  onOpen,
 }: {
-  heading: ReactNode;
-  detail: ReactNode;
-  controls?: ReactNode;
-  mood?: Mood;
-  motion?: MascotMotion | undefined;
-  reranking?: boolean;
+  group: ResultGroup;
+  heroFirst: boolean;
+  onOpen?: OpenResult | undefined;
 }) {
   const headingId = useId();
-  const face = reranking ? "searching" : mood;
+  const pending = group.pending ?? 0;
   return (
-    <section
-      aria-labelledby={headingId}
-      className="relative flex flex-col justify-between gap-6 squircle rounded-tile sm:min-h-[240px] bg-card px-tile-lg pt-tile pb-6 sm:col-span-2 list:min-h-0 list:flex-row list:items-center list:bg-transparent list:p-0 list:pt-2 list:pl-tile"
-    >
-      <div className="relative z-10 flex flex-col gap-1.5 list:flex-row list:items-baseline list:gap-3">
-        <h2
-          id={headingId}
-          className="font-display text-3xl leading-[40px] font-semibold tracking-tight sm:text-display sm:leading-[56px] list:text-2xl list:leading-[36px] list:tracking-snug"
-        >
-          {heading}
-        </h2>
-        <div className="font-sans text-[16px] leading-base text-muted-foreground list:text-base">{detail}</div>
-      </div>
-      {controls && <div className="relative z-10 flex flex-wrap items-center gap-gap list:gap-[10px]">{controls}</div>}
-      {face && (
-        <>
-          <Mascot
-            mood={face}
-            motion={motion}
-            size={200}
-            className="absolute top-2.5 right-[26px] rotate-[10deg] max-sm:size-[112px] list:hidden"
-          />
-          <Sparkle className="top-10 right-[236px] size-5 max-sm:hidden" />
-          <Sparkle className="top-[26px] right-[30px] size-[13px] max-sm:hidden" />
-        </>
-      )}
+    <section aria-labelledby={group.heading ? headingId : undefined} className="flex flex-col gap-3 list:gap-3">
+      {group.heading && <GroupHeading id={headingId} {...group.heading} />}
+      <ol
+        aria-busy={pending > 0}
+        aria-label={group.heading ? undefined : "Results"}
+        className="grid grid-cols-1 gap-gap sm:grid-cols-2 lg:grid-cols-4 list:flex list:flex-col list:gap-3"
+      >
+        {group.results.map((result, index) => (
+          <li
+            key={`${result.owner}/${result.name}`}
+            className={cn("animate-tile-in", heroFirst && index === 0 && "sm:col-span-2")}
+            style={{ animationDelay: `${index * 30}ms` }}
+          >
+            <ResultItem result={result} hero={heroFirst && index === 0} onOpen={onOpen} />
+          </li>
+        ))}
+        {Array.from({ length: pending }, (_, index) => {
+          const position = group.results.length + index;
+          const hero = heroFirst && position === 0;
+          return (
+            <li key={`pending-${position}`} className={cn(hero && "sm:col-span-2")}>
+              <ResultPlaceholder hero={hero} />
+            </li>
+          );
+        })}
+      </ol>
     </section>
   );
 }
 
 export function Results({
   view,
-  results,
-  summary,
-  pending = 0,
+  groups,
   onOpen,
+  className,
 }: {
   view: View;
-  results: ReadonlyArray<Result>;
-  summary?: ReactNode;
-  pending?: number;
+  groups: ReadonlyArray<ResultGroup>;
   onOpen?: OpenResult | undefined;
+  className?: string;
 }) {
   return (
-    <div
-      className={cn(
-        view === "list" ? "view-list" : "view-tiles",
-        "grid grid-cols-1 gap-gap sm:grid-cols-2 lg:grid-cols-4 list:flex list:flex-col list:gap-3",
-      )}
-    >
-      {summary}
-      <ol aria-busy={pending > 0} aria-label="Results" className="contents list:flex list:flex-col list:gap-3">
-        {results.map((result, index) => (
-          <li
-            key={`${result.owner}/${result.name}`}
-            className={cn("animate-tile-in", index === 0 && "sm:col-span-2")}
-            style={{ animationDelay: `${index * 30}ms` }}
-          >
-            <ResultItem result={result} hero={index === 0} onOpen={onOpen} />
-          </li>
-        ))}
-        {Array.from({ length: pending }, (_, index) => {
-          const position = results.length + index;
-          return (
-            <li key={`pending-${position}`} aria-hidden className={cn(position === 0 && "sm:col-span-2")}>
-              <ResultSkeleton hero={position === 0} />
-            </li>
-          );
-        })}
-      </ol>
+    <div className={cn(view === "list" ? "view-list" : "view-tiles", "flex flex-col gap-6", className)}>
+      {groups.map((group, index) => (
+        <Group key={group.key} group={group} heroFirst={index === 0} onOpen={onOpen} />
+      ))}
     </div>
   );
 }

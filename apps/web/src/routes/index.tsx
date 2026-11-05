@@ -1,4 +1,4 @@
-import { buttonVariants, Mascot, Tile } from "@stargrep/ui";
+import { buttonVariants, Pip, Tile } from "@stargrep/ui";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Page } from "../components/page.tsx";
@@ -39,7 +39,7 @@ function Landing() {
     <Page
       header={
         <>
-          <Wordmark />
+          <Wordmark pose={problem === undefined ? "idle" : "scared"} />
           {session === true ? (
             <Link to="/search" className={buttonVariants({ variant: "ghost" })}>
               Your stars
@@ -56,7 +56,7 @@ function Landing() {
             search your github stars in plain words
           </h1>
           {problem === undefined ? (
-            <Tile className="flex flex-col gap-4 py-6 pr-6 pl-tile-lg sm:flex-row sm:items-center sm:justify-between">
+            <Tile className="flex flex-col gap-4 py-6 pr-6 pl-tile-lg sm:flex-row sm:items-center sm:justify-between sm:rounded-md">
               <p className="font-sans text-xl font-medium tracking-snug text-muted-foreground">
                 the rust library for terminal dashboards I starred last year
               </p>
@@ -65,7 +65,7 @@ function Landing() {
           ) : (
             <Tile
               role="alert"
-              className="flex flex-col gap-4 py-6 pr-6 pl-tile-lg sm:flex-row sm:items-center sm:justify-between"
+              className="flex flex-col gap-4 py-6 pr-6 pl-tile-lg sm:flex-row sm:items-center sm:justify-between sm:rounded-md"
             >
               <div className="flex flex-col gap-1">
                 <h2 className="font-display text-2xl font-semibold tracking-snug">{problem.heading}</h2>
@@ -76,7 +76,7 @@ function Landing() {
           )}
         </div>
         <Tile className="relative flex min-h-[240px] items-center justify-center max-lg:hidden">
-          <Mascot mood={problem === undefined ? "searching" : "surprised"} size={200} className="rotate-[10deg]" />
+          <Pip pose={problem === undefined ? "happy" : "scared"} size={200} className="rotate-[10deg]" />
         </Tile>
       </section>
     </Page>

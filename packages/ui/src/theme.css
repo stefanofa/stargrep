@@ -1,8 +1,10 @@
 @import "./fonts.css";
+@import "blobatar/motion.css";
 
 @source "./";
 
 @custom-variant list (&:is(.view-list, .view-list *));
+@custom-variant tiles (&:is(.view-tiles, .view-tiles *));
 
 @theme static {
   --color-*: initial;
@@ -164,6 +166,14 @@
 @layer base {
   :root {
     color-scheme: light dark;
+  }
+
+  :root {
+    --skullet-base: var(--color-muted);
+    --skullet-highlight: var(--color-accent-soft);
+    --skullet-animation: pulse;
+    --skullet-speed: fast;
+    --skullet-radius: 999px;
   }
 
   :root {

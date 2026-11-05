@@ -1,30 +1,62 @@
 import "./gallery.css";
-import { type ReactNode, StrictMode, useEffect, useState } from "react";
+import { type ReactNode, StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Badge,
   Button,
-  DeepSearch,
+  EmptyTile,
   type Filter,
   LanguageBar,
-  Mascot,
-  moods,
+  Pip,
+  pipPoses,
+  RephraseChips,
   type RepoDetail,
+  RepoIcon,
   RepoPanel,
+  type RepoVisual,
   Results,
-  ResultsSummary,
   ScopeSwitch,
   SearchTile,
-  Skeleton,
   type Sort,
   SortMenu,
   StarredWeeks,
-  SyncProgress,
+  type StatusIcon,
+  StatusLine,
   Tile,
   useStoredView,
   ViewToggle,
 } from "../src/index.ts";
-import { detailFor, results, weeks } from "./data.ts";
+import { detailFor, icons, results, weeks } from "./data.ts";
+
+const strips: ReadonlyArray<{ icon: StatusIcon; label: string; detail?: string; progress?: number }> = [
+  { icon: "synced", label: "1,776 stars", detail: "synced 2 min ago" },
+  {
+    icon: "busy",
+    label: "importing your stars",
+    detail: "1,204 of 1,776 · about 20 seconds left",
+    progress: 1204 / 1776,
+  },
+  {
+    icon: "busy",
+    label: "reading your stars",
+    detail: "412 of 1,776 understood · names and descriptions already searchable",
+    progress: 412 / 1776,
+  },
+  { icon: "busy", label: "found 3 so far", detail: "1,364 stars not read yet", progress: 412 / 1776 },
+  { icon: "found", label: "found 6", detail: "of 1,776" },
+  { icon: "busy", label: "nothing yet", detail: "1,364 stars not read yet", progress: 412 / 1776 },
+  { icon: "done", label: "nothing found", detail: "all 1,776 stars read" },
+  { icon: "failed", label: "sync didn't finish", detail: "1,204 stars so far" },
+];
+
+const slots: ReadonlyArray<{ label: string; visual: RepoVisual }> = [
+  { label: "own icon", visual: { kind: "icon", url: icons.ratatui, plate: "light", letters: "ra" } },
+  { label: "dark plate", visual: { kind: "icon", url: icons.ghost, plate: "dark", letters: "gh" } },
+  { label: "small icon", visual: { kind: "icon", url: icons.favicon, plate: "none", letters: "ju" } },
+  { label: "org avatar", visual: { kind: "avatar", url: "https://github.com/tokio-rs.png?size=88", letters: "to" } },
+  { label: "monogram", visual: { kind: "monogram", letters: "ti" } },
+  { label: "failed image", visual: { kind: "icon", url: "/missing.png", plate: "none", letters: "fa" } },
+];
 
 const themes = ["system", "light", "dark"] as const;
 type Theme = (typeof themes)[number];
@@ -89,24 +121,6 @@ const typeScale = [
   ["text-hero leading-none font-display font-semibold tracking-tight", "412"],
 ] as const;
 
-const rerankMs = 1000;
-
-function useRerank() {
-  const [deep, setDeep] = useState(false);
-  const [reranking, setReranking] = useState(false);
-  useEffect(() => {
-    if (!reranking) return;
-    const settled = new AbortController();
-    AbortSignal.timeout(rerankMs).addEventListener("abort", () => setReranking(false), { signal: settled.signal });
-    return () => settled.abort();
-  }, [reranking]);
-  const toggle = (next: boolean) => {
-    setDeep(next);
-    setReranking(next);
-  };
-  return { deep, reranking, toggle };
-}
-
 function Gallery() {
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [view, setView] = useStoredView();
@@ -119,8 +133,13 @@ function Gallery() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelRepo, setPanelRepo] = useState<RepoDetail>();
   const [opener, setOpener] = useState<HTMLElement | null>(null);
-  const [sort, setSort] = useState<Sort>("starred");
-  const deepSearch = useRerank();
+  const [sort, setSort] = useState<Sort>("best");
+  const controls = (
+    <>
+      <SortMenu value={sort} onValueChange={setSort} options={["best", "starred", "stars", "pushed"]} />
+      <ViewToggle value={view} onValueChange={setView} />
+    </>
+  );
 
   return (
     <main className="mx-auto flex w-full max-w-page flex-col gap-16 px-4 pt-12 pb-24 min-[1232px]:px-0">
@@ -144,46 +163,46 @@ function Gallery() {
         </fieldset>
       </header>
 
-      <Section id="search" title="search · artboard 02 and 03">
+      <Section id="search" title="search · direction c">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <span className="font-display text-3xl font-semibold tracking-snug">stargrep</span>
+          <span className="flex items-center gap-1.5 font-display text-3xl font-semibold tracking-snug">
+            <Pip pose="idle" size={40} />
+            stargrep
+          </span>
           <ScopeSwitch scopes={scopes} value={scope} onValueChange={setScope} />
           <span className="flex size-11 items-center justify-center rounded-full bg-avatar-2 font-display text-[16px] font-semibold text-ink">
             JP
           </span>
         </div>
         <SearchTile
-          defaultQuery="rust library for terminal dashboards I starred last year"
+          defaultQuery="rust library for terminal dashboards"
           filters={filters}
           onRemoveFilter={(removed) => setFilters((current) => current.filter((filter) => filter.id !== removed.id))}
+          status={<StatusLine icon="busy" label="found 3 so far" detail="1,364 stars not read yet" />}
+          controls={controls}
+          progress={412 / 1776}
         />
         <Results
           view={view}
-          results={results}
+          groups={[
+            {
+              key: "words",
+              heading: { label: "matching words", detail: "3 from all 1,776" },
+              results: results.slice(1, 4),
+            },
+            {
+              key: "meaning",
+              heading: { label: "matching meaning", detail: "2 from the 412 read so far" },
+              results: [results[0], results[4]].filter((result) => result !== undefined),
+              pending: 2,
+            },
+          ]}
           onOpen={(result, link) => {
             setOpener(link);
             setPanelRepo(detailFor(result));
             setPanelOpen(true);
           }}
-          summary={
-            <ResultsSummary
-              heading="found 5!"
-              detail="of your 2,431 stars"
-              mood="happy"
-              motion="blink"
-              reranking={deepSearch.reranking}
-              controls={
-                <>
-                  <DeepSearch checked={deepSearch.deep} onCheckedChange={deepSearch.toggle} />
-                  <ViewToggle value={view} onValueChange={setView} />
-                </>
-              }
-            />
-          }
         />
-        <div className="flex justify-end">
-          <SortMenu value={sort} onValueChange={setSort} />
-        </div>
         <RepoPanel
           repo={panelRepo}
           open={panelOpen}
@@ -193,56 +212,52 @@ function Gallery() {
         />
       </Section>
 
-      <Section id="states" title="states">
-        <Results
-          view="tiles"
-          results={results.slice(0, 3)}
-          pending={2}
-          summary={
-            <ResultsSummary
-              heading="syncing"
-              detail={<SyncProgress done={1204} total={2431} timeLeft="about 20 seconds left" />}
-              mood="delighted"
-            />
-          }
+      <Section id="states" title="strip states">
+        {strips.map((strip) => (
+          <SearchTile
+            key={strip.label}
+            placeholder="the rust tui library I starred last year"
+            status={<StatusLine {...strip} />}
+            controls={controls}
+            progress={strip.progress}
+          />
+        ))}
+      </Section>
+
+      <Section id="results" title="results, all read">
+        <Results view={view} groups={[{ key: "all", results }]} />
+        <Results view={view} groups={[{ key: "all", results: [], pending: 4 }]} />
+      </Section>
+
+      <Section id="empty" title="empty">
+        <EmptyTile
+          pose="unsure"
+          ring={412 / 1776}
+          heading="not in the 412 i've read yet"
+          body="it might be in the 1,364 stars i'm still reading."
+          meta="i'll search again when reading finishes · about 6 minutes left"
         />
-        <Results
-          view="tiles"
-          results={[]}
-          pending={6}
-          summary={
-            <ResultsSummary
-              heading={
-                <>
-                  <span className="sr-only">searching</span>
-                  <Skeleton aria-hidden className="h-11 w-[236px]" />
-                </>
-              }
-              detail={<Skeleton className="mt-2 h-3 w-[148px]" />}
-              mood="searching"
-            />
-          }
-        />
-        <Tile className="relative flex min-h-[264px] flex-col justify-between gap-6 px-12 pt-10">
-          <h2 className="font-display text-display leading-[56px] font-semibold tracking-tight max-sm:text-3xl">
-            nothing matches that
-          </h2>
-          <p className="flex flex-wrap items-center gap-4 font-sans text-lg text-secondary-foreground">
-            <span>
-              <strong className="font-semibold text-foreground">12 stars</strong> hidden by{" "}
-              <strong className="font-semibold text-foreground">starred in 2019</strong>
-            </span>
-            <Button variant="accent" size="lg">
-              remove that filter
-            </Button>
-          </p>
-          <Mascot mood="flat" size={220} className="absolute top-8 right-[88px] -rotate-12 max-md:hidden" />
-        </Tile>
-        <Tile className="relative flex min-h-[200px] flex-col justify-center gap-2 px-12">
-          <h2 className="font-display text-3xl font-semibold tracking-snug">github needs a breather.</h2>
-          <p className="font-sans text-lg text-secondary-foreground">try again in 2 minutes</p>
-          <Mascot mood="surprised" size={160} className="absolute top-5 right-[88px] rotate-[10deg] max-md:hidden" />
-        </Tile>
+        <EmptyTile
+          pose="sad"
+          heading="nothing in all 1,776 stars"
+          body="i've read all of them, and none matches that. maybe you starred it under different words. try one of these:"
+        >
+          <RephraseChips phrases={["record terminal", "terminal sessions", "sessions gifs"]} onPick={() => {}} />
+        </EmptyTile>
+      </Section>
+
+      <Section id="icons" title="icon slot">
+        <ul className="flex flex-wrap gap-gap">
+          {slots.map(({ label, visual }) => (
+            <li key={label} className="flex flex-col items-center gap-2">
+              <RepoIcon visual={visual} />
+              <span className="view-list">
+                <RepoIcon visual={visual} />
+              </span>
+              <span className="font-sans text-sm text-muted-foreground">{label}</span>
+            </li>
+          ))}
+        </ul>
       </Section>
 
       <Section id="tiles" title="tile variants">
@@ -278,13 +293,14 @@ function Gallery() {
         </div>
       </Section>
 
-      <Section id="mascot" title="mascot moods">
+      <Section id="pip" title="pip poses">
         <ul className="flex flex-wrap gap-gap">
-          {moods.map((mood) => (
-            <li key={mood}>
+          {pipPoses.map((pose) => (
+            <li key={pose}>
               <Tile className="flex w-[180px] flex-col items-center gap-3">
-                <Mascot mood={mood} size={120} />
-                <span className="font-sans text-sm text-muted-foreground">{mood}</span>
+                <Pip pose={pose} size={120} />
+                <Pip pose={pose} size={32} />
+                <span className="font-sans text-sm text-muted-foreground">{pose}</span>
               </Tile>
             </li>
           ))}

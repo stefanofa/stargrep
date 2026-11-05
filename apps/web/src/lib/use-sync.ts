@@ -2,10 +2,21 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { useEffect, useState } from "react";
+import { enrichmentOf } from "./planned.ts";
 import { api, type SyncStatus } from "./rpc.ts";
 
-const every = Duration.seconds(2);
+const importing = Duration.seconds(2);
+const reading = Duration.seconds(5);
 
+const stillReading = (status: SyncStatus) => {
+  const enrichment = enrichmentOf(status);
+  return enrichment !== null && enrichment.read + enrichment.failed < enrichment.total;
+};
+
+const readCount = (status: SyncStatus | undefined) => enrichmentOf(status)?.read;
+
+// Polls while stars import and then while they are read. Each round that imported stars or read more of them
+// reloads the library, so new repos appear and the "not read yet" flags clear as reading goes on.
 export function useSync(login: string, onProgress: () => void) {
   const [status, setStatus] = useState<SyncStatus>();
   const [round, setRound] = useState(0);
@@ -19,18 +30,20 @@ export function useSync(login: string, onProgress: () => void) {
         () => trigger,
       ),
     );
-    let syncing = false;
+    let previous: SyncStatus | undefined;
     const publish = (current: SyncStatus) =>
       Effect.sync(() => {
         setStatus(current);
-        if (syncing || current.state === "queued") onProgress();
-        syncing = current.state === "queued";
+        const syncing = previous?.state === "queued" || current.state === "queued";
+        const readMore = previous !== undefined && readCount(current) !== readCount(previous);
+        if (syncing || readMore) onProgress();
+        previous = current;
       });
     const poll = Effect.gen(function* () {
       let current = yield* round === 0 ? read : trigger;
       yield* publish(current);
-      while (current.state === "queued") {
-        yield* Effect.sleep(every);
+      while (current.state === "queued" || stillReading(current)) {
+        yield* Effect.sleep(current.state === "queued" ? importing : reading);
         current = yield* read;
         yield* publish(current);
       }

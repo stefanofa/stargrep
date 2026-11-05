@@ -2,6 +2,8 @@ import type { Activity, RepoDetail, Result } from "@stargrep/ui";
 import * as DateTime from "effect/DateTime";
 import { highlights } from "./keyword.ts";
 import type { LibraryEntry } from "./library-collection.ts";
+import { repoFacts } from "./planned.ts";
+import { repoVisual } from "./repo-visual.ts";
 
 const day = 86_400_000;
 const relative = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
@@ -43,10 +45,12 @@ export const starredOn = (iso: string) => dateFormat.format(millis(iso));
 
 export const monthOf = (iso: string) => monthFormat.format(millis(iso)).toLowerCase();
 
-const reasonOf = (repo: LibraryEntry) => repo.summary ?? repo.description ?? "";
+const reasonOf = (repo: LibraryEntry, read: boolean) =>
+  (read ? (repo.summary ?? repo.description) : (repo.description ?? repo.summary)) ?? "";
 
 export const toResult = (repo: LibraryEntry, terms: ReadonlyArray<string>, at: number, values = ""): Result => {
-  const summary = reasonOf(repo);
+  const facts = repoFacts(repo);
+  const summary = reasonOf(repo, facts.read);
   const reason = values === "" ? summary : [summary, values].filter((part) => part !== "").join(" · ");
   return {
     owner: repo.owner,
@@ -58,6 +62,9 @@ export const toResult = (repo: LibraryEntry, terms: ReadonlyArray<string>, at: n
     stars: repo.stars,
     starred: starredOn(repo.starredAt),
     network: [],
+    visual: repoVisual({ ...facts, owner: repo.owner }),
+    language: repo.language,
+    unread: !facts.read,
   };
 };
 

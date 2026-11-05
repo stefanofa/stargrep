@@ -1,25 +1,36 @@
 import { Menu } from "@base-ui/react/menu";
-import { buttonVariants } from "./button.tsx";
-import { CheckIcon, ChevronIcon } from "./icons.tsx";
+import { CheckIcon, ChevronIcon, SortIcon } from "./icons.tsx";
 
 export const sorts = [
-  { value: "starred", label: "Recently starred" },
-  { value: "stars", label: "Most stars" },
-  { value: "pushed", label: "Recently pushed" },
+  { value: "best", label: "best match" },
+  { value: "starred", label: "recently starred" },
+  { value: "stars", label: "most stars" },
+  { value: "pushed", label: "recently pushed" },
 ] as const;
 
 export type Sort = (typeof sorts)[number]["value"];
 
 const isSort = (value: unknown): value is Sort => sorts.some((sort) => sort.value === value);
 
-export function SortMenu({ value, onValueChange }: { value: Sort; onValueChange: (sort: Sort) => void }) {
+export function SortMenu({
+  value,
+  onValueChange,
+  options = sorts.filter((sort) => sort.value !== "best").map((sort) => sort.value),
+}: {
+  value: Sort;
+  onValueChange: (sort: Sort) => void;
+  options?: ReadonlyArray<Sort>;
+}) {
   const current = sorts.find((sort) => sort.value === value);
   return (
     <Menu.Root>
-      <Menu.Trigger className={buttonVariants({ variant: "ghost" })}>
-        <span className="sr-only">Sort by</span>
-        {current?.label}
-        <ChevronIcon />
+      <Menu.Trigger
+        aria-label={`Sort by ${current?.label ?? ""}`}
+        className="flex h-10 shrink-0 items-center gap-2 rounded-full bg-muted px-3 font-sans text-meta font-medium text-foreground transition-colors duration-120 select-none hover:bg-border sm:w-[184px] sm:pr-3.5 sm:pl-4"
+      >
+        <SortIcon className="size-4 text-secondary-foreground" />
+        <span className="flex-1 text-left max-sm:sr-only">{current?.label}</span>
+        <ChevronIcon className="size-3.5 text-secondary-foreground max-sm:hidden" />
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner sideOffset={6} align="end" className="z-50 outline-none">
@@ -30,19 +41,21 @@ export function SortMenu({ value, onValueChange }: { value: Sort; onValueChange:
                 if (isSort(next)) onValueChange(next);
               }}
             >
-              {sorts.map((sort) => (
-                <Menu.RadioItem
-                  key={sort.value}
-                  value={sort.value}
-                  closeOnClick
-                  className="flex h-9 cursor-default items-center justify-between gap-3 rounded-sm px-3 select-none data-highlighted:bg-accent-soft"
-                >
-                  {sort.label}
-                  <Menu.RadioItemIndicator>
-                    <CheckIcon className="size-3.5 text-accent-strong" />
-                  </Menu.RadioItemIndicator>
-                </Menu.RadioItem>
-              ))}
+              {sorts
+                .filter((sort) => options.includes(sort.value))
+                .map((sort) => (
+                  <Menu.RadioItem
+                    key={sort.value}
+                    value={sort.value}
+                    closeOnClick
+                    className="flex h-9 cursor-default items-center justify-between gap-3 rounded-sm px-3 select-none data-highlighted:bg-accent-soft"
+                  >
+                    {sort.label}
+                    <Menu.RadioItemIndicator>
+                      <CheckIcon className="size-3.5 text-accent-strong" />
+                    </Menu.RadioItemIndicator>
+                  </Menu.RadioItem>
+                ))}
             </Menu.RadioGroup>
           </Menu.Popup>
         </Menu.Positioner>
