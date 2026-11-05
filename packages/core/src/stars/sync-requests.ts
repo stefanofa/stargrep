@@ -52,6 +52,10 @@ const policies: Record<Requester, Policy> = {
   owner: { cooldown: Duration.minutes(1), fullSyncEvery: Option.some(Duration.days(7)) },
 };
 
+// A queued sync may still be reading pages. An account's first sync has no stop line, so a second request would read
+// every star again. Every requester waits this long for a queued request. A cooldown counts from a finished or failed one.
+const queuedWait = Duration.minutes(10);
+
 export const requestLifetime = Duration.days(1);
 
 const within = (window: Duration.Duration, now: DateTime.Utc) => (at: DateTime.Utc) =>
@@ -70,6 +74,21 @@ const statusOf = (
   }
   return syncedAt === null ? { state: "unknown" } : { state: "done", syncedAt };
 };
+
+// Only a full read finds unstars. It waits while a request is queued, because that sync may still be reading.
+const fullReadDue = (
+  policy: Policy,
+  current: SyncStatus,
+  fullSyncedAt: Option.Option<DateTime.Utc>,
+  now: DateTime.Utc,
+) =>
+  current.state !== "queued" &&
+  Option.exists(policy.fullSyncEvery, (every) =>
+    Option.match(fullSyncedAt, {
+      onNone: () => true,
+      onSome: (at) => Duration.isGreaterThanOrEqualTo(DateTime.distance(at, now), every),
+    }),
+  );
 
 const make = Effect.gen(function* () {
   const db = yield* Db.Db;
@@ -90,19 +109,17 @@ const make = Effect.gen(function* () {
   });
 
   const request = Effect.fn("SyncRequests.request")(function* (login: Login, by: Requester) {
-    const { cooldown, fullSyncEvery } = policies[by];
+    const policy = policies[by];
     const now = yield* DateTime.now;
     const { status: current, fullSyncedAt } = yield* read(login, now);
-    if (current.state === "done" && within(cooldown, now)(current.syncedAt)) return current;
+    if (current.state === "done" && within(policy.cooldown, now)(current.syncedAt)) return current;
+    const cooldown = current.state === "queued" ? Duration.max(queuedWait, policy.cooldown) : policy.cooldown;
     if (!(yield* db.syncRequests.claim({ login, at: now, cooldown, lifetime: requestLifetime }))) {
       return (yield* read(login, now)).status;
     }
-    // A queued full read may still be paging, so the next one waits for it to finish.
-    const fullDue =
-      current.state !== "queued" &&
-      Option.exists(fullSyncEvery, (every) => !Option.exists(fullSyncedAt, within(every, now)));
+    const mode = fullReadDue(policy, current, fullSyncedAt, now) ? "full" : "incremental";
     yield* queue
-      .send({ login, mode: fullDue ? "full" : "incremental", requestedAt: now })
+      .send({ login, mode, requestedAt: now })
       .pipe(Effect.tapError(() => db.syncRequests.markFailed(login, now).pipe(Effect.ignore)));
     return {
       state: "queued",

@@ -15,7 +15,7 @@ import { errorStatus, type WireCode, wireError } from "./errors.ts";
 import { IconHost, iconUrl } from "./icon-host.ts";
 import { instrumentation, type ProcedureTime, type Transport } from "./middleware/instrumentation.ts";
 import { SyncLimiter, type SyncLimiterUnavailable, type SyncRateLimited } from "./sync-limiter.ts";
-import { type ViewerError, Viewers } from "./viewers.ts";
+import { requestOwnerSync, type ViewerError, Viewers } from "./viewers.ts";
 
 export type ApiServices = Db.Db | Search.Search | SyncRequests.SyncRequests | SyncLimiter | Viewers | IconHost;
 
@@ -180,9 +180,7 @@ export const router = implementer.router({
     handle(() =>
       Effect.gen(function* () {
         const { account } = yield* (yield* Viewers).current;
-        yield* SyncRequests.SyncRequests.use((requests) => requests.request(account.login, "owner")).pipe(
-          Effect.catch((error) => Effect.logWarning("Sync on library open was not queued", { failure: error._tag })),
-        );
+        yield* requestOwnerSync(account.login, "library open");
         return {
           login: account.login,
           name: account.name,
