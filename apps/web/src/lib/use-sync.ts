@@ -11,8 +11,6 @@ const stillReading = ({ enrichment }: SyncStatus) => enrichment.read + enrichmen
 
 const readCount = (status: SyncStatus | undefined) => status?.enrichment.read;
 
-// Polls while stars import and then while they are read. Each round that imported stars or read more of them
-// reloads the library, so new repos appear and the "not read yet" flags clear as reading goes on.
 export function useSync(login: string, onProgress: () => void) {
   const [status, setStatus] = useState<SyncStatus>();
   const [round, setRound] = useState(0);

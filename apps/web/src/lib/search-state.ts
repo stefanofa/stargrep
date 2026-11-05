@@ -240,8 +240,6 @@ export const emptyCopy = (stage: Stage, timeLeft: string | undefined, rephrased:
   };
 };
 
-// Shorter phrasings of a query that found nothing, from its own words: each adjacent pair, then the longest single
-// words. Two words match more often than five, since a keyword hit needs every word.
 export const rephrasings = (terms: ReadonlyArray<string>, limit = 3): ReadonlyArray<string> => {
   if (terms.length < 2) return [];
   const pairs = terms.length > 2 ? terms.slice(1).map((term, index) => `${terms[index]} ${term}`) : [];

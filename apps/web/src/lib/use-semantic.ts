@@ -14,9 +14,7 @@ export interface Semantic {
 
 const none: Semantic = { results: [], pending: false, failed: false };
 
-// A new `round` restarts the search and asks the current query again, so a search made while stars were still being
-// read reruns once reading finishes.
-export function useSemanticSearch(login: string, query: string, round = 0): Semantic {
+export function useSemanticSearch(login: string, query: string, rerun = 0): Semantic {
   const [answer, setAnswer] = useState<Answer<ReadonlyArray<SearchResult>, SearchFailed>>();
   const search = useRef<Search>(undefined);
   const latest = useRef(query);
@@ -31,12 +29,12 @@ export function useSemanticSearch(login: string, query: string, round = 0): Sema
       setAnswer,
     );
     search.current = running;
-    if (round > 0) running.offer(latest.current);
+    if (rerun > 0) running.offer(latest.current);
     return () => {
       running.stop();
       search.current = undefined;
     };
-  }, [login, round]);
+  }, [login, rerun]);
 
   useEffect(() => {
     search.current?.offer(query);

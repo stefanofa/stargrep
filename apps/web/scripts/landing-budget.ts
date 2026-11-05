@@ -1,10 +1,7 @@
 import { gzipSync } from "node:zlib";
 
-// What the landing page may load: every chunk the client entry and the index route load before first render.
 export const budget = 130_000;
 
-// Code the landing page must never load. A chunk's module IDs are the source paths the bundler put in it, so they
-// name the package however the code was minified.
 export const forbidden: ReadonlyArray<readonly [name: string, module: RegExp]> = [
   ["Effect", /\/node_modules\/effect\//],
   ["TanStack DB", /\/node_modules\/@tanstack\/(react-)?db\//],

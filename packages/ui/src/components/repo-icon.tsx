@@ -15,13 +15,12 @@ const plates: Record<Plate, string> = {
   dark: "bg-ink",
 };
 
-const smallest = 64;
+const nativeSizeBelow = 64;
 
 const smallSide = 24;
 
-// A source under 64px keeps its own size, up to the 24px the design gives it, so it is never upscaled.
 const shownSide = (visual: RepoVisual) =>
-  visual.kind === "icon" && visual.size < smallest ? Math.min(visual.size, smallSide) : undefined;
+  visual.kind === "icon" && visual.size < nativeSizeBelow ? Math.min(visual.size, smallSide) : undefined;
 
 const slot = "flex shrink-0 items-center justify-center overflow-clip squircle rounded-sm";
 

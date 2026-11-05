@@ -6,7 +6,6 @@ import { type Body, type Ellipse, type Eye, faceFit, superellipse } from "./blob
 
 const seed = "pip";
 
-// Every trait the face fit reads is pinned, so the seed only names Pip and no hash moves an eye.
 export const pin = {
   "body.r": 0.5,
   "eye.rx": 0.15,
@@ -45,9 +44,7 @@ const insidePolygon = (x: number, y: number) => {
   return inside;
 };
 
-// Signed distance from a point to the edge of the star as drawn, its fill polygon plus half the fill stroke.
-// Positive is inside.
-export const room = (x: number, y: number) => {
+export const distanceInsideStar = (x: number, y: number) => {
   const edge = Math.min(
     ...corners.map((corner, index) => toSegment(x, y, corner, corners[(index + 1) % corners.length] ?? corner)),
   );
@@ -56,17 +53,14 @@ export const room = (x: number, y: number) => {
 
 const centre = { x: 50, y: 54 };
 
-// The star's face: the largest circle about its centre that the drawn star contains, raised 2.66 units so the eyes
-// sit where the design puts them. This is the one number a silhouette Blobatar doesn't ship has to supply.
-const inscribed = room(centre.x, centre.y);
-export const face: Ellipse = { cx: centre.x, cy: centre.y - 2.66, rx: inscribed, ry: inscribed };
+const inscribed = distanceInsideStar(centre.x, centre.y);
+const eyeLift = 2.66;
+export const face: Ellipse = { cx: centre.x, cy: centre.y - eyeLift, rx: inscribed, ry: inscribed };
 
-// The design draws Pip's eyes at 0.82 of a blobatar's above 48px, and at full size below, where a small mark would
-// lose them. The fit sizes eyes against the body radius, so that scale is the body's size.
-const largeEyes = 0.82;
+const largeMarkBodyScale = 0.82;
 
 export const bodyFor = (size: number): Body => {
-  const radius = traits(seed, true, pin).num("body.r", 31, 38) * (size <= smallMark ? 1 : largeEyes);
+  const radius = traits(seed, true, pin).num("body.r", 31, 38) * (size <= smallMark ? 1 : largeMarkBodyScale);
   return { cx: centre.x, cy: centre.y, rx: radius, ry: radius, n: 2, rot: 0 };
 };
 

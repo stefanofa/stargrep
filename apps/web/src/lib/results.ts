@@ -27,8 +27,6 @@ export interface Merged {
   readonly meaning: ReadonlyArray<Result>;
 }
 
-// Semantic hits only append after the keyword results, so no tile the user is reading moves when they arrive. An
-// order the user picked sorts each group on its own, for the same reason.
 export const mergeResults = ({ matched, terms, hits, find, at, order }: Merge): Merged => {
   const ranked = terms.length === 0 ? [] : matched.toSorted(byRelevance(terms)).slice(0, keywordLimit);
   const keyword = order === undefined ? ranked : ranked.toSorted(order);

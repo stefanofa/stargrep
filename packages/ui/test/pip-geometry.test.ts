@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import * as expression from "blobatar/expression";
-import { fitEyes, room } from "../scripts/bake-pip.ts";
+import { distanceInsideStar, fitEyes } from "../scripts/bake-pip.ts";
 
 const poses = Object.entries(expression).filter(
   (entry): entry is [string, expression.Expression] =>
@@ -9,7 +9,6 @@ const poses = Object.entries(expression).filter(
 
 type Eye = ReturnType<typeof fitEyes>[number];
 
-// Points on the eye's superellipse outline, |x/rx|^n + |y/ry|^n = 1, turned by its lean.
 const outline = ({ cx, cy, rx, ry, n, rot }: Eye) => {
   const turn = (rot * Math.PI) / 180;
   return Array.from({ length: 144 }, (_, index) => {
@@ -30,7 +29,7 @@ describe("pip's eyes", () => {
     test(`stay inside the star in every pose at ${size}px`, () => {
       const margins = poses.map(([name, pose]) => {
         const eyes = pose.bake({ eyes: fitEyes(size) }, pose.p).l.eyes;
-        const margin = Math.min(...eyes.flatMap(outline).map(([x, y]) => room(x, y)));
+        const margin = Math.min(...eyes.flatMap(outline).map(([x, y]) => distanceInsideStar(x, y)));
         return { name, margin };
       });
       const worst = margins.toSorted((a, b) => a.margin - b.margin)[0];

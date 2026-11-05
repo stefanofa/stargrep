@@ -197,23 +197,25 @@ const containsEvery = (text: Text, [first, ...rest]: readonly [string, ...Array<
   return second === undefined ? head : and(head, second, ...others);
 };
 
-// Estimates the time left from the rate since the stage started. A new stage starts a new estimate.
 function useTimeLeft(done: number, total: number | null, stage: Stage["name"]) {
-  const [first, setFirst] = useState<{ readonly stage: string; readonly at: number; readonly done: number }>();
+  const [stageStart, setStageStart] = useState<{
+    readonly stage: string;
+    readonly at: number;
+    readonly done: number;
+  }>();
   const active = stage !== "ready";
   useEffect(() => {
-    if (!active) setFirst(undefined);
-    else setFirst((current) => (current?.stage === stage ? current : { stage, at: now(), done }));
+    if (!active) setStageStart(undefined);
+    else setStageStart((current) => (current?.stage === stage ? current : { stage, at: now(), done }));
   }, [active, stage, done]);
-  if (!active || first === undefined || total === null) return undefined;
-  const perSecond = (done - first.done) / Math.max(1, (now() - first.at) / 1000);
+  if (!active || stageStart === undefined || total === null) return undefined;
+  const perSecond = (done - stageStart.done) / Math.max(1, (now() - stageStart.at) / 1000);
   if (perSecond <= 0) return undefined;
   const seconds = Math.ceil((total - done) / perSecond);
   if (seconds <= 5) return "almost done";
   return seconds < 90 ? `about ${seconds} seconds left` : `about ${Math.round(seconds / 60)} minutes left`;
 }
 
-// Pip looks surprised for a moment when results by meaning land, then settles.
 function useSurprise(landed: number) {
   const [surprised, setSurprised] = useState(false);
   useEffect(() => {
@@ -244,7 +246,7 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
   const view = params.view ?? storedView;
   const [query, setQuery] = useState(params.q ?? "");
   const [opener, setOpener] = useState<HTMLElement | null>(null);
-  const [round, setRound] = useState(0);
+  const [rerun, setRerun] = useState(0);
   const terms = useMemo(() => keywordTerms(query), [query]);
 
   const { data: entries, isReady, isLoadingError } = useLiveQuery((q) => q.from({ repo: library }));
@@ -254,7 +256,7 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
       ? undefined
       : q.from({ repo: library }).where(({ repo }) => containsEvery(repo.text, [first, ...rest]));
   });
-  const semantic = useSemanticSearch(viewer.login, query, round);
+  const semantic = useSemanticSearch(viewer.login, query, rerun);
   const { status: sync, retry } = useSync(viewer.login, reload);
 
   const enrichment = sync?.enrichment ?? null;
@@ -272,7 +274,7 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
 
   const partial = useRef(stage.name !== "ready");
   useEffect(() => {
-    if (partial.current && stage.name === "ready") setRound((value) => value + 1);
+    if (partial.current && stage.name === "ready") setRerun((value) => value + 1);
     partial.current = stage.name !== "ready";
   }, [stage.name]);
 
