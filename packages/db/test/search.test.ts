@@ -299,4 +299,7 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
 };
 
 it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 30_000 })("PGlite search", searchCases);
-it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgres search", searchCases);
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 30_000 })(
+  "node-postgres search",
+  searchCases,
+);

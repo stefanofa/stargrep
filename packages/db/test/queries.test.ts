@@ -1005,10 +1005,13 @@ it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 30_000 
   "PGlite embedding settings",
   settingsCases,
 );
-it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgres embedding settings", settingsCases);
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 30_000 })(
+  "node-postgres embedding settings",
+  settingsCases,
+);
 
 it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 30_000 })("PGlite Db", sharedCases);
-it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgres Db", (test) => {
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 30_000 })("node-postgres Db", (test) => {
   sharedCases(test);
 
   test.effect("sessions opened after the migrations get an 11s statement timeout", () =>
