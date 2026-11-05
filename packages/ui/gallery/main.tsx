@@ -50,12 +50,12 @@ const strips: ReadonlyArray<{ icon: StatusIcon; label: string; detail?: string; 
 ];
 
 const slots: ReadonlyArray<{ label: string; visual: RepoVisual }> = [
-  { label: "own icon", visual: { kind: "icon", url: icons.ratatui, plate: "light", letters: "ra" } },
-  { label: "dark plate", visual: { kind: "icon", url: icons.ghost, plate: "dark", letters: "gh" } },
-  { label: "small icon", visual: { kind: "icon", url: icons.favicon, plate: "none", letters: "ju" } },
+  { label: "own icon", visual: { kind: "icon", url: icons.ratatui, plate: "light", size: 128, letters: "ra" } },
+  { label: "dark plate", visual: { kind: "icon", url: icons.ghost, plate: "dark", size: 128, letters: "gh" } },
+  { label: "small icon", visual: { kind: "icon", url: icons.favicon, plate: "none", size: 16, letters: "ju" } },
   { label: "org avatar", visual: { kind: "avatar", url: "https://github.com/tokio-rs.png?size=88", letters: "to" } },
   { label: "monogram", visual: { kind: "monogram", letters: "ti" } },
-  { label: "failed image", visual: { kind: "icon", url: "/missing.png", plate: "none", letters: "fa" } },
+  { label: "failed image", visual: { kind: "icon", url: "/missing.png", plate: "none", size: 128, letters: "fa" } },
 ];
 
 const themes = ["system", "light", "dark"] as const;

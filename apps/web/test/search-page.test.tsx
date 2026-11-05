@@ -74,7 +74,7 @@ const repo = (id: number, owner: string, name: string, description: string, extr
 
 const repos = (): Array<Repo> => [
   repo(1, "ratatui", "ratatui", "Widgets for terminal dashboards.", {
-    icon: { url: "https://icons.example/ratatui.webp", plate: "light" },
+    icon: { url: "https://icons.example/ratatui.webp", plate: "light", size: 128 },
     ownerType: "org",
   }),
   repo(2, "ClementTsang", "bottom", "A system monitor dashboard for the terminal."),

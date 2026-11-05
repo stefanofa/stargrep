@@ -12,8 +12,14 @@ const everyone = new Set(["org", "user"] as const);
 
 describe("the repo icon slot", () => {
   test("the repo's own icon comes first, with its plate", () => {
-    const icon = { url: "https://icons.stargrep.com/git/abc.webp", plate: "dark" as const };
-    expect(repoVisual({ ...repo, icon })).toEqual({ kind: "icon", url: icon.url, plate: "dark", letters: "to" });
+    const icon = { url: "https://icons.stargrep.com/git/abc.webp", plate: "dark" as const, size: 128 };
+    expect(repoVisual({ ...repo, icon })).toEqual({
+      kind: "icon",
+      url: icon.url,
+      plate: "dark",
+      size: 128,
+      letters: "to",
+    });
   });
 
   test("an org without an icon shows its avatar, asked for at slot size", () => {

@@ -11,6 +11,7 @@ export type OwnerType = "user" | "org";
 export interface RepoIconFacts {
   readonly url: string;
   readonly plate: Plate;
+  readonly size: number;
 }
 
 export interface Enrichment {

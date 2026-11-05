@@ -57,7 +57,7 @@ export const results: Result[] = [
     stars: 16_400,
     starred: "Mar 14, 2025",
     network: [people.lena, people.kofi, people.jprd, people.mtsk],
-    visual: { kind: "icon", url: icons.ratatui, plate: "light", letters: "ra" },
+    visual: { kind: "icon", url: icons.ratatui, plate: "light", size: 128, letters: "ra" },
   }),
   result(
     "ClementTsang",
@@ -82,7 +82,7 @@ export const results: Result[] = [
       stars: 4_100,
       starred: "Nov 19, 2025",
       network: [people.lena],
-      visual: { kind: "icon", url: icons.console, plate: "none", letters: "to" },
+      visual: { kind: "icon", url: icons.console, plate: "none", size: 128, letters: "to" },
       unread: true,
     },
   ),
@@ -96,7 +96,7 @@ export const results: Result[] = [
       stars: 4_600,
       starred: "Jan 9, 2025",
       network: [],
-      visual: { kind: "icon", url: icons.favicon, plate: "none", letters: "gy" },
+      visual: { kind: "icon", url: icons.favicon, plate: "none", size: 16, letters: "gy" },
       unread: true,
     },
   ),
@@ -105,7 +105,7 @@ export const results: Result[] = [
     stars: 11_100,
     starred: "Feb 21, 2025",
     network: [people.lena, people.kofi, people.mtsk],
-    visual: { kind: "icon", url: icons.ghost, plate: "dark", letters: "fd" },
+    visual: { kind: "icon", url: icons.ghost, plate: "dark", size: 128, letters: "fd" },
   }),
 ];
 

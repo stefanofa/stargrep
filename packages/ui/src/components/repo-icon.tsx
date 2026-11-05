@@ -4,7 +4,7 @@ import { cn } from "../lib/cn.ts";
 export type Plate = "none" | "light" | "dark";
 
 export type RepoVisual = { readonly letters: string } & (
-  | { readonly kind: "icon"; readonly url: string; readonly plate: Plate }
+  | { readonly kind: "icon"; readonly url: string; readonly plate: Plate; readonly size: number }
   | { readonly kind: "avatar"; readonly url: string }
   | { readonly kind: "monogram" }
 );
@@ -16,6 +16,12 @@ const plates: Record<Plate, string> = {
 };
 
 const smallest = 64;
+
+const smallSide = 24;
+
+// A source under 64px keeps its own size, up to the 24px the design gives it, so it is never upscaled.
+const shownSide = (visual: RepoVisual) =>
+  visual.kind === "icon" && visual.size < smallest ? Math.min(visual.size, smallSide) : undefined;
 
 const slot = "flex shrink-0 items-center justify-center overflow-clip squircle rounded-sm";
 
@@ -39,11 +45,11 @@ export function Monogram({ letters }: { letters: string }) {
 
 export function RepoIcon({ visual }: { visual: RepoVisual }) {
   const [failed, setFailed] = useState(false);
-  const [small, setSmall] = useState<number>();
   if (visual.kind === "monogram" || failed) {
     return <Monogram letters={visual.letters} />;
   }
   const plate = visual.kind === "icon" ? visual.plate : "none";
+  const small = shownSide(visual);
   return (
     <span
       aria-hidden
@@ -59,9 +65,6 @@ export function RepoIcon({ visual }: { visual: RepoVisual }) {
         loading="lazy"
         decoding="async"
         onError={() => setFailed(true)}
-        onLoad={({ currentTarget }) => {
-          if (currentTarget.naturalWidth < smallest) setSmall(Math.min(24, currentTarget.naturalWidth));
-        }}
         className={cn("object-cover", small === undefined ? "size-full" : "shrink-0")}
         style={small === undefined ? undefined : { width: small, height: small }}
       />

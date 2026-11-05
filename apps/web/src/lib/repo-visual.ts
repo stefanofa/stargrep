@@ -23,7 +23,7 @@ export const repoVisual = (
   owners: ReadonlySet<OwnerType> = avatarOwners,
 ): RepoVisual => {
   const letters = repo.owner.slice(0, 2).toLowerCase();
-  if (repo.icon !== null) return { kind: "icon", url: repo.icon.url, plate: repo.icon.plate, letters };
+  if (repo.icon !== null) return { kind: "icon", ...repo.icon, letters };
   if (repo.ownerAvatarUrl !== null && repo.ownerType !== null && owners.has(repo.ownerType))
     return { kind: "avatar", url: sized(repo.ownerAvatarUrl), letters };
   return { kind: "monogram", letters };
