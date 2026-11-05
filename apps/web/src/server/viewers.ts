@@ -33,7 +33,7 @@ export const importViewer = Effect.fn("Viewers.import")(
     const { account: facts, starredCount } = GitHubViewer.toViewer(read.data.viewer);
     const db = yield* Db.Db;
     yield* db.accounts.claim({ facts, userId, starredCount });
-    yield* SyncRequests.SyncRequests.use((requests) => requests.request(facts.login)).pipe(
+    yield* SyncRequests.SyncRequests.use((requests) => requests.request(facts.login, "owner")).pipe(
       Effect.catch((error) => Effect.logWarning("Sync after sign-in was not queued", { failure: error._tag })),
     );
     return yield* db.accounts.require(facts.id).pipe(Effect.catchTags({ AccountNotFound: Effect.die }));

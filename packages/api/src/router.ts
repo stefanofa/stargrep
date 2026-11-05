@@ -160,7 +160,7 @@ export const router = implementer.router({
         yield* (yield* SyncLimiter).acquire;
         return yield* withProgress(
           input.login,
-          SyncRequests.SyncRequests.use((requests) => requests.request(input.login)),
+          SyncRequests.SyncRequests.use((requests) => requests.request(input.login, "anyone")),
         );
       }),
     ),
@@ -175,16 +175,21 @@ export const router = implementer.router({
     ),
   ),
 
+  // The page reads syncStatus only after viewer answers, so a sync claimed here is already queued when it looks.
   viewer: os.viewer.use(provideServices).effect(
     handle(() =>
-      Viewers.use((viewers) => viewers.current).pipe(
-        Effect.map(({ account }) => ({
+      Effect.gen(function* () {
+        const { account } = yield* (yield* Viewers).current;
+        yield* SyncRequests.SyncRequests.use((requests) => requests.request(account.login, "owner")).pipe(
+          Effect.catch((error) => Effect.logWarning("Sync on library open was not queued", { failure: error._tag })),
+        );
+        return {
           login: account.login,
           name: account.name,
           avatarUrl: account.avatarUrl,
           starredCount: account.starredCount,
-        })),
-      ),
+        };
+      }),
     ),
   ),
 
