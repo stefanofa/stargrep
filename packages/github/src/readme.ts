@@ -1,6 +1,6 @@
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schema from "effect/Schema";
-import { type Login, ObjectId, type Readme, type RepoName } from "./schemas.ts";
+import { type Login, ObjectId, type RepoFile, type RepoName } from "./schemas.ts";
 
 export const TreeEntry = Schema.Struct({
   name: Schema.String,
@@ -18,7 +18,7 @@ const rank = (name: string) => {
   return index === -1 ? extensionRank.length : index;
 };
 
-export const pickReadme = (entries: ReadonlyArray<TreeEntry>): Readme | null => {
+export const pickReadme = (entries: ReadonlyArray<TreeEntry>): RepoFile | null => {
   const candidates = entries
     .filter((entry) => entry.type === "blob" && readmeName.test(entry.name))
     .toSorted((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name));

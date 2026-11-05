@@ -55,11 +55,11 @@ export const Star = Schema.Struct({
 });
 export type Star = typeof Star.Type;
 
-export const Readme = Schema.Struct({
+export const RepoFile = Schema.Struct({
   name: Schema.String,
   oid: ObjectId,
 });
-export type Readme = typeof Readme.Type;
+export type RepoFile = typeof RepoFile.Type;
 
 export const RepoFacts = Schema.Struct({
   ...Repo.fields,
@@ -74,7 +74,10 @@ export const RepoFacts = Schema.Struct({
   fork: Schema.Boolean,
   stars: Schema.Int,
   forks: Schema.Int,
-  readme: Schema.NullOr(Readme),
+  readme: Schema.NullOr(RepoFile),
+  iconFiles: Schema.Array(RepoFile),
+  ownerType: Schema.Literals(["user", "org"]),
+  ownerAvatarUrl: Schema.String,
 });
 export type RepoFacts = typeof RepoFacts.Type;
 

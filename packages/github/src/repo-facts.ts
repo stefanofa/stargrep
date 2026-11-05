@@ -1,5 +1,6 @@
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schema from "effect/Schema";
+import { rankIconFiles } from "./icon-files.ts";
 import { pickReadme, TreeEntry } from "./readme.ts";
 import { GraphQLError, Login, type RepoFacts, RepoId, RepoName, RepoNodeId } from "./schemas.ts";
 
@@ -13,7 +14,7 @@ const query = `query RepoFacts($ids: [ID!]!) {
       databaseId
       id
       name
-      owner { login }
+      owner { __typename login avatarUrl }
       description
       homepageUrl
       primaryLanguage { name }
@@ -34,7 +35,11 @@ const RepoNode = Schema.Struct({
   databaseId: RepoId,
   id: RepoNodeId,
   name: RepoName,
-  owner: Schema.Struct({ login: Login }),
+  owner: Schema.Struct({
+    __typename: Schema.Literals(["User", "Organization"]),
+    login: Login,
+    avatarUrl: Schema.String,
+  }),
   description: Schema.NullOr(Schema.String),
   homepageUrl: Schema.NullOr(Schema.String),
   primaryLanguage: Schema.NullOr(Schema.Struct({ name: Schema.String })),
@@ -82,6 +87,9 @@ const toFacts = (node: RepoNode): RepoFacts => ({
   stars: node.stargazerCount,
   forks: node.forkCount,
   readme: pickReadme(node.root?.entries ?? []),
+  iconFiles: rankIconFiles(node.root?.entries ?? [], node.name),
+  ownerType: node.owner.__typename === "Organization" ? "org" : "user",
+  ownerAvatarUrl: node.owner.avatarUrl,
 });
 
 interface NodeError {
