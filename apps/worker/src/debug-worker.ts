@@ -12,7 +12,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Database } from "./database.ts";
 import { withClient } from "./postgres.ts";
-import { EnrichRepos, queueNames, SyncStars } from "./queues.ts";
+import { EnrichRepos, FetchIcons, queueNames, SyncStars } from "./queues.ts";
 
 const UNITS_PER_MINUTE = 300;
 
@@ -90,6 +90,7 @@ export default Cloudflare.Worker(
     const pipelineQueues = new Map<string, Cloudflare.Queues.WriteQueueClient>([
       [queueNames.syncStars, yield* Cloudflare.Queues.WriteQueue(yield* SyncStars)],
       [queueNames.enrichRepo, yield* Cloudflare.Queues.WriteQueue(yield* EnrichRepos)],
+      [queueNames.fetchIcon, yield* Cloudflare.Queues.WriteQueue(yield* FetchIcons)],
     ]);
     yield* Cloudflare.KV.ReadWriteNamespace(DebugCache);
     yield* Cloudflare.R2.ReadWriteBucket(DebugBlobs);

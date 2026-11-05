@@ -1,4 +1,5 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
+import { type FetchIcon, IconQueue } from "@stargrep/core/icons";
 import type { EnrichRepo } from "@stargrep/core/repos";
 import type { StarSync } from "@stargrep/core/stars";
 import type * as Db from "@stargrep/db";
@@ -7,6 +8,7 @@ import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as EnrichRepoConsumer from "./consumers/enrich-repo.ts";
+import * as FetchIconConsumer from "./consumers/fetch-icon.ts";
 import * as Settle from "./consumers/settle.ts";
 import * as SyncStarsConsumer from "./consumers/sync-stars.ts";
 
@@ -14,8 +16,12 @@ export const SyncStars = Cloudflare.Queues.Queue("SyncStars");
 const SyncStarsDeadLetters = Cloudflare.Queues.Queue("SyncStarsDeadLetters");
 export const EnrichRepos = Cloudflare.Queues.Queue("EnrichRepos");
 const EnrichReposDeadLetters = Cloudflare.Queues.Queue("EnrichReposDeadLetters");
+export const FetchIcons = Cloudflare.Queues.Queue("FetchIcons");
+const FetchIconsDeadLetters = Cloudflare.Queues.Queue("FetchIconsDeadLetters");
 
-export const queueNames = { syncStars: "sync-stars", enrichRepo: "enrich-repo" } as const;
+export const startIconBackfill = IconQueue.BackfillIcons.make({ after: 0 });
+
+export const queueNames = { syncStars: "sync-stars", enrichRepo: "enrich-repo", fetchIcon: "fetch-icon" } as const;
 
 const retries = { maxRetries: 5, retryDelay: "1 minute" } as const;
 
@@ -42,7 +48,7 @@ const consume = Effect.fn("Queues.consume")(function* <A, R, D, E>(
 });
 
 export const consumeAll = <E>(
-  runtime: Layer.Layer<StarSync.StarSync | EnrichRepo.EnrichRepo | Db.Db, E, RuntimeContext>,
+  runtime: Layer.Layer<StarSync.StarSync | EnrichRepo.EnrichRepo | FetchIcon.FetchIcon | Db.Db, E, RuntimeContext>,
 ) =>
   Effect.all([
     consume(
@@ -57,6 +63,13 @@ export const consumeAll = <E>(
       { queue: EnrichRepos, deadLetters: EnrichReposDeadLetters },
       { batchSize: 100, maxConcurrency: 1, maxWaitTime: "5 seconds", ...retries },
       EnrichRepoConsumer.pipeline,
+      runtime,
+    ),
+    consume(
+      queueNames.fetchIcon,
+      { queue: FetchIcons, deadLetters: FetchIconsDeadLetters },
+      { batchSize: 10, maxConcurrency: 2, maxWaitTime: "5 seconds", ...retries },
+      FetchIconConsumer.pipeline,
       runtime,
     ),
   ]);

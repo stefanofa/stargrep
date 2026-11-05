@@ -50,6 +50,8 @@ export const facts = (id: RepoId): Db.RepoFacts => ({
   pushedAt: null,
   archived: false,
   readmeOid: null,
+  ownerType: null,
+  ownerAvatarUrl: null,
 });
 
 export const stars = (accountId: GitHubAccountId): Db.SearchScope => ({ kind: "stars", accountId });

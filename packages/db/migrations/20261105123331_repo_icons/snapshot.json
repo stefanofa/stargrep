@@ -1,0 +1,390 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "0302bd73-2cf1-448d-9d08-6a22d4358f19",
+  "prevIds": [
+    "487a5e43-f8a2-4501-be28-46feb41d1480"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "icon_plate"
+      ],
+      "writes": [
+        "s|enum|public.icon_plate",
+        "n|enum|public.icon_plate",
+        "e|enum|public.icon_plate",
+        "n|type|public.icon_plate"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "icon_source"
+      ],
+      "writes": [
+        "s|enum|public.icon_source",
+        "n|enum|public.icon_source",
+        "e|enum|public.icon_source",
+        "n|type|public.icon_source"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "icon_key"
+      ],
+      "writes": [
+        "s|col|public.repos.icon_key",
+        "n|col|public.repos.icon_key",
+        "e|col|public.repos.icon_key"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "icon_source"
+      ],
+      "writes": [
+        "s|col|public.repos.icon_source",
+        "n|col|public.repos.icon_source",
+        "e|col|public.repos.icon_source"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|enum|public.icon_source"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "icon_plate"
+      ],
+      "writes": [
+        "s|col|public.repos.icon_plate",
+        "n|col|public.repos.icon_plate",
+        "e|col|public.repos.icon_plate"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|enum|public.icon_plate"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "icon_size"
+      ],
+      "writes": [
+        "s|col|public.repos.icon_size",
+        "n|col|public.repos.icon_size",
+        "e|col|public.repos.icon_size"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "icon_checked_at"
+      ],
+      "writes": [
+        "s|col|public.repos.icon_checked_at",
+        "n|col|public.repos.icon_checked_at",
+        "e|col|public.repos.icon_checked_at"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "owner_type"
+      ],
+      "writes": [
+        "s|col|public.repos.owner_type",
+        "n|col|public.repos.owner_type",
+        "e|col|public.repos.owner_type"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|enum|public.account_type"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "owner_avatar_url"
+      ],
+      "writes": [
+        "s|col|public.repos.owner_avatar_url",
+        "n|col|public.repos.owner_avatar_url",
+        "e|col|public.repos.owner_avatar_url"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repos",
+        "repos_icon_checked_at_idx"
+      ],
+      "writes": [
+        "s|idx|public.repos_icon_checked_at_idx",
+        "n|idx|public.repos_icon_checked_at_idx",
+        "e|idx|public.repos_icon_checked_at_idx",
+        "n|rel|public.repos_icon_checked_at_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.repos.icon_checked_at"
+      ]
+    },
+    {
+      "statementType": "add_check",
+      "statementTarget": [
+        "table",
+        "public",
+        "repos"
+      ],
+      "writes": [
+        "s|ck|public.repos.repos_icon_complete",
+        "n|ck|public.repos.repos_icon_complete",
+        "e|ck|public.repos.repos_icon_complete",
+        "n|con|public.repos.repos_icon_complete"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.repos.icon_key",
+        "n|col|public.repos.icon_source",
+        "n|col|public.repos.icon_plate",
+        "n|col|public.repos.icon_size"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "icon_plate",
+        "values": [
+          "none",
+          "light",
+          "dark"
+        ],
+        "entityType": "enums"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "icon_source",
+        "values": [
+          "repo-file",
+          "readme-image",
+          "homepage"
+        ],
+        "entityType": "enums"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "icon_key",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "icon_source",
+        "type": "icon_source",
+        "typeSchema": "public",
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "icon_plate",
+        "type": "icon_plate",
+        "typeSchema": "public",
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "icon_size",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "icon_checked_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "owner_type",
+        "type": "account_type",
+        "typeSchema": "public",
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "owner_avatar_url",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "repos_icon_checked_at_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "icon_checked_at",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "repos_icon_complete",
+        "value": "(\"icon_key\" is null) = (\"icon_source\" is null) and (\"icon_key\" is null) = (\"icon_plate\" is null) and (\"icon_key\" is null) = (\"icon_size\" is null)",
+        "entityType": "checks"
+      }
+    }
+  ]
+}

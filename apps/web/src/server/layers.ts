@@ -1,4 +1,5 @@
 import * as Gateway from "@stargrep/ai/gateway";
+import { IconHost } from "@stargrep/api/icon-host";
 import type { AuthConfig } from "@stargrep/auth/config";
 import { QueryPlanner, Search } from "@stargrep/core/search";
 import { SyncRequests } from "@stargrep/core/stars";
@@ -40,6 +41,7 @@ export const layerRequest = (
       request.headers.get("cf-connecting-ip") ?? "unknown",
     ),
     layerViewers(auth, request, connectionString(env)),
+    Layer.succeed(IconHost, IconHost.of({ origin: new URL(request.url).origin })),
   ).pipe(
     Layer.provideMerge(QueryPlanner.layer),
     Layer.provideMerge(layerSearchCache(env.SEARCH_CACHE)),

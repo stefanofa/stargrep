@@ -1,5 +1,5 @@
 import { Repo as GitHubRepo, Login, ObjectId, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
-import { and, eq, getColumns, sql } from "drizzle-orm";
+import { and, asc, eq, getColumns, gt, isNotNull, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import * as Arr from "effect/Array";
 import type * as DateTime from "effect/DateTime";
@@ -7,12 +7,21 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Struct from "effect/Struct";
 import { type Embedding, EmbeddingModelId, type EmbeddingModelMismatch, requireModel } from "../embedding.ts";
 import { type DbQueryFailed, type DbRowInvalid, RepoNotFound } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
 import { excluded, NullableTime, requireRow, rowsDecoder, timeParam, writeEncoder } from "../rows.ts";
-import { pendingEnrichment, repoMetrics, repos, retryableEnrichment } from "../schema.ts";
+import {
+  accountType,
+  iconPlate,
+  iconSource,
+  pendingEnrichment,
+  repoMetrics,
+  repos,
+  retryableEnrichment,
+} from "../schema.ts";
 
 const RepoRow = createSelectSchema(repos, {
   id: RepoId,
@@ -27,12 +36,69 @@ const RepoRow = createSelectSchema(repos, {
   keywords: Schema.Array(Schema.String),
   embeddingModel: Schema.NullOr(EmbeddingModelId),
   enrichRetryAt: NullableTime,
+  iconCheckedAt: NullableTime,
 });
+
+export const IconSource = Schema.Literals(iconSource.enumValues);
+export type IconSource = typeof IconSource.Type;
+
+export const IconPlate = Schema.Literals(iconPlate.enumValues);
+export type IconPlate = typeof IconPlate.Type;
+
+export const OwnerType = Schema.Literals(accountType.enumValues);
+export type OwnerType = typeof OwnerType.Type;
+
+export const maxIconSize = 128;
+
+export const RepoIcon = Schema.Struct({
+  key: Schema.String,
+  source: IconSource,
+  plate: IconPlate,
+  size: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: maxIconSize })),
+});
+export type RepoIcon = typeof RepoIcon.Type;
 
 // Columns the pipeline reads but a Repo leaves out: the vector, the full-text column, and the retry state.
 const internalColumns = ["embedding", "search", "enrichFailures", "enrichRetryAt"] as const;
 
-export const Repo = Schema.Struct(Struct.omit(RepoRow.fields, internalColumns));
+const rowFields = Struct.omit(RepoRow.fields, internalColumns);
+const iconColumns = ["iconKey", "iconSource", "iconPlate", "iconSize"] as const;
+
+interface IconColumns {
+  readonly iconKey: string | null;
+  readonly iconSource: IconSource | null;
+  readonly iconPlate: IconPlate | null;
+  readonly iconSize: number | null;
+}
+
+// repos_icon_complete keeps the four icon columns all set or all null, so they decode to one optional icon.
+const iconOf = ({ iconKey, iconSource, iconPlate, iconSize }: IconColumns): RepoIcon | null =>
+  iconKey === null || iconSource === null || iconPlate === null || iconSize === null
+    ? null
+    : { key: iconKey, source: iconSource, plate: iconPlate, size: iconSize };
+
+const iconColumnsOf = (icon: RepoIcon | null): IconColumns => ({
+  iconKey: icon?.key ?? null,
+  iconSource: icon?.source ?? null,
+  iconPlate: icon?.plate ?? null,
+  iconSize: icon?.size ?? null,
+});
+
+const RepoColumns = Schema.Struct(rowFields);
+const RepoFields = Schema.Struct({ ...Struct.omit(rowFields, iconColumns), icon: Schema.NullOr(RepoIcon) });
+
+export const Repo = RepoColumns.pipe(
+  Schema.decodeTo(
+    Schema.toType(RepoFields),
+    SchemaTransformation.transform({
+      decode: ({ iconKey, iconSource, iconPlate, iconSize, ...rest }) => ({
+        ...rest,
+        icon: iconOf({ iconKey, iconSource, iconPlate, iconSize }),
+      }),
+      encode: ({ icon, ...rest }) => ({ ...rest, ...iconColumnsOf(icon) }),
+    }),
+  ),
+);
 export type Repo = typeof Repo.Type;
 
 export const repoColumns = Struct.omit(getColumns(repos), internalColumns);
@@ -41,7 +107,7 @@ const RepoRef = GitHubRepo;
 export type RepoRef = typeof RepoRef.Type;
 
 const RepoFacts = Schema.Struct(
-  Struct.pick(Repo.fields, [
+  Struct.pick(rowFields, [
     "id",
     "owner",
     "name",
@@ -54,6 +120,8 @@ const RepoFacts = Schema.Struct(
     "pushedAt",
     "archived",
     "readmeOid",
+    "ownerType",
+    "ownerAvatarUrl",
   ]),
 );
 export type RepoFacts = typeof RepoFacts.Type;
@@ -65,7 +133,7 @@ export interface RepoCounts {
 }
 
 const RepoSummary = Schema.Struct({
-  ...Struct.pick(Repo.fields, ["id", "readmeOid", "keywords"]),
+  ...Struct.pick(rowFields, ["id", "readmeOid", "keywords"]),
   summary: Schema.String,
   kind: Schema.String,
 });
@@ -78,11 +146,34 @@ export interface RepoEmbedding {
   readonly readmeOid: ObjectId | null;
 }
 
-const StoredRepo = Schema.Struct({
-  ...Repo.fields,
-  ...Struct.pick(RepoRow.fields, ["enrichFailures", "enrichRetryAt"]),
-  pending: Schema.Boolean,
-});
+export interface IconCheck {
+  readonly id: RepoId;
+  readonly icon: RepoIcon | null;
+}
+
+export interface RepoOwner {
+  readonly id: RepoId;
+  readonly ownerType: OwnerType;
+  readonly ownerAvatarUrl: string;
+}
+
+const DueIcon = Schema.Struct({ id: RepoId, nodeId: RepoNodeId });
+export type DueIcon = typeof DueIcon.Type;
+
+const retryFields = Struct.pick(RepoRow.fields, ["enrichFailures", "enrichRetryAt"]);
+
+const StoredRepo = Schema.Struct({ ...rowFields, ...retryFields, pending: Schema.Boolean }).pipe(
+  Schema.decodeTo(
+    Schema.toType(Schema.Struct({ ...RepoFields.fields, ...retryFields, pending: Schema.Boolean })),
+    SchemaTransformation.transform({
+      decode: ({ iconKey, iconSource, iconPlate, iconSize, ...rest }) => ({
+        ...rest,
+        icon: iconOf({ iconKey, iconSource, iconPlate, iconSize }),
+      }),
+      encode: ({ icon, ...rest }) => ({ ...rest, ...iconColumnsOf(icon) }),
+    }),
+  ),
+);
 export type StoredRepo = typeof StoredRepo.Type;
 
 export interface EnrichFailures {
@@ -108,6 +199,13 @@ export interface Queries {
   readonly saveEmbedding: (
     input: RepoEmbedding,
   ) => Effect.Effect<boolean, DbQueryFailed | RepoNotFound | EmbeddingModelMismatch>;
+  readonly saveIcon: (check: IconCheck) => Effect.Effect<void, DbQueryFailed>;
+  readonly saveOwners: (owners: ReadonlyArray<RepoOwner>) => Effect.Effect<void, DbQueryFailed>;
+  readonly dueIcons: (page: {
+    readonly after: number;
+    readonly limit: number;
+    readonly checkedBefore: DateTime.Utc;
+  }) => Effect.Effect<ReadonlyArray<DueIcon>, DbQueryFailed | DbRowInvalid>;
   readonly get: (id: RepoId) => Effect.Effect<Option.Option<Repo>, DbQueryFailed | DbRowInvalid>;
   readonly require: (id: RepoId) => Effect.Effect<Repo, DbQueryFailed | DbRowInvalid | RepoNotFound>;
   readonly getMany: (
@@ -122,6 +220,7 @@ const decodeRepos = rowsDecoder(Repo);
 const decodeIds = rowsDecoder(Schema.Struct({ id: RepoId }));
 const decodeStored = rowsDecoder(StoredRepo);
 const decodePending = rowsDecoder(Schema.Struct({ pending: Schema.Boolean }));
+const decodeDue = rowsDecoder(DueIcon);
 
 const needsEnrichment = pendingEnrichment(repos);
 const encodeRefs = writeEncoder(Schema.Array(RepoRef));
@@ -236,6 +335,40 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
         ),
         Effect.flatMap(applied("repos.saveEmbedding", input.id)),
       ),
+    saveIcon: ({ id, icon }) =>
+      run("repos.saveIcon", (db) =>
+        db
+          .update(repos)
+          .set({ ...iconColumnsOf(icon), iconCheckedAt: sql`now()` })
+          .where(eq(repos.id, id)),
+      ),
+    saveOwners: (owners) =>
+      owners.length === 0
+        ? Effect.void
+        : run("repos.saveOwners", (db) =>
+            db
+              .update(repos)
+              .set({ ownerType: sql`owners.owner_type::account_type`, ownerAvatarUrl: sql`owners.owner_avatar_url` })
+              .from(
+                sql`(select * from unnest(${sql.param(owners.map((owner) => owner.id))}::bigint[], ${sql.param(owners.map((owner) => owner.ownerType))}::text[], ${sql.param(owners.map((owner) => owner.ownerAvatarUrl))}::text[]) as owners(id, owner_type, owner_avatar_url)) as owners`,
+              )
+              .where(sql`${repos.id} = owners.id`),
+          ),
+    dueIcons: ({ after, limit, checkedBefore }) =>
+      run("repos.dueIcons", (db) =>
+        db
+          .select({ id: repos.id, nodeId: repos.nodeId })
+          .from(repos)
+          .where(
+            and(
+              sql`(${repos.iconCheckedAt} is null or ${repos.iconCheckedAt} < ${timeParam(checkedBefore)})`,
+              isNotNull(repos.nodeId),
+              gt(repos.id, after),
+            ),
+          )
+          .orderBy(asc(repos.id))
+          .limit(limit),
+      ).pipe(Effect.flatMap(decodeDue("repos.dueIcons"))),
     get: (id) =>
       run("repos.get", (db) => db.select(repoColumns).from(repos).where(eq(repos.id, id))).pipe(
         Effect.flatMap(decodeRepos("repos.get")),

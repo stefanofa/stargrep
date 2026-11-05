@@ -375,7 +375,7 @@ const node = (n: number) => ({
   databaseId: n,
   id: `R_${n}`,
   name: `repo-${n}`,
-  owner: { login: "owner" },
+  owner: { __typename: "Organization", login: "owner", avatarUrl: "https://avatars.githubusercontent.com/u/9?v=4" },
   description: null,
   homepageUrl: "",
   primaryLanguage: { name: "TypeScript" },
@@ -395,6 +395,8 @@ const node = (n: number) => ({
             { name: "README", type: "blob", oid: "1".repeat(40) },
             { name: "readme.md", type: "blob", oid: "2".repeat(40) },
             { name: "src", type: "tree", oid: "3".repeat(40) },
+            { name: "favicon.ico", type: "blob", oid: "4".repeat(40) },
+            { name: "logo-dark.svg", type: "blob", oid: "5".repeat(40) },
           ],
         },
 });
@@ -429,6 +431,12 @@ describe("repoFacts", () => {
         language: "TypeScript",
         topics: ["effect"],
         readme: { name: "readme.md", oid: "2".repeat(40) },
+        iconFiles: [
+          { name: "logo-dark.svg", oid: "5".repeat(40) },
+          { name: "favicon.ico", oid: "4".repeat(40) },
+        ],
+        ownerType: "org",
+        ownerAvatarUrl: "https://avatars.githubusercontent.com/u/9?v=4",
       });
       expect(facts[1]?.license).toBeNull();
       expect(facts[2]?.readme).toBeNull();

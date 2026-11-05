@@ -100,6 +100,8 @@ const loadAccount = Effect.fn("Recall.loadAccount")(function* (repos: ReadonlyAr
           pushedAt: null,
           archived: false,
           readmeOid: null,
+          ownerType: null,
+          ownerAvatarUrl: null,
         });
         yield* db.repos.saveSummary({
           id: ref.id,

@@ -4,6 +4,7 @@ import { oc } from "@orpc/contract";
 import { mcp } from "@orpc/mcp";
 import { MetricRegistry, QueryPlanner, Search } from "@stargrep/core/search";
 import { SyncRequests } from "@stargrep/core/stars";
+import * as Db from "@stargrep/db";
 import { Login, RepoId } from "@stargrep/github/schemas";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -41,6 +42,26 @@ export const RepoFields = Schema.Struct({
   kind: Schema.NullOr(Schema.String),
   archived: Schema.Boolean,
   pushedAt: Schema.NullOr(Timestamp),
+  icon: Schema.NullOr(
+    Schema.Struct({
+      url: Schema.String.annotate({
+        description: "A square WebP on this API's origin, served as immutable, so the URL never shows other bytes.",
+      }),
+      plate: Db.IconPlate.annotate({
+        description:
+          "The tile to draw behind the icon. dark for white ink on transparent, light for black ink on transparent.",
+      }),
+      size: Db.RepoIcon.fields.size.annotate({
+        description: `The icon's width and height in pixels, at most ${Db.maxIconSize}. Smaller when the source was smaller.`,
+      }),
+    }),
+  ).annotate({ description: "The repo's own icon, or null when Stargrep found none or has not looked yet." }),
+  ownerType: Schema.NullOr(Db.OwnerType).annotate({
+    description: "Whether a user or an org owns the repo, or null before Stargrep has read it.",
+  }),
+  ownerAvatarUrl: Schema.NullOr(Schema.String).annotate({
+    description: "The owner's GitHub avatar, or null before Stargrep has read it.",
+  }),
 });
 
 export const SearchResult = Schema.Struct({

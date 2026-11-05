@@ -1,0 +1,1901 @@
+[
+  {
+    "owner": "antirez",
+    "name": "ds4",
+    "ownerType": "User",
+    "homepage": null,
+    "entries": [
+      {
+        "name": ".gitattributes",
+        "type": "blob",
+        "oid": "d130f38693f584859a406df46721b40d54d2e392"
+      },
+      {
+        "name": ".gitignore",
+        "type": "blob",
+        "oid": "2c3d3bb0b2f79fd21f60330fb55afb406bcc8b12"
+      },
+      {
+        "name": "AGENT.md",
+        "type": "blob",
+        "oid": "7a1387c9eaa400692f6edf0b0b102f2bbe1c0567"
+      },
+      {
+        "name": "CONTRIBUTING.md",
+        "type": "blob",
+        "oid": "f9bb07168b466e73c7e1de5ef0e5c9d5cdcf41ee"
+      },
+      {
+        "name": "EVAL_DATA.md",
+        "type": "blob",
+        "oid": "ac6d207b780bbc478ad4c90c1e38b66a744e3302"
+      },
+      {
+        "name": "LICENSE",
+        "type": "blob",
+        "oid": "c5b10d432f8b1ce00e1f666f30be04b63cc46dd6"
+      },
+      {
+        "name": "MODEL_CARD.md",
+        "type": "blob",
+        "oid": "a220c9137ef211fdbbcd5efdb688fa13c694e60a"
+      },
+      {
+        "name": "Makefile",
+        "type": "blob",
+        "oid": "6a213b4c6fef9fc4c3a1b9b2e4f4e7af90337f0f"
+      },
+      {
+        "name": "QA_BEFORE_RELEASES.md",
+        "type": "blob",
+        "oid": "1288cfb11419ac23b90afbfe05130d5646c1ef38"
+      },
+      {
+        "name": "README.md",
+        "type": "blob",
+        "oid": "287b39cf857694839ebb27d4ced607d9a09be11f"
+      },
+      {
+        "name": "STRIXHALO.md",
+        "type": "blob",
+        "oid": "d632b33c61f04b8bc55534689c216f7a67c50718"
+      },
+      {
+        "name": "cuda",
+        "type": "tree",
+        "oid": "d0475a42a67c6b3c581e29c18e51fb1bcd64bc61"
+      },
+      {
+        "name": "dir-steering",
+        "type": "tree",
+        "oid": "29cd99d41abb2de3e6799f839efed7cc2109221d"
+      },
+      {
+        "name": "docs",
+        "type": "tree",
+        "oid": "5c85ff0d251d066ae04c886cee96405a293515d7"
+      },
+      {
+        "name": "download_model.sh",
+        "type": "blob",
+        "oid": "d90ac1f63cc0c20cd16477ec271e257792531e44"
+      },
+      {
+        "name": "ds4.c",
+        "type": "blob",
+        "oid": "ae6767ca0318c2908627c944e391914c27d608ff"
+      },
+      {
+        "name": "ds4.h",
+        "type": "blob",
+        "oid": "7fd00119bd3b0fa70899b6a20dddd7f0c386aea5"
+      },
+      {
+        "name": "ds4_agent.c",
+        "type": "blob",
+        "oid": "deadc45013a97cddbd5f263b5bead5adb4c8aa87"
+      },
+      {
+        "name": "ds4_bench.c",
+        "type": "blob",
+        "oid": "f493ac287de8d161eb871ef87af4414afd9862d0"
+      },
+      {
+        "name": "ds4_cli.c",
+        "type": "blob",
+        "oid": "af4e2b63d8d9c4c10a5440cef3ac6adc9f796bea"
+      },
+      {
+        "name": "ds4_cuda.cu",
+        "type": "blob",
+        "oid": "4a141cbc849dd94ec43ba9dac02551d3d273c49c"
+      },
+      {
+        "name": "ds4_deepseek41_cuda.cuh",
+        "type": "blob",
+        "oid": "6a88641da046d6dfd0cb0499dc99bf9ee3921623"
+      },
+      {
+        "name": "ds4_deepseek41_dspark.h",
+        "type": "blob",
+        "oid": "98bab7f0b83d8db8f8aa73aa20be2998cd1c71ec"
+      },
+      {
+        "name": "ds4_deepseek41_gpu.h",
+        "type": "blob",
+        "oid": "b849b4694716dc7e1bef71d10b9a7e22073c83ae"
+      },
+      {
+        "name": "ds4_deepseek4_vision_gpu.cuh",
+        "type": "blob",
+        "oid": "d84e4923296ec91d118fb61f9e3935027ac77ba1"
+      },
+      {
+        "name": "ds4_distributed.c",
+        "type": "blob",
+        "oid": "3d797b5dd19015cea24effa745df06199d2e89e0"
+      },
+      {
+        "name": "ds4_distributed.h",
+        "type": "blob",
+        "oid": "35c5343bd668b2fd8398ce8348e549f8be7eaa9c"
+      },
+      {
+        "name": "ds4_engram.c",
+        "type": "blob",
+        "oid": "c5a770293a046fd1b73243cae8abd5a054d12402"
+      },
+      {
+        "name": "ds4_engram.h",
+        "type": "blob",
+        "oid": "2d080af7b37fd3d2a88054487a2962fbfe295abd"
+      },
+      {
+        "name": "ds4_eval.c",
+        "type": "blob",
+        "oid": "214b7efdc2c764ee47420b7b344b18f05d31b1a5"
+      },
+      {
+        "name": "ds4_eval_cases.c",
+        "type": "blob",
+        "oid": "4fc6718addc93fdb3d2b465c659c268824123100"
+      },
+      {
+        "name": "ds4_eval_cases.h",
+        "type": "blob",
+        "oid": "e3f49d4a23a969dc7633ad84f2f26b865e30795c"
+      },
+      {
+        "name": "ds4_glm53_vision_gpu.cuh",
+        "type": "blob",
+        "oid": "0fbd4a77cb749f72e8da8d8b71538b2c1be0d005"
+      },
+      {
+        "name": "ds4_gpu.h",
+        "type": "blob",
+        "oid": "b1323286566e7d6fdd938f583ac08ecc1c9feb40"
+      },
+      {
+        "name": "ds4_gpu_args.c",
+        "type": "blob",
+        "oid": "bacf001ddbdbba06181ef3b69829429c9ef09ef9"
+      },
+      {
+        "name": "ds4_gpu_args.h",
+        "type": "blob",
+        "oid": "18dd0228b6f3c82beba2b45d8be26bbf9775ad3a"
+      },
+      {
+        "name": "ds4_gpu_copy.h",
+        "type": "blob",
+        "oid": "6150d1c407e4dc238cfb17e001ff84b64349eb5b"
+      },
+      {
+        "name": "ds4_gpu_mgpu.h",
+        "type": "blob",
+        "oid": "b82e802c1f97851def01c0eff4f767bbf946a4d5"
+      },
+      {
+        "name": "ds4_gpu_tp.h",
+        "type": "blob",
+        "oid": "72c7077bf50c848286f2375b485d3f515e2039c1"
+      },
+      {
+        "name": "ds4_help.c",
+        "type": "blob",
+        "oid": "a29c1f6a7a6f84269bf49902727f2bdd42016f32"
+      },
+      {
+        "name": "ds4_help.h",
+        "type": "blob",
+        "oid": "f4fa400b68e86c276973fa3f1825b07f136c9fe5"
+      },
+      {
+        "name": "ds4_image.c",
+        "type": "blob",
+        "oid": "7ffb74fcc10d3f96c27ec339237cb862cfc3830f"
+      },
+      {
+        "name": "ds4_image.h",
+        "type": "blob",
+        "oid": "026417903f515d10a5a6bebece5fe3599a9e096c"
+      },
+      {
+        "name": "ds4_iq2_tables_cuda.inc",
+        "type": "blob",
+        "oid": "7602ed6463074c278a823b7dcb6d844db60a91fa"
+      },
+      {
+        "name": "ds4_kvstore.c",
+        "type": "blob",
+        "oid": "d9d33118eccdb546aa86268ada12ecd448683647"
+      },
+      {
+        "name": "ds4_kvstore.h",
+        "type": "blob",
+        "oid": "a80e45b0cf4d7a0a6e0b44b35538f615f5035374"
+      },
+      {
+        "name": "ds4_layer_pack.c",
+        "type": "blob",
+        "oid": "7cbc61c0746e0cfca5b95f1415c4998b965475ee"
+      },
+      {
+        "name": "ds4_layer_pack.h",
+        "type": "blob",
+        "oid": "ba1950a7c89052d4440d86f16ffe0eb0cb4fc052"
+      },
+      {
+        "name": "ds4_linux_memory.h",
+        "type": "blob",
+        "oid": "87d54d767b3549e9fcd01f33e082a844d688ad58"
+      },
+      {
+        "name": "ds4_metal.m",
+        "type": "blob",
+        "oid": "e9704770b73f0ebd1b5ae9485897faaf6845ee7e"
+      },
+      {
+        "name": "ds4_metal_device.h",
+        "type": "blob",
+        "oid": "af8872700a3f813ab91d4446d10350c36e0feda6"
+      },
+      {
+        "name": "ds4_prompt_prefix.c",
+        "type": "blob",
+        "oid": "557b1df1c8c9291b019af7d9ccdc8c6ed89b3c52"
+      },
+      {
+        "name": "ds4_prompt_prefix.h",
+        "type": "blob",
+        "oid": "ad439d44adcaa037602f735cc9cabe66a749efed"
+      },
+      {
+        "name": "ds4_qwen4_cuda.cuh",
+        "type": "blob",
+        "oid": "0c5cd7651e68dedad98388507f6136473249acbc"
+      },
+      {
+        "name": "ds4_qwen4_unicode.inc",
+        "type": "blob",
+        "oid": "1d0f3921bbec561e50a6ced3fce4cecd0dcf505a"
+      },
+      {
+        "name": "ds4_qwen4_vision.h",
+        "type": "blob",
+        "oid": "b33546300e80e84679dc80253aaafcf8de2c680b"
+      },
+      {
+        "name": "ds4_rocm.cu",
+        "type": "blob",
+        "oid": "4659c04787321ceb7fa9dd6560d23fe1176e9f6c"
+      },
+      {
+        "name": "ds4_rocm.h",
+        "type": "blob",
+        "oid": "d33d624d55f9b299924afc93c5b01f2b977b40af"
+      },
+      {
+        "name": "ds4_rocm_compat.cu",
+        "type": "blob",
+        "oid": "4315f7a9de4897902ca5cae2e7dd1b57ef248860"
+      },
+      {
+        "name": "ds4_rocm_memory.h",
+        "type": "blob",
+        "oid": "f988499f591687effe11a167fc1b0ba4e7d9e27e"
+      },
+      {
+        "name": "ds4_rocm_unavailable.cu",
+        "type": "blob",
+        "oid": "9883a95dffd354861c1809e2e714c4ae419bf606"
+      },
+      {
+        "name": "ds4_server.c",
+        "type": "blob",
+        "oid": "681f333b6a0c9ed30c7e8456049aa21be64404ab"
+      },
+      {
+        "name": "ds4_ssd.c",
+        "type": "blob",
+        "oid": "42b1a415c05a574410689362b149c71582ddc358"
+      },
+      {
+        "name": "ds4_ssd.h",
+        "type": "blob",
+        "oid": "414a44369adb329d97104c5a56c8057a474ce83a"
+      },
+      {
+        "name": "ds4_streaming_hotlist.inc",
+        "type": "blob",
+        "oid": "9f9bf03358ae7999d8575f5a08edc1f8b9e1e869"
+      },
+      {
+        "name": "ds4_streaming_hotlist_glm52.inc",
+        "type": "blob",
+        "oid": "d42227d43e7f4670be04a6fe00ed088434f77e16"
+      },
+      {
+        "name": "ds4_tool_text.h",
+        "type": "blob",
+        "oid": "5ae19457436f6e38cf9ff6013f4196c937704bc1"
+      },
+      {
+        "name": "ds4_tp.c",
+        "type": "blob",
+        "oid": "d47518be5078fc485e060ed5299378825a5bfab1"
+      },
+      {
+        "name": "ds4_tp.h",
+        "type": "blob",
+        "oid": "bd0bc44ae9899dde7779815717f82c17f158035e"
+      },
+      {
+        "name": "ds4_web.c",
+        "type": "blob",
+        "oid": "886a93bce6ebf4f9bf85d02014b68f518d7c6116"
+      },
+      {
+        "name": "ds4_web.h",
+        "type": "blob",
+        "oid": "338f1c6470ca80ec8efbe9595b99abe417dfd2e4"
+      },
+      {
+        "name": "gguf-tools",
+        "type": "tree",
+        "oid": "135491f8dcf35cf0e14c684c927f2f75ea41ee79"
+      },
+      {
+        "name": "licenses",
+        "type": "tree",
+        "oid": "c48b35d368f3a5facd13b9e3ecf3e7e4fab6f29b"
+      },
+      {
+        "name": "linenoise.c",
+        "type": "blob",
+        "oid": "65f2fabf9ed5105c69c6772a57531a48e535484a"
+      },
+      {
+        "name": "linenoise.h",
+        "type": "blob",
+        "oid": "09745ab11ce928aecb95365b43dc884595160f00"
+      },
+      {
+        "name": "logo.svg",
+        "type": "blob",
+        "oid": "71635caa388f65fde8494653abfab3284dedc209"
+      },
+      {
+        "name": "metal",
+        "type": "tree",
+        "oid": "ccdce1805e0e9cbbeb225f24e38589445e87a805"
+      },
+      {
+        "name": "misc",
+        "type": "tree",
+        "oid": "943546bb1c373704fb768eea91dc45adfcc897e6"
+      },
+      {
+        "name": "rax.c",
+        "type": "blob",
+        "oid": "b3ec8114c6de0425acea583e2c7927dff9973589"
+      },
+      {
+        "name": "rax.h",
+        "type": "blob",
+        "oid": "2c2400b133014466164161435f28573882c079e2"
+      },
+      {
+        "name": "rax_malloc.h",
+        "type": "blob",
+        "oid": "e9d5d5d7b8e18fadce5786757adc3a25e4f3b6f8"
+      },
+      {
+        "name": "rocm",
+        "type": "tree",
+        "oid": "8fb442e6d49e282e9869d0551b0c54e0bef6eec9"
+      },
+      {
+        "name": "run-nvidia-tp-server.sh",
+        "type": "blob",
+        "oid": "e0a13cb93a0211443c1d2d4cd964bb75a750ead3"
+      },
+      {
+        "name": "speed-bench",
+        "type": "tree",
+        "oid": "2554428df5b4a21939f5fb01e1eff02f86cec0ed"
+      },
+      {
+        "name": "tests",
+        "type": "tree",
+        "oid": "1a038b591f530b5918b12d21eca43c379a1b4d05"
+      },
+      {
+        "name": "third_party",
+        "type": "tree",
+        "oid": "0a7eaec957d572819b44950c95f247ebfd843709"
+      }
+    ],
+    "readme": "<p align=\"center\">\n  <img src=\"logo.svg\" alt=\"DwarfStar logo\" width=\"220\">\n</p>\n\n**DwarfStar** aims to be the best way to run a few excellent large\nlanguage models on consumer hardware (that is, hardware that people\ncan actually own). To reach this goal, we are building\na small native inference engine optimized first for\n**DeepSeek V4 Flash** (including the experimental vision model),\n**DeepSeek V4.1 Flash** (Metal, and text inference on CUDA),\nand additionally **GLM 5.2 and 5.3**, **GLM 5.3 Flash** and\n**DeepSeek V4 PRO**, and **Qwen3.8 Flash Next** (Metal and CUDA). The code is self-contained and\ndeliberately narrow, not a general GGUF runner: you need to use the\nGGUF files the project produces, that are part of the project\nitself.\n\nWe test things in integration: model loading, prompt rendering,\ntool calls, KV state, the HTTP server, and the coding agent are built and tested together.\nThe repository also includes tools and data for GGUF, imatrix, quality, and speed.\n\n## Supported hardware\n\n* **Metal**, the primary target, on Macs with 64 GB (for Qwen Flash next) and 96 GB or more (for DeepSeek and GLM). Smaller machines can use SSD streaming. SSD streaming is also needed in order to run very large models such as full GLM 5.x (not Flash) on 128GB systems.\n* **NVIDIA CUDA**, the DGX Spark is our main gaol. DwarfStar also supports multi-GPU systems that are not supported by other backends, for instance it can run DeepSeek v4 Flash on Ada Lovelace cards.\n* **ROCm** on Strix Halo systems such as the Framework Desktop.\n\nThis project would not exist without **llama.cpp and GGML**, make sure to read\nthe acknowledgements section, a big thank you to Georgi Gerganov and all the\nother contributors.\n\n**Model support is intentionally opportunistic**. The project follows the best open\nweights for useful local machine sizes, especially 128 GB laptops and 256/512 GB\nworkstations. A model may be removed when a better replacement arrives.\n\n# So, what can I do with this software?\n\n* You can run a very capable models in your consumer hardware, a MacBook, a DGX Spark, or a Strix Halo for example. Even if you have not enough RAM, with SSD streaming, you can run it at a decent speed.\n* You can use multiple CUDA cards as a multi-user LLM server. Ada Lovelace, including L40S, is supported: newer models can run here even when their other inference implementations require newer GPUs. Our eight-L40S Flash setup has reached about 126 t/s aggregate generation with 16 sessions.\n* Using two 128 GB Macs connected with RDMA, you can run 4-bit DeepSeek Flash or GLM 5.3 Flash with tensor parallelism. Larger GLM 5.2 quants need larger machines, such as Mac Studios.\n* You can also use pipeline paralellism to glue together multiple systems to sum their RAM and run larger models.\n\n## Motivations\n\n* Capable open-weight models now fit on high-end personal machines.\n* DeepSeek V4 Flash and PRO, GLM 5.2, tolerate aggressive routed-expert quantization.\n* Compressed KV caches and fast local"
+  },
+  {
+    "owner": "benjitaylor",
+    "name": "drawesome",
+    "ownerType": "User",
+    "homepage": null,
+    "entries": [
+      {
+        "name": ".gitignore",
+        "type": "blob",
+        "oid": "f7bde9c90a8544cecab42326a6a2c4d4e16ec506"
+      },
+      {
+        "name": "CONTRIBUTING.md",
+        "type": "blob",
+        "oid": "46e8f694204a8e9a3b94a7764a4e17a38aba61ba"
+      },
+      {
+        "name": "LICENSE",
+        "type": "blob",
+        "oid": "5c9588bf04266d691a9f36b4b1d2b765c7fd3ae5"
+      },
+      {
+        "name": "README.md",
+        "type": "blob",
+        "oid": "d1683af28236c3bd6c07862291abc65a68be26e7"
+      },
+      {
+        "name": "apps",
+        "type": "tree",
+        "oid": "fd275dafdfac85fa039a0de4d2ca00d20aca0923"
+      },
+      {
+        "name": "logo-dark.svg",
+        "type": "blob",
+        "oid": "eae9e7de3a5b04e589506b14bdd6731fac5bf362"
+      },
+      {
+        "name": "logo.svg",
+        "type": "blob",
+        "oid": "87aca35545df3048d8424940ea72f70906166f4d"
+      },
+      {
+        "name": "package.json",
+        "type": "blob",
+        "oid": "db35d61172147a78a7851f8a6d0a6eb1f287f490"
+      },
+      {
+        "name": "packages",
+        "type": "tree",
+        "oid": "c2a38f703dd6b1068ab307fe4ea6635765f90c8b"
+      },
+      {
+        "name": "playwright.config.ts",
+        "type": "blob",
+        "oid": "790d0c0ad30e8e14b958c617aefa3b9a9395cc4c"
+      },
+      {
+        "name": "pnpm-lock.yaml",
+        "type": "blob",
+        "oid": "c8abb22efbaced21431e665c64910b54539036a2"
+      },
+      {
+        "name": "pnpm-workspace.yaml",
+        "type": "blob",
+        "oid": "1f07f307fe6ca8b9a1a3bed84d729a6dfadb0a0c"
+      },
+      {
+        "name": "tests",
+        "type": "tree",
+        "oid": "7c67bcbd681f04c1482e0d4274939901667ba195"
+      },
+      {
+        "name": "tsconfig.base.json",
+        "type": "blob",
+        "oid": "7f1da2de4d26853d5dcb67ba61ad7af07ab5f569"
+      }
+    ],
+    "readme": null
+  },
+  {
+    "owner": "shinyobjectz",
+    "name": "raea",
+    "ownerType": "User",
+    "homepage": "https://raea.io",
+    "entries": [
+      {
+        "name": ".cargo",
+        "type": "tree",
+        "oid": "0f6a1377fdf4f062cd58605cf27108b2376d403b"
+      },
+      {
+        "name": ".claude-plugin",
+        "type": "tree",
+        "oid": "66eb0bb7b749cf528a079def383bb59c9a4fc4ea"
+      },
+      {
+        "name": ".gitignore",
+        "type": "blob",
+        "oid": "6aed7ec8f8003d9d72c186a4a50c9e1365c919ad"
+      },
+      {
+        "name": ".gitleaks.toml",
+        "type": "blob",
+        "oid": "0c29ce2ef1274cb57d0cae1aff797610f0313958"
+      },
+      {
+        "name": "Cargo.lock",
+        "type": "blob",
+        "oid": "1ca4c0c6e55e4b27f7534d1a37e87bf596b87ae2"
+      },
+      {
+        "name": "Cargo.toml",
+        "type": "blob",
+        "oid": "bb015d6eb5c3cf96d8941416a84174ba1cbd6ab9"
+      },
+      {
+        "name": "LICENSE",
+        "type": "blob",
+        "oid": "926929c4c8f818c9e137c87cdfc005020022256e"
+      },
+      {
+        "name": "LICENSES",
+        "type": "tree",
+        "oid": "1fb00293bebc4831070b81fb8f1b12ffff51ad35"
+      },
+      {
+        "name": "NOTICE",
+        "type": "blob",
+        "oid": "273fd5ef613b79caad489703f5073db813becb3f"
+      },
+      {
+        "name": "README.md",
+        "type": "blob",
+        "oid": "d71d84be455428326f95911988ac30ab1e11d90d"
+      },
+      {
+        "name": "apps",
+        "type": "tree",
+        "oid": "8fec289c697a93894bfffe78281886a4742840cf"
+      },
+      {
+        "name": "bench",
+        "type": "tree",
+        "oid": "a0aef1a5ab44e7121ed38d6c67f11341cd161a44"
+      },
+      {
+        "name": "core",
+        "type": "tree",
+        "oid": "d2e00bdf12de2184a04832b8c0f11a4b453593a7"
+      },
+      {
+        "name": "docs",
+        "type": "tree",
+        "oid": "969054e42f27d649bb409aab4a9d9962307dfbf4"
+      },
+      {
+        "name": "engine",
+        "type": "tree",
+        "oid": "86399a4f48f33855bec2d7ae7e6a104bc20b8923"
+      },
+      {
+        "name": "gpu",
+        "type": "tree",
+        "oid": "eaa2724efb1672573c6168b93ea19494b9d6e2de"
+      },
+      {
+        "name": "io",
+        "type": "tree",
+        "oid": "39258076858aafd2fd7a13254e31e9ddc9898fda"
+      },
+      {
+        "name": "runtime",
+        "type": "tree",
+        "oid": "d6961fd3d595369ba446365c3f3738155348e380"
+      },
+      {
+        "name": "sdk",
+        "type": "tree",
+        "oid": "00fc814187c061c37fdb4e746b652b907dd1b07b"
+      },
+      {
+        "name": "systems",
+        "type": "tree",
+        "oid": "a497a5db25644c599dea91807716f235b99a8b15"
+      },
+      {
+        "name": "tools",
+        "type": "tree",
+        "oid": "79fd541642b244d54ab3f304f233984217710ccb"
+      },
+      {
+        "name": "vendor",
+        "type": "tree",
+        "oid": "3df3f3049b731d8c0653408c576a55fb49e714b3"
+      }
+    ],
+    "readme": "<p align=\"center\">\n  <picture>\n    <source media=\"(prefers-color-scheme: dark)\" srcset=\"docs/logo/cat-white.svg\">\n    <img src=\"docs/logo/cat-black.svg\" width=\"72\" alt=\"raea's cat\">\n  </picture>\n</p>\n\n<h1 align=\"center\">raea</h1>\n\n<p align=\"center\"><b>Render Anything Engine</b> <i>(for Anyone)</i></p>\n\n<p align=\"center\">\n  Tell your AI what to make. Videos, motion graphics, 3D and games, written as React and TypeScript<br>\n  (the code your AI already writes) and rendered on your own GPU, faster than they play.\n</p>\n\n<p align=\"center\">\n  <a href=\"https://raea.io\">raea.io</a> \u00b7\n  <a href=\"https://raea.io/made/\">Made in raea</a> \u00b7\n  <a href=\"https://raea.io/why/\">Why raea</a> \u00b7\n  <a href=\"https://raea.io/learn/\">Docs</a> \u00b7\n  <a href=\"https://github.com/shinyobjectz/raea/releases\">Releases</a>\n</p>\n\n<p align=\"center\">\n  <img alt=\"licence FSL-1.1-ALv2\" src=\"https://img.shields.io/badge/licence-FSL--1.1--ALv2-black\">\n  <img alt=\"status canary\" src=\"https://img.shields.io/badge/status-canary-black\">\n  <img alt=\"macOS, Apple Silicon\" src=\"https://img.shields.io/badge/macOS-Apple%20Silicon-black\">\n  <img alt=\"Linux x86_64\" src=\"https://img.shields.io/badge/Linux-x86__64-black\">\n</p>\n\n---\n\n> **Canary.** raea changes daily. Releases run on macOS (Apple Silicon) and Linux (x86_64). Expect breaking changes,\n> rough edges and gaps in the docs.\n\n## Install\n\n```sh\ncurl -fsSL https://raea.io/install | sh\n```\n\nThe installer puts the `raea` command under `~/.raea`, links it into `~/.local/bin`, and adds raea's agent skills to\n`~/.claude/skills`, so Claude Code (or any agent that reads that folder) knows how to write, render and check raea\nwork. Run it again to update. The engine is free and needs no account. Tarballs and checksums are on the\n[releases page](https://github.com/shinyobjectz/raea/releases).\n\n## Hello\n\nA composition is a React component that draws a frame for a given moment:\n\n```tsx\nimport { AbsoluteFill, Composition, interpolate, registerRoot, useCurrentFrame } from \"raea\";\n\nfunction Hello() {\n  const f = useCurrentFrame();\n  return <AbsoluteFill style={{ background: \"#000\", color: \"#fff\", fontSize: 120, opacity: interpolate(f, [0, 20], [0, 1]) }}>Hello</AbsoluteFill>;\n}\n\nregisterRoot(() => <Composition id=\"hello\" component={Hello} width={1920} height={1080} fps={30} durationInFrames={90} />);\n```\n\n```sh\nraea render hello.tsx -o hello.mp4\n```\n\nOn an Apple Silicon Mac those 90 frames render in about a second. The same file can play live as a game\n(`raea play`), render one frame for an agent to look at (`-o frame.png --frame 45`), or be checked against a quality\nfloor (`raea check hello.mp4`). `raea init` starts a project, and `raea --help` lists every verb.\n\n## What it does\n\n- **Video and motion graphics.** Layout, text, Tailwind, SVG and animation, composited on the GPU and encoded in\n  hardware where the machine has it. Footage is cut by what's said in it (`raea cut`), and `raea check` catches clipped\n  text, low contrast, unsafe areas, freezes and l"
+  },
+  {
+    "owner": "trycua",
+    "name": "cua",
+    "ownerType": "Organization",
+    "homepage": "https://cua.ai",
+    "entries": [
+      {
+        "name": ".agents",
+        "type": "tree",
+        "oid": "8e25189d9919400bc4606ead010622dc27193330"
+      },
+      {
+        "name": ".cargo",
+        "type": "tree",
+        "oid": "adee3834e8b5881991b75f4d2402589e7fe9d5fb"
+      },
+      {
+        "name": ".claude",
+        "type": "tree",
+        "oid": "b3d2cb7fd6468937688d1b5f854a4b78e7586659"
+      },
+      {
+        "name": ".cursor",
+        "type": "tree",
+        "oid": "7981826442a98b7b67c9de044de398e0d96ede48"
+      },
+      {
+        "name": ".editorconfig",
+        "type": "blob",
+        "oid": "86e252938ad044803df00b924bab43a4423462ef"
+      },
+      {
+        "name": ".gitattributes",
+        "type": "blob",
+        "oid": "5cf6e7081aea25c01c6f3cfb7ee1adfd595da127"
+      },
+      {
+        "name": ".github",
+        "type": "tree",
+        "oid": "0a1fd77467bb156efba60b3f3a4ba547965fd2d3"
+      },
+      {
+        "name": ".gitignore",
+        "type": "blob",
+        "oid": "5cf5935874a56ee42f92421c1459080ec06a08bb"
+      },
+      {
+        "name": ".lycheeignore",
+        "type": "blob",
+        "oid": "54cd0cf08f5fda6e624a8131abb93109ea6a6d12"
+      },
+      {
+        "name": ".pre-commit-config.yaml",
+        "type": "blob",
+        "oid": "7fc73c95dfd69d8cef7055a99061309ace8417d6"
+      },
+      {
+        "name": ".prettierignore",
+        "type": "blob",
+        "oid": "cd64d01155ab92e4425b3c90c1f86df0d8e7ce37"
+      },
+      {
+        "name": ".prettierrc.yaml",
+        "type": "blob",
+        "oid": "1815ee00a4b2a0f8d32464fcd06eedc5e2645bd7"
+      },
+      {
+        "name": ".release-please-manifest.json",
+        "type": "blob",
+        "oid": "71215a4f707b65f535847792e2c48ab46114b4e6"
+      },
+      {
+        "name": ".vscode",
+        "type": "tree",
+        "oid": "41c8d4e50f82cee3883e0976bf52d2c628146495"
+      },
+      {
+        "name": "AGENTS.md",
+        "type": "blob",
+        "oid": "4ab3c7377b294f8176197114e7a3862d2a1b53d6"
+      },
+      {
+        "name": "CITATION.cff",
+        "type": "blob",
+        "oid": "4af0640f8a2dd677127f2afb431f8f290bb29194"
+      },
+      {
+        "name": "CLAUDE.md",
+        "type": "blob",
+        "oid": "894bdde5391a6e3369bb0d5403ff9a51f6675397"
+      },
+      {
+        "name": "LICENSE.md",
+        "type": "blob",
+        "oid": "b8b198ce3ebaa22c9f59588a80f9f1875d85b34a"
+      },
+      {
+        "name": "Makefile",
+        "type": "blob",
+        "oid": "a4fc7b71ce6f7de383aaf46ecf8fd6e9807f6ca4"
+      },
+      {
+        "name": "README.md",
+        "type": "blob",
+        "oid": "6ee36dc1ba6a1df623c9a769fce8fc41baaef499"
+      },
+      {
+        "name": "apps",
+        "type": "tree",
+        "oid": "f1c8f268efff8fdcd1c0afdc11f0d3012b61008f"
+      },
+      {
+        "name": "bin",
+        "type": "tree",
+        "oid": "f55c6adf988ade377722c5926b69127a751cc02e"
+      },
+      {
+        "name": "blog",
+        "type": "tree",
+        "oid": "a5264fd4b6b9bece3a55fddda6279ec4b0487539"
+      },
+      {
+        "name": "config",
+        "type": "tree",
+        "oid": "6095b7e2f35acf2c671e23ef8458e1b943c6c3ff"
+      },
+      {
+        "name": "docs",
+        "type": "tree",
+        "oid": "feb306725fe6cfcae2ead5e2ecb7b483617c24ff"
+      },
+      {
+        "name": "examples",
+        "type": "tree",
+        "oid": "11eb2585d1332eced71ad27f257c48ea7546e557"
+      },
+      {
+        "name": "flake.lock",
+        "type": "blob",
+        "oid": "3af18b327805b11d01e5381d9ffebf40bd9682f2"
+      },
+      {
+        "name": "flake.nix",
+        "type": "blob",
+        "oid": "8efad5d0ed6093635557821968fb37befe4fbc11"
+      },
+      {
+        "name": "gen.sh",
+        "type": "blob",
+        "oid": "02b0ed6d62722cab42963ec27f37e42301a8db5d"
+      },
+      {
+        "name": "img",
+        "type": "tree",
+        "oid": "601b2f36b054c6af281a820eee4ef8fc7d34bbfb"
+      },
+      {
+        "name": "jobab.sh",
+        "type": "blob",
+        "oid": "fca0f50d1cd19621c6752f59f30b3b89029ab68a"
+      },
+      {
+        "name": "legal",
+        "type": "tree",
+        "oid": "e8245c431688ddac9fd2a13f8cf3a9c13f1888a0"
+      },
+      {
+        "name": "libs",
+        "type": "tree",
+        "oid": "8a50d0b88bc775bef08cc197291e5d793477e0ff"
+      },
+      {
+        "name": "nix",
+        "type": "tree",
+        "oid": "cea592f8c1a7cbd104e27a07d7cc624d8ee52d7b"
+      },
+      {
+        "name": "package.json",
+        "type": "blob",
+        "oid": "12c0f9146bb95995c40edc0ce8d15bce0bf0b868"
+      },
+      {
+        "name": "pnpm-lock.yaml",
+        "type": "blob",
+        "oid": "af0feb4892dfa03f043f00eb082ff360b92d0e7c"
+      },
+      {
+        "name": "pyproject.toml",
+        "type": "blob",
+        "oid": "238cae2d2180a1678b7f4da5efbe59881afd3a62"
+      },
+      {
+        "name": "real-matrix.py",
+        "type": "blob",
+        "oid": "e404cf15e89dd787415c2259d6d3756e6729e412"
+      },
+      {
+        "name": "release-please-config.json",
+        "type": "blob",
+        "oid": "b88b27e6a86dc138331c09f5d43a0508aad6f335"
+      },
+      {
+        "name": "scripts",
+        "type": "tree",
+        "oid": "14f301003f86af3bfa779bc1fc552b7bfc6c1daa"
+      },
+      {
+        "name": "skills",
+        "type": "tree",
+        "oid": "9f5d350b75081cf585477aa3c3b2fe1a2c21eff8"
+      },
+      {
+        "name": "tests",
+        "type": "tree",
+        "oid": "c2449ecb6f4afeb0cf7003c83712cc9d87cabdd5"
+      },
+      {
+        "name": "uv.lock",
+        "type": "blob",
+        "oid": "299c26b5f1c5ba432f83079c50cef973697251ca"
+      }
+    ],
+    "readme": "<div align=\"center\">\n  <a href=\"https://cua.ai\" target=\"_blank\" rel=\"noopener noreferrer\">\n    <picture>\n      <source media=\"(prefers-color-scheme: dark)\" alt=\"Cua logo\" width=\"150\" srcset=\"img/logo_white.svg\">\n      <source media=\"(prefers-color-scheme: light)\" alt=\"Cua logo\" width=\"150\" srcset=\"img/logo_black.svg\">\n      <img alt=\"Cua logo\" width=\"150\" src=\"img/logo_black.svg\">\n    </picture>\n  </a>\n\n  <p align=\"center\"><strong>Give AI agents computers they can use.</strong><br>Cua Spaces gives your agents full desktops on your Mac and on computers you own. This repository also holds Cua Driver for desktop automation, Lume for local VMs, CUA-S1 decision models and Cua Bench for evaluating computer-use agents.</p>\n\n  <p align=\"center\"><strong><a href=\"https://spaces.cua.ai\">Get Cua Spaces</a></strong></p>\n\n  <p align=\"center\">\n    <a href=\"https://cua.ai\" target=\"_blank\" rel=\"noopener noreferrer\"><img src=\"https://img.shields.io/badge/cua.ai-0ea5e9\" alt=\"cua.ai\"></a>\n    <a href=\"https://discord.gg/mVnXXpdE85\" target=\"_blank\" rel=\"noopener noreferrer\"><img src=\"https://img.shields.io/badge/Discord-Join%20Server-10b981?logo=discord&logoColor=white\" alt=\"Discord\"></a>\n    <a href=\"https://x.com/trycua\" target=\"_blank\" rel=\"noopener noreferrer\"><img src=\"https://img.shields.io/twitter/follow/trycua?style=social\" alt=\"Twitter\"></a>\n    <a href=\"https://cua.ai/docs\" target=\"_blank\" rel=\"noopener noreferrer\"><img src=\"https://img.shields.io/badge/Docs-0ea5e9.svg\" alt=\"Documentation\"></a>\n    <br>\n<a href=\"https://www.star-history.com/#trycua/cua\" target=\"_blank\" rel=\"noopener noreferrer\"><img src=\"https://api.star-history.com/badge?repo=trycua/cua&type=trending\" alt=\"trycua/cua | GitHub Trending on Star History\" width=\"266\" height=\"64\"/></a>\n  </p>\n\n</div>\n\n## Choose your path\n\n<div align=\"center\">\n  <table width=\"100%\">\n    <tr>\n      <td colspan=\"3\" align=\"center\" valign=\"top\">\n        <a href=\"#cua-spaces\">\n          <img src=\"img/card-cua-spaces-wide.webp\" alt=\"Cua Spaces: full desktops for your agents. macOS and Linux Spaces on computers you own.\" width=\"100%\">\n        </a>\n      </td>\n    </tr>\n    <tr>\n      <td align=\"center\" valign=\"top\" width=\"33.33%\">\n        <a href=\"#cua-driver\">\n          <img src=\"img/card-cua-driver.webp\" alt=\"Cua Driver: inspect and operate apps on macOS, Windows, and Linux\" width=\"100%\">\n        </a>\n      </td>\n      <td align=\"center\" valign=\"top\" width=\"33.33%\">\n        <a href=\"#lume\">\n          <img src=\"img/card-cua-lume.webp\" alt=\"Lume: local macOS and Linux VMs on Apple Silicon\" width=\"100%\">\n        </a>\n      </td>\n      <td align=\"center\" valign=\"top\" width=\"33.33%\">\n        <a href=\"#cua-bench\">\n          <img src=\"img/card-cua-bench.webp\" alt=\"Cua Bench: create tasks, evaluate agents, and export trajectories\" width=\"100%\">\n        </a>\n      </td>\n    </tr>\n  </table>\n</div>\n\n- **Cua Spaces:** [Install the app and run your first Space](https://cua.ai/docs/spaces/quickstart).\n- **Cua Driver:** [Operate C"
+  },
+  {
+    "owner": "haydenbleasel",
+    "name": "ghost",
+    "ownerType": "User",
+    "homepage": null,
+    "entries": [
+      {
+        "name": ".changeset",
+        "type": "tree",
+        "oid": "9103597df9de148d3966c33f543a682992d3d8ab"
+      },
+      {
+        "name": ".env.example",
+        "type": "blob",
+        "oid": "300c4c9e00d541fa474ad6b04f1dcc544c0213f6"
+      },
+      {
+        "name": ".github",
+        "type": "tree",
+        "oid": "bba7217b630e440ff29cbe029b6cf46dd48df877"
+      },
+      {
+        "name": ".gitignore",
+        "type": "blob",
+        "oid": "dae32349f5057fc4507e42323cc3825bdd32380a"
+      },
+      {
+        "name": ".husky",
+        "type": "tree",
+        "oid": "553c9bacd092d72a788cad217506db75d2c3aca4"
+      },
+      {
+        "name": ".npmrc",
+        "type": "blob",
+        "oid": "d67f3748837b62bbc681ed92228541ee01d8abea"
+      },
+      {
+        "name": ".vscode",
+        "type": "tree",
+        "oid": "4e7f4521ad70b8bd233cdbca5d6496f65f1beb1b"
+      },
+      {
+        "name": "CHANGELOG.md",
+        "type": "blob",
+        "oid": "4f0520c4e8b282406152b11b691a25a1e7c08e3c"
+      },
+      {
+        "name": "README.md",
+        "type": "blob",
+        "oid": "028e6766326682397ccafdb65f2b7c73cf4df1ba"
+      },
+      {
+        "name": "agent",
+        "type": "tree",
+        "oid": "f2b5292b2fdcd782520ec4c57f2cafa9a9371bba"
+      },
+      {
+        "name": "app",
+        "type": "tree",
+        "oid": "6563b7a55bfc77c3fa959e2fffb73f8155b773b0"
+      },
+      {
+        "name": "bun.lock",
+        "type": "blob",
+        "oid": "0ed6df789d0f86f705fccc7d2a5c837457cd609e"
+      },
+      {
+        "name": "bunfig.toml",
+        "type": "blob",
+        "oid": "82f81e299463606f9891bf37ec35b6376f4655e7"
+      },
+      {
+        "name": "components.json",
+        "type": "blob",
+        "oid": "bb648c016cc665181dc3126df588146a8965c490"
+      },
+      {
+        "name": "components",
+        "type": "tree",
+        "oid": "850d4f3a8606086d347e889a9d21a74282f59d5a"
+      },
+      {
+        "name": "games",
+        "type": "tree",
+        "oid": "9b4eeba947a3e217adcec1cb31d9024ccafee214"
+      },
+      {
+        "name": "hooks",
+        "type": "tree",
+        "oid": "cc6027e3ac916df709fe1f49005f24ad4402e692"
+      },
+      {
+        "name": "lib",
+        "type": "tree",
+        "oid": "ce97b1480c66e3cebb44933ff431f0af04ebdee1"
+      },
+      {
+        "name": "license.md",
+        "type": "blob",
+        "oid": "01023039f3b0ae436f1c1fb9ee1a21d63e61d305"
+      },
+      {
+        "name": "next-env.d.ts",
+        "type": "blob",
+        "oid": "9edff1c7cacb3bfac9a1eadcf6f51eaa99565e38"
+      },
+      {
+        "name": "next.config.ts",
+        "type": "blob",
+        "oid": "af876a78f436fe1c172ccd2b06bf0c1143db2aa8"
+      },
+      {
+        "name": "oxfmt.config.ts",
+        "type": "blob",
+        "oid": "14c04b6ca3c3421bcb352857d5b0fc45d6c5cc71"
+      },
+      {
+        "name": "oxlint.config.ts",
+        "type": "blob",
+        "oid": "cbc5e215a68b09ab9fcf57859c994597bce3dff5"
+      },
+      {
+        "name": "package.json",
+        "type": "blob",
+        "oid": "3e7615f9f8770a31ce4ab4521a68354e446790f9"
+      },
+      {
+        "name": "patches",
+        "type": "tree",
+        "oid": "02007b118c4acf5c09adfa54c78a283c1a3d5bdb"
+      },
+      {
+        "name": "postcss.config.mjs",
+        "type": "blob",
+        "oid": "79bcf135dc4391e8ff691d471c1fe46d10ff8329"
+      },
+      {
+        "name": "prisma.config.ts",
+        "type": "blob",
+        "oid": "6dee75b04c54d1753e81f9086a382b598c8380bf"
+      },
+      {
+        "name": "prisma",
+        "type": "tree",
+        "oid": "3992bd8dba92617f276aa010a0d92dcede65d7b8"
+      },
+      {
+        "name": "protocol",
+        "type": "tree",
+        "oid": "96727fbab1c32aae04c45ed1fb1cbf2cab3c5220"
+      },
+      {
+        "name": "providers",
+        "type": "tree",
+        "oid": "a91fb1a13b26430f5dfb6a01d6b71cbdd7ef9b88"
+      },
+      {
+        "name": "proxy.ts",
+        "type": "blob",
+        "oid": "fb4bb51bfa1d04d449d112f0777ea32c6477e98d"
+      },
+      {
+        "name": "public",
+        "type": "tree",
+        "oid": "f26591e0a7b4198082bc6c16614e77c47bd85731"
+      },
+      {
+        "name": "redirect",
+        "type": "tree",
+        "oid": "ec1782efa234c1d0e08b3f9a85a0a345335eb658"
+      },
+      {
+        "name": "scripts",
+        "type": "tree",
+        "oid": "370f31a9d3c0c9441d1c16bf71e26348874ec21b"
+      },
+      {
+        "name": "test",
+        "type": "tree",
+        "oid": "2a6db5eebd713aa89b85ef6b6e087fd4501f0128"
+      },
+      {
+        "name": "tsconfig.json",
+        "type": "blob",
+        "oid": "801966de3d5b10105ea4a60969c011ff4635cd5b"
+      }
+    ],
+    "readme": "<p align=\"center\">\n  <img src=\".github/logo.svg\" alt=\"Ghost\" width=\"120\" />\n</p>\n\n<h1 align=\"center\">\n  Ghost\n  <br />\n  <sub><sup>Simple, beautiful game servers in under a minute.</sup></sub>\n</h1>\n\nPick a game, pick a region, click start. Drop the IP in your group chat \u2014 no terminals, no toggles, no surprises. Ghost is an open-source dedicated game server platform you deploy yourself: your Vercel account, your Hetzner account, your billing, your data. Docker, SSH, and firewall rules are handled for you.\n\n- **Open source, end to end** \u2014 the whole stack lives on GitHub. Read it, fork it, self-host it; there's no black box.\n- **Up in seconds** \u2014 a dedicated server in under a minute, booted from a pre-baked golden image.\n- **Beautiful by default** \u2014 a dashboard you'll actually want to look at. Sensible defaults instead of a hundred toggles.\n- **Live console** \u2014 stream stdout straight from the container and run commands without leaving the page.\n- **Honest activity log** \u2014 every start, stop, restart, and config change in a clean, filterable timeline.\n- **Your infra, your rules** \u2014 bring your own Hetzner key. Your infrastructure, your billing, your data \u2014 Ghost just wires it up.\n\n![The Ghost dashboard](.github/demo.jpeg)\n\n## Deploy your own\n\n[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fhaydenbleasel%2Fghost&project-name=ghost&repository-name=ghost&env=HETZNER_API_TOKEN,AUTH_PASSWORD,GHOST_SECRET&envDescription=Hetzner%20Cloud%20API%20token%2C%20dashboard%20password%2C%20and%20a%20random%20signing%20secret&envLink=https%3A%2F%2Fgithub.com%2Fhaydenbleasel%2Fghost%23environment-variables&stores=%5B%7B%22type%22%3A%22postgres%22%7D%2C%7B%22type%22%3A%22kv%22%7D%2C%7B%22type%22%3A%22blob%22%7D%5D)\n\nThe Deploy Button clones this repo to your GitHub account, creates a Vercel project connected to it, provisions the backing stores (Neon Postgres, Upstash Redis, Vercel Blob \u2014 their connection strings are injected automatically), and prompts you for the three secrets below.\n\n1. **Create a Hetzner Cloud project** and generate an API token (Read & Write) \u2014 [how to create a token](https://docs.hetzner.cloud/#getting-started). All VMs run in your Hetzner project and are billed to you.\n2. **Click the button** and fill in the env vars (see [Environment variables](#environment-variables)).\n3. **Sign in** at your deployment's URL with `AUTH_PASSWORD` (email defaults to `admin@ghost.local` unless you set `AUTH_EMAIL`).\n4. **Bake your golden image** \u2014 open `/account` and click **Build snapshot**. Baking takes ~10\u201315 min. Once it's ready, you can create servers.\n\n> [!NOTE]\n> New Hetzner Cloud accounts are capped at 5 servers per project until the account is verified. Provisioning fails with `resource_limit_exceeded` once you hit it \u2014 request a limit increase from Hetzner support.\n\n### Environment variables\n\nGenerate `GHOST_SECRET` with `openssl rand -hex 32`.\n\n| Variable | Purpose |\n| --- | --- |"
+  },
+  {
+    "owner": "heycupola",
+    "name": "relic",
+    "ownerType": "Organization",
+    "homepage": "https://withrelic.com",
+    "entries": [
+      {
+        "name": ".changeset",
+        "type": "tree",
+        "oid": "9225ee8b9426354f17dbd1a924601ef6a488264d"
+      },
+      {
+        "name": ".github",
+        "type": "tree",
+        "oid": "d723b54e2bf1e016d5a9e4bf7c37b45df05ea027"
+      },
+      {
+        "name": ".gitignore",
+        "type": "blob",
+        "oid": "b5de897907a5729a46e5e0eaea3db2a08b237a40"
+      },
+      {
+        "name": ".mcp.json",
+        "type": "blob",
+        "oid": "59a2f65697dc7451d2ca754d52d0327bb6d79cb9"
+      },
+      {
+        "name": ".oxfmtrc.json",
+        "type": "blob",
+        "oid": "4d363fdda04d3d9c40219cc41e6f80f1835f84ea"
+      },
+      {
+        "name": ".oxlintrc.json",
+        "type": "blob",
+        "oid": "03777a9f78942bca5a262b4598318829434e3eea"
+      },
+      {
+        "name": "AGENTS.md",
+        "type": "blob",
+        "oid": "3bad16e87991d8f93b0db67d1e1c2cc31e156285"
+      },
+      {
+        "name": "CODE_OF_CONDUCT.md",
+        "type": "blob",
+        "oid": "93559b20cee8de7f9266388861bdb29b2f2701e1"
+      },
+      {
+        "name": "CONTRIBUTING.md",
+        "type": "blob",
+        "oid": "1338e51918bc8008d036c3f23bd3f9e6350af440"
+      },
+      {
+        "name": "LICENSE",
+        "type": "blob",
+        "oid": "0f40b06c7ed503adb228a6a2c944deeba8b7716b"
+      },
+      {
+        "name": "README.md",
+        "type": "blob",
+        "oid": "5edd5b8c28bd5671f1a8bf0208e9ee5a68126869"
+      },
+      {
+        "name": "SECURITY.md",
+        "type": "blob",
+        "oid": "958b2d2b3c73501615d414aa9fbb6e2ebc3c79e6"
+      },
+      {
+        "name": "action.yml",
+        "type": "blob",
+        "oid": "2bd9f2b1dc5ec5771d9a170b58f027cd15d97c7c"
+      },
+      {
+        "name": "apps",
+        "type": "tree",
+        "oid": "ff21b8d80bfa935ca7938a2b1e92b9141361503a"
+      },
+      {
+        "name": "bun.lock",
+        "type": "blob",
+        "oid": "d3989052174b26b7d2cd5784e361dc130121fa52"
+      },
+      {
+        "name": "glama.json",
+        "type": "blob",
+        "oid": "2554fbf76be0735583a37c4efe93e6a1e0d214b4"
+      },
+      {
+        "name": "homebrew",
+        "type": "tree",
+        "oid": "57e54020b33e0116154873fa0fd8642f335008f6"
+      },
+      {
+        "name": "lefthook.yml",
+        "type": "blob",
+        "oid": "0d6c1d0195bad3ad97dd5f7afbb523933e21e7cc"
+      },
+      {
+        "name": "npm",
+        "type": "tree",
+        "oid": "f11e6b2ffb1112ba2896915f70cb55d0ed342473"
+      },
+      {
+        "name": "package.json",
+        "type": "blob",
+        "oid": "6a8a5cdb4b04a9770123cfe513ce7e2a3d76e810"
+      },
+      {
+        "name": "packages",
+        "type": "tree",
+        "oid": "800f45908739806fb2d0b9a577d57ad4659966c7"
+      },
+      {
+        "name": "scoop",
+        "type": "tree",
+        "oid": "e443538536209f34b1ba9300ad205f07f75392c4"
+      },
+      {
+        "name": "scripts",
+        "type": "tree",
+        "oid": "1929d3e4f17b90d0aea3ca60ca4489022a8df103"
+      },
+      {
+        "name": "skills",
+        "type": "tree",
+        "oid": "0ef29deab1e55c79f906f43877b505bcae953924"
+      },
+      {
+        "name": "turbo.json",
+        "type": "blob",
+        "oid": "ee256daf84ff230f383d16409a526e2cb88edac8"
+      }
+    ],
+    "readme": "<p align=\"center\">\n  <picture>\n    <source media=\"(prefers-color-scheme: dark)\" srcset=\"./apps/web/public/relic-logo-light.svg\">\n    <source media=\"(prefers-color-scheme: light)\" srcset=\"./apps/web/public/relic-logo-dark.svg\">\n    <img alt=\"relic\" src=\"./apps/web/public/relic-logo-dark.svg\" width=\"48\">\n  </picture>\n</p>\n\n<p align=\"center\">\n  End-to-end encrypted secrets for developers and AI agents.<br>\n  Manage, share, and inject environment variables, encrypted on your device \u2014 servers store ciphertext; AI agents see names, with best-effort output redaction.\n</p>\n\n<p align=\"center\">\n  <a href=\"https://github.com/heycupola/relic/stargazers\"><img src=\"https://img.shields.io/github/stars/heycupola/relic?style=flat\" alt=\"GitHub Stars\"></a>\n  <a href=\"https://github.com/heycupola/relic/blob/canary/LICENSE\"><img src=\"https://img.shields.io/github/license/heycupola/relic\" alt=\"License\"></a>\n  <a href=\"https://docs.withrelic.com\"><img src=\"https://img.shields.io/badge/docs-withrelic.com-blue\" alt=\"Docs\"></a>\n</p>\n\n<p align=\"center\">\n  <a href=\"https://withrelic.com\"><img src=\"./apps/docs/assets/tui-overview.png\" alt=\"Relic Terminal UI\" width=\"800\"></a>\n</p>\n\n---\n\n### What is Relic?\n\nRelic is a CLI-first, end-to-end encrypted secret manager built for developers, teams, and AI coding workflows.\n\n- **Encrypted on your device:** Secrets are encrypted client-side with AES-256-GCM and Argon2id before leaving your machine. Our servers store only ciphertext.\n- **Familiar `.env` workflow, zero plaintext on disk:** Paste `.env` files directly into the TUI editor or import from Doppler, Infisical, Vercel, and 1Password. At runtime, a memory-safe Rust runner injects variables into your process and wipes memory on exit.\n- **AI-safe MCP server (`relic mcp`):** Let Cursor, Claude Code, Codex, and Zed inspect secret names and run commands with secrets injected while values are best-effort redacted from output (env dumps blocked by default).\n- **Direct platform sync (`relic push`):** Decrypt locally and sync straight to Vercel, Cloudflare Workers, GitHub Actions, Fly.io, and more with diff plans (`+`, `~`, `-`).\n- **Shift-left protection (`relic guard` & `relic check`):** Block accidental `.env` or secret leaks in pre-commit hooks, and validate missing keys in your IDE or CI.\n- **Encrypted team sharing & OIDC CI/CD:** Share projects using per-collaborator public keys, and run pipelines with passwordless OIDC service accounts.\n\n### Install \u2014 try Relic in ~60 seconds\n\nmacOS / Linux:\n\n```bash\ncurl -fsSL https://withrelic.com/install | bash\nrelic login\nrelic init\nrelic          # TUI: create environment \"development\", add a secret name\nrelic run -e development -- echo ok\n```\n\nWindows (PowerShell):\n\n```powershell\nirm https://withrelic.com/install.ps1 | iex\nrelic login\nrelic init\nrelic run -e development -- echo ok\n```\n\nAlternates: `brew install heycupola/tap/relic` \u00b7 `npm install -g relic` \u00b7 `bun add -g relic`\n\nPrebuilt binaries are also available on the [releases page](htt"
+  },
+  {
+    "owner": "chdb-io",
+    "name": "chdb",
+    "ownerType": "Organization",
+    "homepage": "https://clickhouse.com/chdb",
+    "entries": [
+      {
+        "name": ".agents",
+        "type": "tree",
+        "oid": "e80c834ac8b27081e420300df568225236b9363d"
+      },
+      {
+        "name": ".bumpversion.toml",
+        "type": "blob",
+        "oid": "263fafb5e26a4ab24200c3bd7e356a09a93b1f9a"
+      },
+      {
+        "name": ".claude",
+        "type": "tree",
+        "oid": "db7303d7253e65d1b1ca5eb38dc6c91e72b18b1a"
+      },
+      {
+        "name": ".cursor",
+        "type": "tree",
+        "oid": "17e03eb4c9a91b0caf46a682495aaecb87e5db75"
+      },
+      {
+        "name": ".cursorignore",
+        "type": "blob",
+        "oid": "ad66b56ef277335e0eafb231e9c610c4736ea725"
+      },
+      {
+        "name": ".github",
+        "type": "tree",
+        "oid": "95b416840b0afc5b5d0a8385fc589c9d4feef9e3"
+      },
+      {
+        "name": ".gitignore",
+        "type": "blob",
+        "oid": "b5f68ac0bc185e96c1e12e043b3b0fa7ac027b8d"
+      },
+      {
+        "name": ".readthedocs.yml",
+        "type": "blob",
+        "oid": "790d0ce453538730d3806c65d9d2ad63e7fde8c9"
+      },
+      {
+        "name": "AGENTS.md",
+        "type": "blob",
+        "oid": "779f2133686906615dfa6ef98274b435f9ed2116"
+      },
+      {
+        "name": "AUTHORS.md",
+        "type": "blob",
+        "oid": "94a0a31c7bbfb19405c221625ddec27969e75e29"
+      },
+      {
+        "name": "CHANGELOG.md",
+        "type": "blob",
+        "oid": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      },
+      {
+        "name": "CITATION.cff",
+        "type": "blob",
+        "oid": "e4008c6940b52bb7c12f40e46b4af862a910fc12"
+      },
+      {
+        "name": "CLAUDE.md",
+        "type": "blob",
+        "oid": "47dc3e3d863cfb5727b87d785d09abf9743c0a72"
+      },
+      {
+        "name": "CODE_OF_CONDUCT.md",
+        "type": "blob",
+        "oid": "4d547a081c6c64463a1ced9f055b911fe2fb0ccc"
+      },
+      {
+        "name": "CONTRIBUTING.md",
+        "type": "blob",
+        "oid": "7c47874fe59036a9d8776aa41358ec359b58479e"
+      },
+      {
+        "name": "LICENSE.txt",
+        "type": "blob",
+        "oid": "9da989ec185e9f14563f1fb7ecdb05c754d35817"
+      },
+      {
+        "name": "Makefile",
+        "type": "blob",
+        "oid": "b0a6e5e756070ba675eb39432a507c9b056e3748"
+      },
+      {
+        "name": "README-zh.md",
+        "type": "blob",
+        "oid": "51e5ff41ca8d13b982041428753b752b8704eb94"
+      },
+      {
+        "name": "README.md",
+        "type": "blob",
+        "oid": "ec719ea50b2ce3f7fc2079a8db9bc3876cec8d97"
+      },
+      {
+        "name": "VERSION-GUIDE.md",
+        "type": "blob",
+        "oid": "88bb095df791f2808849cbf7c4088c2398b1c35f"
+      },
+      {
+        "name": "adbc_driver_chdb",
+        "type": "tree",
+        "oid": "dbf23631bcd4e1488da1ed496b83eb7f3ee53c62"
+      },
+      {
+        "name": "agent",
+        "type": "tree",
+        "oid": "97dfc67d51b5f243543680d24d2dc28797098ad9"
+      },
+      {
+        "name": "benchmark",
+        "type": "tree",
+        "oid": "c4622dce7e645cac967b0a7d918d7ee81790c8b4"
+      },
+      {
+        "name": "chdb",
+        "type": "tree",
+        "oid": "e107db38d6bfaa1cf474e6c40cdfd42d00385dfd"
+      },
+      {
+        "name": "datastore",
+        "type": "tree",
+        "oid": "8b5b434bacec78fdd2648bc6e670e764e6a135f2"
+      },
+      {
+        "name": "dev-docs",
+        "type": "tree",
+        "oid": "7042bff86d62e94eb9b9b121b6f05e7bbac7f6bc"
+      },
+      {
+        "name": "docs",
+        "type": "tree",
+        "oid": "cb14745649eedd9a01c2064e97842b005aefe099"
+      },
+      {
+        "name": "examples",
+        "type": "tree",
+        "oid": "3aa3e76a4ffce532fdbaeb7ad9fbb466dfae5cc5"
+      },
+      {
+        "name": "install_skill.sh",
+        "type": "blob",
+        "oid": "4e0d13804ee0904e9c9ed0013a06f782b47e713e"
+      },
+      {
+        "name": "llms-full.txt",
+        "type": "blob",
+        "oid": "03e28196c84385a3fe0fc566617432e6cdc49a21"
+      },
+      {
+        "name": "llms.txt",
+        "type": "blob",
+        "oid": "76f90f56afc039d64c2e31916b70dbd2043e613b"
+      },
+      {
+        "name": "pyproject.toml",
+        "type": "blob",
+        "oid": "9c960e0f1665ac6d6f9857288f671d1a4429c78b"
+      },
+      {
+        "name": "refs",
+        "type": "tree",
+        "oid": "b0a17ab42474b7a4e930e898b321c4683ef6cb43"
+      },
+      {
+        "name": "requirements-dev.txt",
+        "type": "blob",
+        "oid": "0212f1b33e11e12b615a9fe4dcf3025f944207a1"
+      },
+      {
+        "name": "requirements.txt",
+        "type": "blob",
+        "oid": "f9c2eea663173ce7e64d6ecb3537eeba11c300d9"
+      },
+      {
+        "name": "scripts",
+        "type": "tree",
+        "oid": "ffc7c0b7cd075ffd818776b3b93046b5cc3c1351"
+      },
+      {
+        "name": "sphinx",
+        "type": "tree",
+        "oid": "33b37b192338fea19bead83bee19aad4fcfa1546"
+      },
+      {
+        "name": "tests",
+        "type": "tree",
+        "oid": "b3ee98947ab54cba3f8a6e685e9b1bf70fb20bce"
+      },
+      {
+        "name": "tox.ini",
+        "type": "blob",
+        "oid": "338aa703bc6bfa6dba77cd05024da913e510fd50"
+      }
+    ],
+    "readme": "<div align=\"center\">\n   <a href=\"https://wasm.chdb.io\"><b>\ud83c\udf89 New: chDB-Wasm \u2014 the complete ClickHouse engine compiled to WebAssembly. Run SQL in your browser, no server, no install \u2192 wasm.chdb.io</b></a>\n</div>\n<div align=\"center\">\n<picture>\n  <source media=\"(prefers-color-scheme: dark)\" srcset=\"https://github.com/chdb-io/chdb/raw/main/docs/_static/snake-chdb-dark.png\" height=\"130\">\n  <img src=\"https://github.com/chdb-io/chdb/raw/main/docs/_static/snake-chdb.png\" height=\"130\">\n</picture>\n\n[![Build X86](https://github.com/chdb-io/chdb/actions/workflows/build_linux_x86_wheels.yml/badge.svg?event=release)](https://github.com/chdb-io/chdb/actions/workflows/build_linux_x86_wheels.yml)\n[![PyPI](https://img.shields.io/pypi/v/chdb.svg)](https://pypi.org/project/chdb/)\n[![Downloads](https://static.pepy.tech/badge/chdb)](https://pepy.tech/project/chdb)\n[![Discord](https://img.shields.io/discord/1098133460310294528?logo=Discord)](https://discord.gg/D2Daa2fM5K)\n[![Twitter](https://img.shields.io/twitter/url/http/shields.io.svg?style=social&label=Twitter)](https://twitter.com/chdb_io)\n</div>\n\n<div align=\"center\">\n   <sub>Contributing? See <a href=\"./CONTRIBUTING.md\"><code>CONTRIBUTING.md</code></a> \u2014 setup, the modify-then-test workflow, PR conventions, CI, and releases. <a href=\"./AGENTS.md\"><code>AGENTS.md</code></a> (kept short and stays in agent context) captures the chdb-ds design and testing principles.</sub>\n</div>\n\n# chDB\n\n\n> chDB is an in-process SQL OLAP Engine powered by ClickHouse  [^1]\n> For more details: [The birth of chDB](https://auxten.com/the-birth-of-chdb/)\n\n\n## Features\n\n* **\ud83d\udc3c Pandas-compatible DataStore API** - Use familiar pandas syntax with ClickHouse performance\n* **\ud83c\udf10 Runs in the browser via WebAssembly** - [chDB-Wasm](https://github.com/chdb-io/chdb-wasm) compiles the full engine to WASM; try it live at [wasm.chdb.io](https://wasm.chdb.io)\n* In-process SQL OLAP Engine, powered by ClickHouse\n* No need to install ClickHouse\n* Minimized data copy from C++ to Python with [python memoryview](https://docs.python.org/3/c-api/memoryview.html)\n* Input&Output support Parquet, CSV, JSON, Arrow, ORC and 60+[more](https://clickhouse.com/docs/en/interfaces/formats) formats\n* Support Python DB API 2.0\n\n## Get Started on Hex\n\n- \ud83d\udcd6 <a href=\"https://app.hex.tech/partnerships/app/chDB-Tutorial-032XsQ4qoKtlXxcw49joav/latest\" target=\"_blank\"><b>Getting Started Tutorial</b></a> \u2014 set up your first connection\n- \ud83d\ude80 <a href=\"https://app.hex.tech/signup/clickhouse-30\" target=\"_blank\"><b>Extended 30-day Hex Trial</b></a> \u2014 full access to ClickHouse integrations\n\n## Arch\n<div align=\"center\">\n  <img src=\"https://github.com/chdb-io/chdb/raw/main/docs/_static/arch-chdb3.png\" width=\"450\">\n</div>\n\n## Installation\nCurrently, chDB supports Python 3.9+ on macOS and Linux (x86_64 and ARM64).\n```bash\npip install chdb\n```\n\nNo install at all: open [wasm.chdb.io](https://wasm.chdb.io) and run SQL against the WebAssembly build ([chDB-Wasm](https://github.com/chdb-io/chdb-wasm)) "
+  },
+  {
+    "owner": "vercel-labs",
+    "name": "wterm",
+    "ownerType": "Organization",
+    "homepage": "https://wterm.dev",
+    "entries": [
+      {
+        "name": ".agents",
+        "type": "tree",
+        "oid": "623417e311fed9c364cb826978998594816c3be5"
+      },
+      {
+        "name": ".claude",
+        "type": "blob",
+        "oid": "c0ca46856636174575b3ec5e804c4530a5f99fff"
+      },
+      {
+        "name": ".github",
+        "type": "tree",
+        "oid": "b7f8b86c71cd034ffec59533051c592fb3cc072a"
+      },
+      {
+        "name": ".gitignore",
+        "type": "blob",
+        "oid": "b363fb7bccff2ff278ea6537494da5dac85e05cc"
+      },
+      {
+        "name": ".node-version",
+        "type": "blob",
+        "oid": "a45fd52cc5891570d6299fab38643103c3955474"
+      },
+      {
+        "name": "AGENTS.md",
+        "type": "blob",
+        "oid": "5298bc0e5e97ff0615da7a61f39bb9cc3850b5d5"
+      },
+      {
+        "name": "CHANGELOG.md",
+        "type": "blob",
+        "oid": "9c59c653efd06069f126d039d4491539bdeb37ba"
+      },
+      {
+        "name": "CONTRIBUTING.md",
+        "type": "blob",
+        "oid": "2f54dddd1bf77c72718392290be9712831e3e38f"
+      },
+      {
+        "name": "LICENSE",
+        "type": "blob",
+        "oid": "9b73ea8111a4d1f17e4afffb93e867401c7be597"
+      },
+      {
+        "name": "README.md",
+        "type": "blob",
+        "oid": "4f9f24174c7c529049a11fc58984118911d5172c"
+      },
+      {
+        "name": "apps",
+        "type": "tree",
+        "oid": "c4d52b3311852527fd7a1d7e202ce255c33cd98a"
+      },
+      {
+        "name": "build.zig",
+        "type": "blob",
+        "oid": "d95edf7b5b10a5a04cf866df1e2bfbf5d7abdbec"
+      },
+      {
+        "name": "build.zig.zon",
+        "type": "blob",
+        "oid": "d3bedaa060d60072bcab00674fc315d592a7eccf"
+      },
+      {
+        "name": "e2e",
+        "type": "tree",
+        "oid": "188a55bb83814683412cd040941b8d57c6cbb321"
+      },
+      {
+        "name": "examples",
+        "type": "tree",
+        "oid": "8086a097d03b3f16eae4c13e259a6374526550c6"
+      },
+      {
+        "name": "experiments",
+        "type": "tree",
+        "oid": "db5401d866455395856832d65ecd1c15bd4595d4"
+      },
+      {
+        "name": "package.json",
+        "type": "blob",
+        "oid": "e401ff25de6ba8aa87b47726e13827f3ec7e9625"
+      },
+      {
+        "name": "packages",
+        "type": "tree",
+        "oid": "c7e9837c7e947cff8a858dae32f10b213cb9b62d"
+      },
+      {
+        "name": "pnpm-lock.yaml",
+        "type": "blob",
+        "oid": "9e6faa49ba9bc4518d30299f8306d49df95038fb"
+      },
+      {
+        "name": "pnpm-workspace.yaml",
+        "type": "blob",
+        "oid": "cbbd5bd26d0fb471f6337298566006cf18637e32"
+      },
+      {
+        "name": "scripts",
+        "type": "tree",
+        "oid": "f07a2884ed06331bd68e0b1e831412e7bee79eb0"
+      },
+      {
+        "name": "src",
+        "type": "tree",
+        "oid": "f8fef262f0dc9eef1c503a6b28510eb1854ab7a9"
+      },
+      {
+        "name": "turbo.json",
+        "type": "blob",
+        "oid": "5a66429a1930d8bd0f1b4f6d6431c0e3416494d9"
+      },
+      {
+        "name": "vitest.workspace.ts",
+        "type": "blob",
+        "oid": "e84f63a2161533a990ed7e4bb312c91b438ef966"
+      },
+      {
+        "name": "web",
+        "type": "tree",
+        "oid": "e6450576434390edfbd1ae97e8d722b548f90367"
+      }
+    ],
+    "readme": "# wterm\n\n<p>\n  <a href=\"https://vercel.com/labs#active-experiments\"><img alt=\"Vercel Labs Experiment\" src=\"https://img.shields.io/badge/LABS-EXPERIMENT-0a0a0a.svg?style=for-the-badge&amp;logo=Vercel&amp;labelColor=000000\" height=\"28\"></a>\n  <a href=\"https://www.npmjs.com/package/@wterm/core\"><img alt=\"npm version: @wterm/core\" src=\"https://img.shields.io/npm/v/%40wterm%2Fcore.svg?style=for-the-badge&amp;labelColor=000000\" height=\"28\"></a>\n  <a href=\"https://github.com/vercel-labs/wterm/blob/main/LICENSE\"><img alt=\"License: Apache-2.0\" src=\"https://img.shields.io/github/license/vercel-labs/wterm.svg?style=for-the-badge&amp;labelColor=000000\" height=\"28\"></a>\n  <a href=\"https://www.npmjs.com/package/@wterm/core\"><img alt=\"npm downloads per month: @wterm/core\" src=\"https://img.shields.io/npm/dm/%40wterm%2Fcore.svg?style=for-the-badge&amp;labelColor=000000&amp;label=npm%20downloads\" height=\"28\"></a>\n</p>\n\nA terminal emulator for the web.\n\nwterm (\"dub-term\") renders to the DOM \u2014 native text selection, copy/paste, find, and accessibility work directly on the mounted rows. The core is written in Zig and compiled to WASM for near-native performance.\n\n## Packages\n\n| Package | Description |\n|---|---|\n| [`@wterm/core`](packages/@wterm/core) | Headless WASM bridge, `TerminalCore` interface, WebSocket transport |\n| [`@wterm/dom`](packages/@wterm/dom) | DOM renderer, input handler \u2014 vanilla JS terminal |\n| [`@wterm/react`](packages/@wterm/react) | React component + `useTerminal` hook (TypeScript) |\n| [`@wterm/vue`](packages/@wterm/vue) | Vue 3 component + template ref API |\n| [`@wterm/svelte`](packages/@wterm/svelte) | Svelte component + callback API |\n| [`@wterm/ghostty`](packages/@wterm/ghostty) | Full-featured VT emulation core powered by libghostty |\n| [`@wterm/just-bash`](packages/@wterm/just-bash) | In-browser Bash shell powered by just-bash 3 |\n| [`@wterm/markdown`](packages/@wterm/markdown) | Render Markdown in the terminal |\n\n## Features\n\n- **Pluggable cores** \u2014 built-in lightweight Zig core or opt-in [libghostty](packages/@wterm/ghostty) backend for full VT compliance\n- **Lower idle memory** \u2014 Ghostty allocates terminal pages as needed, reducing memory reserved by idle terminals and alternate screens\n- **Shared WASM loading** \u2014 both cores reuse compiled modules while keeping separate terminal memory; the built-in binary loads only when selected and is decoded once, and supported browsers compile separately served binaries during download\n- **Zig + WASM core** \u2014 VT100/VT220/xterm escape sequence parser compiled to a ~26 KB `.wasm` binary (release build)\n- **DOM rendering** \u2014 native text selection, clipboard, browser find, and screen reader support for mounted rows\n- **Opt-in WebGL2 renderer** \u2014 `renderer: \"webgl\"` paints full-screen redraws, images, and large pane grids from one shared context while DOM text keeps selection, find, and screen readers working\n- **Worker core** \u2014 `WorkerCore` parses off the main thread so many busy panes use more than on"
+  },
+  {
+    "owner": "AtomicBot-ai",
+    "name": "Atomic-Chat",
+    "ownerType": "Organization",
+    "homepage": "https://atomic.chat",
+    "entries": [
+      {
+        "name": ".cargo",
+        "type": "tree",
+        "oid": "deae8ba22e1091b14a51f6b84dc70326023e8156"
+      },
+      {
+        "name": ".codegraph",
+        "type": "tree",
+        "oid": "f5e8f9f162f2683809e7fd784926bc6c1422710f"
+      },
+      {
+        "name": ".devcontainer",
+        "type": "tree",
+        "oid": "d12b8eb150cd6e22aa5e3500916ea5c8bef50bf4"
+      },
+      {
+        "name": ".gitattributes",
+        "type": "blob",
+        "oid": "6bfe1df363be686cbef62374f07ae3b08e519a24"
+      },
+      {
+        "name": ".github",
+        "type": "tree",
+        "oid": "b3ad53eab6471740cb18cb869d2c8c40f4d44829"
+      },
+      {
+        "name": ".gitignore",
+        "type": "blob",
+        "oid": "9ea3ae85e3f62a0108426e57ffea90f5161fc96d"
+      },
+      {
+        "name": ".husky",
+        "type": "tree",
+        "oid": "db698edb6157bc2e4f0437121e685b309ba6a966"
+      },
+      {
+        "name": ".prettierignore",
+        "type": "blob",
+        "oid": "02d9145c141252806ddeecf4a6a56561eaa4cc8a"
+      },
+      {
+        "name": ".prettierrc",
+        "type": "blob",
+        "oid": "a4207953be64f0c3ec675ec18c1948c5aca9c26e"
+      },
+      {
+        "name": ".probe",
+        "type": "tree",
+        "oid": "647d5a765ed5028bae6899e762f997c92fb047e3"
+      },
+      {
+        "name": ".yarnrc.yml",
+        "type": "blob",
+        "oid": "3186f3f0795ab612d5508593672dc9ad94bccca0"
+      },
+      {
+        "name": "AGENTS.md",
+        "type": "blob",
+        "oid": "12641030d5f56f2d8179edaf24281badcfadcfc8"
+      },
+      {
+        "name": "CONTRIBUTING.md",
+        "type": "blob",
+        "oid": "31551369bd6f78f5d6ac707259ddff8d2d45f7fa"
+      },
+      {
+        "name": "DEVELOP.md",
+        "type": "blob",
+        "oid": "be055df3a2473808c283f13ca0c5410bc52b7dc5"
+      },
+      {
+        "name": "LICENSE",
+        "type": "blob",
+        "oid": "7dddd38b93536621b54fbbb2e36b35b1fa49f954"
+      },
+      {
+        "name": "Makefile",
+        "type": "blob",
+        "oid": "f15fa97a21a70d39e5b8ceacd3c4e14869990924"
+      },
+      {
+        "name": "README.md",
+        "type": "blob",
+        "oid": "e39cce9e2c254d742ac98043e24f6a214ebaf7fb"
+      },
+      {
+        "name": "assets",
+        "type": "tree",
+        "oid": "db01d33c24d22204fd8a585f3496f704b88b5ce6"
+      },
+      {
+        "name": "autoqa",
+        "type": "tree",
+        "oid": "c117bfa200f9437a9ff084e9a8ef3bb0d1b88d38"
+      },
+      {
+        "name": "core",
+        "type": "tree",
+        "oid": "162840125fbd99158f6e20f8bf53c46a76b810bf"
+      },
+      {
+        "name": "demo.gif",
+        "type": "blob",
+        "oid": "f5af39e1257215a99a934ef2266fe266c9f96871"
+      },
+      {
+        "name": "docs",
+        "type": "tree",
+        "oid": "d513a990269bc334c13572c5339e3e3825b8442a"
+      },
+      {
+        "name": "downloads",
+        "type": "tree",
+        "oid": "cfdfc002bd0c37860b4246bdfe64fd5d04f10990"
+      },
+      {
+        "name": "extensions",
+        "type": "tree",
+        "oid": "977a93ac986f57f971e8d3b0e3ba49b2f5dd20b8"
+      },
+      {
+        "name": "foundation-models-server",
+        "type": "tree",
+        "oid": "360550251866d6f5a8e90a36798d9cacb1876002"
+      },
+      {
+        "name": "mlx-server",
+        "type": "tree",
+        "oid": "4d816ca79d3d6b1b383578dbb98d18b9d56a57b1"
+      },
+      {
+        "name": "openspec",
+        "type": "tree",
+        "oid": "26753b7c6a2688325db50b0520257395dd52cc1a"
+      },
+      {
+        "name": "package.json",
+        "type": "blob",
+        "oid": "8fdce64b6e32ee456621efe188d6ed383b9c80ed"
+      },
+      {
+        "name": "packaging",
+        "type": "tree",
+        "oid": "7b7894d9f73d8bb6a1b7cdd15ea9bde0b6819ff5"
+      },
+      {
+        "name": "scripts",
+        "type": "tree",
+        "oid": "2faf0d52a93e399f0ec8a2d5a889fe680658c936"
+      },
+      {
+        "name": "src-tauri",
+        "type": "tree",
+        "oid": "3c4113edca7bc5ebf3f51ee0b12adb67a601b051"
+      },
+      {
+        "name": "tests",
+        "type": "tree",
+        "oid": "0f520532ffe226a6d61634b903c0d64a163baeb3"
+      },
+      {
+        "name": "vitest.config.ts",
+        "type": "blob",
+        "oid": "b1b8f0e70492bd0c3a34967114e905d7a852ba58"
+      },
+      {
+        "name": "web-app",
+        "type": "tree",
+        "oid": "1ba030e4be481f676fe78d0c2102c6cd0eb05b05"
+      },
+      {
+        "name": "yarn.lock",
+        "type": "blob",
+        "oid": "86229c436e93d7a66b6df38152b4463db04b269b"
+      }
+    ],
+    "readme": "<img src=\"https://github.com/AtomicBot-ai/Atomic-Chat/raw/main/assets/logo.png\" width=\"80\" alt=\"Atomic Chat\" />\n\n# Atomic Chat\n\nLocal AI app and inference engine for agents. Run open-weight LLMs locally \u2014 private, on your machine.\n\n<a href=\"https://github.com/AtomicBot-ai/Atomic-Chat/stargazers\"><img src=\"https://img.shields.io/github/stars/AtomicBot-ai/Atomic-Chat?style=flat&logo=github&label=Stars&color=f5c542\" alt=\"Stars\" /></a>&nbsp;\n<a href=\"https://github.com/AtomicBot-ai/Atomic-Chat/network/members\"><img src=\"https://img.shields.io/github/forks/AtomicBot-ai/Atomic-Chat?style=flat&logo=github&label=Forks&color=4ac1f2\" alt=\"Forks\" /></a>&nbsp;\n<a href=\"https://github.com/AtomicBot-ai/Atomic-Chat/graphs/contributors\"><img src=\"https://img.shields.io/github/contributors/AtomicBot-ai/Atomic-Chat?style=flat&logo=github&label=Contributors&color=ff69b4\" alt=\"Contributors\" /></a>&nbsp;\n<a href=\"https://github.com/AtomicBot-ai/Atomic-Chat/commits/main\"><img src=\"https://img.shields.io/github/last-commit/AtomicBot-ai/Atomic-Chat?style=flat&label=Last%20Commit&color=blueviolet\" alt=\"Last Commit\" /></a>&nbsp;\n<img src=\"https://img.shields.io/badge/Built_with-Tauri-FFC131?style=flat&logo=tauri&logoColor=white\" alt=\"Tauri\" />&nbsp;\n<img src=\"https://img.shields.io/badge/Runtime-Node.js_\u226520-339933?style=flat&logo=nodedotjs&logoColor=white\" alt=\"Node.js\" />\n\n[Getting Started](https://atomic.chat/) \u00b7 [Hugging Face](https://huggingface.co/AtomicChat) \u00b7 [Discord](https://discord.com/invite/8wGSsvmg4V) \u00b7 [X / Twitter](https://x.com/atomic_chat_hq) \u00b7 [Bug Reports](https://github.com/AtomicBot-ai/Atomic-Chat/issues)\n\n<p align=\"center\">\n  <img src=\"https://github.com/AtomicBot-ai/.github/raw/main/assets/0529_final.gif\" width=\"100%\" alt=\"Atomic Chat \u2014 local AI chat in action\" />\n</p>\n\n---\n\n### \ud83d\udce6 Download\n\n<p align=\"left\"><b>Desktop</b></p>\n<p align=\"left\">\n  <a href=\"https://github.com/AtomicBot-ai/Atomic-Chat/releases/download/v2.0.0/Atomic.Chat_2.0.0_universal.dmg\"><img src=\"https://img.shields.io/badge/macOS-Universal-000000?style=for-the-badge&logo=apple&logoColor=white\" height=\"46\" alt=\"Download for macOS\" /></a>&nbsp;\n  <a href=\"https://github.com/AtomicBot-ai/Atomic-Chat/releases/download/v2.0.0/Atomic.Chat_2.0.0_x64-setup.exe\"><img src=\"https://img.shields.io/badge/Windows-x64-0078D4?style=for-the-badge&logo=windows11&logoColor=white\" height=\"46\" alt=\"Download for Windows\" /></a>&nbsp;\n  <a href=\"https://github.com/AtomicBot-ai/Atomic-Chat/releases/download/v2.0.0/Atomic.Chat_2.0.0_amd64.AppImage\"><img src=\"https://img.shields.io/badge/Linux-AppImage-FCC624?style=for-the-badge&logo=linux&logoColor=black\" height=\"46\" alt=\"Download for Linux\" /></a>\n</p>\n\n<p align=\"left\"><b>Linux packages</b> \u2014 from the Atomic Chat repository, updated by your package manager (<a href=\"#-running-on-linux\">how to install</a>)</p>\n<p align=\"left\">\n  <a href=\"#-running-on-linux\"><img src=\"https://img.shields.io/badge/Debian_%2F_Ubuntu-apt-A81D33?style=for-the-badge&logo=debian&l"
+  },
+  {
+    "owner": "lucataco",
+    "name": "open-source-higgsfield",
+    "ownerType": "User",
+    "homepage": null,
+    "entries": [
+      {
+        "name": ".github",
+        "type": "tree",
+        "oid": "fa59ad5bed3667151b415efd543bdecd4c226657"
+      },
+      {
+        "name": ".gitignore",
+        "type": "blob",
+        "oid": "27b861ec8580d4785df5ada0100799354329b2c6"
+      },
+      {
+        "name": "LICENSE",
+        "type": "blob",
+        "oid": "d645695673349e3947e8e5ae42332d0ac3164cd7"
+      },
+      {
+        "name": "MODELS.md",
+        "type": "blob",
+        "oid": "945ed30fff1b07406ff7835cb656e9ec59bfad7e"
+      },
+      {
+        "name": "NOTICE",
+        "type": "blob",
+        "oid": "20f22318c188843c470b22694d7bffc8687fe615"
+      },
+      {
+        "name": "README.md",
+        "type": "blob",
+        "oid": "00b843265a4bed70ec9670ab4e7837deb3cd1578"
+      },
+      {
+        "name": "RIGHTS.md",
+        "type": "blob",
+        "oid": "875264a3fb553aca94b7262a2d9b1d016c7ed9e9"
+      },
+      {
+        "name": "bodydouble",
+        "type": "tree",
+        "oid": "6e7f94505402109791431845067814f6bcc081e9"
+      },
+      {
+        "name": "media",
+        "type": "tree",
+        "oid": "637ba2f54f66327789c40219e9d30c972aa1a7c0"
+      },
+      {
+        "name": "pyproject.toml",
+        "type": "blob",
+        "oid": "8dbdc76acf8f41eb8595aa5be866e44d25587dfa"
+      },
+      {
+        "name": "run.sh",
+        "type": "blob",
+        "oid": "d854b56dfd4b697bbefb52e393ca08e70202a27c"
+      },
+      {
+        "name": "scripts",
+        "type": "tree",
+        "oid": "4d296971137453ae6462e5fe5eed626b5ebd6873"
+      },
+      {
+        "name": "setup.sh",
+        "type": "blob",
+        "oid": "bf78b3f900ff025a244d7ffc082064686d17a19b"
+      },
+      {
+        "name": "tests",
+        "type": "tree",
+        "oid": "31fef80f86f9f40c9d9ef96a9a8ab7094c4da4a3"
+      },
+      {
+        "name": "workflows",
+        "type": "tree",
+        "oid": "476122847473412ac38b19c5b9b7d4d37968c00e"
+      }
+    ],
+    "readme": null
+  },
+  {
+    "owner": "TanStack",
+    "name": "markdown",
+    "ownerType": "Organization",
+    "homepage": null,
+    "entries": [
+      {
+        "name": ".changeset",
+        "type": "tree",
+        "oid": "703a1551fe348bc4f73711a6a0300ba24b731330"
+      },
+      {
+        "name": ".github",
+        "type": "tree",
+        "oid": "8497c1ed637e488e5931e17187444eaeb6e8951c"
+      },
+      {
+        "name": ".gitignore",
+        "type": "blob",
+        "oid": "b8307925a8da1f3576ef10b11fa2f9fdc162ab79"
+      },
+      {
+        "name": "CHANGELOG.md",
+        "type": "blob",
+        "oid": "7c451ffb9f0130903cb6641df25d37fc20bc1f30"
+      },
+      {
+        "name": "CONTRIBUTING.md",
+        "type": "blob",
+        "oid": "0de1472af85ce484f5542b79ffcce64f1afbb4ae"
+      },
+      {
+        "name": "README.md",
+        "type": "blob",
+        "oid": "2fc157a25c2ebb75c0d58a4982519deceea713d2"
+      },
+      {
+        "name": "corpus",
+        "type": "tree",
+        "oid": "d3f6ab0cf4c4f1f735ed66fbee1312c7fe16cc21"
+      },
+      {
+        "name": "docs",
+        "type": "tree",
+        "oid": "7ddb89a4458dda9a3ee8170ed60a72e97d437d65"
+      },
+      {
+        "name": "fixtures",
+        "type": "tree",
+        "oid": "6f4937701c6696a287b5bb26292dd1f44351b44d"
+      },
+      {
+        "name": "package.json",
+        "type": "blob",
+        "oid": "7363b9724f5a02b6803c04ca7c9476c6d09b415f"
+      },
+      {
+        "name": "pnpm-lock.yaml",
+        "type": "blob",
+        "oid": "0594a396883e2dde38b2d420f8dd9670c728be47"
+      },
+      {
+        "name": "pnpm-workspace.yaml",
+        "type": "blob",
+        "oid": "f0d6034da62c91d691153aa1c011a77816a21e33"
+      },
+      {
+        "name": "reports",
+        "type": "tree",
+        "oid": "7b83996dec6ea6317ebd2fe2484c2df726baa41d"
+      },
+      {
+        "name": "scripts",
+        "type": "tree",
+        "oid": "286177554076d54017eb89677d379db1c684d4ef"
+      },
+      {
+        "name": "skills",
+        "type": "tree",
+        "oid": "75c1a467de8b658b578f1c4ae3b785c6de550e4f"
+      },
+      {
+        "name": "src",
+        "type": "tree",
+        "oid": "ebcbbc1c1e1359fe79d1e1facdc2eef1b7b13982"
+      },
+      {
+        "name": "tests",
+        "type": "tree",
+        "oid": "aab4f1e07d39d99ace9cfff8aea4a3cd568743da"
+      },
+      {
+        "name": "tsconfig.build.json",
+        "type": "blob",
+        "oid": "f02dbc0cfb7de814b176c7d2d76d7830e1f6f46a"
+      },
+      {
+        "name": "tsconfig.json",
+        "type": "blob",
+        "oid": "dc3809c791b65e8534a200e435b25ca5d4dcd14d"
+      },
+      {
+        "name": "vitest.config.ts",
+        "type": "blob",
+        "oid": "8bb182fb9837a4bc81bb68cf8c6695580dc9b15e"
+      }
+    ],
+    "readme": null
+  }
+]

@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { IconHost } from "@stargrep/api/icon-host";
 import { NotSignedIn, Viewers } from "@stargrep/api/viewers";
 import { QueryPlan, Search } from "@stargrep/core/search";
 import { SyncQueue, SyncRequests } from "@stargrep/core/stars";
@@ -32,6 +33,10 @@ export const repo: Db.Repo = {
   summaryReadmeOid: null,
   keywords: ["tui"],
   embeddingModel: null,
+  icon: { key: "v1/git/abc.webp", source: "repo-file", plate: "none", size: 128 },
+  iconCheckedAt: null,
+  ownerType: "org",
+  ownerAvatarUrl: "https://avatars.githubusercontent.com/u/1",
 };
 
 const ada = { id: 7 as GitHubAccountId, login: "ada" as Login, starsSyncedAt: null };
@@ -92,6 +97,7 @@ const serve = makeServer(
     Layer.mergeAll(
       Layer.succeed(Search.Search, search),
       Layer.succeed(Viewers, Viewers.of({ current: Effect.fail(new NotSignedIn()) })),
+      Layer.succeed(IconHost, IconHost.of({ origin: new URL(request.url).origin })),
       SyncRequests.layer,
       layerSyncLimiter(
         { perCaller: env.SYNC_PER_CALLER, overall: env.SYNC_OVERALL },

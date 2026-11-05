@@ -31,6 +31,8 @@ export const followSource = pgEnum("follow_source", ["github", "stargrep"]);
 export const collectionKind = pgEnum("collection_kind", ["user", "editorial"]);
 export const searchScope = pgEnum("search_scope", ["stars", "network", "global"]);
 export const syncRequestOutcome = pgEnum("sync_request_outcome", ["pending", "failed"]);
+export const iconSource = pgEnum("icon_source", ["repo-file", "readme-image", "homepage"]);
+export const iconPlate = pgEnum("icon_plate", ["none", "light", "dark"]);
 
 export const embeddingSettings = pgTable(
   "embedding_settings",
@@ -105,6 +107,13 @@ export const repos = pgTable(
     embeddingModel: text("embedding_model"),
     enrichFailures: integer("enrich_failures").notNull().default(0),
     enrichRetryAt: time("enrich_retry_at"),
+    iconKey: text("icon_key"),
+    iconSource: iconSource("icon_source"),
+    iconPlate: iconPlate("icon_plate"),
+    iconSize: integer("icon_size"),
+    iconCheckedAt: time("icon_checked_at"),
+    ownerType: accountType("owner_type"),
+    ownerAvatarUrl: text("owner_avatar_url"),
     search: tsvector("search")
       .notNull()
       .generatedAlwaysAs(
@@ -119,6 +128,11 @@ export const repos = pgTable(
   (table) => [
     index("repos_search_idx").using("gin", table.search),
     index("repos_retryable_enrichment_idx").on(table.enrichRetryAt, table.id).where(retryableEnrichment(table)),
+    index("repos_icon_checked_at_idx").on(table.iconCheckedAt),
+    check(
+      "repos_icon_complete",
+      sql`(${table.iconKey} is null) = (${table.iconSource} is null) and (${table.iconKey} is null) = (${table.iconPlate} is null) and (${table.iconKey} is null) = (${table.iconSize} is null)`,
+    ),
   ],
 );
 

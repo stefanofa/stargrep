@@ -1,16 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import * as Cloudflare from "@alchemy.run/cloudflare";
 import { Readmes } from "@stargrep/worker/readmes";
-import * as Alchemy from "alchemy";
-import * as Effect from "effect/Effect";
+import { inStage } from "./test-stage.ts";
 
-const declare = (stage: string) =>
-  Effect.runSync(
-    Readmes.pipe(
-      Effect.provideService(Alchemy.Stack, { name: "Stargrep", stage, resources: {}, bindings: {} } as never),
-      Effect.provideService(Cloudflare.Providers, {} as never),
-    ),
-  );
+const declare = (stage: string) => inStage(stage)(Readmes);
 
 describe("Readmes bucket", () => {
   test("prod's bucket is retained and never emptied on destroy", () => {

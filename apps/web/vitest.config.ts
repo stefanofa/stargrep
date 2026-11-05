@@ -11,6 +11,7 @@ export default defineConfig({
         compatibilityDate: "2026-11-01",
         compatibilityFlags: ["nodejs_compat"],
         kvNamespaces: ["SEARCH_CACHE"],
+        r2Buckets: ["ICONS"],
         hyperdrives: { DATABASE: "postgres://stargrep:stargrep@127.0.0.1:1/stargrep", ...authHyperdrives },
         queueProducers: { SYNC_STARS: "sync-stars" },
         ratelimits: {

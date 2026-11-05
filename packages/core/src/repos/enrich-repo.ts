@@ -19,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import { IconQueue, type IconQueueFailed, iconRequest, needsIconCheck } from "../icons/icon-queue.ts";
 import * as BlobStore from "./blob-store.ts";
 import * as EnrichRetry from "./enrich-retry.ts";
 
@@ -79,7 +80,7 @@ const repoFailed = (outcome: Enrichment): boolean =>
     Embedded: () => false,
   });
 
-export type EnrichRepoAbort = DbQueryFailed | DbRowInvalid | EmbeddingModelMismatch | GitHubError;
+export type EnrichRepoAbort = DbQueryFailed | DbRowInvalid | EmbeddingModelMismatch | GitHubError | IconQueueFailed;
 
 export class EnrichRepo extends Context.Service<
   EnrichRepo,
@@ -119,8 +120,6 @@ const embedBatchSize = 128;
 
 const decodeEmbedding = Schema.decodeUnknownEffect(Embedding);
 
-export const readmeKey = (oid: ObjectId) => `readmes/${oid}`;
-
 const readmeOidOf = (facts: RepoFacts) => facts.readme?.oid ?? null;
 
 const summaryOf = (row: Db.Repo, readmeOid: ObjectId | null): Option.Option<Summary> =>
@@ -141,6 +140,8 @@ const storedFacts = (facts: RepoFacts): Db.RepoFacts => ({
   pushedAt: facts.pushedAt,
   archived: facts.archived,
   readmeOid: readmeOidOf(facts),
+  ownerType: facts.ownerType,
+  ownerAvatarUrl: facts.ownerAvatarUrl,
 });
 
 const fullName = (facts: RepoFacts) => `${facts.owner}/${facts.name}`;
@@ -159,10 +160,11 @@ const make = Effect.gen(function* () {
   const blobs = yield* BlobStore.BlobStore;
   const embeddings = yield* Embeddings.Embeddings;
   const textGeneration = yield* TextGeneration.TextGeneration;
+  const icons = yield* IconQueue;
 
   const readme = Effect.fn("EnrichRepo.readme")(function* (facts: RepoFacts) {
     if (facts.readme === null) return null;
-    const key = readmeKey(facts.readme.oid);
+    const key = BlobStore.readmeKey(facts.readme.oid);
     const stored = yield* blobs.get(key);
     if (Option.isSome(stored)) return stored.value;
     const text = yield* github.readme({ owner: facts.owner, name: facts.name, oid: facts.readme.oid });
@@ -218,6 +220,16 @@ const make = Effect.gen(function* () {
     const nodeIds = located.flatMap((step) => (Result.isSuccess(step) ? [step.success.nodeId] : []));
     const facts = nodeIds.length === 0 ? [] : yield* github.repoFacts(nodeIds);
     const factsById = new Map<number, RepoFacts>(facts.map((entry) => [entry.id, entry]));
+    // planOne saves the new README ID and homepage, so the icon work goes out first, decided from the rows as they
+    // were. A failed send stops the chunk before anything is saved or paid for, and the retry sees the same change.
+    yield* icons.send(
+      located.flatMap((step) => {
+        const found = Result.isSuccess(step) ? factsById.get(step.success.id) : undefined;
+        return Result.isSuccess(step) && found !== undefined && needsIconCheck(step.success, found)
+          ? [iconRequest(found)]
+          : [];
+      }),
+    );
     return yield* Effect.forEach(
       located,
       (step) =>

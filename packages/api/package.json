@@ -5,6 +5,7 @@
   "exports": {
     "./contract": "./src/contract.ts",
     "./errors": "./src/errors.ts",
+    "./icon-host": "./src/icon-host.ts",
     "./router": "./src/router.ts",
     "./middleware/instrumentation": "./src/middleware/instrumentation.ts",
     "./sync-limiter": "./src/sync-limiter.ts",
