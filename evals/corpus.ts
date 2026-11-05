@@ -29,7 +29,14 @@ const read = <A>(file: string, decode: (text: string) => Effect.Effect<A, Schema
     catch: () => new EvalDataMissing({ file }),
   }).pipe(Effect.flatMap(decode));
 
-export const loadQueries = read("queries.json", Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Query))));
+const loadQuerySet = (file: string) =>
+  read(file, Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Query))));
+
+export const loadQueries = loadQuerySet("queries.json");
+
+export const loadTypos = loadQuerySet("typos.json");
+
+export const loadNonsense = loadQuerySet("nonsense.json");
 
 export const loadDistractors = read(
   "distractors.json",
