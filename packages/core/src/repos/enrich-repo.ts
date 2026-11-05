@@ -19,6 +19,7 @@ import * as Order from "effect/Order";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as BlobStore from "./blob-store.ts";
+import * as EnrichRetry from "./enrich-retry.ts";
 
 export interface Summary {
   readonly summary: string;
@@ -33,6 +34,7 @@ export type Enrichment = Data.TaggedEnum<{
   NotFound: { readonly id: RepoId };
   NoNodeId: { readonly id: RepoId };
   Gone: { readonly id: RepoId };
+  Backoff: { readonly id: RepoId };
   Stale: { readonly id: RepoId };
   Failed: { readonly id: RepoId; readonly error: EnrichRepoError };
   Summarized: { readonly id: RepoId; readonly summary: Summary };
@@ -167,10 +169,12 @@ const make = Effect.gen(function* () {
 
   const plan = Effect.fn("EnrichRepo.plan")(function* (ids: ReadonlyArray<RepoId>) {
     const rows = new Map<number, Db.StoredRepo>((yield* db.repos.getMany(ids)).map((row) => [row.id, row]));
+    const now = yield* DateTime.now;
     const located = ids.map((id): Step<Db.StoredRepo & { readonly nodeId: NonNullable<Db.Repo["nodeId"]> }> => {
       const row = rows.get(id);
       if (row === undefined) return Result.fail(Enrichment.NotFound({ id }));
       if (!row.pending) return Result.fail(Enrichment.Unchanged({ id }));
+      if (EnrichRetry.inBackoff(row, now)) return Result.fail(Enrichment.Backoff({ id }));
       if (row.nodeId === null) return Result.fail(Enrichment.NoNodeId({ id }));
       return Result.succeed({ ...row, nodeId: row.nodeId });
     });
@@ -190,7 +194,7 @@ const make = Effect.gen(function* () {
         ? [step.failure.id]
         : [],
     );
-    yield* db.repos.recordEnrichFailures({ ids: unreadable, at: yield* DateTime.now });
+    yield* db.repos.recordEnrichFailures({ ids: unreadable, at: now });
     return steps;
   });
 

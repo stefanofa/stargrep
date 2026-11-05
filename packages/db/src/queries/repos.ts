@@ -82,7 +82,12 @@ export interface RepoEmbedding {
   readonly readmeOid: ObjectId | null;
 }
 
-const StoredRepo = Schema.Struct({ ...Repo.fields, pending: Schema.Boolean });
+const StoredRepo = Schema.Struct({
+  ...Repo.fields,
+  pending: Schema.Boolean,
+  enrichFailures: Schema.Int,
+  enrichFailedAt: NullableTime,
+});
 export type StoredRepo = typeof StoredRepo.Type;
 
 export interface EnrichFailures {
@@ -251,7 +256,12 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
     getMany: (ids) =>
       run("repos.getMany", (db) =>
         db
-          .select({ ...repoColumns, pending: needsEnrichment })
+          .select({
+            ...repoColumns,
+            pending: needsEnrichment,
+            enrichFailures: repos.enrichFailures,
+            enrichFailedAt: repos.enrichFailedAt,
+          })
           .from(repos)
           .where(sql`${repos.id} = any(${sql.param([...ids])}::bigint[])`),
       ).pipe(Effect.flatMap(decodeStored("repos.getMany"))),

@@ -13,6 +13,22 @@ export const maxFailures = retryDelays.length + 1;
 
 export const sweepBatch = 100;
 
+export interface FailureRecord {
+  readonly enrichFailures: number;
+  readonly enrichFailedAt: DateTime.Utc | null;
+}
+
+// A repo under the cap whose last failure is newer than its delay is waiting for the sweep. Any message that
+// reaches it sooner is a copy of an attempt already counted, such as a queue retry or a second sweep send.
+export const inBackoff = ({ enrichFailures, enrichFailedAt }: FailureRecord, now: DateTime.Utc) => {
+  const delay = retryDelays[enrichFailures - 1];
+  return (
+    delay !== undefined &&
+    enrichFailedAt !== null &&
+    DateTime.isGreaterThan(enrichFailedAt, DateTime.subtractDuration(now, delay))
+  );
+};
+
 export const sweep = Effect.fn("EnrichRetry.sweep")(function* () {
   const db = yield* Db.Db;
   const queue = yield* EnrichQueue.EnrichQueue;

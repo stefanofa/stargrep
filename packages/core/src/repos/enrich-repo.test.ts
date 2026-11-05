@@ -497,35 +497,37 @@ for (const [adapter, database] of adapters) {
 }
 
 it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30_000 })("enrichRepos", (it) => {
-  it.effect("enriches a batch, reports each outcome in input order, and summarizes nothing twice on a rerun", () =>
-    Effect.gen(function* () {
-      for (const n of [30, 31, 32, 34]) {
-        remotes.set(n, { description: `Tool ${n}`, readme: { oid: oid(String(n % 10)), text: `# Tool ${n}` } });
-      }
-      const batch = [...(yield* store([34, 33, 32, 31, 30])), id(35)];
-      const enricher = yield* EnrichRepo.EnrichRepo;
-      expect(
-        (yield* enricher.enrichRepos(batch)).map((outcome): [number, string] => [outcome.id, outcome._tag]),
-      ).toEqual([
-        [34, "Failed"],
-        [33, "Gone"],
-        [32, "Summarized"],
-        [31, "Summarized"],
-        [30, "Summarized"],
-        [35, "NotFound"],
-      ]);
+  it.effect(
+    "enriches a batch, reports each outcome in input order, and neither summarizes nor looks up anything twice on a rerun",
+    () =>
+      Effect.gen(function* () {
+        for (const n of [30, 31, 32, 34]) {
+          remotes.set(n, { description: `Tool ${n}`, readme: { oid: oid(String(n % 10)), text: `# Tool ${n}` } });
+        }
+        const batch = [...(yield* store([34, 33, 32, 31, 30])), id(35)];
+        const enricher = yield* EnrichRepo.EnrichRepo;
+        expect(
+          (yield* enricher.enrichRepos(batch)).map((outcome): [number, string] => [outcome.id, outcome._tag]),
+        ).toEqual([
+          [34, "Failed"],
+          [33, "Gone"],
+          [32, "Summarized"],
+          [31, "Summarized"],
+          [30, "Summarized"],
+          [35, "NotFound"],
+        ]);
 
-      const calls = prompts.length;
-      expect((yield* enricher.enrichRepos(batch)).map((outcome) => outcome._tag)).toEqual([
-        "Failed",
-        "Gone",
-        "Unchanged",
-        "Unchanged",
-        "Unchanged",
-        "NotFound",
-      ]);
-      expect(prompts.slice(calls).map((prompt) => prompt.split("\n")[0])).toEqual(["Repository: owner/repo-34"]);
-    }),
+        const calls = prompts.length;
+        expect((yield* enricher.enrichRepos(batch)).map((outcome) => outcome._tag)).toEqual([
+          "Failed",
+          "Backoff",
+          "Unchanged",
+          "Unchanged",
+          "Unchanged",
+          "NotFound",
+        ]);
+        expect(prompts.slice(calls).map((prompt) => prompt.split("\n")[0])).toEqual(["Repository: owner/repo-34"]);
+      }),
   );
 
   it.effect("enriches the rest of a batch when GitHub forbids one of its repos", () =>
@@ -561,12 +563,52 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       ]);
 
       remotes.set(240, { description: "Public again" });
+      yield* TestClock.adjust("1 hour");
       expect((yield* enricher.enrichRepos([id(240)])).map((outcome) => outcome._tag)).toEqual(["Summarized"]);
       expect(yield* stored()).toEqual([
         { id: 240, enrich_failures: 0, failed_at: null },
         { id: 241, enrich_failures: 0, failed_at: null },
       ]);
     }),
+  );
+
+  it.effect(
+    "skips a repo in its backoff with no GitHub call and no new failure, and tries it once the delay passes",
+    () =>
+      Effect.gen(function* () {
+        remotes.set(250, { description: "Private now", forbidden: true });
+        const enricher = yield* EnrichRepo.EnrichRepo;
+        const batch = yield* store([250]);
+        const lookups = () => github.sent.filter((sent) => sent.url.pathname === "/graphql").length;
+        const tags = Effect.map(enricher.enrichRepos(batch), (outcomes) => outcomes.map((outcome) => outcome._tag));
+        yield* TestClock.setTime(Date.parse("2026-11-06T12:00:00Z"));
+
+        const tries: Array<[string, ReadonlyArray<string>, number]> = [];
+        const attempt = (label: string) =>
+          Effect.gen(function* () {
+            const before = lookups();
+            tries.push([label, yield* tags, lookups() - before]);
+          });
+        yield* attempt("first try");
+        yield* attempt("a queue retry a minute later");
+        yield* TestClock.adjust("10 minutes");
+        yield* attempt("the sweep 10 minutes after the first failure");
+        yield* TestClock.adjust("59 minutes");
+        yield* attempt("a copy 59 minutes after the second failure");
+        yield* TestClock.adjust("1 minute");
+        yield* attempt("the sweep an hour after the second failure");
+        yield* attempt("a full sync after the cap");
+
+        expect(tries).toEqual([
+          ["first try", ["Gone"], 1],
+          ["a queue retry a minute later", ["Backoff"], 0],
+          ["the sweep 10 minutes after the first failure", ["Gone"], 1],
+          ["a copy 59 minutes after the second failure", ["Backoff"], 0],
+          ["the sweep an hour after the second failure", ["Gone"], 1],
+          ["a full sync after the cap", ["Gone"], 1],
+        ]);
+        expect(yield* failuresOf(250)).toEqual([{ enrich_failures: 4 }]);
+      }),
   );
 
   it.effect("marks a repo Failed when its README cannot be read", () =>
