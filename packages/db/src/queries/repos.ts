@@ -2,6 +2,7 @@ import { Repo as GitHubRepo, Login, ObjectId, RepoId, RepoName, RepoNodeId } fro
 import { and, eq, getColumns, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import * as Arr from "effect/Array";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -26,10 +27,18 @@ const RepoRow = createSelectSchema(repos, {
   embeddingModel: Schema.NullOr(EmbeddingModelId),
 });
 
-export const Repo = Schema.Struct(Struct.omit(RepoRow.fields, ["embedding", "search"]));
+export const Repo = Schema.Struct(
+  Struct.omit(RepoRow.fields, ["embedding", "search", "enrichFailures", "enrichFailedAt"]),
+);
 export type Repo = typeof Repo.Type;
 
-const { embedding: _embedding, search: _search, ...columns } = getColumns(repos);
+const {
+  embedding: _embedding,
+  search: _search,
+  enrichFailures: _enrichFailures,
+  enrichFailedAt: _enrichFailedAt,
+  ...columns
+} = getColumns(repos);
 export const repoColumns = columns;
 
 const RepoRef = GitHubRepo;
@@ -76,6 +85,18 @@ export interface RepoEmbedding {
 const StoredRepo = Schema.Struct({ ...Repo.fields, pending: Schema.Boolean });
 export type StoredRepo = typeof StoredRepo.Type;
 
+export interface EnrichFailures {
+  readonly ids: ReadonlyArray<RepoId>;
+  readonly at: DateTime.Utc;
+}
+
+export interface SweepQuery {
+  /** The latest failure time a repo may have and still be retried, indexed by its failure count minus one.
+   *  A repo with more failures than there are cutoffs is past the cap and never swept. */
+  readonly cutoffs: ReadonlyArray<DateTime.Utc>;
+  readonly limit: number;
+}
+
 export interface Queries {
   readonly upsertRefs: (refs: ReadonlyArray<RepoRef>) => Effect.Effect<void, DbQueryFailed>;
   readonly pendingEnrichment: (
@@ -92,6 +113,8 @@ export interface Queries {
   readonly getMany: (
     ids: ReadonlyArray<RepoId>,
   ) => Effect.Effect<ReadonlyArray<StoredRepo>, DbQueryFailed | DbRowInvalid>;
+  readonly recordEnrichFailures: (failures: EnrichFailures) => Effect.Effect<void, DbQueryFailed>;
+  readonly sweepable: (query: SweepQuery) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
 }
 
 const batchSize = 1000;
@@ -100,7 +123,7 @@ const decodeIds = rowsDecoder(Schema.Struct({ id: RepoId }));
 const decodeStored = rowsDecoder(StoredRepo);
 const decodePending = rowsDecoder(Schema.Struct({ pending: Schema.Boolean }));
 
-const needsEnrichment = sql<boolean>`(${repos.summary} is null or ${repos.summaryReadmeOid} is distinct from ${repos.readmeOid} or ${repos.embeddingModel} is null)`;
+export const needsEnrichment = sql<boolean>`(${repos.summary} is null or ${repos.summaryReadmeOid} is distinct from ${repos.readmeOid} or ${repos.embeddingModel} is null)`;
 const encodeRefs = writeEncoder(Schema.Array(RepoRef));
 const encodeFacts = writeEncoder(RepoFacts);
 const encodeSummary = writeEncoder(RepoSummary);
@@ -199,7 +222,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           run("repos.saveEmbedding", (db) =>
             db
               .update(repos)
-              .set({ embedding: [...vector], embeddingModel: configuredModel })
+              .set({ embedding: [...vector], embeddingModel: configuredModel, enrichFailures: 0, enrichFailedAt: null })
               .where(
                 and(
                   eq(repos.id, input.id),
@@ -232,5 +255,31 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           .from(repos)
           .where(sql`${repos.id} = any(${sql.param([...ids])}::bigint[])`),
       ).pipe(Effect.flatMap(decodeStored("repos.getMany"))),
+    recordEnrichFailures: ({ ids, at }) =>
+      Arr.isReadonlyArrayEmpty(ids)
+        ? Effect.void
+        : run("repos.recordEnrichFailures", (db) =>
+            db
+              .update(repos)
+              .set({
+                enrichFailures: sql`${repos.enrichFailures} + 1`,
+                enrichFailedAt: sql`${DateTime.formatIso(at)}::timestamptz`,
+              })
+              .where(sql`${repos.id} = any(${sql.param([...ids])}::bigint[]) and ${needsEnrichment}`),
+          ),
+    sweepable: ({ cutoffs, limit }) =>
+      run("repos.sweepable", (db) =>
+        db
+          .select({ id: repos.id })
+          .from(repos)
+          .where(
+            sql`${needsEnrichment} and ${repos.enrichFailures} <= ${cutoffs.length} and (${repos.enrichFailures} = 0 or ${repos.enrichFailedAt} <= (${sql.param(cutoffs.map(DateTime.formatIso))}::timestamptz[])[${repos.enrichFailures}])`,
+          )
+          .orderBy(sql`${repos.enrichFailedAt} nulls last`, repos.id)
+          .limit(limit),
+      ).pipe(
+        Effect.flatMap(decodeIds("repos.sweepable")),
+        Effect.map((rows) => rows.map((row) => row.id)),
+      ),
   } satisfies Queries;
 });

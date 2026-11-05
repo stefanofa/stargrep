@@ -83,6 +83,8 @@ export const repos = pgTable(
     keywords: jsonb("keywords").notNull().default([]),
     embedding: halfvec("embedding", { dimensions: embeddingDimensions }),
     embeddingModel: text("embedding_model"),
+    enrichFailures: integer("enrich_failures").notNull().default(0),
+    enrichFailedAt: time("enrich_failed_at"),
     search: tsvector("search")
       .notNull()
       .generatedAlwaysAs(
@@ -94,7 +96,14 @@ export const repos = pgTable(
           setweight(to_tsvector('english', coalesce(${repos.summary}, '')), 'C')`,
       ),
   },
-  (table) => [index("repos_search_idx").using("gin", table.search)],
+  (table) => [
+    index("repos_search_idx").using("gin", table.search),
+    index("repos_pending_enrichment_idx")
+      .on(table.enrichFailedAt, table.id)
+      .where(
+        sql`${table.summary} is null or ${table.summaryReadmeOid} is distinct from ${table.readmeOid} or ${table.embeddingModel} is null`,
+      ),
+  ],
 );
 
 export const repoMetrics = pgTable("repo_metrics", {
