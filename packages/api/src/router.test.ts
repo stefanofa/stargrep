@@ -4,16 +4,21 @@ import { QueryPlan, Search } from "@stargrep/core/search";
 import { SyncQueue, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import { UserId } from "@stargrep/db/auth-schema";
+import type { EmbeddingModelId } from "@stargrep/db/embedding";
 import { DbQueryFailed, RepoNotFound } from "@stargrep/db/errors";
+import * as TestDatabase from "@stargrep/db/test-database";
 import type { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
 import { collectSpans } from "@stargrep/telemetry/collector";
+import * as it from "@stargrep/testing";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 import { IconHost } from "./icon-host.ts";
 import type { Transport } from "./middleware/instrumentation.ts";
 import { type ApiContext, type ApiServices, ApiServicesUnavailable, router } from "./router.ts";
@@ -377,6 +382,93 @@ describe("signed-in procedures", () => {
     const { api } = client({ viewer: Effect.fail(new ViewerUnavailable({ step: "session" })) });
     expect((await failure(api.library())).code).toBe("SERVICE_UNAVAILABLE");
   });
+});
+
+const now = Date.parse("2026-11-05T12:55:30Z");
+const queue = SyncQueue.layerMemory();
+
+const syncedAccount = Effect.gen(function* () {
+  const db = yield* Db.Db;
+  const { id, type, login, name, avatarUrl, followers, publicRepos } = ada.account;
+  const lastSync = DateTime.makeUnsafe(now - 80 * 60_000);
+  yield* db.accounts.upsert({ id, type, login, name, avatarUrl, followers, publicRepos });
+  yield* db.stars.applySnapshot({ accountId: id, stars: [], at: lastSync });
+  yield* db.accounts.recordStarSync({ accountId: id, etag: null, at: lastSync });
+});
+
+const signedInWith = (sender: Layer.Layer<SyncQueue.SyncQueue>) =>
+  SyncRequests.layer.pipe(
+    Layer.provideMerge(TestDatabase.layerMemory({ embeddingModel: "test/model" as EmbeddingModelId })),
+    Layer.provideMerge(sender),
+  );
+
+const ownerApi = Effect.gen(function* () {
+  const real = yield* Effect.context<Db.Db | SyncRequests.SyncRequests>();
+  const fakes = services({ viewer: Effect.succeed(ada) });
+  const merged = Context.merge(fakes, real);
+  return createRouterClient(router, { context: contextFor("rpc", Effect.succeed(merged)) });
+});
+
+const openLibrary = Effect.gen(function* () {
+  const api = yield* ownerApi;
+  yield* Effect.promise(() => api.viewer());
+  return yield* Effect.promise(() => api.syncStatus({ login: ada.account.login }));
+});
+
+const resetOwner = Effect.gen(function* () {
+  queue.sent.length = 0;
+  yield* (yield* TestDatabase.TestDatabase).query("truncate github_accounts, sync_requests cascade");
+  yield* TestClock.setTime(now);
+  yield* syncedAccount;
+});
+
+it.layer(signedInWith(queue.layer), { timeout: 30_000 })("opening the library", (it) => {
+  it.effect("starts a sync that syncStatus reports as queued right after", () =>
+    Effect.gen(function* () {
+      yield* resetOwner;
+      expect(yield* openLibrary).toMatchObject({
+        login: "ada",
+        state: "queued",
+        requestedAt: "2026-11-05T12:55:30.000Z",
+        syncedAt: "2026-11-05T11:35:30.000Z",
+      });
+      expect(queue.sent).toEqual([
+        { login: ada.account.login, mode: "incremental", requestedAt: DateTime.makeUnsafe(now) },
+      ]);
+    }),
+  );
+
+  it.effect("starts at most one sync a minute however often the owner opens it", () =>
+    Effect.gen(function* () {
+      yield* resetOwner;
+      yield* openLibrary;
+      yield* TestClock.adjust("59 seconds");
+      expect(yield* openLibrary).toMatchObject({ state: "queued", requestedAt: "2026-11-05T12:55:30.000Z" });
+      expect(queue.sent).toHaveLength(1);
+      yield* TestClock.adjust("1 second");
+      expect(yield* openLibrary).toMatchObject({ state: "queued", requestedAt: "2026-11-05T12:56:30.000Z" });
+      expect(queue.sent).toHaveLength(2);
+    }),
+  );
+});
+
+const downQueue = Layer.succeed(
+  SyncQueue.SyncQueue,
+  SyncQueue.SyncQueue.of({ send: () => Effect.fail(new SyncQueue.SyncQueueFailed({ cause: "down" })) }),
+);
+
+it.layer(signedInWith(downQueue), { timeout: 30_000 })("opening the library with the sync queue down", (it) => {
+  it.effect("still answers the viewer and reports the sync failed", () =>
+    Effect.gen(function* () {
+      yield* resetOwner;
+      const api = yield* ownerApi;
+      expect(yield* Effect.promise(() => api.viewer())).toMatchObject({ login: "ada" });
+      expect(yield* Effect.promise(() => api.syncStatus({ login: ada.account.login }))).toMatchObject({
+        state: "failed",
+        requestedAt: "2026-11-05T12:55:30.000Z",
+      });
+    }),
+  );
 });
 
 test("validates input without starting the services, and maps a failed start to service unavailable", async () => {
