@@ -2,7 +2,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import type { ComponentProps } from "react";
 import { cn } from "../lib/cn.ts";
 
-const tileVariants = cva("relative rounded-tile p-tile text-foreground", {
+const tileVariants = cva("relative squircle rounded-tile p-tile text-foreground", {
   variants: {
     variant: {
       default: "bg-card",

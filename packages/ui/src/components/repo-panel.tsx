@@ -51,7 +51,7 @@ export function RepoPanel({
         <Dialog.Backdrop className="fixed inset-0 z-40 bg-scrim transition-opacity duration-160 data-ending-style:opacity-0 data-starting-style:opacity-0" />
         <Dialog.Popup
           finalFocus={returnFocus ? () => returnFocus : true}
-          className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[520px] flex-col gap-[34px] overflow-y-auto rounded-l-tile bg-card px-9 py-8 text-foreground shadow-panel transition-[translate,opacity] duration-220 ease-out data-ending-style:translate-x-full data-starting-style:translate-x-full max-sm:px-gap motion-reduce:transition-opacity motion-reduce:data-ending-style:translate-x-0 motion-reduce:data-ending-style:opacity-0 motion-reduce:data-starting-style:translate-x-0 motion-reduce:data-starting-style:opacity-0"
+          className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[520px] flex-col gap-[34px] overflow-y-auto squircle rounded-l-tile bg-card px-9 py-8 text-foreground shadow-panel transition-[translate,opacity] duration-220 ease-out data-ending-style:translate-x-full data-starting-style:translate-x-full max-sm:px-gap motion-reduce:transition-opacity motion-reduce:data-ending-style:translate-x-0 motion-reduce:data-ending-style:opacity-0 motion-reduce:data-starting-style:translate-x-0 motion-reduce:data-starting-style:opacity-0"
         >
           {repo && (
             <>
@@ -99,7 +99,7 @@ export function RepoPanel({
                     </p>
                   )}
                 </div>
-                <dl className="flex gap-4 rounded-md bg-background px-gap py-4">
+                <dl className="flex gap-4 squircle rounded-md bg-background px-gap py-4">
                   <div className={`${fact} grow-[1.4]`}>
                     <dt className={factLabel}>Alive</dt>
                     <dd className={`${factValue} flex items-center gap-[7px]`}>
@@ -158,7 +158,7 @@ export function RepoPanel({
                     {repo.alsoStarred.slice(0, 3).map((related) => (
                       <li
                         key={`${related.owner}/${related.name}`}
-                        className="relative flex flex-col gap-[14px] rounded-md bg-background px-4 py-[14px]"
+                        className="relative flex flex-col gap-[14px] squircle rounded-md bg-background px-4 py-[14px]"
                       >
                         <div className="flex flex-col gap-px">
                           <a
@@ -181,7 +181,12 @@ export function RepoPanel({
               )}
 
               <div className="mt-auto flex gap-[10px]">
-                <a href={repo.githubUrl} className={buttonVariants({ size: "lg", className: "flex-1" })}>
+                <a
+                  href={repo.githubUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={buttonVariants({ size: "lg", className: "flex-1" })}
+                >
                   Open on GitHub
                   <ExternalIcon />
                 </a>

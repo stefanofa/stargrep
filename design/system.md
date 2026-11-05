@@ -89,6 +89,8 @@ Load Fredoka (600 only) and Inter (variable) from the app, with `font-display: s
 | `--container-narrow` | 720px | Reserved for long text, such as docs and the privacy page |
 | `--opacity-archived` | 60% | The star and the alive dot on archived and deprecated tiles |
 
+Cards take squircle corners. Add `squircle` next to the card's `rounded-*` class: tiles, result rows, the detail panel, and the boxes inside it. Where the browser supports `corner-shape`, the corner becomes a squircle and its radius grows 1.84 times, so it cuts into the card as deep as the round corner did. Other browsers keep the round corner at the token's radius. Chips, buttons, toggles, menus, and tooltips stay round.
+
 The grid is 4 columns at 1024px and up, 2 columns from 640px, and 1 column below. On phones the search input moves to the bottom of the screen, under the thumb, with chips just above it (artboard 18).
 
 Small tiles take 24px padding at the top and left and 22px at the right and bottom. The hero tile takes 26px at the top, 30px at the sides, and 24px at the bottom. The search tile takes 26px at the top, 28px at the sides, and 24px at the bottom. A list row takes 20px (`--spacing-gap`) at the top and bottom and 28px at the sides.

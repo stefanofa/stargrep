@@ -82,12 +82,6 @@
   --spacing-16: 64px;
   --spacing-24: 96px;
 
-  --radius-*: initial;
-  --radius-sm: 12px;
-  --radius-md: 20px;
-  --radius-tile: 28px;
-  --radius-full: 999px;
-
   --container-page: 1200px;
   --container-narrow: 720px;
   --opacity-archived: 60%;
@@ -123,6 +117,32 @@
     40% {
       translate: 0 -8%;
     }
+  }
+}
+
+@theme inline {
+  --radius-*: initial;
+  --radius-sm: calc(12px * var(--corner-scale, 1));
+  --radius-md: calc(20px * var(--corner-scale, 1));
+  --radius-tile: calc(28px * var(--corner-scale, 1));
+  --radius-full: 999px;
+}
+
+/* A squircle corner cuts into the box less than a round one at the same
+   radius. At 1.84 times the radius it cuts in as deep along the diagonal,
+   so the card keeps its size and gains the smoother curve. The scale does
+   not inherit, so a rounded element inside a squircle keeps its own radius.
+   Browsers without `corner-shape` keep the round corner. */
+@property --corner-scale {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+@utility squircle {
+  @supports (corner-shape: squircle) {
+    corner-shape: squircle;
+    --corner-scale: 1.84;
   }
 }
 
