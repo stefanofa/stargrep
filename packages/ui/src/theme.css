@@ -120,6 +120,8 @@
   }
 }
 
+/* Inline, so each utility reads --corner-scale on its own element. In the
+   static @theme block the scale would resolve once at :root and never apply. */
 @theme inline {
   --radius-*: initial;
   --radius-sm: calc(12px * var(--corner-scale, 1));
@@ -129,10 +131,11 @@
 }
 
 /* A squircle corner cuts into the box less than a round one at the same
-   radius. At 1.84 times the radius it cuts in as deep along the diagonal,
-   so the card keeps its size and gains the smoother curve. The scale does
-   not inherit, so a rounded element inside a squircle keeps its own radius.
-   Browsers without `corner-shape` keep the round corner. */
+   radius: r(1 - 2^-1/4) along the diagonal against r(1 - 1/sqrt 2). Their
+   ratio is 1.84, so at 1.84 times the radius the squircle cuts in as deep as
+   the round corner did. The scale does not inherit, so a rounded element
+   inside a squircle keeps its own radius. Browsers without `corner-shape`
+   keep the round corner. */
 @property --corner-scale {
   syntax: "<number>";
   inherits: false;
