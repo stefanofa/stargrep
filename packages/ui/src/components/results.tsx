@@ -124,7 +124,7 @@ export function ResultItem({
   return (
     <article
       className={cn(
-        "relative grid h-full grid-cols-[1fr_auto] grid-rows-[auto_1fr_auto] gap-y-[14px] rounded-tile bg-card px-tile-sm pt-tile-sm pb-gap text-foreground [grid-template-areas:'head_stars'_'reason_reason'_'alive_network']",
+        "relative grid h-full grid-cols-[1fr_auto] grid-rows-[auto_1fr_auto] gap-y-[14px] squircle rounded-tile bg-card px-tile-sm pt-tile-sm pb-gap text-foreground [grid-template-areas:'head_stars'_'reason_reason'_'alive_network']",
         layout.article,
         "list:gap-y-2 list:rounded-md list:px-tile list:py-gap list:sm:grid-cols-[180px_100px_190px_1fr] list:sm:grid-rows-none list:sm:[grid-template-areas:'head_head_head_head'_'reason_reason_reason_reason'_'alive_stars_starred_network']",
       )}
@@ -254,7 +254,7 @@ export function ResultSkeleton({ hero = false }: { hero?: boolean }) {
     <div
       data-slot="result-skeleton"
       className={cn(
-        "flex h-full min-h-[240px] flex-col gap-3 rounded-tile bg-card p-6 list:min-h-0 list:rounded-md list:px-tile list:py-gap",
+        "flex h-full min-h-[240px] flex-col gap-3 squircle rounded-tile bg-card p-6 list:min-h-0 list:rounded-md list:px-tile list:py-gap",
         hero && "sm:px-tile-lg sm:pt-tile-lg",
       )}
     >
@@ -302,7 +302,7 @@ export function ResultsSummary({
   return (
     <section
       aria-labelledby={headingId}
-      className="relative flex flex-col justify-between gap-6 rounded-tile sm:min-h-[240px] bg-card px-tile-lg pt-tile pb-6 sm:col-span-2 list:min-h-0 list:flex-row list:items-center list:bg-transparent list:p-0 list:pt-2 list:pl-tile"
+      className="relative flex flex-col justify-between gap-6 squircle rounded-tile sm:min-h-[240px] bg-card px-tile-lg pt-tile pb-6 sm:col-span-2 list:min-h-0 list:flex-row list:items-center list:bg-transparent list:p-0 list:pt-2 list:pl-tile"
     >
       <div className="relative z-10 flex flex-col gap-1.5 list:flex-row list:items-baseline list:gap-3">
         <h2
