@@ -399,6 +399,17 @@ describe("the search page in each state", () => {
     }
   }, 20_000);
 
+  test("a check for new stars that reads nothing new doesn't search again", async () => {
+    server.status = status({ state: "queued", enrichment: allRead });
+    await open("/search?q=async");
+    await waitFor(() => expect(strip()).toContain("found"));
+    await waitFor(() => expect(server.searches).toEqual(["async"]));
+    server.status = status({ enrichment: allRead });
+    await waitFor(() => expect(strip()).toContain("of 6"), { timeout: 5000 });
+    await settle(800);
+    expect(server.searches).toEqual(["async"]);
+  }, 10_000);
+
   test("when reading finishes, the flags clear and the search runs again", async () => {
     server.status = status({ enrichment: reading });
     await open("/search?q=async");

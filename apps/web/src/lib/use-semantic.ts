@@ -14,9 +14,14 @@ export interface Semantic {
 
 const none: Semantic = { results: [], pending: false, failed: false };
 
-export function useSemanticSearch(login: string, query: string, readDone: boolean): Semantic {
+export function useSemanticSearch(
+  login: string,
+  query: string,
+  { read, settled }: { read: number | undefined; settled: boolean },
+): Semantic {
   const [answer, setAnswer] = useState<Answer<ReadonlyArray<SearchResult>, SearchFailed>>();
   const search = useRef<Search>(undefined);
+  const readBefore = useRef<number>(undefined);
 
   useEffect(() => {
     const running = startSemanticSearch(
@@ -38,8 +43,11 @@ export function useSemanticSearch(login: string, query: string, readDone: boolea
   }, [query]);
 
   useEffect(() => {
-    if (readDone) search.current?.refresh();
-  }, [readDone]);
+    if (read === undefined) return;
+    const before = readBefore.current;
+    if (settled && before !== undefined && before !== read) search.current?.refresh();
+    if (settled || before === undefined) readBefore.current = read;
+  }, [read, settled]);
 
   const wanted = normalize(query);
   const landed =

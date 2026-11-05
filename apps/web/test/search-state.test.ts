@@ -172,7 +172,13 @@ describe("browsing", () => {
 
   test("a failed check on a synced library says it couldn't check", () => {
     const state = view({ name: "ready", total: 1776, failed: 0, lastSync: "failed-refresh" }, {}, "synced 2 min ago");
-    expect(state.status).toEqual({ icon: "failed", label: "couldn't check for new stars", retry: true });
+    expect(state.status).toEqual({
+      icon: "failed",
+      label: "couldn't check",
+      detail: "for new stars",
+      continues: true,
+      retry: true,
+    });
   });
 });
 

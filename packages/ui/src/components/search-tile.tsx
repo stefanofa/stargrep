@@ -149,7 +149,7 @@ export function SearchTile({
         </search>
         {strip && (
           <div className="max-sm:order-first sm:pr-5 sm:pb-1.5 sm:pl-8">
-            <div className="flex min-h-16 items-center justify-between gap-3 border-muted pr-3 pl-[22px] max-sm:pt-[3px] sm:gap-6 sm:border-t-[1.5px] sm:px-0">
+            <div className="flex min-h-16 items-center justify-between gap-2 border-muted pr-3 pl-[22px] max-sm:pt-[3px] sm:gap-6 sm:border-t-[1.5px] sm:px-0">
               <div className="min-w-0">{status}</div>
               <div className="flex shrink-0 items-center gap-2.5">{controls}</div>
             </div>
@@ -244,18 +244,30 @@ export function StatusLine({
       <span className="flex size-[18px] shrink-0 items-center justify-center max-sm:hidden">
         <Glyph icon={icon} />
       </span>
-      <p className="flex min-h-9 min-w-0 flex-col gap-0.5 font-sans font-medium tabular-nums sm:block sm:min-h-0 sm:truncate sm:text-base sm:leading-5">
-        <span role="status" className="text-meta font-semibold text-foreground sm:text-base">
-          {label}
-        </span>
-        {detail && (
-          <span className="text-sm text-muted-foreground max-sm:line-clamp-1 sm:text-base">
-            <span className="max-sm:hidden">{continues ? " " : " · "}</span>
-            {detail}
+      <div className="flex min-h-9 min-w-0 flex-col items-start justify-start gap-0.5 sm:flex-row sm:items-center sm:justify-center sm:gap-2.5">
+        <p
+          className={cn(
+            "flex max-w-full min-w-0 flex-col gap-0.5 font-sans font-medium tabular-nums sm:block sm:truncate sm:text-base sm:leading-5",
+            !detail && !action && "max-sm:translate-y-2.5",
+          )}
+        >
+          <span role="status" className="text-meta font-semibold text-foreground max-sm:truncate sm:text-base">
+            {label}
           </span>
-        )}
-      </p>
-      {action}
+          {detail && (
+            <span
+              className={cn(
+                "text-sm text-muted-foreground max-sm:line-clamp-1 sm:text-base",
+                Boolean(action) && "max-sm:hidden",
+              )}
+            >
+              <span className="max-sm:hidden">{continues ? " " : " · "}</span>
+              {detail}
+            </span>
+          )}
+        </p>
+        {action}
+      </div>
     </div>
   );
 }

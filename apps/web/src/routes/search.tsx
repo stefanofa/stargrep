@@ -288,7 +288,10 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
   const { status: sync, retry } = useSync(viewer.login, reload);
   const stage = stageOf({ sync, entries, starred: viewer.starredCount });
   const timeLeft = useTimeLeft(stage);
-  const semantic = useSemanticSearch(viewer.login, query, stage.name === "ready");
+  const semantic = useSemanticSearch(viewer.login, query, {
+    read: sync?.enrichment.read,
+    settled: stage.name === "ready",
+  });
 
   const searching = terms.length > 0 || semantic.pending || semantic.results.length > 0;
   const { view, sort, controls } = useControls(searching);
@@ -375,7 +378,12 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
               continues={state.status.continues}
               action={
                 state.status.retry && (
-                  <Button variant="bare" size="default" onClick={retry}>
+                  <Button
+                    variant="bare"
+                    size="default"
+                    className="max-sm:h-[18px] max-sm:px-0 max-sm:text-sm max-sm:after:-inset-x-2 max-sm:after:-inset-y-2.5 max-sm:hover:bg-transparent"
+                    onClick={retry}
+                  >
                     try again
                   </Button>
                 )

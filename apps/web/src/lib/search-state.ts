@@ -174,7 +174,7 @@ const browsing = (stage: Stage, synced: string | undefined, timeLeft: string | u
       };
     case "ready":
       if (stage.lastSync === "failed-refresh")
-        return { icon: "failed", label: "couldn't check for new stars", retry: true };
+        return { icon: "failed", label: "couldn't check", detail: "for new stars", continues: true, retry: true };
       if (stage.lastSync === "failed-first")
         return { icon: "failed", label: "sync didn't finish", detail: `${stars(stage.total)} so far`, retry: true };
       return { icon: "synced", label: stars(stage.total), ...(synced === undefined ? {} : { detail: synced }) };
