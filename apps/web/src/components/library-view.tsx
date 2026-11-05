@@ -65,7 +65,7 @@ function CountTile({
               : `of ${formatCount(arriving.total)} stars, still arriving`}
         </p>
       </div>
-      <div className="flex size-[104px] shrink-0 items-center justify-center rounded-full bg-[#ffffff] sm:size-[200px]">
+      <div className="flex size-[104px] shrink-0 items-center justify-center rounded-full bg-plate sm:size-[200px]">
         <Pip pose={pose} size={150} className="max-sm:size-[78px]" />
       </div>
     </Tile>
@@ -82,7 +82,7 @@ function LanguagesTile({
   language: string | undefined;
 }) {
   const chip = (active: boolean) =>
-    `flex h-9 items-center rounded-full px-4 font-sans text-meta font-medium transition-colors duration-120 ${
+    `relative after:absolute after:inset-x-0 after:-inset-y-1 flex h-9 items-center rounded-full px-4 font-sans text-meta font-medium transition-[color,background-color,scale] duration-120 motion-safe:active:scale-[0.96] ${
       active ? "bg-accent font-semibold text-ink" : "bg-accent-soft text-foreground hover:bg-accent-soft/70"
     }`;
   return (

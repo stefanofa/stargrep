@@ -54,10 +54,8 @@ export function EmptyTile({
         <Pip pose={pose} size={132} className="sm:size-[150px]" />
       </div>
       <div className="flex min-w-0 flex-1 flex-col items-center gap-2.5 sm:items-start">
-        <h2 className="font-display text-[22px] leading-7 font-semibold tracking-snug sm:text-2xl">{heading}</h2>
-        <p className="max-w-[640px] font-sans text-[15px] leading-[22px] text-secondary-foreground sm:text-lg">
-          {body}
-        </p>
+        <h2 className="font-display text-title font-semibold tracking-snug sm:text-2xl">{heading}</h2>
+        <p className="max-w-[640px] font-sans text-base text-secondary-foreground sm:text-lg">{body}</p>
         {meta && (
           <p className="flex items-center gap-2 pt-1.5 font-sans text-sm font-medium text-muted-foreground max-sm:rounded-full max-sm:bg-muted max-sm:px-3.5 max-sm:py-1.5">
             <span aria-hidden className="size-2 shrink-0 rounded-full bg-accent" />
@@ -85,7 +83,7 @@ export function RephraseChips({
           <button
             type="button"
             onClick={() => onPick(phrase)}
-            className="flex h-9 items-center rounded-full bg-accent-soft px-4 font-sans text-meta font-semibold text-accent-strong transition-colors duration-120 hover:bg-accent/30"
+            className="relative after:absolute after:inset-x-0 after:-inset-y-1 flex h-9 items-center rounded-full bg-accent-soft px-4 font-sans text-meta font-semibold text-accent-strong transition-[color,background-color,scale] duration-120 motion-safe:active:scale-[0.96] hover:bg-accent/30"
           >
             {phrase}
           </button>

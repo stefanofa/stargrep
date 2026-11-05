@@ -1,15 +1,11 @@
 // Writes the favicons and the web manifest into public/ from Pip's star: bun run favicon
 import { Resvg } from "@resvg/resvg-js";
+import { pip } from "@stargrep/ui/mark/pip.gen.ts";
+import { starPoints, starStroke } from "@stargrep/ui/mark/star.ts";
 import { themeColor } from "./theme.ts";
 
-// Pip's star, and the eyes Pip draws at small sizes, so the tab icon matches the header mark.
-const starPoints =
-  "50,16 61.17,38.63 86.14,42.26 68.07,59.87 72.34,84.74 50,73 27.66,84.74 31.93,59.87 13.86,42.26 38.83,38.63";
-const starStroke = { edge: 12, fill: 10 };
-const eyes = [
-  "M42.52 52.39C42.14 59.8 42.14 59.8 39.4 59.66C36.67 59.53 36.67 59.53 37.04 52.11C37.41 44.7 37.41 44.7 40.15 44.84C42.89 44.98 42.89 44.98 42.52 52.39Z",
-  "M62.74 52.38C62.39 59.29 62.39 59.29 59.87 59.16C57.36 59.03 57.36 59.03 57.71 52.13C58.06 45.22 58.06 45.22 60.57 45.35C63.08 45.47 63.08 45.47 62.74 52.38Z",
-];
+// The header mark's star and small eyes, so the tab icon matches it.
+const eyes = pip.eyes.small.map((eye) => eye.d);
 
 const colors = {
   highlight: themeColor("highlight").light,

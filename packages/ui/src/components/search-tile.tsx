@@ -131,9 +131,9 @@ export function SearchTile({
               value={current}
               onValueChange={change}
               onKeyDown={removeLastOnBackspace}
-              className="min-w-0 flex-1 bg-transparent font-sans outline-none text-[16px] leading-6 font-medium text-foreground placeholder:text-muted-foreground sm:text-xl sm:tracking-snug [&::-webkit-search-cancel-button]:appearance-none"
+              className="min-w-0 flex-1 bg-transparent font-sans text-ellipsis outline-none text-[16px] leading-6 font-medium text-foreground placeholder:text-muted-foreground sm:text-xl sm:tracking-snug [&::-webkit-search-cancel-button]:appearance-none"
             />
-            <kbd className="flex h-[30px] shrink-0 items-center rounded-[8px] bg-muted px-2.5 font-sans text-sm font-semibold text-secondary-foreground max-sm:hidden">
+            <kbd className="flex h-[30px] shrink-0 items-center rounded-xs bg-muted px-2.5 font-sans text-sm font-semibold text-secondary-foreground max-sm:hidden">
               /
             </kbd>
           </form>

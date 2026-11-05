@@ -81,7 +81,7 @@ export const toDetail = (repo: LibraryEntry, at: number): RepoDetail => ({
   name: repo.name,
   ...(repo.language === null ? {} : { language: repo.language }),
   description: repo.description ?? "",
-  summary: repo.summary ?? repo.description ?? "",
+  ...(repo.summary === null || repo.summary === repo.description ? {} : { summary: repo.summary }),
   stars: repo.stars,
   starred: starredOn(repo.starredAt),
   activity: activity(repo, at),

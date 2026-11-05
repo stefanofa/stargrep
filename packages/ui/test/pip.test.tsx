@@ -1,7 +1,7 @@
 import "./register.ts";
 import "./dom.ts";
 import { describe, expect, test } from "bun:test";
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { bakePip } from "../scripts/bake-pip.ts";
 import { Pip, type PipPose, pipPoses } from "../src/index.ts";
 import { pip } from "../src/mark/pip.gen.ts";
@@ -43,5 +43,41 @@ describe("pip", () => {
     expect(eye(48)).toBe(pip.eyes.small[0].d);
     expect(eye(49)).toBe(pip.eyes.large[0].d);
     expect(pip.eyes.small[0].d).not.toBe(pip.eyes.large[0].d);
+  });
+
+  test("the header mark keeps still until hovered, and a large mark keeps its ambient life", () => {
+    const header = draw("idle", 40).querySelector(".mo-root");
+    expect(header?.classList.contains("mo-always")).toBe(false);
+    expect(header?.className).toContain("[&:not(:hover)]:[animation-play-state:paused]!");
+    expect(draw("idle", 150).querySelector(".mo-root")?.classList.contains("mo-always")).toBe(true);
+  });
+
+  test("a large mark rests while it is offscreen and wakes when it scrolls back", () => {
+    let report: (visible: boolean) => void = () => {};
+    const original = globalThis.IntersectionObserver;
+    globalThis.IntersectionObserver = class {
+      readonly callback: IntersectionObserverCallback;
+      constructor(callback: IntersectionObserverCallback) {
+        this.callback = callback;
+      }
+      observe() {
+        report = (visible) =>
+          this.callback(
+            [{ isIntersecting: visible } as IntersectionObserverEntry],
+            this as unknown as IntersectionObserver,
+          );
+      }
+      disconnect() {}
+    } as unknown as typeof IntersectionObserver;
+    try {
+      const root = draw("idle", 150).querySelector(".mo-root");
+      expect(root?.classList.contains("[animation-play-state:paused]!")).toBe(false);
+      act(() => report(false));
+      expect(root?.classList.contains("[animation-play-state:paused]!")).toBe(true);
+      act(() => report(true));
+      expect(root?.classList.contains("[animation-play-state:paused]!")).toBe(false);
+    } finally {
+      globalThis.IntersectionObserver = original;
+    }
   });
 });
