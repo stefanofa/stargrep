@@ -478,7 +478,7 @@ describe("gateway embeddings", () => {
       expect((yield* Effect.flip(embeddings.embed(["one"])))._tag).toBe("AiOutputInvalid");
     }).pipe(
       Effect.provide(
-        Gateway.layerEmbeddings({ id: "test/embed", dimensions: 64 }).pipe(
+        Gateway.layerEmbeddings({ ...Models.embeddingModel, id: "test/embed", dimensions: 64 }).pipe(
           Layer.provide(Layer.succeed(Gateway.AiProvider, provider)),
         ),
       ),
@@ -537,7 +537,7 @@ describe("gateway privacy", () => {
     });
     const layer = Layer.merge(
       Gateway.layerTextGeneration("private/model"),
-      Gateway.layerEmbeddings({ id: "private/embed", dimensions: 3 }),
+      Gateway.layerEmbeddings({ ...Models.embeddingModel, id: "private/embed", dimensions: 3 }),
     ).pipe(Layer.provide(Layer.succeed(Gateway.AiProvider, provider)));
     const logs: Array<unknown> = [];
     const logger = Logger.make((options) => {

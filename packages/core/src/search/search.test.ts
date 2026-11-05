@@ -10,6 +10,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { registry } from "./metric-registry.ts";
@@ -256,6 +257,74 @@ const searchCases = (test: {
     }),
   );
 
+  test.effect("answers gibberish with nothing after one planner call", () =>
+    Effect.gen(function* () {
+      const scope = yield* seed(916, orms(9020));
+      respond = () => ormPlan({}, { _tag: "relevance" }, "a software project matching the unclear term dfsfgdsrg");
+      const outcome = yield* search({ scope, query: "dfsfgdsrg", limit: 10 });
+      expect([outcome.planSource, outcome.results]).toEqual(["model", []]);
+      expect(calls.prompts).toHaveLength(1);
+    }),
+  );
+
+  test.effect("finds a misspelled repo name through the planner when the typed word matches nothing", () =>
+    Effect.gen(function* () {
+      const scope = yield* seed(917, orms(9030));
+      respond = () => ormPlan({}, { _tag: "relevance" }, "rust orm for sql databases");
+      const outcome = yield* search({ scope, query: "deisel", limit: 10 });
+      expect(outcome.planSource).toBe("model");
+      expect(names(outcome)[0]).toBe("diesel");
+      expect(names(outcome)).not.toContain("ratatui");
+      expect(calls.prompts).toHaveLength(1);
+    }),
+  );
+
+  test.effect("skips the planner for a word that still matches as a prefix, as while typing", () =>
+    Effect.gen(function* () {
+      const scope = yield* seed(918, orms(9040));
+      const outcome = yield* search({ scope, query: "drizz", limit: 10 });
+      expect([outcome.planSource, outcome.results, calls.prompts]).toEqual(["keyword", [], []]);
+    }),
+  );
+
+  test.effect("answers nothing when the planner fails, without searching the same words again", () =>
+    Effect.gen(function* () {
+      const scope = yield* seed(919, orms(9050));
+      respond = () => ({});
+      const searched: Array<string> = [];
+      const counting = Layer.effect(
+        Db.Db,
+        Effect.map(Effect.service(Db.Db), (db) =>
+          Db.Db.of({
+            ...db,
+            search: {
+              ...db.search,
+              hybrid: (request) =>
+                Effect.sync(() => searched.push(request.text)).pipe(Effect.andThen(db.search.hybrid(request))),
+            },
+          }),
+        ),
+      );
+      const service = yield* Search.make.pipe(Effect.provide(counting));
+      const outcome = yield* service.search({ scope, query: "qwpoeiruty", limit: 10 });
+      expect([outcome.planSource, outcome.results, searched]).toEqual(["fallback", [], ["qwpoeiruty"]]);
+      expect(calls.prompts).toHaveLength(1);
+    }),
+  );
+
+  test.effect("counts a keyword search that needed the planner once, under the plan it ran", () =>
+    Effect.gen(function* () {
+      const scope = yield* seed(920, orms(9060));
+      respond = () => ormPlan({}, { _tag: "relevance" }, "typescript orm for sql databases with migrations");
+      const count = (source: QueryPlanner.PlanSource) =>
+        Effect.map(Metric.value(Metric.withAttributes(Search.plansMade, { source })), (state) => state.count);
+      const keywordBefore = yield* count("keyword");
+      const modelBefore = yield* count("model");
+      expect(names(yield* search({ scope, query: "prsima", limit: 10 }))[0]).toBe("prisma");
+      expect([yield* count("keyword"), yield* count("model")]).toEqual([keywordBefore, modelBefore + 1]);
+    }),
+  );
+
   test.effect("refuses network and global scopes until they exist", () =>
     Effect.gen(function* () {
       for (const scope of [{ _tag: "network", login: Login.make("user-906") }, { _tag: "global" }] as const) {
@@ -476,6 +545,7 @@ const searchCases = (test: {
           scope: { kind: "stars", accountId: GitHubAccountId.make(907) },
           text: "orm",
           embedding,
+          maxDistance: embeddings.model.maxMatchDistance,
           limit: 10,
           name: null,
           metrics: [metric],
@@ -530,7 +600,7 @@ const searchCases = (test: {
   test.effect("fails with AiOutputInvalid when the query vector does not fit the database column", () =>
     Effect.gen(function* () {
       const scope = yield* seed(909, orms(9900));
-      const narrow = Fake.layerEmbeddings({ id: model, dimensions: 512 });
+      const narrow = Fake.layerEmbeddings({ ...Fake.hashEmbeddingModel, dimensions: 512 });
       const service = yield* Search.make.pipe(Effect.provide(narrow));
       const error = yield* service.search({ scope, query: "zebra-vector-check", limit: 10 }).pipe(Effect.flip);
       expect(error).toMatchObject({ _tag: "AiOutputInvalid", operation: "embed", model });

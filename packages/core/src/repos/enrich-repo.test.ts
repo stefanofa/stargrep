@@ -116,7 +116,7 @@ const embeddingsWith = (
     Embeddings.Embeddings,
     Embeddings.make({
       provider: "test",
-      model: { id: embeddingModel, dimensions: 1024 },
+      model: { ...Fake.hashEmbeddingModel, id: embeddingModel },
       timeout: Duration.seconds(5),
       run,
     }),

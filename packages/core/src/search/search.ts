@@ -7,6 +7,7 @@ import type { Login } from "@stargrep/github/schemas";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { type MetricId, registry } from "./metric-registry.ts";
@@ -84,6 +85,11 @@ export class Search extends Context.Service<
   }
 >()("@stargrep/core/search/search") {}
 
+export const plansMade = Metric.counter("stargrep_search_plans", {
+  description:
+    "Searches, by the source of the plan each one ran, and by the planner failure that made search fall back to the typed text.",
+});
+
 const decodeEmbedding = Schema.decodeUnknownEffect(Embedding);
 
 const planMetrics = (plan: QueryPlan.QueryPlan): ReadonlyArray<MetricId> => [
@@ -140,33 +146,46 @@ export const make = Effect.gen(function* () {
     return { kind: "stars", accountId: account.value.id } satisfies Db.SearchScope;
   });
 
-  const search = Effect.fn("Search.search")(function* (request: SearchRequest) {
-    const scope = yield* dbScope(request.scope);
-    const { plan, source } = yield* planner.plan(request.query);
+  const find = Effect.fn("Search.find")(function* (scope: Db.SearchScope, plan: QueryPlan.QueryPlan, limit: number) {
     const metrics = planMetrics(plan);
     const hits = yield* db.search.hybrid({
       scope,
       text: plan.textQuery,
       embedding: yield* embedQuery(plan.semanticText),
-      limit: request.limit,
+      maxDistance: embeddings.model.maxMatchDistance,
+      limit,
       name: plan.exactName,
       metrics: metrics.map((id) => registry[id]),
       filters: { ...plan.filters, languages: Vocabulary.matchNames(plan.filters.languages) },
       rankBy: plan.ranking._tag === "metric" ? plan.ranking : null,
     });
-    return {
-      plan,
-      planSource: source,
-      results: hits.map(
-        (hit): SearchResult => ({
-          repo: hit.repo,
-          nameMatch: hit.nameMatch,
-          textRank: hit.textRank,
-          vectorRank: hit.vectorRank,
-          metrics: metrics.map((metric, index) => ({ metric, value: hit.metrics[index] ?? null })),
-        }),
-      ),
-    } satisfies SearchOutcome;
+    return hits.map(
+      (hit): SearchResult => ({
+        repo: hit.repo,
+        nameMatch: hit.nameMatch,
+        textRank: hit.textRank,
+        vectorRank: hit.vectorRank,
+        metrics: metrics.map((metric, index) => ({ metric, value: hit.metrics[index] ?? null })),
+      }),
+    );
+  });
+
+  const outcome = (planned: QueryPlanner.Planned, results: ReadonlyArray<SearchResult>) =>
+    Metric.update(Metric.withAttributes(plansMade, QueryPlanner.planAttributes(planned)), 1).pipe(
+      Effect.as<SearchOutcome>({ plan: planned.plan, planSource: planned.source, results }),
+    );
+
+  const search = Effect.fn("Search.search")(function* (request: SearchRequest) {
+    const scope = yield* dbScope(request.scope);
+    const typed = yield* planner.plan(request.query);
+    const results = yield* find(scope, typed.plan, request.limit);
+    if (results.length > 0 || typed.source !== "keyword") return yield* outcome(typed, results);
+    // Typed words that match nothing are often a misspelled name, which the planner can read past. Words that still
+    // match as a prefix are most likely a word the user is still typing, so they skip the planner.
+    if (yield* db.search.matchesAsPrefix({ scope, text: typed.plan.textQuery })) return yield* outcome(typed, results);
+    const read = yield* planner.planWithModel(request.query);
+    if (read.source === "fallback") return yield* outcome(read, results);
+    return yield* outcome(read, yield* find(scope, read.plan, request.limit));
   });
 
   return Search.of({ search });

@@ -9,7 +9,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Metric from "effect/Metric";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as PlannerPrompt from "./planner-prompt.ts";
@@ -54,6 +53,21 @@ it.effect("answers a keyword or exact-name query without calling the model", () 
     }
     expect((yield* plan("ratatui")).plan.exactName).toBe("ratatui");
     expect(prompts).toEqual([]);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("plans a keyword query with the model when asked to, and caches that plan", () => {
+  const { prompts, layer } = planner(() => encode(goYaml));
+  return Effect.gen(function* () {
+    const planWithModel = (query: string) =>
+      Effect.flatMap(Effect.service(QueryPlanner.QueryPlanner), (service) => service.planWithModel(query));
+    expect((yield* plan("ratatui")).source).toBe("keyword");
+    expect(yield* planWithModel("ratatui")).toEqual({
+      plan: QueryPlan.fromPlannerOutput("ratatui", goYaml),
+      source: "model",
+    });
+    expect((yield* planWithModel(" Ratatui ")).source).toBe("cache");
+    expect(prompts).toEqual([PlannerPrompt.prompt({ today: "1970-01-01", query: "ratatui" })]);
   }).pipe(Effect.provide(layer));
 });
 
@@ -150,9 +164,7 @@ it.effect("searches the query as typed when the planner stalls past its timeout,
   );
   const layer = QueryPlanner.layer.pipe(Layer.provide(stalled), Layer.provide(SearchCache.layerMemory));
   const collected = collectSpans();
-  const timeouts = Metric.withAttributes(QueryPlanner.plansMade, { source: "fallback", failure: "AiTimeout" });
   return Effect.gen(function* () {
-    const before = (yield* Metric.value(timeouts)).count;
     const query = "go library for parsing yaml";
     const fiber = yield* Effect.forkChild(plan(query));
     yield* TestClock.adjust("4 seconds");
@@ -167,7 +179,6 @@ it.effect("searches the query as typed when the planner stalls past its timeout,
         ["search.plan.failure", "AiTimeout"],
       ]),
     );
-    expect((yield* Metric.value(timeouts)).count).toBe(before + 1);
     expect(collected.text()).not.toContain("yaml");
   }).pipe(Effect.provide(layer), Effect.withTracer(collected.tracer));
 });

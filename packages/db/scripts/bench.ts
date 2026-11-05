@@ -7,7 +7,7 @@ import * as Random from "effect/Random";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Db from "../src/db.ts";
-import { Embedding, EmbeddingModelId } from "../src/embedding.ts";
+import { anyDistance, Embedding, EmbeddingModelId } from "../src/embedding.ts";
 import { createMigratedDatabase, databaseUrl, withClient } from "../src/local-database.ts";
 
 const adminUrl = process.env.DATABASE_URL ?? "postgres://stargrep:stargrep@127.0.0.1:54317/stargrep";
@@ -203,7 +203,15 @@ const measure = Effect.gen(function* () {
   const timed = <A, E>(effect: Effect.Effect<ReadonlyArray<A>, E>) =>
     Effect.timed(effect).pipe(Effect.map(([duration, rows]): Sample => [Duration.toMillis(duration), rows.length]));
   const scope: Db.SearchScope = { kind: "stars", accountId };
-  const plain = { scope, limit: 20, name: null, metrics: [], filters: Db.noFilters, rankBy: null };
+  const plain = {
+    scope,
+    limit: 20,
+    maxDistance: anyDistance,
+    name: null,
+    metrics: [],
+    filters: Db.noFilters,
+    rankBy: null,
+  };
 
   yield* Console.log(
     `${rounds} interleaved rounds after ${warmup} warmup rounds, ${starCount} stars of ${repoCount} repos`,

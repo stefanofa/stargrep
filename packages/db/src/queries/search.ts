@@ -1,5 +1,5 @@
 import type { GitHubAccountId } from "@stargrep/github/schemas";
-import { eq, type SQL, sql } from "drizzle-orm";
+import { and, eq, isNull, type SQL, sql } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -127,6 +127,7 @@ export interface HybridSearch {
   readonly scope: SearchScope;
   readonly text: string;
   readonly embedding: Embedding;
+  readonly maxDistance: number;
   readonly limit: number;
   readonly name: string | null;
   readonly metrics: ReadonlyArray<SearchMetric>;
@@ -144,10 +145,16 @@ const SearchHit = Schema.Struct({
 });
 export type SearchHit = typeof SearchHit.Type;
 
+export interface PrefixSearch {
+  readonly scope: SearchScope;
+  readonly text: string;
+}
+
 export interface Queries {
   readonly hybrid: (
     search: HybridSearch,
   ) => Effect.Effect<ReadonlyArray<SearchHit>, DbQueryFailed | DbRowInvalid | EmbeddingModelMismatch>;
+  readonly matchesAsPrefix: (search: PrefixSearch) => Effect.Effect<boolean, DbQueryFailed>;
 }
 
 const rankDepth = sql.raw("100");
@@ -163,6 +170,18 @@ const languageClause = (languages: ReadonlyArray<string>) => {
   if (languages.length === 0) return sql``;
   const names = sql.param(languages.map((language) => language.toLowerCase()));
   return sql` and (lower(${repos.language}) = any(${names}::text[]) or jsonb_exists_any(${repos.topics}, ${names}::text[]))`;
+};
+
+// Words keep only letters and digits, so the text can never be tsquery syntax. The last word matches as a prefix.
+const prefixQuery = (text: string) => {
+  const words = text
+    .toLowerCase()
+    .split(/\s+/)
+    .map((word) => word.replace(/[^a-z0-9]/g, ""))
+    .filter((word) => word !== "");
+  return words.length === 0
+    ? null
+    : words.map((word, index) => (index === words.length - 1 ? `${word}:*` : word)).join(" & ");
 };
 
 const ranked = (search: HybridSearch, vector: EmbeddingVector, model: EmbeddingModelId) => {
@@ -229,7 +248,7 @@ const ranked = (search: HybridSearch, vector: EmbeddingVector, model: EmbeddingM
   ),
   vector_hits as (
     select id, row_number() over (order by distance, id) as rank from (
-      select id, distance from scored where distance is not null
+      select id, distance from scored where distance <= ${search.maxDistance}::float8
       order by distance, id
       limit ${rankDepth}
     ) top
@@ -299,5 +318,23 @@ export const make = Effect.fn("Db.search.make")(function* (configuredModel: Embe
         ),
         Effect.flatMap(decodeHits("search.hybrid")),
       ),
+    matchesAsPrefix: ({ scope, text }) => {
+      const query = prefixQuery(text);
+      if (query === null) return Effect.succeed(false);
+      return run("search.matchesAsPrefix", (db) =>
+        db
+          .select({ id: stars.repoId })
+          .from(stars)
+          .innerJoin(repos, eq(repos.id, stars.repoId))
+          .where(
+            and(
+              eq(stars.accountId, scope.accountId),
+              isNull(stars.unstarredAt),
+              sql`${repos.search} @@ to_tsquery('english', ${query})`,
+            ),
+          )
+          .limit(1),
+      ).pipe(Effect.map((rows) => rows.length > 0));
+    },
   } satisfies Queries;
 });

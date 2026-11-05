@@ -19,6 +19,8 @@ This doc explains how Stargrep picks its embedding and summary models, what the 
 
 Product queries name a product that has no repo of its own, so only a model that knows what the product does can match them. Non-English queries check that English summaries still match queries in other languages.
 
+Two smaller sets check what recall@10 cannot. `evals/typos.json` holds 16 misspelled names and descriptions, such as "zustnad" for `pmndrs/zustand` and "fuzy finder" for `junegunn/fzf`, each with the repo it means. `evals/nonsense.json` holds 38 queries no repo answers: gibberish, keyboard mashes, unrelated words such as "wedding dress shopping", and nonsense or unrelated phrases in other languages. Search must find every typo's repo and answer every nonsense query with nothing. Neither set counts toward recall@10.
+
 Every expected repo was checked against the GitHub API on 2026-11-03. Names are the current `owner/name` that GitHub returns after renames. `bun run evals/corpus.ts` repeats the check and fails with a list of any repo that is missing or renamed.
 
 ## Corpus
@@ -135,19 +137,64 @@ The first run reached 0.933. These changes got it over the bar. Each row except 
 
 Two baselines frame these numbers. The raw query with no planner reaches 0.988 with hybrid search and 0.990 with vector search alone. The planner still earns its place. On product queries the raw query reaches 0.964, because "like Wispr Flow" names a product that no repo describes. Full text on model keywords cost 0.009, and dropping full text for planned queries entirely reached 0.997, one query above typed words. Search keeps full text on the typed words, so every search stays hybrid.
 
+### Meaning floor
+
+On 2026-11-05 the query "dfsfgdsrg" found 20 of an account's 1,780 stars. The eval corpus shows the same thing. There the query returns 20 results, each a meaning match and none a word or name match. Full text needs the query's words in the repo, and a name match needs the exact name, but the vector side always returns the nearest repos however far they are. Rank fusion scores by rank alone, so the nearest repo to gibberish scored like the nearest repo to a real query.
+
+The vector side now keeps only repos within the embedding model's `maxMatchDistance`, a cosine distance from the query. Cosine distances on this corpus set its value.
+
+| Query | Distance to the best repo |
+|---|---|
+| The 126 planned eval queries | 0.093 to 0.327 |
+| The 3 keyword eval queries, as typed | 0.366 to 0.449 |
+| Nonsense, as typed | 0.484 to 0.768 |
+| Nonsense, as the planner rewrote it | 0.406 to 0.696 |
+| Typos, as typed, to the repo they mean | 0.355 to 0.688 |
+| Typos, as the planner rewrote them, to the repo they mean | 0.097 to 0.308 |
+
+No max distance on the typed text keeps typos and drops nonsense, because "zustnad" sits at 0.639 from Zustand and "dfsfgdsrg" at 0.540 from its nearest repo. A cutoff relative to the query's own distances fails too. The best repo for a nonsense query stands 2.7 to 4.8 standard deviations above the query's mean distance, and real matches start at 2.6. The planner's rewrites separate them, so a keyword query that matches nothing gets planned and searched again.
+
+`bun run evals/recall.ts --max-distances` scored these values on the same cached plans and vectors. A max distance of 2 keeps every repo, as search did before.
+
+```
+max distance  recall@10  typos found  nonsense answered
+        2.00      0.991        16/16              38/38
+        0.50      0.991        15/16              17/38
+        0.45      0.991        16/16               5/38
+        0.42      0.991        16/16               1/38
+        0.40      0.991        16/16               0/38
+        0.38      0.991        16/16               0/38
+        0.36      0.991        16/16               0/38
+        0.34      0.991        16/16               0/38
+        0.32      0.991        16/16               0/38
+        0.30      0.990        15/16               0/38
+        0.28      0.972        14/16               0/38
+```
+
+Every max distance from 0.32 to 0.40 keeps recall, finds every typo, and answers no nonsense. Search uses 0.36, the middle, which leaves 0.04 before the first loss on either side. At 0.30, "neovm" and one eval query lose a repo. At 0.42, the planner's reading of "plumber" matches `pathwaycom/pathway`. At 0.50, "typsense" finds a near repo as typed, so it is never planned and misses `typesense/typesense`.
+
+The range that works is narrow, from 0.32 to 0.40, and the same 54 typo and nonsense queries both chose the value and test it. No held-out set checks it. Two risks are known and unmeasured.
+
+- **Larger accounts.** A nonsense query's nearest repo gets closer as an account stars more repos. A fit of nearest distance against the log of the star count, over subsamples of this corpus, projects that 2 of the 23 planner rewrites of short gibberish come within 0.36 at 5,000 stars, and 9 at 20,000. Such an account could get 1 to 3 results for gibberish again, not 20. This is an extrapolation, not a measurement.
+- **Obscure typos.** All 16 typos name projects the planner knows, such as Zustand and ripgrep. A typo of a star the planner cannot identify likely finds nothing now. Before, the typed vector often ranked it first. A follow-up adds typos of niche repos and a check on a larger corpus.
+
+The value belongs to the embedding model. After a model change, rerun the sweep and set the new model's `maxMatchDistance` to the middle of its plateau.
+
 ### In CI
 
 CI runs `bun run evals/recall.ts --fixture`. The fixture is three files in `evals/fixtures`, one entry per line, so a rewrite shows as a readable diff.
 
-- `recall.json` names the 11 queries, the first of each category, and the recall the fixture scored when it was written, 0.970. All 11 go through the planner.
-- `recall-repos.jsonl` holds 48 repos: the expected repos and the three highest-ranked wrong results for each query in the last full run. Each repo has its public metadata, summary, keywords, kind, and vector, and no README text.
-- `recall-answers.jsonl` holds the cached plan and query embedding for each query, under the cache namespace that names the model and the prompt version.
+- `recall.json` names 16 queries and the recall the fixture scored on the 11 from `queries.json` when it was written, 0.970. They are the first query of each category in each set: 11 from `queries.json`, all planned, the first typo, and the first nonsense query of each of the 4 kinds.
+- `recall-repos.jsonl` holds 51 repos: the expected repos and the three highest-ranked wrong results for each query in the last full run. Each repo has its public metadata, summary, keywords, kind, and vector, and no README text.
+- `recall-answers.jsonl` holds every cached plan and query embedding those searches read, under the cache namespace that names the model and the prompt version. A typo or nonsense query typed as a keyword reads two embeddings and one plan.
 
-The fixture run loads PGlite in the test process and fails any model or embedding call, so it needs no key and no Postgres. It fails when recall drops under the recorded recall. It also fails when a query is missing from the cache, which happens after a change to the planner prompt or a model. After such a change, run `--write-fixture` with a key and commit the new fixture.
+The fixture run loads PGlite in the test process and fails any model or embedding call, so it needs no key and no Postgres. It fails when recall drops under the recorded recall, when the typo misses its repo, or when a nonsense query gets a result. It also fails when a query is missing from the cache, which happens after a change to the planner prompt or a model. After such a change, run `--write-fixture` with a key and commit the new fixture.
 
 A fixture of real vectors and plans tests the ranking that production runs. A run on hash embeddings would only test the plumbing.
 
 ## Spend
+
+Calibrating the meaning floor on 2026-11-05 used 222,107 input and 10,365 output tokens of `anthropic/claude-haiku-5.5` for plans and 1,286 tokens of `voyage/voyage-4`, about $0.03 at catalog prices. Every other plan and vector came from the cache.
 
 The AI Gateway ledger shows $1.10 for every run on 2026-11-03: a 10-query smoke run, two full runs, one run that a gateway error stopped after its first stage, and the live checks. The script's own price estimate for the same work is about four times higher. The ledger is the bill.
 
@@ -167,8 +214,11 @@ The recall gate needs Postgres, from `docker compose up --detach --wait` or a `D
 ```sh
 AI_GATEWAY_API_KEY=... bun run evals/recall.ts
 AI_GATEWAY_API_KEY=... bun run evals/recall.ts --write-fixture
+AI_GATEWAY_API_KEY=... bun run evals/recall.ts --max-distances 0.32,0.36,0.40
 bun run evals/recall.ts --fixture
 ```
+
+`--max-distances` scores search at each listed value of `maxMatchDistance` and prints one line per value.
 
 `--summary-model ID` summarizes with another model. A full run from an empty cache used 4.96 million input and 0.19 million output tokens of `anthropic/claude-haiku-5.5` and 0.11 million tokens of `voyage/voyage-4`, about $0.60 at catalog prices. A rerun with a new planner prompt costs about 0.44 million input tokens, for 126 plans.
 

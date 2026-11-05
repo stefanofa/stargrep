@@ -254,6 +254,71 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
     }),
   );
 
+  test.effect("drops meaning matches past the max distance and keeps the ranks of the rest", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const owner = accountId(809);
+      const [same, near, far, worded] = [repoId(8801), repoId(8802), repoId(8803), repoId(8804)];
+      yield* seed(owner, [
+        { id: same, weights: { 0: 1 } },
+        { id: near, weights: { 0: 1, 1: 1 } },
+        { id: far, weights: { 0: 1, 1: 2 } },
+        { id: worded, summary: "terminal dashboard", weights: { 1: 1 } },
+      ]);
+      const query = { scope: stars(owner), text: "terminal dashboard", embedding: embedding({ 0: 1 }), limit: 10 };
+      const ranks = (maxDistance: number) =>
+        db.search
+          .hybrid(hybrid({ ...query, maxDistance }))
+          .pipe(Effect.map((hits) => hits.map((hit) => [hit.repo.id, hit.textRank, hit.vectorRank]).sort()));
+
+      expect(yield* ranks(2)).toEqual([
+        [same, null, 1],
+        [near, null, 2],
+        [far, null, 3],
+        [worded, 1, 4],
+      ]);
+      expect(yield* ranks(0.4)).toEqual([
+        [same, null, 1],
+        [near, null, 2],
+        [worded, 1, null],
+      ]);
+    }),
+  );
+
+  test.effect("returns nothing for words no star has when every star is past the max distance", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const owner = accountId(810);
+      yield* seed(owner, [{ id: repoId(8901) }, { id: repoId(8902), weights: { 0: 1, 1: 2 } }]);
+      const hits = yield* db.search.hybrid(
+        hybrid({ scope: stars(owner), text: "dfsfgdsrg", embedding: embedding({ 0: 1 }), maxDistance: 0.4, limit: 10 }),
+      );
+      expect(hits).toEqual([]);
+    }),
+  );
+
+  test.effect("matches the last typed word as a prefix of a word in the account's stars", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const owner = accountId(811);
+      yield* seed(owner, [{ id: repoId(8951), name: "ratatui", summary: "rust library for terminal dashboards" }]);
+      const matches = (text: string, scope = stars(owner)) => db.search.matchesAsPrefix({ scope, text });
+
+      expect(
+        yield* Effect.all([matches("rata"), matches("termi"), matches("rust termi"), matches("Terminal Dash")]),
+      ).toEqual([true, true, true, true]);
+      expect(
+        yield* Effect.all([
+          matches("zust"),
+          matches("rest termi"),
+          matches(""),
+          matches("rata", stars(accountId(812))),
+        ]),
+      ).toEqual([false, false, false, false]);
+      expect(yield* matches("termi:* | nothing")).toBe(false);
+    }),
+  );
+
   test.effect("dies when a ranking names a metric the search does not compute", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;

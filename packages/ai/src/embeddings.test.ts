@@ -7,8 +7,9 @@ import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 import * as Embeddings from "./embeddings.ts";
 import { AiUnavailable } from "./errors.ts";
+import { embeddingModel } from "./models.ts";
 
-const model = { id: "seam/embed", dimensions: 3 };
+const model = { ...embeddingModel, id: "seam/embed", dimensions: 3 };
 
 const service = (vectors: ReadonlyArray<ReadonlyArray<number>>) =>
   Embeddings.make({

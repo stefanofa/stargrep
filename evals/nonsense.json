@@ -1,0 +1,230 @@
+[
+  {
+    "id": "n01",
+    "category": "gibberish",
+    "query": "dfsfgdsrg",
+    "expected": []
+  },
+  {
+    "id": "n02",
+    "category": "gibberish",
+    "query": "qwpoeiruty",
+    "expected": []
+  },
+  {
+    "id": "n03",
+    "category": "gibberish",
+    "query": "xzqvbnmlk",
+    "expected": []
+  },
+  {
+    "id": "n04",
+    "category": "gibberish",
+    "query": "fjdkslaeiw",
+    "expected": []
+  },
+  {
+    "id": "n05",
+    "category": "gibberish",
+    "query": "sdfsdf",
+    "expected": []
+  },
+  {
+    "id": "n06",
+    "category": "gibberish",
+    "query": "gfdgdfg dfgdfg",
+    "expected": []
+  },
+  {
+    "id": "n07",
+    "category": "gibberish",
+    "query": "vbnvbnvbn",
+    "expected": []
+  },
+  {
+    "id": "n08",
+    "category": "gibberish",
+    "query": "ghfjdksla",
+    "expected": []
+  },
+  {
+    "id": "n09",
+    "category": "gibberish",
+    "query": "aaaaaaaa",
+    "expected": []
+  },
+  {
+    "id": "n10",
+    "category": "gibberish",
+    "query": "zzzzzz",
+    "expected": []
+  },
+  {
+    "id": "n11",
+    "category": "keyboard",
+    "query": "asdfghjkl",
+    "expected": []
+  },
+  {
+    "id": "n12",
+    "category": "keyboard",
+    "query": "qwertyuiop",
+    "expected": []
+  },
+  {
+    "id": "n13",
+    "category": "keyboard",
+    "query": "jkjkjkjk",
+    "expected": []
+  },
+  {
+    "id": "n14",
+    "category": "keyboard",
+    "query": "asdf asdf asdf",
+    "expected": []
+  },
+  {
+    "id": "n15",
+    "category": "keyboard",
+    "query": "lkjhgfdsa",
+    "expected": []
+  },
+  {
+    "id": "n16",
+    "category": "keyboard",
+    "query": "zxcvbnm",
+    "expected": []
+  },
+  {
+    "id": "n17",
+    "category": "keyboard",
+    "query": ";lkj;lkj",
+    "expected": []
+  },
+  {
+    "id": "n18",
+    "category": "keyboard",
+    "query": "1234567890",
+    "expected": []
+  },
+  {
+    "id": "n19",
+    "category": "keyboard",
+    "query": "poiuytrewq",
+    "expected": []
+  },
+  {
+    "id": "n20",
+    "category": "unrelated",
+    "query": "how to fix a flat bicycle tire",
+    "expected": []
+  },
+  {
+    "id": "n21",
+    "category": "unrelated",
+    "query": "wedding dress shopping",
+    "expected": []
+  },
+  {
+    "id": "n22",
+    "category": "unrelated",
+    "query": "grandmother knitting patterns",
+    "expected": []
+  },
+  {
+    "id": "n23",
+    "category": "unrelated",
+    "query": "horse riding lessons near me",
+    "expected": []
+  },
+  {
+    "id": "n24",
+    "category": "unrelated",
+    "query": "symptoms of the common cold",
+    "expected": []
+  },
+  {
+    "id": "n25",
+    "category": "unrelated",
+    "query": "best beaches in portugal",
+    "expected": []
+  },
+  {
+    "id": "n26",
+    "category": "unrelated",
+    "query": "tax return deadline",
+    "expected": []
+  },
+  {
+    "id": "n27",
+    "category": "unrelated",
+    "query": "plumber",
+    "expected": []
+  },
+  {
+    "id": "n28",
+    "category": "unrelated",
+    "query": "giraffe",
+    "expected": []
+  },
+  {
+    "id": "n29",
+    "category": "unrelated",
+    "query": "lawn mower",
+    "expected": []
+  },
+  {
+    "id": "n30",
+    "category": "foreign",
+    "query": "blorf snizzle wunk",
+    "expected": []
+  },
+  {
+    "id": "n31",
+    "category": "foreign",
+    "query": "Schnurpsel Gribbelwux",
+    "expected": []
+  },
+  {
+    "id": "n32",
+    "category": "foreign",
+    "query": "pirolón mastrefuga",
+    "expected": []
+  },
+  {
+    "id": "n33",
+    "category": "foreign",
+    "query": "kvorbna plintuska",
+    "expected": []
+  },
+  {
+    "id": "n34",
+    "category": "foreign",
+    "query": "glorbique fenestroux",
+    "expected": []
+  },
+  {
+    "id": "n35",
+    "category": "foreign",
+    "query": "トリポロ ムニャムニャ",
+    "expected": []
+  },
+  {
+    "id": "n36",
+    "category": "foreign",
+    "query": "ксыврмо плотупка",
+    "expected": []
+  },
+  {
+    "id": "n37",
+    "category": "foreign",
+    "query": "zapatos de boda baratos",
+    "expected": []
+  },
+  {
+    "id": "n38",
+    "category": "foreign",
+    "query": "Fahrradreifen flicken",
+    "expected": []
+  }
+]

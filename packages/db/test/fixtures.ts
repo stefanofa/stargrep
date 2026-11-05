@@ -2,7 +2,7 @@ import { GitHubAccountId, Login, ObjectId, RepoId, RepoName, RepoNodeId } from "
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import * as Db from "../src/db.ts";
-import { Embedding, EmbeddingModelId } from "../src/embedding.ts";
+import { anyDistance, Embedding, EmbeddingModelId } from "../src/embedding.ts";
 
 export const model = Schema.decodeSync(EmbeddingModelId)("test/embedding-1024");
 export const otherModel = Schema.decodeSync(EmbeddingModelId)("test/other-embedding");
@@ -65,4 +65,11 @@ export const starred = (id: RepoId, starredAt: string, observedAt = starredAt): 
 
 export const hybrid = (
   search: Pick<Db.HybridSearch, "scope" | "text" | "embedding" | "limit"> & Partial<Db.HybridSearch>,
-): Db.HybridSearch => ({ name: null, metrics: [], filters: Db.noFilters, rankBy: null, ...search });
+): Db.HybridSearch => ({
+  maxDistance: anyDistance,
+  name: null,
+  metrics: [],
+  filters: Db.noFilters,
+  rankBy: null,
+  ...search,
+});

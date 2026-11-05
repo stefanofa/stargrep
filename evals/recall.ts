@@ -7,7 +7,7 @@ import { tokensSpent } from "@stargrep/ai/port";
 import * as TextGeneration from "@stargrep/ai/text-generation";
 import { QueryPlanner, Search, SearchCache } from "@stargrep/core/search";
 import * as Db from "@stargrep/db";
-import { Embedding, EmbeddingModelId } from "@stargrep/db/embedding";
+import { anyDistance, Embedding, EmbeddingModelId } from "@stargrep/db/embedding";
 import { createMigratedDatabase } from "@stargrep/db/local-database";
 import * as Memory from "@stargrep/db/memory";
 import { GitHubAccountId, Login, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
@@ -149,9 +149,25 @@ const runQueries = Effect.fn("Recall.runQueries")(function* (queries: ReadonlyAr
   );
 });
 
+interface Sets<A> {
+  readonly queries: A;
+  readonly typos: A;
+  readonly nonsense: A;
+}
+
+const loadSets = Effect.all({ queries: Corpus.loadQueries, typos: Corpus.loadTypos, nonsense: Corpus.loadNonsense });
+
+const runSets = (sets: Sets<ReadonlyArray<Corpus.Query>>) =>
+  Effect.all({ queries: runQueries(sets.queries), typos: runQueries(sets.typos), nonsense: runQueries(sets.nonsense) });
+
+const typosMissed = (typos: ReadonlyArray<Scored>) => typos.filter((entry) => entry.recall < 1);
+
+const nonsenseAnswered = (nonsense: ReadonlyArray<Scored>) => nonsense.filter((entry) => entry.found.length > 0);
+
 const mean = (values: ReadonlyArray<number>) => values.reduce((sum, value) => sum + value, 0) / values.length;
 
-const report = Effect.fn("Recall.report")(function* (scored: ReadonlyArray<Scored>, repoCount: number) {
+const report = Effect.fn("Recall.report")(function* (results: Sets<ReadonlyArray<Scored>>, repoCount: number) {
+  const scored = results.queries;
   const recall = mean(scored.map((entry) => entry.recall));
   yield* Console.log(`recall@${topK} over ${scored.length} queries and ${repoCount} repos: ${recall.toFixed(3)}`);
   const categories = [...new Set(scored.map((entry) => entry.query.category))].sort();
@@ -171,8 +187,41 @@ const report = Effect.fn("Recall.report")(function* (scored: ReadonlyArray<Score
     const missing = entry.query.expected.filter((name) => !entry.found.includes(name));
     yield* Console.log(`miss ${entry.query.id} "${entry.query.query}": ${missing.join(", ")}`);
   }
+  const missedTypos = typosMissed(results.typos);
+  yield* Console.log(`typos found: ${results.typos.length - missedTypos.length} of ${results.typos.length}`);
+  for (const entry of missedTypos) {
+    yield* Console.log(`miss ${entry.query.id} "${entry.query.query}": ${entry.query.expected.join(", ")}`);
+  }
+  const answered = nonsenseAnswered(results.nonsense);
+  yield* Console.log(
+    `nonsense answered with nothing: ${results.nonsense.length - answered.length} of ${results.nonsense.length}`,
+  );
+  for (const entry of answered) {
+    yield* Console.log(`answered ${entry.query.id} "${entry.query.query}": ${entry.found.slice(0, 3).join(", ")}`);
+  }
   return recall;
 });
+
+class SearchChecksFailed extends Schema.TaggedError<SearchChecksFailed>()("SearchChecksFailed", {
+  typosMissed: Schema.Array(Schema.String),
+  nonsenseAnswered: Schema.Array(Schema.String),
+}) {
+  override get message(): string {
+    const failures = [
+      ...(this.typosMissed.length === 0 ? [] : [`missed typos ${this.typosMissed.join(", ")}`]),
+      ...(this.nonsenseAnswered.length === 0 ? [] : [`answered nonsense ${this.nonsenseAnswered.join(", ")}`]),
+    ];
+    return `search ${failures.join(" and ")}`;
+  }
+}
+
+const checkTyposAndNonsense = (results: Sets<ReadonlyArray<Scored>>) => {
+  const missed = typosMissed(results.typos).map((entry) => entry.query.id);
+  const answered = nonsenseAnswered(results.nonsense).map((entry) => entry.query.id);
+  return missed.length === 0 && answered.length === 0
+    ? Effect.void
+    : Effect.fail(new SearchChecksFailed({ typosMissed: missed, nonsenseAnswered: answered }));
+};
 
 const layerSearch = <E1, R1, E2, R2>(
   text: Layer.Layer<TextGeneration.TextGeneration, E1, R1>,
@@ -254,17 +303,25 @@ class FixtureStale extends Schema.TaggedError<FixtureStale>()("FixtureStale", {
 }
 
 const runFixture = Effect.fn("Recall.runFixture")(function* (fixture: Fixture) {
-  const queries = (yield* Corpus.loadQueries).filter((query) => fixture.queries.includes(query.id));
+  const sets = yield* loadSets;
+  const inFixture = (queries: ReadonlyArray<Corpus.Query>) =>
+    queries.filter((query) => fixture.queries.includes(query.id));
   const layer = layerSearch(layerFixtureAi, answered(fixture.answers)).pipe(
     Layer.provideMerge(layerFixtureAi),
     Layer.provideMerge(Memory.layerMemory({ embeddingModel: embeddingModelId })),
   );
   return yield* Effect.gen(function* () {
     yield* loadAccount(fixture.repos);
-    const scored = yield* runQueries(queries);
-    const fellBack = scored.filter((entry) => entry.source === "fallback").map((entry) => entry.query.id);
+    const results = yield* runSets({
+      queries: inFixture(sets.queries),
+      typos: inFixture(sets.typos),
+      nonsense: inFixture(sets.nonsense),
+    });
+    const fellBack = [...results.queries, ...results.typos, ...results.nonsense]
+      .filter((entry) => entry.source === "fallback")
+      .map((entry) => entry.query.id);
     if (fellBack.length > 0) return yield* new FixtureStale({ queries: fellBack });
-    return scored;
+    return results;
   }).pipe(Effect.provide(layer));
 });
 
@@ -280,19 +337,24 @@ const fileCache = SearchCache.layerKeyValueStore.pipe(
 
 const writeFixture = Effect.fn("Recall.writeFixture")(function* (
   repos: ReadonlyArray<EnrichedRepo>,
-  scored: ReadonlyArray<Scored>,
+  results: Sets<ReadonlyArray<Scored>>,
 ) {
-  const chosen = fixtureQueries(scored.map((entry) => entry.query));
+  const chosen: Sets<ReadonlyArray<Corpus.Query>> = {
+    queries: fixtureQueries(results.queries.map((entry) => entry.query)),
+    typos: fixtureQueries(results.typos.map((entry) => entry.query)),
+    nonsense: fixtureQueries(results.nonsense.map((entry) => entry.query)),
+  };
+  const ids = [...chosen.queries, ...chosen.typos, ...chosen.nonsense].map((query) => query.id);
   const names = new Set(
-    scored
-      .filter((entry) => chosen.includes(entry.query))
+    [...results.queries, ...results.typos]
+      .filter((entry) => ids.includes(entry.query.id))
       .flatMap((entry) => [
         ...entry.query.expected,
         ...entry.found.filter((name) => !entry.query.expected.includes(name)).slice(0, negativesPerQuery),
       ]),
   );
   const seen: Array<Answer> = [];
-  yield* runQueries(chosen).pipe(
+  yield* runSets(chosen).pipe(
     Effect.provide(layerSearch(Gateway.layerPlannerTextGeneration, recording(fileCache, seen)), { local: true }),
   );
   const answers = [...new Map(seen.map((answer) => [`${answer.namespace}\n${answer.text}`, answer])).values()].sort(
@@ -300,16 +362,18 @@ const writeFixture = Effect.fn("Recall.writeFixture")(function* (
   );
   const draft: Fixture = {
     recall: 0,
-    queries: chosen.map((query) => query.id),
+    queries: ids,
     repos: repos.filter((repo) => names.has(repo.fullName)),
     answers,
   };
-  const recall = mean((yield* runFixture(draft)).map((entry) => entry.recall));
+  const recall = mean((yield* runFixture(draft)).queries.map((entry) => entry.recall));
   const meta = yield* Schema.encodeEffect(Schema.fromJsonString(FixtureMeta))({ recall, queries: draft.queries });
   yield* Effect.promise(() => Bun.write(fixtureFile("recall.json"), `${meta}\n`));
   yield* writeLines("recall-repos.jsonl", EnrichedRepo, draft.repos);
   yield* writeLines("recall-answers.jsonl", Answer, draft.answers);
-  const planned = scored.filter((entry) => chosen.includes(entry.query) && entry.source !== "keyword").length;
+  const planned = results.queries.filter(
+    (entry) => chosen.queries.includes(entry.query) && entry.source !== "keyword",
+  ).length;
   yield* Console.log(
     `Wrote evals/fixtures: ${draft.queries.length} queries (${planned} planned), ${draft.repos.length} repos, ${answers.length} answers, recall ${recall.toFixed(3)}`,
   );
@@ -324,9 +388,37 @@ class RecallBelowBar extends Schema.TaggedError<RecallBelowBar>()("RecallBelowBa
   }
 }
 
+const sweep = Effect.fn("Recall.sweep")(function* (
+  sets: Sets<ReadonlyArray<Corpus.Query>>,
+  maxDistances: ReadonlyArray<number>,
+) {
+  yield* Console.log(`max distance  recall@${topK}  typos found  nonsense answered`);
+  for (const maxDistance of maxDistances) {
+    const results = yield* runSets(sets).pipe(
+      Effect.provide(
+        layerSearch(Gateway.layerPlannerTextGeneration, fileCache).pipe(
+          Layer.provide(
+            Gateway.layerEmbeddings({ ...Models.embeddingModel, maxMatchDistance: maxDistance }).pipe(
+              Layer.provide(Gateway.layerProviderConfig),
+            ),
+          ),
+        ),
+        { local: true },
+      ),
+    );
+    const recall = mean(results.queries.map((entry) => entry.recall)).toFixed(3);
+    const found = `${results.typos.length - typosMissed(results.typos).length}/${results.typos.length}`;
+    const answered = `${nonsenseAnswered(results.nonsense).length}/${results.nonsense.length}`;
+    yield* Console.log(
+      `${maxDistance.toFixed(2).padStart(12)}  ${recall.padStart(9)}  ${found.padStart(11)}  ${answered.padStart(17)}`,
+    );
+  }
+});
+
 const real = Effect.fn("Recall.real")(function* (options: {
   readonly summaryModel: string;
   readonly writeFixture: boolean;
+  readonly maxDistances: ReadonlyArray<number>;
 }) {
   const repos = yield* enrich(options.summaryModel).pipe(
     Effect.provide(Gateway.layerTextGeneration(options.summaryModel).pipe(Layer.provide(Gateway.layerProviderConfig))),
@@ -337,13 +429,16 @@ const real = Effect.fn("Recall.real")(function* (options: {
   const db = Db.layerNodePostgres({ embeddingModel: embeddingModelId, connectionString: Redacted.make(url) });
   return yield* Effect.gen(function* () {
     yield* loadAccount(repos);
-    const scored = yield* runQueries(yield* Corpus.loadQueries).pipe(
+    const sets = yield* loadSets;
+    if (options.maxDistances.length > 0) return yield* sweep(sets, options.maxDistances);
+    const results = yield* runSets(sets).pipe(
       Effect.provide(layerSearch(Gateway.layerPlannerTextGeneration, fileCache), { local: true }),
     );
-    const recall = yield* report(scored, repos.length);
+    const recall = yield* report(results, repos.length);
     yield* Console.log(`tokens: ${(yield* tokenCounts).join("; ")}`);
-    if (options.writeFixture) yield* writeFixture(repos, scored);
+    if (options.writeFixture) yield* writeFixture(repos, results);
     if (recall < bar) return yield* new RecallBelowBar({ recall, bar });
+    yield* checkTyposAndNonsense(results);
   }).pipe(Effect.provide(db));
 });
 
@@ -356,21 +451,34 @@ const fixture = Effect.gen(function* () {
     repos: yield* readLines("recall-repos.jsonl", EnrichedRepo),
     answers: yield* readLines("recall-answers.jsonl", Answer),
   };
-  const scored = yield* runFixture(loaded);
-  const recall = yield* report(scored, loaded.repos.length);
+  const results = yield* runFixture(loaded);
+  const recall = yield* report(results, loaded.repos.length);
   yield* Console.log(`recorded fixture recall: ${loaded.recall.toFixed(3)}`);
   if (recall < loaded.recall) return yield* new RecallBelowBar({ recall, bar: loaded.recall });
+  yield* checkTyposAndNonsense(results);
 });
+
+const MaxDistances = Schema.NonEmptyArray(
+  Schema.FiniteFromString.check(Schema.isBetween({ minimum: 0, maximum: anyDistance, exclusiveMinimum: true })),
+);
 
 const args = Bun.argv.slice(2);
 const summaryIndex = args.indexOf("--summary-model");
+const maxDistancesIndex = args.indexOf("--max-distances");
+const maxDistances =
+  maxDistancesIndex === -1
+    ? Effect.succeed<ReadonlyArray<number>>([])
+    : Schema.decodeUnknownEffect(MaxDistances)((args[maxDistancesIndex + 1] ?? "").split(","));
 
 const main = args.includes("--fixture")
   ? fixture
-  : real({
-      summaryModel: summaryIndex === -1 ? Models.summaryModel : (args[summaryIndex + 1] ?? Models.summaryModel),
-      writeFixture: args.includes("--write-fixture"),
-    }).pipe(
+  : Effect.flatMap(maxDistances, (distances) =>
+      real({
+        summaryModel: summaryIndex === -1 ? Models.summaryModel : (args[summaryIndex + 1] ?? Models.summaryModel),
+        writeFixture: args.includes("--write-fixture"),
+        maxDistances: distances,
+      }),
+    ).pipe(
       Effect.provide(Gateway.layerEmbeddings(Models.embeddingModel).pipe(Layer.provide(Gateway.layerProviderConfig))),
     );
 

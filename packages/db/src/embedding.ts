@@ -4,6 +4,9 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 
 export const embeddingDimensions = 1024;
 
+// Cosine distance never exceeds 2, so a search with this max distance keeps every repo.
+export const anyDistance = 2;
+
 export const EmbeddingModelId = Schema.NonEmptyString.pipe(Schema.brand("EmbeddingModelId"));
 export type EmbeddingModelId = typeof EmbeddingModelId.Type;
 

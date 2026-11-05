@@ -6,6 +6,7 @@ import * as Models from "@stargrep/ai/models";
 import { tokensSpent } from "@stargrep/ai/port";
 import { QueryPlan, QueryPlanner, Search, SearchCache } from "@stargrep/core/search";
 import * as Db from "@stargrep/db";
+import { anyDistance } from "@stargrep/db/embedding";
 import { Login } from "@stargrep/github/schemas";
 import { SQL } from "bun";
 import * as Config from "effect/Config";
@@ -113,7 +114,11 @@ const bench = Command.make(
   Effect.fn("search-bench")(function* (input) {
     const embeddingModel = Option.getOrElse(input.fakeEmbeddings, () => Models.embeddingModel.id);
     const embeddings = Option.isSome(input.fakeEmbeddings)
-      ? Fake.layerEmbeddings({ id: input.fakeEmbeddings.value, dimensions: Models.embeddingModel.dimensions })
+      ? Fake.layerEmbeddings({
+          id: input.fakeEmbeddings.value,
+          dimensions: Models.embeddingModel.dimensions,
+          maxMatchDistance: anyDistance,
+        })
       : Gateway.layerEmbeddings(Models.embeddingModel).pipe(Layer.provide(Gateway.layerProviderConfig));
     const sql = new SQL(Redacted.value(yield* Config.Redacted("DATABASE_URL")));
     const selectOne = Effect.promise(async () => {

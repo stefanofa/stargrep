@@ -1,0 +1,98 @@
+[
+  {
+    "id": "t01",
+    "category": "typo",
+    "query": "tanstak query",
+    "expected": ["TanStack/query"]
+  },
+  {
+    "id": "t02",
+    "category": "typo",
+    "query": "zustnad",
+    "expected": ["pmndrs/zustand"]
+  },
+  {
+    "id": "t03",
+    "category": "typo",
+    "query": "ripgrpe",
+    "expected": ["BurntSushi/ripgrep"]
+  },
+  {
+    "id": "t04",
+    "category": "typo",
+    "query": "elasticsaerch",
+    "expected": ["elastic/elasticsearch"]
+  },
+  {
+    "id": "t05",
+    "category": "typo",
+    "query": "meilisaerch",
+    "expected": ["meilisearch/meilisearch"]
+  },
+  {
+    "id": "t06",
+    "category": "typo",
+    "query": "typsense",
+    "expected": ["typesense/typesense"]
+  },
+  {
+    "id": "t07",
+    "category": "typo",
+    "query": "fuzy finder",
+    "expected": ["junegunn/fzf"]
+  },
+  {
+    "id": "t08",
+    "category": "typo",
+    "query": "ollamma",
+    "expected": ["ollama/ollama"]
+  },
+  {
+    "id": "t09",
+    "category": "typo",
+    "query": "pytroch",
+    "expected": ["pytorch/pytorch"]
+  },
+  {
+    "id": "t10",
+    "category": "typo",
+    "query": "tailwnd css",
+    "expected": ["tailwindlabs/tailwindcss"]
+  },
+  {
+    "id": "t11",
+    "category": "typo",
+    "query": "neovm",
+    "expected": ["neovim/neovim"]
+  },
+  {
+    "id": "t12",
+    "category": "typo",
+    "query": "langchian",
+    "expected": ["langchain-ai/langchain"]
+  },
+  {
+    "id": "t13",
+    "category": "typo",
+    "query": "excalidrw",
+    "expected": ["excalidraw/excalidraw"]
+  },
+  {
+    "id": "t14",
+    "category": "typo",
+    "query": "jelyfin",
+    "expected": ["jellyfin/jellyfin"]
+  },
+  {
+    "id": "t15",
+    "category": "typo",
+    "query": "imich photos",
+    "expected": ["immich-app/immich"]
+  },
+  {
+    "id": "t16",
+    "category": "typo",
+    "query": "kubernets",
+    "expected": ["kubernetes/kubernetes"]
+  }
+]
