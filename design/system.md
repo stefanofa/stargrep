@@ -109,14 +109,14 @@ Every component is a stock shadcn component on Base UI, restyled with the tokens
 | Scope switch | Base UI `Tabs` | Your stars, Network, Everyone. A white pill track, the active tab on `accent`. Each tab is a link, so the scope is in the URL. |
 | View toggle | Base UI `ToggleGroup` | Two icon toggles, tiles and list, `aria-label` on each. The choice persists per user (local storage signed out, profile setting signed in) and in `?view=`. |
 | Deep search | Base UI `Switch` | Off by default. It adds about a second. When on, the hero tile shows the mascot thinking until results rerank. |
-| Result tile | `Card` | The icon slot left of the repo name, an `h3` link, with "owner · language" under it, the reason line with `<mark>`, then the footer: stars (Fredoka), starred date, alive dot and text, network avatars and "N you follow". A repo not read yet shows its GitHub description under a "not read yet" chip. |
+| Result tile | `Card` | The icon slot left of the repo name, an `h3` link, with "owner · language" under it, the reason line with `<mark>`, then the footer: stars (Fredoka), starred date, alive dot and text, network avatars and "N you follow". In search results, a repo not read yet shows its GitHub description under a "not read yet" chip. A repo whose facts have not arrived yet, with no stars and no push date, shows "reading…" and skeleton text instead of "no pushes yet", and fills in place when they land. |
 | Result row (list view) | `Card` with `--radius-md` | The same data in one row. The icon slot has its own lane, so text starts at the same x in every row, and alive, stars and starred date have fixed lanes. |
 | Repo icon slot | Custom | 44px in tiles, 36px in rows, a squircle with `--radius-sm` and a 1.5px `border` edge. One policy function in `apps/web/src/lib/repo-visual.ts` picks what fills it: the repo's own icon on its plate, then the owner's avatar for orgs, then a monogram of two lowercase owner letters in Fredoka on #DCD0FF. An image under 64px is never upscaled; it sits at its own size, at most 24px, on a `muted` tile. An image that fails shows the monogram. |
 | Matched words | `<mark>` | Styled as `accent-strong`, weight 600, no background. Screen readers and agents get the same spans. |
 | Network avatars | shadcn `Avatar`, stacked with -6px overlap | At most four, then "N you follow". `Tooltip` on hover lists handles. Never "friends". |
 | Alive | Text with an 8px dot | `success` dot for pushed in the last 30 days, `muted-foreground` dot after that. Archived and deprecated get a label instead. |
 | Repo detail panel | shadcn `Sheet` (Base UI `Dialog`), side right, 520px | Opens on tile click, with its own URL (`?repo=ratatui/ratatui`). Escape closes it. Contents: summary, one big star count, alive, release, license, who you follow starred it, three "also starred", Open on GitHub, Add to collection. |
-| Search tile strip | Custom, inside the search tile | One status line on the left, sort and the view toggle on the right, 64px tall, the same in every state, so the controls never move. A 3px rail along the tile's bottom edge shows real progress: stars imported, then stars read. On phones the tile docks at the bottom with the strip above the input, and the rail sits just above the tile, outside the squircle, so its ends are never clipped. |
+| Search tile strip | Custom, inside the search tile | One status line on the left, sort and the view toggle on the right, 64px tall, the same in every state, so the controls never move. A 3px rail along the tile's bottom edge shows real progress: stars imported on the first sync, then stars read. A later sync only says "checking for new stars", and a few new stars read as "2 new stars · reading…" with no rail. On phones the tile docks at the bottom with the strip above the input and one line of detail, and the rail runs along the tile's top edge, inset 32px from each side so the squircle never clips its ends. |
 | Sort | Base UI `Menu` (shadcn `DropdownMenu`) | Recently starred, most stars, recently pushed, and best match while searching. |
 | Buttons | shadcn `Button` | `primary` (ink), `secondary` (accent-soft), `ghost` (white pill). Heights 36 and 44. Always `--radius-full`. |
 | Skeleton | skullet | skullet measures the real card with a sample repo and draws one bar per text line, so a placeholder is the size of the card that replaces it. The bars pulse between `muted` and `accent-soft` and hold still under reduced motion. |
@@ -157,8 +157,9 @@ Proper nouns keep their case inside lowercase copy (Rust, TypeScript, GitHub in 
 
 ## Motion
 
-- Tiles enter with opacity and a 6px rise, 200ms, spring easing, 30ms stagger, once per query.
-- Semantic results append at the end of the grid with the same entrance. Tiles already on screen never move.
+- Library tiles enter with opacity and a 6px rise, 200ms, ease-out, when they first appear.
+- Search results do not replay an entrance per query. While the next answer is pending the previous results stay, and a result new to the set fades in over 150ms with no stagger. Tiles already on screen never move.
+- Loading frames have the final layout: an avatar-sized placeholder in the header, the strip with its controls, and the count, languages and month tiles at their final size, so a reload moves nothing.
 - The repo panel slides in from the right in 220ms over a 160ms scrim fade.
 - Toggles and tabs: 120ms color change, no movement.
 - `prefers-reduced-motion` removes all movement and keeps the opacity fades.

@@ -7,21 +7,37 @@ const stars = (value: number) => `${n(value)} ${value === 1 ? "star" : "stars"}`
 
 export type Stage =
   | { readonly name: "importing"; readonly done: number; readonly total: number | null; readonly read: number | null }
-  | { readonly name: "reading"; readonly read: number; readonly settled: number; readonly total: number }
-  | { readonly name: "ready"; readonly total: number; readonly failed: number };
+  | {
+      readonly name: "reading";
+      readonly read: number;
+      readonly settled: number;
+      readonly total: number;
+      readonly arriving: number;
+    }
+  | {
+      readonly name: "ready";
+      readonly total: number;
+      readonly failed: number;
+      readonly syncing: boolean;
+      readonly arriving: number;
+    };
 
 export const stageOf = ({
-  importing,
+  syncing,
+  firstSync,
   imported,
   starred,
   enrichment,
+  arriving = 0,
 }: {
-  importing: boolean;
+  syncing: boolean;
+  firstSync: boolean;
   imported: number;
   starred: number | null;
   enrichment: EnrichmentProgress | null;
+  arriving?: number;
 }): Stage => {
-  if (importing)
+  if (syncing && firstSync)
     return {
       name: "importing",
       done: imported,
@@ -34,8 +50,9 @@ export const stageOf = ({
       read: enrichment.read,
       settled: enrichment.read + enrichment.failed,
       total: enrichment.total,
+      arriving,
     };
-  return { name: "ready", total: imported, failed: enrichment?.failed ?? 0 };
+  return { name: "ready", total: imported, failed: enrichment?.failed ?? 0, syncing, arriving };
 };
 
 export type Answer =
@@ -87,7 +104,17 @@ const unreadDetail = (stage: Stage) => {
   return undefined;
 };
 
+export const fewNewStars = 20;
+
+const newStars = (stage: Stage) => {
+  if (stage.name === "ready") return stage.syncing || stage.arriving > 0 ? stage.arriving : undefined;
+  if (stage.name === "reading" && stage.arriving > 0 && stage.total - stage.settled <= fewNewStars)
+    return stage.arriving;
+  return undefined;
+};
+
 const railOf = (stage: Stage) => {
+  if (newStars(stage) !== undefined) return undefined;
   if (stage.name === "importing") return stage.total === null ? undefined : stage.done / Math.max(1, stage.total);
   if (stage.name === "reading") return stage.settled / Math.max(1, stage.total);
   return undefined;
@@ -111,6 +138,10 @@ const browsing = (
           ? `${n(stage.done)} imported so far`
           : withTime(`${n(stage.done)} of ${n(stage.total)}`, timeLeft),
     };
+  const fresh = newStars(stage);
+  if (fresh === 0) return { icon: "busy", label: "checking for new stars" };
+  if (fresh !== undefined)
+    return { icon: "busy", label: `${n(fresh)} new ${fresh === 1 ? "star" : "stars"}`, detail: "reading…" };
   if (stage.name === "reading")
     return {
       icon: "busy",

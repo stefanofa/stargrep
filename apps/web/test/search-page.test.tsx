@@ -159,11 +159,11 @@ describe("the search page in each state", () => {
 
   test("importing: real counts on the strip and the rail, and placeholders where stars will land", async () => {
     server.viewer = { ...server.viewer, starredCount: 10 };
-    server.status = status({ state: "queued", enrichment: arriving });
+    server.status = status({ state: "queued", syncedAt: null, enrichment: arriving });
     await open("/search");
     await waitFor(() => expect(strip()).toContain("importing your stars"));
     expect(strip()).toContain("6 of 10");
-    expect(rail()?.style.width).toBe("60%");
+    expect(rail()?.style.transform).toBe("scaleX(0.6)");
     expect(mark()).toBe("happy");
     await waitFor(() => expect(page().getAllByText(/stars so far/).length).toBeGreaterThan(0));
     expect(document.querySelectorAll("ol[aria-busy=true] > li").length).toBe(8);
@@ -175,7 +175,7 @@ describe("the search page in each state", () => {
     await open("/search");
     await waitFor(() => expect(strip()).toContain("reading your stars"));
     expect(strip()).toContain("4 of 6 understood");
-    expect(rail()?.style.width).toBe("66.7%");
+    expect(rail()?.style.transform).toBe("scaleX(0.667)");
     expect(mark()).toBe("thinking");
     await waitFor(() => expect(page().getByText("A debugger for async rust.")).toBeTruthy());
     expect(page().queryAllByText("not read yet")).toEqual([]);
@@ -189,6 +189,55 @@ describe("the search page in each state", () => {
     expect(card?.textContent).toContain("A debugger for async rust.");
   });
 
+  test("a sync on a library that synced before checks quietly, then reads new stars in place", async () => {
+    server.status = status({ state: "queued", enrichment: allRead });
+    await open("/search");
+    await waitFor(() => expect(strip()).toContain("checking for new stars"));
+    expect(rail()).toBeNull();
+    expect(page().queryByText(/still arriving/)).toBeNull();
+
+    const fresh = repo(7, "NVIDIA", "auto-ontology", "", {
+      description: null,
+      summary: null,
+      stars: null,
+      pushedAt: null,
+      read: false,
+      starredAt: "2026-11-05T09:00:00.000Z",
+    });
+    server.repos = [fresh, ...server.repos];
+    server.status = status({ state: "queued", enrichment: { total: 7, read: 6, failed: 0 } });
+    await waitFor(() => expect(strip()).toContain("1 new star · reading…"), { timeout: 8000 });
+    const card = page().getByRole("link", { name: "auto-ontology" }).closest("article");
+    expect(card?.textContent).toContain("reading…");
+    expect(card?.textContent).not.toContain("no pushes yet");
+
+    server.repos = server.repos.map((entry) =>
+      entry.id === fresh.id
+        ? {
+            ...entry,
+            description: "A semantic layer.",
+            summary: "A semantic layer.",
+            stars: 6400,
+            pushedAt: "2026-11-05T08:00:00.000Z",
+            read: true,
+          }
+        : entry,
+    );
+    server.status = status({ enrichment: { total: 7, read: 7, failed: 0 } });
+    await waitFor(() => expect(page().getByText("A semantic layer.")).toBeTruthy(), { timeout: 8000 });
+    expect(strip()).toContain("7 stars");
+  }, 20_000);
+
+  test("a sync that starts after the page settled is picked up when the tab is shown again", async () => {
+    await open("/search");
+    await waitFor(() => expect(strip()).toContain("6 stars"));
+    server.status = status({ state: "queued", enrichment: allRead });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await waitFor(() => expect(strip()).toContain("checking for new stars"));
+  });
+
   test("searching while reading: grouped results and a partial count", async () => {
     server.status = status({ enrichment: reading });
     server.search = () => [hit(server.repos[4] as Repo)];
@@ -199,6 +248,18 @@ describe("the search page in each state", () => {
     );
     expect(page().getByRole("heading", { name: "matching words 2 from all 6" })).toBeTruthy();
     expect(strip()).toContain("2 stars not read yet");
+  });
+
+  test("typing on keeps the results on screen instead of blanking and replaying them", async () => {
+    const user = userEvent.setup();
+    server.search = () => [hit(server.repos[4] as Repo)];
+    await open("/search?q=terminal");
+    const tile = await waitFor(() => page().getByRole("link", { name: "tui-rs" }).closest("li"));
+    await user.type(page().getByRole("searchbox"), "s");
+    expect(tile?.isConnected).toBe(true);
+    await waitFor(() => expect(server.searches.at(-1)).toBe("terminals"));
+    expect(tile?.isConnected).toBe(true);
+    expect(tile?.className).not.toContain("tile-in");
   });
 
   test("results once everything is read: one list, a plain count, no rail", async () => {
@@ -236,7 +297,7 @@ describe("the search page in each state", () => {
   test("the sort menu and view toggle stay inside the search tile in every state", async () => {
     const states: Array<[string, () => void]> = [
       ["/search", () => {}],
-      ["/search", () => (server.status = status({ state: "queued", enrichment: arriving }))],
+      ["/search", () => (server.status = status({ state: "queued", syncedAt: null, enrichment: arriving }))],
       ["/search?q=terminal", () => (server.status = status({ enrichment: reading }))],
       ["/search?q=nothing%20like%20this", () => (server.status = status({ enrichment: reading }))],
       ["/search?q=nothing%20like%20this", () => {}],

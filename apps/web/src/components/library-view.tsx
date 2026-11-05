@@ -65,7 +65,17 @@ export interface Arriving {
   readonly total: number | null;
 }
 
-function CountTile({ count, arriving, pose }: { count: number; arriving: Arriving | undefined; pose: PipPose }) {
+const bar = "inline-block rounded-full align-middle";
+
+function CountTile({
+  count,
+  arriving,
+  pose,
+}: {
+  count: number | undefined;
+  arriving: Arriving | undefined;
+  pose: PipPose;
+}) {
   return (
     <Tile
       variant="highlight"
@@ -73,7 +83,7 @@ function CountTile({ count, arriving, pose }: { count: number; arriving: Arrivin
     >
       <div className="relative z-10 flex flex-col">
         <p className="font-display text-[64px] leading-[64px] font-semibold tracking-tight sm:text-hero sm:leading-[120px]">
-          {formatCount(count)}
+          {count === undefined ? <span className={`${bar} h-[0.7em] w-[2.4em] bg-ink/10`} /> : formatCount(count)}
         </p>
         <p className="font-display text-lg leading-6 font-semibold sm:text-2xl">
           {arriving === undefined
@@ -90,7 +100,15 @@ function CountTile({ count, arriving, pose }: { count: number; arriving: Arrivin
   );
 }
 
-function LanguagesTile({ shares, language }: { shares: ReadonlyArray<LanguageShare>; language: string | undefined }) {
+const waitingChips = ["w-[92px]", "w-[118px]", "w-[78px]"];
+
+function LanguagesTile({
+  shares,
+  language,
+}: {
+  shares: ReadonlyArray<LanguageShare> | undefined;
+  language: string | undefined;
+}) {
   const chip = (active: boolean) =>
     `flex h-9 items-center rounded-full px-4 font-sans text-meta font-medium transition-colors duration-120 ${
       active ? "bg-accent font-semibold text-ink" : "bg-accent-soft text-foreground hover:bg-accent-soft/70"
@@ -98,7 +116,14 @@ function LanguagesTile({ shares, language }: { shares: ReadonlyArray<LanguageSha
   return (
     <Tile className="flex flex-col justify-between gap-6 pt-tile-top pb-6 pl-tile-lg">
       <h2 className="font-display text-2xl font-semibold tracking-snug">languages</h2>
-      {shares.length > 0 && <LanguageBar languages={shares} />}
+      {shares === undefined ? (
+        <div aria-hidden className="flex flex-col gap-3">
+          <span className="h-3 rounded-full bg-muted" />
+          <span className="h-4 w-56 rounded-full bg-muted" />
+        </div>
+      ) : (
+        shares.length > 0 && <LanguageBar languages={shares} />
+      )}
       <nav aria-label="Filter by language" className="flex flex-wrap gap-2">
         <Link
           to="/search"
@@ -107,7 +132,11 @@ function LanguagesTile({ shares, language }: { shares: ReadonlyArray<LanguageSha
         >
           All
         </Link>
-        {shares.slice(0, 3).map((share) => (
+        {shares === undefined &&
+          waitingChips.map((width) => (
+            <span key={width} aria-hidden className={`h-9 rounded-full bg-muted ${width}`} />
+          ))}
+        {(shares ?? []).slice(0, 3).map((share) => (
           <Link
             key={share.name}
             to="/search"
@@ -119,6 +148,37 @@ function LanguagesTile({ shares, language }: { shares: ReadonlyArray<LanguageSha
         ))}
       </nav>
     </Tile>
+  );
+}
+
+function MonthHeading({ heading, size, arriving }: { heading: string; size: number; arriving: boolean }) {
+  return (
+    <h2 className="flex items-baseline gap-2.5 pl-1.5">
+      <span className="font-display text-2xl font-semibold tracking-snug">{heading}</span>
+      <span className="font-sans text-base text-muted-foreground">
+        {stars(size)}
+        {arriving && " so far"}
+      </span>
+    </h2>
+  );
+}
+
+export function LibraryPlaceholder({ view }: { view: View }) {
+  return (
+    <>
+      <div aria-busy className="grid gap-gap lg:grid-cols-2">
+        <CountTile count={undefined} arriving={undefined} pose="idle" />
+        <LanguagesTile shares={undefined} language={undefined} />
+      </div>
+      <section className="flex flex-col gap-gap pt-3">
+        <div aria-hidden className="flex items-baseline gap-2.5 pl-1.5">
+          <span className="font-display text-2xl font-semibold tracking-snug">
+            <span className={`${bar} h-6 w-48 bg-muted`} />
+          </span>
+        </div>
+        <ResultGrid view={view} results={[]} pending={8} onOpen={() => {}} />
+      </section>
+    </>
   );
 }
 
@@ -169,13 +229,7 @@ export function LibraryView({
         const size = byMonth ? (counts.get(heading)?.length ?? 0) : visible.length;
         return (
           <section key={heading} aria-label={heading} className="flex flex-col gap-gap pt-3">
-            <h2 className="flex items-baseline gap-2.5 pl-1.5">
-              <span className="font-display text-2xl font-semibold tracking-snug">{heading}</span>
-              <span className="font-sans text-base text-muted-foreground">
-                {stars(size)}
-                {arriving !== undefined && " so far"}
-              </span>
-            </h2>
+            <MonthHeading heading={heading} size={size} arriving={arriving !== undefined} />
             <ResultGrid
               view={view}
               results={members.map((entry) => ({ ...toResult(entry, [], at), unread: false }))}

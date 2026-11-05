@@ -35,6 +35,7 @@ export const syncedAgo = (iso: string, at: number) => {
 
 const activity = (repo: LibraryEntry, at: number): Activity => {
   if (repo.archived) return { state: "archived" };
+  if (repo.stars === null && repo.pushedAt === null) return { state: "reading" };
   if (repo.pushedAt === null) return { state: "quiet", label: "no pushes yet" };
   const label = `pushed ${since(repo.pushedAt, at)}`;
   return at - millis(repo.pushedAt) <= 30 * day ? { state: "alive", label } : { state: "quiet", label };

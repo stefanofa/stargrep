@@ -9,15 +9,17 @@ import {
   stageOf,
 } from "../src/lib/search-state.ts";
 
-const importing = stageOf({ importing: true, imported: 1204, starred: 1776, enrichment: null });
+const importing = stageOf({ syncing: true, firstSync: true, imported: 1204, starred: 1776, enrichment: null });
 const reading = stageOf({
-  importing: false,
+  syncing: false,
+  firstSync: false,
   imported: 1776,
   starred: 1776,
   enrichment: { total: 1776, read: 412, failed: 0 },
 });
 const ready = stageOf({
-  importing: false,
+  syncing: false,
+  firstSync: false,
   imported: 1776,
   starred: 1776,
   enrichment: { total: 1776, read: 1776, failed: 0 },
@@ -37,25 +39,30 @@ const browsing: Answer = { kind: "browsing" };
 describe("the stage", () => {
   test("importing wins while the sync runs, and an unknown star count leaves the total open", () => {
     expect(importing).toEqual({ name: "importing", done: 1204, total: 1776, read: null });
-    expect(stageOf({ importing: true, imported: 40, starred: null, enrichment: null })).toMatchObject({ total: null });
+    expect(stageOf({ syncing: true, firstSync: true, imported: 40, starred: null, enrichment: null })).toMatchObject({
+      total: null,
+    });
   });
 
   test("reading lasts until every star is read or failed", () => {
-    expect(reading).toEqual({ name: "reading", read: 412, settled: 412, total: 1776 });
+    expect(reading).toEqual({ name: "reading", read: 412, settled: 412, total: 1776, arriving: 0 });
     const settled = stageOf({
-      importing: false,
+      syncing: false,
+      firstSync: false,
       imported: 1776,
       starred: 1776,
       enrichment: { total: 1776, read: 1770, failed: 6 },
     });
-    expect(settled).toEqual({ name: "ready", total: 1776, failed: 6 });
+    expect(settled).toEqual({ name: "ready", total: 1776, failed: 6, syncing: false, arriving: 0 });
   });
 
   test("a server without read progress is ready once import ends", () => {
-    expect(stageOf({ importing: false, imported: 95, starred: 95, enrichment: null })).toEqual({
+    expect(stageOf({ syncing: false, firstSync: false, imported: 95, starred: 95, enrichment: null })).toEqual({
       name: "ready",
       total: 95,
       failed: 0,
+      syncing: false,
+      arriving: 0,
     });
   });
 });
@@ -82,7 +89,10 @@ describe("the strip, rail, mark and body for each state", () => {
   });
 
   test("importing with no known total counts up and draws no rail", () => {
-    const state = view(stageOf({ importing: true, imported: 40, starred: null, enrichment: null }), browsing);
+    const state = view(
+      stageOf({ syncing: true, firstSync: true, imported: 40, starred: null, enrichment: null }),
+      browsing,
+    );
     expect(state.status.detail).toBe("40 imported so far");
     expect(state.rail).toBeUndefined();
   });
@@ -132,7 +142,8 @@ describe("the strip, rail, mark and body for each state", () => {
 
   test("an empty answer never claims every star was read when some failed", () => {
     const stage = stageOf({
-      importing: false,
+      syncing: false,
+      firstSync: false,
       imported: 1776,
       starred: 1776,
       enrichment: { total: 1776, read: 1770, failed: 6 },
@@ -155,6 +166,53 @@ describe("the strip, rail, mark and body for each state", () => {
     const state = view(ready, { kind: "failed" });
     expect(state.body).toBe("failed");
     expect(state.pose).toBe("scared");
+  });
+});
+
+describe("a sync on a library that has synced before", () => {
+  const refreshing = (arriving: number) =>
+    stageOf({
+      syncing: true,
+      firstSync: false,
+      imported: 1776,
+      starred: 1776,
+      enrichment: { total: 1776, read: 1776, failed: 0 },
+      arriving,
+    });
+
+  test("checks for new stars quietly instead of importing again", () => {
+    const state = view(refreshing(0), browsing);
+    expect(state.status).toEqual({ icon: "busy", label: "checking for new stars" });
+    expect(state.rail).toBeUndefined();
+    expect(state.body).toBe("library");
+    expect(state.pose).toBe("idle");
+  });
+
+  test("counts the new stars it found while they are read", () => {
+    expect(view(refreshing(2), browsing).status).toEqual({ icon: "busy", label: "2 new stars", detail: "reading…" });
+    const reading = stageOf({
+      syncing: false,
+      firstSync: false,
+      imported: 1778,
+      starred: 1778,
+      enrichment: { total: 1778, read: 1776, failed: 0 },
+      arriving: 2,
+    });
+    const state = view(reading, browsing);
+    expect(state.status).toEqual({ icon: "busy", label: "2 new stars", detail: "reading…" });
+    expect(state.rail).toBeUndefined();
+  });
+
+  test("a large backlog still reads as reading your stars", () => {
+    const backlog = stageOf({
+      syncing: false,
+      firstSync: false,
+      imported: 1776,
+      starred: 1776,
+      enrichment: { total: 1776, read: 412, failed: 0 },
+      arriving: 1364,
+    });
+    expect(view(backlog, browsing).status.label).toBe("reading your stars");
   });
 });
 
@@ -187,7 +245,8 @@ describe("empty state copy", () => {
 
   test("before anything is read, it says so instead of counting zero", () => {
     const fresh = stageOf({
-      importing: false,
+      syncing: false,
+      firstSync: false,
       imported: 6,
       starred: 6,
       enrichment: { total: 6, read: 0, failed: 0 },
@@ -204,7 +263,8 @@ describe("empty state copy", () => {
     expect(emptyCopy(ready, "", false).body).not.toContain("try one of these");
     expect(emptyCopy(ready, "", true).heading).toBe("nothing in all 1,776 stars");
     const someFailed = stageOf({
-      importing: false,
+      syncing: false,
+      firstSync: false,
       imported: 1776,
       starred: 1776,
       enrichment: { total: 1776, read: 1770, failed: 6 },

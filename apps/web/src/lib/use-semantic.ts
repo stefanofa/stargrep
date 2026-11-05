@@ -41,10 +41,14 @@ export function useSemanticSearch(login: string, query: string, rerun = 0): Sema
   }, [query]);
 
   const wanted = normalize(query);
-  if (answer?.query !== wanted) return { ...none, pending: wanted.length >= minimumLength };
-  if (answer.result === undefined) return none;
-  return Result.match(answer.result, {
-    onSuccess: (results) => ({ ...none, results }),
-    onFailure: () => ({ ...none, failed: true }),
-  });
+  const landed =
+    answer?.result === undefined
+      ? none
+      : Result.match(answer.result, {
+          onSuccess: (results) => ({ ...none, results }),
+          onFailure: () => ({ ...none, failed: true }),
+        });
+  if (answer?.query === wanted) return landed;
+  if (wanted.length < minimumLength) return none;
+  return { results: landed.results, pending: true, failed: false };
 }

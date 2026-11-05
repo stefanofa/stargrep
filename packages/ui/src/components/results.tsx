@@ -12,7 +12,8 @@ export type Activity =
   | { readonly state: "alive"; readonly label: string }
   | { readonly state: "quiet"; readonly label: string }
   | { readonly state: "archived" }
-  | { readonly state: "deprecated" };
+  | { readonly state: "deprecated" }
+  | { readonly state: "reading" };
 
 export type Match = readonly [start: number, end: number];
 
@@ -53,7 +54,10 @@ export function highlight(text: string, matches: ReadonlyArray<Match>): ReactNod
   return parts;
 }
 
-export const activityLabel = (activity: Activity) => ("label" in activity ? activity.label : activity.state);
+export const activityLabel = (activity: Activity) => {
+  if ("label" in activity) return activity.label;
+  return activity.state === "reading" ? "reading…" : activity.state;
+};
 
 const retired = (activity: Activity) => activity.state === "archived" || activity.state === "deprecated";
 
@@ -96,6 +100,7 @@ export function ResultItem({
   onOpen?: OpenResult | undefined;
 }) {
   const dim = retired(result.activity);
+  const reading = result.activity.state === "reading";
   const open = (event: MouseEvent<HTMLAnchorElement>) => {
     if (!onOpen || !plainClick(event)) return;
     event.preventDefault();
@@ -140,22 +145,30 @@ export function ResultItem({
             {result.owner}
             {result.language && <span className="list:hidden"> · {result.language}</span>}
           </p>
-          {result.unread && <UnreadChip className="hidden list:inline-flex" />}
+          {result.unread && !reading && <UnreadChip className="hidden list:inline-flex" />}
         </div>
         {dim && <Badge className="self-start list:ml-1 list:self-center">{result.activity.state}</Badge>}
       </header>
       <div className="[grid-area:reason] flex flex-col items-start gap-2">
-        {result.unread && <UnreadChip className="list:hidden" />}
-        <p
-          className={cn(
-            "font-sans text-base text-secondary-foreground",
-            dim && "text-muted-foreground",
-            hero && heroText.reason,
-            "list:text-base",
-          )}
-        >
-          {highlight(result.reason, result.matches)}
-        </p>
+        {result.unread && !reading && <UnreadChip className="list:hidden" />}
+        {reading ? (
+          <span className="flex w-full flex-col gap-2 py-1">
+            <span className="sr-only">reading this repo</span>
+            <span aria-hidden className="h-3 w-full animate-pulse rounded-full bg-muted motion-reduce:animate-none" />
+            <span aria-hidden className="h-3 w-2/3 animate-pulse rounded-full bg-muted motion-reduce:animate-none" />
+          </span>
+        ) : (
+          <p
+            className={cn(
+              "font-sans text-base text-secondary-foreground",
+              dim && "text-muted-foreground",
+              hero && heroText.reason,
+              "list:text-base",
+            )}
+          >
+            {highlight(result.reason, result.matches)}
+          </p>
+        )}
       </div>
       <dl className="contents font-sans">
         {result.stars !== null && (
@@ -292,8 +305,7 @@ function Group({
         {group.results.map((result, index) => (
           <li
             key={`${result.owner}/${result.name}`}
-            className={cn("animate-tile-in", heroFirst && index === 0 && "sm:col-span-2")}
-            style={{ animationDelay: `${index * 30}ms` }}
+            className={cn("motion-safe:animate-fade-in", heroFirst && index === 0 && "sm:col-span-2")}
           >
             <ResultItem result={result} hero={heroFirst && index === 0} onOpen={onOpen} />
           </li>

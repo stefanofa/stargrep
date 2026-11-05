@@ -33,8 +33,8 @@ function Rail({ progress, className }: { progress: number; className?: string })
   return (
     <div aria-hidden data-slot="rail" className={cn("h-[3px] overflow-hidden bg-accent-soft", className)}>
       <div
-        className="h-full bg-accent transition-[width] duration-500 ease-out"
-        style={{ width: `${Math.round(Math.min(1, Math.max(0, progress)) * 1000) / 10}%` }}
+        className="h-full origin-left bg-accent transition-transform duration-500 ease-out"
+        style={{ transform: `scaleX(${Math.round(Math.min(1, Math.max(0, progress)) * 1000) / 1000})` }}
       />
     </div>
   );
@@ -102,9 +102,6 @@ export function SearchTile({
 
   return (
     <div className={cn("relative", className)}>
-      {progress !== undefined && (
-        <Rail progress={progress} className="absolute inset-x-0 -top-2.5 rounded-full sm:hidden" />
-      )}
       <Tile className="flex flex-col overflow-clip p-0">
         <search className="flex flex-col gap-[18px] px-[22px] pt-4 pb-5 sm:px-8 sm:pt-7 sm:pb-6">
           <form onSubmit={submit} className="flex items-center gap-3 sm:gap-4">
@@ -135,7 +132,7 @@ export function SearchTile({
         </search>
         {strip && (
           <div className="max-sm:order-first sm:pr-5 sm:pb-1.5 sm:pl-8">
-            <div className="flex h-16 items-center justify-between gap-3 border-muted pr-3 pl-[22px] max-sm:pt-[3px] sm:gap-6 sm:border-t-[1.5px] sm:px-0">
+            <div className="flex min-h-16 items-center justify-between gap-3 border-muted pr-3 pl-[22px] max-sm:pt-[3px] sm:gap-6 sm:border-t-[1.5px] sm:px-0">
               <div aria-live="polite" className="min-w-0">
                 {status}
               </div>
@@ -144,7 +141,12 @@ export function SearchTile({
             <div aria-hidden className="mx-[22px] h-[1.5px] bg-muted sm:hidden" />
           </div>
         )}
-        {progress !== undefined && <Rail progress={progress} className="absolute inset-x-0 bottom-0 max-sm:hidden" />}
+        {progress !== undefined && (
+          <Rail
+            progress={progress}
+            className="absolute inset-x-8 top-0 rounded-full sm:inset-x-0 sm:top-auto sm:bottom-0 sm:rounded-none"
+          />
+        )}
       </Tile>
     </div>
   );
@@ -225,10 +227,10 @@ export function StatusLine({
       <span className="flex size-[18px] shrink-0 items-center justify-center max-sm:hidden">
         <Glyph icon={icon} />
       </span>
-      <p className="flex min-w-0 flex-col gap-0.5 font-sans font-medium sm:block sm:truncate sm:text-base sm:leading-5">
+      <p className="flex min-h-9 min-w-0 flex-col gap-0.5 font-sans font-medium tabular-nums sm:block sm:min-h-0 sm:truncate sm:text-base sm:leading-5">
         <span className="text-meta font-semibold text-foreground sm:text-base">{label}</span>
         {detail && (
-          <span className="text-sm text-muted-foreground sm:text-base">
+          <span className="text-sm text-muted-foreground max-sm:line-clamp-1 sm:text-base">
             <span className="max-sm:hidden"> · </span>
             {detail}
           </span>

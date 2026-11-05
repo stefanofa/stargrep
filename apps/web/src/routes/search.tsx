@@ -7,7 +7,6 @@ import {
   RephraseChips,
   RepoPanel,
   type ResultGroup,
-  ResultPlaceholder,
   Results,
   ScopeSwitch,
   SearchTile,
@@ -27,7 +26,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { AccountMenu } from "../components/account-menu.tsx";
-import { LibraryView } from "../components/library-view.tsx";
+import { LibraryPlaceholder, LibraryView } from "../components/library-view.tsx";
 import { Page } from "../components/page.tsx";
 import { SignInButton } from "../components/sign-in-button.tsx";
 import { Wordmark } from "../components/wordmark.tsx";
@@ -112,6 +111,8 @@ function SearchPage() {
           <ScopeSwitch scopes={scopes} value="stars" className="max-sm:hidden" />
           {state.status === "ready" ? (
             <AccountMenu login={state.viewer.login} avatarUrl={state.viewer.avatarUrl} />
+          ) : state.status === "loading" ? (
+            <span aria-hidden className="size-11 shrink-0 rounded-full bg-muted" />
           ) : (
             <SignInButton />
           )}
@@ -160,34 +161,67 @@ function Notice({
 }
 
 const dock =
-  "max-sm:fixed max-sm:inset-x-3 max-sm:bottom-[max(16px,env(safe-area-inset-bottom))] max-sm:z-30 max-sm:[&_[data-slot=tile]]:shadow-[0_10px_32px_#1e1b2e1f,0_1px_3px_#1e1b2e0f]";
+  "max-sm:fixed max-sm:inset-x-3 max-sm:bottom-[max(16px,env(safe-area-inset-bottom))] max-sm:z-30 max-sm:[&_[data-slot=tile]]:shadow-dock";
 
-function Placeholders({ count }: { count: number }) {
-  return (
-    <ol aria-busy className="view-tiles grid grid-cols-1 gap-gap sm:grid-cols-2 lg:grid-cols-4">
-      {Array.from({ length: count }, (_, index) => `pending-${index}`).map((key) => (
-        <li key={key}>
-          <ResultPlaceholder />
-        </li>
-      ))}
-    </ol>
+const searchSorts: ReadonlyArray<Sort> = ["best", "starred", "stars", "pushed"];
+const librarySorts: ReadonlyArray<Sort> = ["starred", "stars", "pushed"];
+
+function useControls(searching: boolean) {
+  const params = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const [storedView, storeView] = useStoredView();
+  const view = params.view ?? storedView;
+  const sort = params.sort ?? (searching ? "best" : "starred");
+  const setView = (next: View) => {
+    storeView(next);
+    navigate({ search: (previous) => ({ ...previous, view: next }), replace: true });
+  };
+  const setSort = (next: Sort) => navigate({ search: (previous) => ({ ...previous, sort: next }), replace: true });
+  const controls = (
+    <>
+      <SortMenu value={sort} onValueChange={setSort} options={searching ? searchSorts : librarySorts} />
+      <ViewToggle value={view} onValueChange={setView} />
+    </>
+  );
+  return { view, sort, controls };
+}
+
+function Waiting({ view, searching }: { view: View; searching: boolean }) {
+  return searching ? (
+    <Results view={view} groups={[{ key: "all", results: [], pending: 4 }]} />
+  ) : (
+    <LibraryPlaceholder view={view} />
   );
 }
 
+const loadingStatus = <StatusLine icon="busy" label="loading your stars" />;
+
 function Loading() {
+  const params = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const searching = keywordTerms(params.q ?? "").length > 0;
+  const { view, controls } = useControls(searching);
   return (
     <>
       <SearchTile
+        query={params.q ?? ""}
+        onQueryChange={(next) =>
+          navigate({ search: (previous) => ({ ...previous, q: next === "" ? undefined : next }), replace: true })
+        }
         label="Search your stars"
+        placeholder={idlePlaceholder}
         className={dock}
-        status={<StatusLine icon="busy" label="loading your stars" />}
+        status={loadingStatus}
+        controls={controls}
       />
-      <div className="max-sm:pb-44">
-        <Placeholders count={8} />
+      <div className="flex flex-col gap-gap max-sm:pb-44">
+        <Waiting view={view} searching={searching} />
       </div>
     </>
   );
 }
+
+const idlePlaceholder = "the rust tui library I starred last year";
 
 type Text = Parameters<typeof ilike>[0];
 
@@ -242,8 +276,6 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
   const [at] = useState(now);
   const params = Route.useSearch();
   const navigate = Route.useNavigate();
-  const [storedView, storeView] = useStoredView();
-  const view = params.view ?? storedView;
   const [query, setQuery] = useState(params.q ?? "");
   const [opener, setOpener] = useState<HTMLElement | null>(null);
   const [rerun, setRerun] = useState(0);
@@ -259,12 +291,17 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
   const semantic = useSemanticSearch(viewer.login, query, rerun);
   const { status: sync, retry } = useSync(viewer.login, reload);
 
-  const enrichment = sync?.enrichment ?? null;
+  const arriving = useMemo(
+    () => entries.filter((entry) => entry.stars === null && entry.pushedAt === null).length,
+    [entries],
+  );
   const stage = stageOf({
-    importing: sync?.state === "queued",
+    syncing: sync?.state === "queued",
+    firstSync: sync?.state === "queued" && sync.syncedAt === null,
     imported: entries.length,
     starred: viewer.starredCount,
-    enrichment,
+    enrichment: sync?.enrichment ?? null,
+    arriving,
   });
   const timeLeft = useTimeLeft(
     stage.name === "importing" ? stage.done : stage.name === "reading" ? stage.settled : 0,
@@ -279,7 +316,7 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
   }, [stage.name]);
 
   const searching = terms.length > 0 || semantic.pending || semantic.results.length > 0;
-  const sort = params.sort ?? (searching ? "best" : "starred");
+  const { view, sort, controls } = useControls(searching);
   const order = sort === "best" ? undefined : orders[sort];
   const merged = useMemo(
     () => mergeResults({ matched, terms, hits: semantic.results, find: (id) => library.get(id), at, order }),
@@ -306,11 +343,6 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
     setQuery(next);
     navigate({ search: (previous) => ({ ...previous, q: next === "" ? undefined : next }), replace: true });
   };
-  const setView = (next: View) => {
-    storeView(next);
-    navigate({ search: (previous) => ({ ...previous, view: next }), replace: true });
-  };
-  const setSort = (next: Sort) => navigate({ search: (previous) => ({ ...previous, sort: next }), replace: true });
   const open: OpenResult = (result, link) => {
     setOpener(link);
     navigate({ search: (previous) => ({ ...previous, repo: `${result.owner}/${result.name}` }) });
@@ -339,35 +371,28 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
         query={query}
         onQueryChange={search}
         label="Search your stars"
-        placeholder={
-          stage.name === "importing" ? "search what has arrived" : "the rust tui library I starred last year"
-        }
+        placeholder={stage.name === "importing" ? "search what has arrived" : idlePlaceholder}
         className={dock}
-        progress={state.rail}
+        progress={isReady ? state.rail : undefined}
         status={
-          <StatusLine
-            icon={state.status.icon}
-            label={state.status.label}
-            detail={state.status.detail}
-            action={
-              state.status.retry && (
-                <Button variant="bare" size="default" onClick={retry}>
-                  try again
-                </Button>
-              )
-            }
-          />
-        }
-        controls={
-          <>
-            <SortMenu
-              value={sort}
-              onValueChange={setSort}
-              options={searching ? ["best", "starred", "stars", "pushed"] : ["starred", "stars", "pushed"]}
+          !isReady ? (
+            loadingStatus
+          ) : (
+            <StatusLine
+              icon={state.status.icon}
+              label={state.status.label}
+              detail={state.status.detail}
+              action={
+                state.status.retry && (
+                  <Button variant="bare" size="default" onClick={retry}>
+                    try again
+                  </Button>
+                )
+              }
             />
-            <ViewToggle value={view} onValueChange={setView} />
-          </>
+          )
         }
+        controls={controls}
       />
       <div className="flex flex-col gap-gap max-sm:pb-44">
         {isLoadingError ? (
@@ -382,7 +407,7 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
             }
           />
         ) : !isReady ? (
-          <Placeholders count={8} />
+          <Waiting view={view} searching={terms.length > 0} />
         ) : state.body === "library" ? (
           <LibraryView
             entries={entries}
