@@ -124,6 +124,14 @@ const linkedAccounts = (database: Hyperdrive, providerId: string) =>
     ),
   );
 
+const execute = (database: Hyperdrive, text: string) =>
+  Effect.runPromise(
+    acquirePool(database.connectionString).pipe(
+      Effect.flatMap((pool) => Effect.promise(() => pool.query(text))),
+      Effect.scoped,
+    ),
+  );
+
 const encoder = new TextEncoder();
 
 // Better Auth derives each proxy key with HKDF-SHA256 over the proxy secret, as in better-auth/dist/crypto/purpose.mjs.
@@ -161,6 +169,9 @@ const forgedCompletion = (profile: string) =>
 
 const json = async (response: Response) => [response.status, await response.json()] as const;
 
+const syncStatus = async (response: Response) =>
+  (await response.json()) as { readonly state: string; readonly requestedAt: string; readonly syncedAt: string };
+
 describe("direct sign-in", () => {
   it("signs in with GitHub, imports the account, and queues its sync", async () => {
     const authorize = await startSignIn(local);
@@ -188,6 +199,28 @@ describe("direct sign-in", () => {
     ]);
     expect(await json(await local.send("/api/library"))).toEqual([200, { repos: [] }]);
     expect((await githubSaw()).viewerReads).toBe(0);
+  });
+
+  it("queues a sync when the owner opens the library a minute after the last one, and still makes anyone wait", async () => {
+    await visit(local, githubReturn(await startSignIn(local), { code: ada.code }));
+    await githubSaw();
+    await execute(
+      databases.AUTH_LOCAL_DATABASE,
+      `update github_accounts set stars_synced_at = now() - interval '2 minutes',
+         stars_full_synced_at = now() - interval '2 minutes' where login = 'ada';
+       update sync_requests set requested_at = now() - interval '3 minutes' where login = 'ada'`,
+    );
+    const before = await syncStatus(await local.send("/api/sync/ada"));
+    expect(before).toMatchObject({ state: "done" });
+
+    expect((await local.send("/api/viewer")).status).toBe(200);
+    const opened = await syncStatus(await local.send("/api/sync/ada"));
+    expect(opened).toMatchObject({ state: "queued", syncedAt: before.syncedAt });
+    expect(Date.parse(opened.requestedAt)).toBeGreaterThan(Date.parse(before.syncedAt));
+
+    expect((await local.send("/api/viewer")).status).toBe(200);
+    const triggered = await syncStatus(await local.send("/api/sync/ada", { method: "POST" }));
+    expect(triggered).toMatchObject({ state: "queued", requestedAt: opened.requestedAt });
   });
 
   it("sends a denied consent back to the landing page with the error", async () => {

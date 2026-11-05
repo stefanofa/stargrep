@@ -1,7 +1,7 @@
-import { NotSignedIn, type Viewer, Viewers, ViewerUnavailable } from "@stargrep/api/viewers";
+import { NotSignedIn, requestOwnerSync, type Viewer, Viewers, ViewerUnavailable } from "@stargrep/api/viewers";
 import * as Auth from "@stargrep/auth/auth";
 import type { AuthConfig } from "@stargrep/auth/config";
-import { SyncRequests } from "@stargrep/core/stars";
+import type { SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import type { UserId } from "@stargrep/db/auth-schema";
 import * as GitHubViewer from "@stargrep/github/viewer";
@@ -33,9 +33,7 @@ export const importViewer = Effect.fn("Viewers.import")(
     const { account: facts, starredCount } = GitHubViewer.toViewer(read.data.viewer);
     const db = yield* Db.Db;
     yield* db.accounts.claim({ facts, userId, starredCount });
-    yield* SyncRequests.SyncRequests.use((requests) => requests.request(facts.login)).pipe(
-      Effect.catch((error) => Effect.logWarning("Sync after sign-in was not queued", { failure: error._tag })),
-    );
+    yield* requestOwnerSync(facts.login, "sign-in");
     return yield* db.accounts.require(facts.id).pipe(Effect.catchTags({ AccountNotFound: Effect.die }));
   },
   Effect.catchTags({
