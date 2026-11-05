@@ -47,7 +47,7 @@ const stage = (origin: string, database: Hyperdrive, github: GitHubSignIn) => {
     }
     return response;
   };
-  return { origin, send, github };
+  return { origin, send, github, cookies };
 };
 
 type Stage = ReturnType<typeof stage>;
@@ -208,6 +208,27 @@ describe("direct sign-in", () => {
       expect.objectContaining({ code: "UNAUTHORIZED" }),
     ]);
     await githubSaw();
+  });
+
+  it("refuses a GitHub link from a signed-out session that the cookie cache still holds", async () => {
+    const browser = stage(local.origin, databases.AUTH_LOCAL_DATABASE, local.github);
+    await visit(browser, githubReturn(await startSignIn(browser), { code: ada.code }));
+    await githubSaw();
+    const linkGitHub = () =>
+      browser.send("/auth/link-social", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: "github", callbackURL: "/search" }),
+      });
+    expect(await json(await linkGitHub())).toEqual([
+      200,
+      expect.objectContaining({ url: expect.stringMatching(/^https:\/\/github\.com\/login\/oauth\/authorize\?/) }),
+    ]);
+
+    const copied = new Map(browser.cookies);
+    expect((await browser.send("/auth/sign-out", { method: "POST" })).status).toBe(200);
+    for (const [name, value] of copied) browser.cookies.set(name, value);
+    expect(await json(await linkGitHub())).toEqual([401, expect.objectContaining({ code: "UNAUTHORIZED" })]);
   });
 });
 

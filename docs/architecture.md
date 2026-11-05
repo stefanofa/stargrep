@@ -209,7 +209,7 @@ Deployed code uses the layers from `@stargrep/ai/gateway`. `layer` serves both p
 
 ## Sign-in
 
-People sign in with GitHub through a GitHub App, whose manifest is `.github/app-manifest.json`. `packages/auth` configures Better Auth on `pg` and `drizzle-orm/node-postgres`, the same driver as `Db`, with its own pool for each request that connects only when a query runs. Better Auth serves `/auth/*`, because `/api/*` is the REST API. The session cookie carries a five-minute cache of the session, so most API calls read no session row. Better Auth stores the user's GitHub token encrypted.
+People sign in with GitHub through a GitHub App, whose manifest is `.github/app-manifest.json`. `packages/auth` configures Better Auth on `pg` and `drizzle-orm/node-postgres`, the same driver as `Db`, with its own pool for each request that connects only when a query runs. Better Auth serves `/auth/*`, because `/api/*` is the REST API. The session cookie carries a five-minute cache of the session, so most API calls read no session row. Linking a GitHub account reads the session row, so a cookie copied before sign-out cannot start a link. Better Auth stores the user's GitHub token encrypted.
 
 A new session imports the GitHub account with the user's own token: `GET /user` for the login and profile, and one GraphQL call for the number of repos the account starred. It claims the `github_accounts` row for the user and queues a sync. If that import fails, the first `viewer` or `library` call runs it again. The sync page compares the library's size with the starred count to show progress.
 
