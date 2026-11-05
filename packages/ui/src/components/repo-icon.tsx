@@ -30,7 +30,7 @@ export function Monogram({ letters }: { letters: string }) {
   return (
     <span
       aria-hidden
-      skullet-block=""
+      data-slot="repo-icon"
       className={cn(
         slot,
         slotSize,
@@ -52,7 +52,6 @@ export function RepoIcon({ visual }: { visual: RepoVisual }) {
   return (
     <span
       aria-hidden
-      skullet-block=""
       data-slot="repo-icon"
       className={cn(slot, slotSize, "border-[1.5px] border-border", small === undefined ? plates[plate] : "bg-muted")}
     >

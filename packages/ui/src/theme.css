@@ -153,10 +153,10 @@
   }
 }
 
-@supports (corner-shape: squircle) {
-  [skullet-rect] {
-    corner-shape: squircle;
-  }
+/* skullet paints a placeholder's icon slot as a round rectangle from its computed radius and ignores corner-shape,
+   so a loading slot keeps the round radius that cuts as deep as the squircle. */
+[skullet-reveal] [data-slot="repo-icon"] {
+  --corner-scale: 1;
 }
 
 @utility butter {
