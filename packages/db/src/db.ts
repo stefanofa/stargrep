@@ -39,7 +39,6 @@ export type {
 export { MetricFamily, MetricVariant, noFilters } from "./queries/search.ts";
 export type {
   EnrichmentProgress,
-  EnrichmentQuery,
   LibraryEntry,
   SnapshotChanges,
   Star,
@@ -50,6 +49,7 @@ export type {
 } from "./queries/stars.ts";
 export type { SyncClaim, SyncRequest } from "./queries/sync-requests.ts";
 export type { UsageCall, UsageCounts, UsageDay } from "./queries/usage.ts";
+export { enrichFailureCap } from "./schema.ts";
 
 export class Db extends Context.Service<
   Db,

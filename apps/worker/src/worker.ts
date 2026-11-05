@@ -1,5 +1,4 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
-import { EnrichRetry } from "@stargrep/core/repos";
 import * as Tracing from "@stargrep/telemetry/cloudflare";
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
@@ -9,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import { budgetShareName, stageBudgetShare } from "./budget-share.ts";
+import * as Crons from "./crons.ts";
 import { Database, DatabaseMigrations } from "./database.ts";
 import { prodWorkerHosting } from "./domain.ts";
 import { tokenGate } from "./github-gate.ts";
@@ -48,13 +48,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
       adopted: yield* Ref.make(false),
     });
     yield* Queues.consumeAll(runtime);
-    yield* Cloudflare.Workers.cron("*/10 * * * *", () =>
-      EnrichRetry.sweep().pipe(
-        Effect.provide(runtime),
-        Effect.flatMap(({ enqueued }) => Effect.logInfo("Enrich sweep ran", { enqueued })),
-        Effect.catchCause((cause) => Effect.logError("Enrich sweep failed", cause)),
-      ),
-    );
+    yield* Crons.scheduleAll(runtime);
     return {
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest;

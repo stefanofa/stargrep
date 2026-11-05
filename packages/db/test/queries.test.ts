@@ -139,38 +139,25 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         repoId(2515),
         repoId(2516),
       ];
-      yield* db.accounts.upsert(account(reader));
+      yield* db.accounts.upsert(account(reader, { login: login("Reader") }));
       yield* db.accounts.upsert(account(other));
       yield* db.repos.upsertRefs([shared, own, retrying, failed, unstarred, waiting].map((id) => ref(id)));
       yield* db.stars.upsert({ accountId: other, stars: [starred(shared, "2025-01-01T00:00:00Z")] });
       yield* embedSummarized(db, shared, embedding({ 0: 1 }));
-      const before = yield* db.stars.enrichment({ accountId: reader, maxFailures: 3 });
-      expect(before).toEqual({ total: 0, read: 0, failed: 0 });
+      expect(yield* db.stars.enrichment(login("reader"))).toEqual({ total: 0, read: 0, failed: 0 });
 
       const kept = [shared, own, retrying, failed, waiting].map((id) => starred(id, "2025-02-01T00:00:00Z"));
       yield* db.stars.upsert({ accountId: reader, stars: [...kept, starred(unstarred, "2025-02-01T00:00:00Z")] });
       yield* db.stars.applySnapshot({ accountId: reader, stars: kept, at: at("2026-04-01T00:00:00Z") });
-      expect(yield* db.stars.enrichment({ accountId: reader, maxFailures: 3 })).toEqual({
-        total: 5,
-        read: 1,
-        failed: 0,
-      });
+      expect(yield* db.stars.enrichment(login("reader"))).toEqual({ total: 5, read: 1, failed: 0 });
 
       yield* embedSummarized(db, own, embedding({ 1: 1 }));
-      const failedAt = at("2026-05-01T00:00:00Z");
-      yield* db.repos.recordEnrichFailures({ ids: [retrying, failed, unstarred], at: failedAt });
-      yield* db.repos.recordEnrichFailures({ ids: [failed, unstarred], at: failedAt });
-      yield* db.repos.recordEnrichFailures({ ids: [failed, unstarred, own], at: failedAt });
-      expect(yield* db.stars.enrichment({ accountId: reader, maxFailures: 3 })).toEqual({
-        total: 5,
-        read: 2,
-        failed: 1,
-      });
-      expect(yield* db.stars.enrichment({ accountId: reader, maxFailures: 1 })).toEqual({
-        total: 5,
-        read: 2,
-        failed: 2,
-      });
+      const fail = (ids: ReadonlyArray<RepoId>) =>
+        db.repos.recordEnrichFailures({ ids, at: at("2026-05-01T00:00:00Z"), retryDelays: [] });
+      yield* fail([retrying, failed, unstarred]);
+      yield* fail([failed, unstarred]);
+      yield* fail([failed, unstarred, own]);
+      expect(yield* db.stars.enrichment(login("READER"))).toEqual({ total: 5, read: 2, failed: 1 });
 
       const read = new Map((yield* db.stars.library(reader)).map((entry) => [entry.repo.id, entry.read]));
       expect(Object.fromEntries(read)).toEqual({
@@ -180,75 +167,90 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         [failed]: false,
         [waiting]: false,
       });
-      expect(yield* db.stars.enrichment({ accountId: accountId(999_997), maxFailures: 3 })).toEqual({
-        total: 0,
-        read: 0,
-        failed: 0,
-      });
+      expect(yield* db.stars.enrichment(login("nobody-here"))).toEqual({ total: 0, read: 0, failed: 0 });
     }),
   );
 
-  test.effect("counts failures only while a repo is pending, and clears them when its embedding lands", () =>
+  test.effect("counts a failure once per retry window, only while the repo is pending, and clears it once read", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
       const database = yield* TestDatabase.TestDatabase;
       const [pending, read] = [repoId(2521), repoId(2522)];
       yield* db.repos.upsertRefs([ref(pending), ref(read)]);
       yield* embedSummarized(db, read, embedding({ 0: 1 }));
-      const failures = () =>
+      const retryDelays = [Duration.minutes(10), Duration.hours(1)];
+      const fail = (time: string) => db.repos.recordEnrichFailures({ ids: [pending, read], at: at(time), retryDelays });
+      const stored = () =>
         database.query(
-          "select id::int, enrich_failures, enrich_failed_at is not null as stamped from repos where id = any($1) order by id",
+          "select id::int, enrich_failures, to_char(enrich_retry_at at time zone 'utc', 'HH24:MI:SS') as retry_at from repos where id = any($1) order by id",
           [[pending, read]],
         );
-      yield* db.repos.recordEnrichFailures({ ids: [pending, read], at: at("2026-05-01T00:00:00Z") });
-      yield* db.repos.recordEnrichFailures({ ids: [pending], at: at("2026-05-02T00:00:00Z") });
-      yield* db.repos.recordEnrichFailures({ ids: [], at: at("2026-05-03T00:00:00Z") });
-      expect(yield* failures()).toEqual([
-        { id: pending, enrich_failures: 2, stamped: true },
-        { id: read, enrich_failures: 0, stamped: false },
+      const states: Array<unknown> = [];
+      for (const time of [
+        "2026-05-01T12:00:00Z",
+        "2026-05-01T12:00:03Z",
+        "2026-05-01T12:10:00Z",
+        "2026-05-01T12:30:00Z",
+        "2026-05-01T13:10:00Z",
+        "2026-05-01T13:10:01Z",
+      ]) {
+        yield* fail(time);
+        states.push((yield* stored())[0]);
+      }
+      expect(states).toEqual([
+        { id: pending, enrich_failures: 1, retry_at: "12:10:00" },
+        { id: pending, enrich_failures: 1, retry_at: "12:10:00" },
+        { id: pending, enrich_failures: 2, retry_at: "13:10:00" },
+        { id: pending, enrich_failures: 2, retry_at: "13:10:00" },
+        { id: pending, enrich_failures: 3, retry_at: null },
+        { id: pending, enrich_failures: 4, retry_at: null },
       ]);
+      expect((yield* stored())[1]).toEqual({ id: read, enrich_failures: 0, retry_at: null });
+      yield* db.repos.recordEnrichFailures({ ids: [], at: at("2026-05-02T00:00:00Z"), retryDelays });
 
       yield* embedSummarized(db, pending, embedding({ 1: 1 }));
-      expect(yield* failures()).toEqual([
-        { id: pending, enrich_failures: 0, stamped: false },
-        { id: read, enrich_failures: 0, stamped: false },
-      ]);
+      expect((yield* stored())[0]).toEqual({ id: pending, enrich_failures: 0, retry_at: null });
     }),
   );
 
-  test.effect("sweeps pending repos under the cap whose backoff passed, oldest failure first", () =>
-    Effect.gen(function* () {
-      const db = yield* Db.Db;
-      const database = yield* TestDatabase.TestDatabase;
-      yield* database.query("truncate repos cascade");
-      const [fresh, once, onceRecent, twice, capped, read, freshLater] = [
-        repoId(2531),
-        repoId(2532),
-        repoId(2533),
-        repoId(2534),
-        repoId(2535),
-        repoId(2536),
-        repoId(2537),
-      ];
-      yield* db.repos.upsertRefs([fresh, once, onceRecent, twice, capped, read, freshLater].map((id) => ref(id)));
-      yield* embedSummarized(db, read, embedding({ 0: 1 }));
-      const fail = (ids: ReadonlyArray<RepoId>, time: string) => db.repos.recordEnrichFailures({ ids, at: at(time) });
-      yield* fail([twice, capped], "2026-05-01T00:00:00Z");
-      yield* fail([twice, capped], "2026-05-01T01:00:00Z");
-      yield* fail([capped], "2026-05-01T02:00:00Z");
-      yield* fail([once], "2026-05-01T03:00:00Z");
-      yield* fail([onceRecent], "2026-05-01T05:00:00Z");
+  test.effect(
+    "sweeps pending repos under the cap whose retry time passed, earliest first, then never-failed ones",
+    () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const database = yield* TestDatabase.TestDatabase;
+        yield* database.query("truncate repos cascade");
+        const [fresh, due, dueEarlier, waiting, capped, read, freshLater] = [
+          repoId(2531),
+          repoId(2532),
+          repoId(2533),
+          repoId(2534),
+          repoId(2535),
+          repoId(2536),
+          repoId(2537),
+        ];
+        yield* db.repos.upsertRefs([fresh, due, dueEarlier, waiting, capped, read, freshLater].map((id) => ref(id)));
+        yield* embedSummarized(db, read, embedding({ 0: 1 }));
+        const fail = (ids: ReadonlyArray<RepoId>, time: string) =>
+          db.repos.recordEnrichFailures({ ids, at: at(time), retryDelays: [Duration.hours(1), Duration.hours(1)] });
+        yield* fail([capped], "2026-05-01T00:00:00Z");
+        yield* fail([capped], "2026-05-01T01:00:00Z");
+        yield* fail([capped], "2026-05-01T02:00:00Z");
+        yield* fail([dueEarlier], "2026-05-01T02:30:00Z");
+        yield* fail([due], "2026-05-01T02:45:00Z");
+        yield* fail([waiting], "2026-05-01T03:30:00Z");
 
-      const cutoffs = [at("2026-05-01T04:00:00Z"), at("2026-05-01T01:00:00Z")];
-      expect(yield* db.repos.sweepable({ cutoffs, limit: 10 })).toEqual([twice, once, fresh, freshLater]);
-      expect(yield* db.repos.sweepable({ cutoffs, limit: 2 })).toEqual([twice, once]);
-      expect(yield* db.repos.sweepable({ cutoffs: [at("2026-05-01T04:00:00Z")], limit: 10 })).toEqual([
-        once,
-        fresh,
-        freshLater,
-      ]);
-      expect(yield* db.repos.sweepable({ cutoffs: [], limit: 10 })).toEqual([fresh, freshLater]);
-    }),
+        const now = at("2026-05-01T04:00:00Z");
+        expect(yield* db.repos.sweepable({ now, limit: 10 })).toEqual([dueEarlier, due, fresh, freshLater]);
+        expect(yield* db.repos.sweepable({ now, limit: 2 })).toEqual([dueEarlier, due]);
+        expect(yield* db.repos.sweepable({ now: at("2026-05-01T05:00:00Z"), limit: 10 })).toEqual([
+          dueEarlier,
+          due,
+          waiting,
+          fresh,
+          freshLater,
+        ]);
+      }),
   );
 
   test.effect("finds an account by login in any case", () =>

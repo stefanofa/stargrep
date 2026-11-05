@@ -37,7 +37,11 @@ const reset = (ids: ReadonlyArray<number>) =>
 const fail = (ids: ReadonlyArray<number>) =>
   Effect.gen(function* () {
     const db = yield* Db.Db;
-    yield* db.repos.recordEnrichFailures({ ids: ids.map((n) => repoId(n)), at: yield* DateTime.now });
+    yield* db.repos.recordEnrichFailures({
+      ids: ids.map((n) => repoId(n)),
+      at: yield* DateTime.now,
+      retryDelays: EnrichRetry.retryDelays,
+    });
   });
 
 const sweep = Effect.gen(function* () {
@@ -87,8 +91,11 @@ it.layer(Layer.merge(TestDatabase.layerMemory({ embeddingModel }), queue.layer),
         yield* tick("30 days after the third failure");
 
         expect(tries).toEqual(["10 minutes after the first failure", "an hour after the second failure"]);
-        expect(EnrichRetry.maxFailures).toBe(3);
       }),
+    );
+
+    it.effect("has one delay for each failure under the cap", () =>
+      Effect.sync(() => expect(EnrichRetry.retryDelays.length + 1).toBe(Db.enrichFailureCap)),
     );
 
     it.effect("sends at most one batch per run, with retries ahead of repos that never failed", () =>

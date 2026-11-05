@@ -2,7 +2,7 @@
   "type": "diff",
   "version": "9",
   "dialect": "postgres",
-  "id": "0b33a837-4ca8-439d-8bc4-cbd624db376a",
+  "id": "487a5e43-f8a2-4501-be28-46feb41d1480",
   "prevIds": [
     "037f3dc1-3076-4aca-88b4-a5cae3fe3549"
   ],
@@ -31,12 +31,12 @@
         "column",
         "public",
         "repos",
-        "enrich_failed_at"
+        "enrich_retry_at"
       ],
       "writes": [
-        "s|col|public.repos.enrich_failed_at",
-        "n|col|public.repos.enrich_failed_at",
-        "e|col|public.repos.enrich_failed_at"
+        "s|col|public.repos.enrich_retry_at",
+        "n|col|public.repos.enrich_retry_at",
+        "e|col|public.repos.enrich_retry_at"
       ],
       "reads": [
         "n|tbl|public.repos",
@@ -49,18 +49,18 @@
         "index",
         "public",
         "repos",
-        "repos_pending_enrichment_idx"
+        "repos_retryable_enrichment_idx"
       ],
       "writes": [
-        "s|idx|public.repos_pending_enrichment_idx",
-        "n|idx|public.repos_pending_enrichment_idx",
-        "e|idx|public.repos_pending_enrichment_idx",
-        "n|rel|public.repos_pending_enrichment_idx"
+        "s|idx|public.repos_retryable_enrichment_idx",
+        "n|idx|public.repos_retryable_enrichment_idx",
+        "e|idx|public.repos_retryable_enrichment_idx",
+        "n|rel|public.repos_retryable_enrichment_idx"
       ],
       "reads": [
         "n|tbl|public.repos",
         "n|sch|public",
-        "n|col|public.repos.enrich_failed_at",
+        "n|col|public.repos.enrich_retry_at",
         "n|col|public.repos.id"
       ]
     }
@@ -87,7 +87,7 @@
       "row": {
         "schema": "public",
         "table": "repos",
-        "name": "enrich_failed_at",
+        "name": "enrich_retry_at",
         "type": "timestamp with time zone",
         "typeSchema": null,
         "notNull": false,
@@ -103,11 +103,11 @@
       "row": {
         "schema": "public",
         "table": "repos",
-        "name": "repos_pending_enrichment_idx",
+        "name": "repos_retryable_enrichment_idx",
         "nameExplicit": true,
         "columns": [
           {
-            "value": "enrich_failed_at",
+            "value": "enrich_retry_at",
             "isExpression": false,
             "asc": true,
             "nullsFirst": false,
@@ -122,7 +122,7 @@
           }
         ],
         "isUnique": false,
-        "where": "\"summary\" is null or \"summary_readme_oid\" is distinct from \"readme_oid\" or \"embedding_model\" is null",
+        "where": "(\"summary\" is null or \"summary_readme_oid\" is distinct from \"readme_oid\" or \"embedding_model\" is null) and \"enrich_failures\" < 3",
         "with": "",
         "method": "btree",
         "concurrently": false,

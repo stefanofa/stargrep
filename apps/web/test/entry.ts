@@ -80,7 +80,10 @@ const db = {
   repos: {
     require: (id: RepoId) => (id === repo.id ? Effect.succeed(repo) : Effect.fail(new RepoNotFound({ repoId: id }))),
   },
-  stars: { enrichment: () => Effect.succeed({ total: 1, read: 1, failed: 0 }) },
+  stars: {
+    enrichment: (login: Login) =>
+      Effect.succeed(login === ada.login ? { total: 1, read: 1, failed: 0 } : { total: 0, read: 0, failed: 0 }),
+  },
   syncRequests,
 } as unknown as Db.Db["Service"];
 

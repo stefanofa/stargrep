@@ -1,15 +1,13 @@
 import { expect } from "bun:test";
 import * as Db from "@stargrep/db";
-import { Embedding, type EmbeddingModelId } from "@stargrep/db/embedding";
+import type { EmbeddingModelId } from "@stargrep/db/embedding";
 import * as TestDatabase from "@stargrep/db/test-database";
-import { type GitHubAccountId, type Login, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
+import type { GitHubAccountId, Login } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import * as EnrichRetry from "../repos/enrich-retry.ts";
 import * as SyncQueue from "./sync-queue.ts";
 import * as SyncRequests from "./sync-requests.ts";
 
@@ -21,18 +19,6 @@ const layerWith = (sender: Layer.Layer<SyncQueue.SyncQueue>) =>
   SyncRequests.layer.pipe(Layer.provideMerge(TestDatabase.layerMemory({ embeddingModel })), Layer.provideMerge(sender));
 
 const at = (millis: number) => DateTime.makeUnsafe(millis);
-const unread = { enrichment: { total: 0, read: 0, failed: 0 } };
-const repoIds = [9101, 9102, 9103].map((n) => Schema.decodeSync(RepoId)(n)) as [RepoId, RepoId, RepoId];
-const repoRefs = repoIds.map((id) => ({
-  id,
-  nodeId: RepoNodeId.make(`R_${id}`),
-  owner: "owner" as Login,
-  name: Schema.decodeSync(RepoName)(`repo-${id}`),
-}));
-const flatEmbedding = Schema.decodeSync(Embedding)({
-  model: embeddingModel,
-  vector: Array.from({ length: 1024 }, () => 0.5),
-});
 
 const reset = Effect.gen(function* () {
   queue.sent.length = 0;
@@ -66,44 +52,14 @@ it.layer(layerWith(queue.layer), { timeout: 30_000 })("SyncRequests", (it) => {
   it.effect("queues an unknown login once and reports it done after a later sync", () =>
     Effect.gen(function* () {
       yield* reset;
-      expect(yield* status("octocat")).toEqual({ ...unread, state: "unknown" });
-      expect(yield* request("octocat")).toEqual({ ...unread, state: "queued", requestedAt: at(start), syncedAt: null });
+      expect(yield* status("octocat")).toEqual({ state: "unknown" });
+      expect(yield* request("octocat")).toEqual({ state: "queued", requestedAt: at(start), syncedAt: null });
       yield* TestClock.adjust("1 minute");
-      expect(yield* request("OctoCat")).toEqual({ ...unread, state: "queued", requestedAt: at(start), syncedAt: null });
+      expect(yield* request("OctoCat")).toEqual({ state: "queued", requestedAt: at(start), syncedAt: null });
       expect(queue.sent).toEqual([{ login: "octocat" as Login, mode: "incremental", requestedAt: at(start) }]);
 
       yield* synced("octocat", start + 30_000);
-      expect(yield* status("Octocat")).toEqual({ ...unread, state: "done", syncedAt: at(start + 30_000) });
-    }),
-  );
-
-  it.effect("reports how many of the account's stars are read and how many failed", () =>
-    Effect.gen(function* () {
-      yield* reset;
-      yield* synced("octocat", start - 60 * 60_000);
-      const db = yield* Db.Db;
-      const [read, failed, waiting] = repoIds;
-      const ids = [read, failed, waiting];
-      yield* db.repos.upsertRefs(repoRefs);
-      yield* db.stars.upsert({
-        accountId: 583231 as GitHubAccountId,
-        stars: ids.map((repoId) => ({ repoId, starredAt: at(start), observedAt: at(start), source: "api" as const })),
-      });
-      yield* db.repos.saveSummary({ id: read, readmeOid: null, summary: "s", keywords: [], kind: "app" });
-      yield* db.repos.saveEmbedding({
-        id: read,
-        summary: "s",
-        readmeOid: null,
-        embedding: flatEmbedding,
-      });
-      for (let attempt = 0; attempt < EnrichRetry.maxFailures; attempt++) {
-        yield* db.repos.recordEnrichFailures({ ids: [failed], at: at(start) });
-      }
-      yield* db.repos.recordEnrichFailures({ ids: [waiting], at: at(start) });
-
-      const enrichment = { total: 3, read: 1, failed: 1 };
-      expect(yield* status("octocat")).toEqual({ state: "done", syncedAt: at(start - 60 * 60_000), enrichment });
-      expect(yield* request("octocat")).toMatchObject({ state: "queued", enrichment });
+      expect(yield* status("Octocat")).toEqual({ state: "done", syncedAt: at(start + 30_000) });
     }),
   );
 
@@ -125,7 +81,7 @@ it.layer(layerWith(queue.layer), { timeout: 30_000 })("SyncRequests", (it) => {
       yield* request("octocat");
       yield* TestClock.adjust("11 minutes");
       const later = start + 11 * 60_000;
-      expect(yield* request("octocat")).toEqual({ ...unread, state: "queued", requestedAt: at(later), syncedAt: null });
+      expect(yield* request("octocat")).toEqual({ state: "queued", requestedAt: at(later), syncedAt: null });
       expect(queue.sent).toHaveLength(2);
     }),
   );
@@ -134,12 +90,11 @@ it.layer(layerWith(queue.layer), { timeout: 30_000 })("SyncRequests", (it) => {
     Effect.gen(function* () {
       yield* reset;
       yield* synced("octocat", start - 5 * 60_000);
-      expect(yield* request("octocat")).toEqual({ ...unread, state: "done", syncedAt: at(start - 5 * 60_000) });
+      expect(yield* request("octocat")).toEqual({ state: "done", syncedAt: at(start - 5 * 60_000) });
       expect(queue.sent).toEqual([]);
 
       yield* TestClock.adjust("6 minutes");
       expect(yield* request("octocat")).toEqual({
-        ...unread,
         state: "queued",
         requestedAt: at(start + 6 * 60_000),
         syncedAt: at(start - 5 * 60_000),
@@ -154,7 +109,7 @@ it.layer(layerWith(queue.layer), { timeout: 30_000 })("SyncRequests", (it) => {
       yield* request("no-such-login");
       yield* TestClock.adjust("1 minute");
       yield* markFailed("No-Such-Login", start);
-      const failed = { ...unread, state: "failed", requestedAt: at(start), syncedAt: null } as const;
+      const failed = { state: "failed", requestedAt: at(start), syncedAt: null } as const;
       expect(yield* status("no-such-login")).toEqual(failed);
       expect(yield* request("no-such-login")).toEqual(failed);
       expect(queue.sent).toHaveLength(1);
@@ -182,7 +137,7 @@ it.layer(layerWith(queue.layer), { timeout: 30_000 })("SyncRequests", (it) => {
       yield* reset;
       yield* request("octocat");
       yield* TestClock.adjust("25 hours");
-      expect(yield* status("octocat")).toEqual({ ...unread, state: "unknown" });
+      expect(yield* status("octocat")).toEqual({ state: "unknown" });
     }),
   );
 });
@@ -197,7 +152,7 @@ it.layer(layerWith(brokenQueue), { timeout: 30_000 })("SyncRequests with a faili
     Effect.gen(function* () {
       yield* reset;
       expect((yield* Effect.flip(request("octocat")))._tag).toBe("SyncQueueFailed");
-      expect(yield* status("octocat")).toEqual({ ...unread, state: "failed", requestedAt: at(start), syncedAt: null });
+      expect(yield* status("octocat")).toEqual({ state: "failed", requestedAt: at(start), syncedAt: null });
     }),
   );
 });

@@ -64,6 +64,21 @@ export const SearchOutput = Schema.Struct({
 
 export const SyncInput = Schema.Struct({ login: GitHubLogin });
 
+export const EnrichmentProgress = Schema.Struct({
+  total: Schema.Int.annotate({ description: "How many repos the login stars now." }),
+  read: Schema.Int.annotate({
+    description:
+      "How many of them Stargrep has summarized and embedded, so search by meaning can find them. Repos are shared, so this can start above zero.",
+  }),
+  failed: Schema.Int.annotate({
+    description:
+      "How many of them Stargrep gave up reading after repeated failures of their own, such as repos GitHub no longer serves.",
+  }),
+}).annotate({
+  description:
+    "How far reading the login's stars has got. Reading is finished when state is not queued and read plus failed equals total. Right after triggerSync the total is still 0, so poll while state is queued or read plus failed is less than total, and reload the library when read changes.",
+});
+
 export const SyncStatus = Schema.Struct({
   login: Schema.String,
   state: SyncRequests.SyncState.annotate({
@@ -72,19 +87,7 @@ export const SyncStatus = Schema.Struct({
   }),
   requestedAt: Schema.NullOr(Timestamp),
   syncedAt: Schema.NullOr(Timestamp),
-  enrichment: Schema.Struct({
-    total: Schema.Int.annotate({ description: "How many repos the login stars now." }),
-    read: Schema.Int.annotate({
-      description:
-        "How many of them Stargrep has summarized and embedded, so search by meaning can find them. Repos are shared, so this can start above zero.",
-    }),
-    failed: Schema.Int.annotate({
-      description: "How many of them Stargrep gave up reading, such as repos GitHub no longer serves.",
-    }),
-  }).annotate({
-    description:
-      "How far reading the login's stars has got. Reading is finished when read plus failed equals total. It goes on after state leaves queued, so poll this until then and reload the library when read changes.",
-  }),
+  enrichment: EnrichmentProgress,
 });
 
 export const RepoInput = Schema.Struct({ id: RepoId.annotate({ description: "The GitHub repo ID." }) });

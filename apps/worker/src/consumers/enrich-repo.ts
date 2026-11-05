@@ -1,6 +1,4 @@
 import { EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
-import * as Db from "@stargrep/db";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Settle from "./settle.ts";
@@ -28,14 +26,4 @@ export const pipeline = Settle.pipeline({
     return enriched.success.map(settlementOf);
   }),
   describe: (body) => ({ repoId: body.repoId }),
-  onDeadLetter: Effect.fn("EnrichRepoConsumer.markFailed")(function* (body) {
-    const db = yield* Db.Db;
-    yield* db.repos
-      .recordEnrichFailures({ ids: [body.repoId], at: yield* DateTime.now })
-      .pipe(
-        Effect.catchTag("DbQueryFailed", (error) =>
-          Effect.logWarning("Could not count a dead-lettered enrichment as failed", { reason: error.reason }),
-        ),
-      );
-  }),
 });

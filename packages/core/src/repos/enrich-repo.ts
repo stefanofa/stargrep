@@ -14,6 +14,7 @@ import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Result from "effect/Result";
@@ -41,6 +42,41 @@ export type Enrichment = Data.TaggedEnum<{
   Embedded: { readonly id: RepoId; readonly summary: Summary };
 }>;
 export const Enrichment = Data.taggedEnum<Enrichment>();
+
+// Whether an error is the repo's own, so it counts toward the cap. An error every repo would hit, such as a missing
+// key, an outage, or a rate limit, never counts, and the sweep or the queue tries the repo again.
+const ownError = (error: EnrichRepoError): boolean =>
+  Match.valueTags(error, {
+    NotFound: () => true,
+    GitHubRequestFailed: (failure) =>
+      failure.reason === "status" && failure.status !== null && failure.status < 500 && failure.status !== 403,
+    GitHubResponseInvalid: (failure) => failure.reason !== "unreadable-body",
+    // Each answer is a paid model call, so a repo whose answers never decode must reach the cap.
+    AiOutputInvalid: () => true,
+    RateLimited: () => false,
+    TokenBudgetExhausted: () => false,
+    Unauthorized: () => false,
+    GitHubTokenMissing: () => false,
+    BlobStoreFailed: () => false,
+    AiKeyMissing: () => false,
+    AiModelNotFound: () => false,
+    AiRequestFailed: () => false,
+    AiTimeout: () => false,
+    AiUnavailable: () => false,
+  });
+
+const repoFailed = (outcome: Enrichment): boolean =>
+  Enrichment.$match(outcome, {
+    Gone: () => true,
+    NoNodeId: () => true,
+    Failed: ({ error }) => ownError(error),
+    Unchanged: () => false,
+    NotFound: () => false,
+    Backoff: () => false,
+    Stale: () => false,
+    Summarized: () => false,
+    Embedded: () => false,
+  });
 
 export type EnrichRepoAbort = DbQueryFailed | DbRowInvalid | EmbeddingModelMismatch | GitHubError;
 
@@ -181,7 +217,7 @@ const make = Effect.gen(function* () {
     const nodeIds = located.flatMap((step) => (Result.isSuccess(step) ? [step.success.nodeId] : []));
     const facts = nodeIds.length === 0 ? [] : yield* github.repoFacts(nodeIds);
     const factsById = new Map<number, RepoFacts>(facts.map((entry) => [entry.id, entry]));
-    const steps = yield* Effect.forEach(
+    return yield* Effect.forEach(
       located,
       (step) =>
         Result.isFailure(step)
@@ -189,13 +225,6 @@ const make = Effect.gen(function* () {
           : planOne(step.success, factsById.get(step.success.id)),
       { concurrency: planConcurrency },
     );
-    const unreadable = steps.flatMap((step) =>
-      Result.isFailure(step) && (step.failure._tag === "Gone" || step.failure._tag === "NoNodeId")
-        ? [step.failure.id]
-        : [],
-    );
-    yield* db.repos.recordEnrichFailures({ ids: unreadable, at: yield* DateTime.now });
-    return steps;
   });
 
   const keepSummary = (job: Job, answer: Result.Result<Summarize.RepoSummary, AiError>) =>
@@ -277,8 +306,13 @@ const make = Effect.gen(function* () {
   ) {
     const planned = yield* plan(ids);
     const summarized = yield* summarizeAll(planned, summarizer);
-    const steps = yield* embedAll(summarized);
-    return steps.map(Result.merge);
+    const outcomes = (yield* embedAll(summarized)).map(Result.merge);
+    yield* db.repos.recordEnrichFailures({
+      ids: outcomes.flatMap((outcome) => (repoFailed(outcome) ? [outcome.id] : [])),
+      at: yield* DateTime.now,
+      retryDelays: EnrichRetry.retryDelays,
+    });
+    return outcomes;
   });
 
   const summarizeEach: Summarizer = (repos) =>

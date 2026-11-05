@@ -93,6 +93,7 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
       require: (id: RepoId) => (id === repo.id ? Effect.succeed(repo) : Effect.fail(new RepoNotFound({ repoId: id }))),
     },
     stars: {
+      enrichment: () => Effect.succeed(reading),
       library: (accountId: GitHubAccountId) =>
         Effect.succeed(accountId === ada.account.id ? [{ repo, starredAt, stars: 16_400, read: false }] : []),
     },
@@ -103,9 +104,9 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
       request: (login) =>
         Effect.sync(() => {
           fakes.sent?.push(login);
-          return { state: "queued", requestedAt: pushedAt, syncedAt: null, enrichment: reading };
+          return { state: "queued", requestedAt: pushedAt, syncedAt: null };
         }),
-      status: () => Effect.succeed({ state: "failed", requestedAt: pushedAt, syncedAt: null, enrichment: reading }),
+      status: () => Effect.succeed({ state: "failed", requestedAt: pushedAt, syncedAt: null }),
     });
   return Context.make(Db.Db, db).pipe(
     Context.add(
@@ -281,7 +282,7 @@ describe("sync", () => {
     const { api } = client({
       requests: SyncRequests.SyncRequests.of({
         request: () => Effect.fail(new SyncQueue.SyncQueueFailed({ cause: "down" })),
-        status: () => Effect.succeed({ state: "unknown", enrichment: { total: 0, read: 0, failed: 0 } }),
+        status: () => Effect.succeed({ state: "unknown" }),
       }),
     });
     expect((await failure(api.triggerSync({ login: "octocat" }))).code).toBe("SERVICE_UNAVAILABLE");
