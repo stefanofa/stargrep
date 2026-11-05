@@ -256,6 +256,27 @@ const searchCases = (test: {
     }),
   );
 
+  test.effect("answers gibberish with nothing after one planner call", () =>
+    Effect.gen(function* () {
+      const scope = yield* seed(916, orms(9020));
+      respond = () => ormPlan({}, { _tag: "relevance" }, "a software project matching the unclear term dfsfgdsrg");
+      const outcome = yield* search({ scope, query: "dfsfgdsrg", limit: 10 });
+      expect([outcome.planSource, outcome.results]).toEqual(["model", []]);
+      expect(calls.prompts).toHaveLength(1);
+    }),
+  );
+
+  test.effect("finds a misspelled repo name through the planner when the typed word matches nothing", () =>
+    Effect.gen(function* () {
+      const scope = yield* seed(917, orms(9030));
+      respond = () => ormPlan({}, { _tag: "relevance" }, "rust orm for sql databases");
+      const outcome = yield* search({ scope, query: "deisel", limit: 10 });
+      expect(outcome.planSource).toBe("model");
+      expect(names(outcome)[0]).toBe("diesel");
+      expect(names(outcome)).not.toContain("ratatui");
+    }),
+  );
+
   test.effect("refuses network and global scopes until they exist", () =>
     Effect.gen(function* () {
       for (const scope of [{ _tag: "network", login: Login.make("user-906") }, { _tag: "global" }] as const) {
