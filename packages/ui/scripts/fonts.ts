@@ -1,0 +1,119 @@
+// Writes src/fonts.css: the web font faces, and fallback faces on Arial whose metrics match each web font, so text
+// takes the same space before and after the swap. Needs Arial (macOS) or Liberation Sans (Linux): bun run fonts
+import { create, type Font } from "fontkitten";
+import decompress from "wawoff2/decompress.js";
+
+const latin =
+  "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD";
+const latinExt =
+  "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF";
+
+const faces = [
+  { family: "Fredoka", file: "fredoka-latin-600-normal.woff2", weight: "600", range: latin },
+  { family: "Fredoka", file: "fredoka-latin-ext-600-normal.woff2", weight: "600", range: latinExt },
+  { family: "Inter", file: "inter-latin-wght-normal.woff2", weight: "100 900", range: latin },
+];
+
+// Liberation Sans has Arial's advance widths, so either file gives the same CSS, and the same size-adjust holds on
+// Linux, where local() finds Liberation Sans.
+const liberation = ["/usr/share/fonts/truetype/liberation", "/usr/share/fonts/truetype/liberation2"];
+const arial = {
+  files: [
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    ...liberation.map((dir) => `${dir}/LiberationSans-Regular.ttf`),
+  ],
+  local: ["Arial", "ArialMT", "Liberation Sans", "LiberationSans"],
+};
+const arialBold = {
+  files: [
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    ...liberation.map((dir) => `${dir}/LiberationSans-Bold.ttf`),
+  ],
+  local: ["Arial Bold", "Arial-BoldMT", "Liberation Sans Bold", "LiberationSans-Bold"],
+};
+
+const installed = async (files: ReadonlyArray<string>) => {
+  for (const file of files) if (await Bun.file(file).exists()) return file;
+  return undefined;
+};
+
+export const baseFontsInstalled =
+  (await installed(arial.files)) !== undefined && (await installed(arialBold.files)) !== undefined;
+
+// Width is averaged over text each family sets in the app, weighted by how often each character appears in it.
+// Fredoka sets the headings and the wordmark, Inter everything else.
+const display =
+  "search your github stars in plain words. stargrep. sign in to search your stars. languages. stars. " +
+  "stargrep couldn't load your account. stargrep couldn't load your stars. nothing matches that. " +
+  "you said no to github. sign-in didn't finish.";
+const body =
+  "the rust library for terminal dashboards i starred last year. Sign in with GitHub. Your stars. " +
+  "Recently starred, 36 stars, september 2026, 18.5k. try again in a moment. " +
+  "ratatui/ratatui Widgets for charts, gauges, sparklines, and tables. The maintained fork of tui-rs. " +
+  "A system monitor dashboard for the terminal. Rust 22% Go 19% TypeScript 19% other 39%. pushed 2 days ago";
+
+// One fallback face per weight the UI sets. Arial has no medium, so 500 scales the regular face to Inter's 500 widths.
+const fallbacks = [
+  { family: "Fredoka", file: "fredoka-latin-600-normal.woff2", weight: 600, base: arialBold, sample: display },
+  { family: "Inter", file: "inter-latin-wght-normal.woff2", weight: 400, base: arial, sample: body },
+  { family: "Inter", file: "inter-latin-wght-normal.woff2", weight: 500, base: arial, sample: body },
+  { family: "Inter", file: "inter-latin-wght-normal.woff2", weight: 600, base: arialBold, sample: body },
+];
+
+// fontkitten instances a variable font only from TTF data, so WOFF2 files are decompressed first.
+const load = async (path: string) => {
+  const bytes = new Uint8Array(await Bun.file(path).arrayBuffer());
+  const font = create(Buffer.from(path.endsWith(".woff2") ? await decompress(bytes) : bytes));
+  if (font.isCollection) throw new Error(`${path} is a font collection`);
+  return font;
+};
+
+const averageWidth = (font: Font, sample: string) => {
+  const glyphs = font.glyphsForString(sample);
+  return glyphs.reduce((sum, glyph) => sum + glyph.advanceWidth, 0) / glyphs.length / font.unitsPerEm;
+};
+
+const percent = (value: number) => `${(value * 100).toFixed(2)}%`;
+
+const webFace = (face: (typeof faces)[number]) => `@font-face {
+  font-family: "${face.family}";
+  font-style: normal;
+  font-weight: ${face.weight};
+  font-display: swap;
+  src: url("./fonts/${face.file}") format("woff2");
+  unicode-range:
+    ${face.range};
+}`;
+
+const fallbackFace = async (fallback: (typeof fallbacks)[number]) => {
+  const source = await load(new URL(`../src/fonts/${fallback.file}`, import.meta.url).pathname);
+  const web = Object.keys(source.variationAxes).includes("wght")
+    ? source.getVariation({ wght: fallback.weight })
+    : source;
+  const file = await installed(fallback.base.files);
+  if (file === undefined) throw new Error(`none of ${fallback.base.files.join(", ")} exists`);
+  const base = await load(file);
+  const sizeAdjust = averageWidth(web, fallback.sample) / averageWidth(base, fallback.sample);
+  const scaled = (metric: number) => percent(metric / web.unitsPerEm / sizeAdjust);
+  return `@font-face {
+  font-family: "${fallback.family} Fallback";
+  font-style: normal;
+  font-weight: ${fallback.weight};
+  src: ${fallback.base.local.map((name) => `local("${name}")`).join(", ")};
+  size-adjust: ${percent(sizeAdjust)};
+  ascent-override: ${scaled(web.ascent)};
+  descent-override: ${scaled(Math.abs(web.descent))};
+  line-gap-override: ${scaled(web.lineGap)};
+}`;
+};
+
+export const fontsCssFile = new URL("../src/fonts.css", import.meta.url);
+
+export const fontsCss = async () =>
+  `${[
+    "/* Generated by scripts/fonts.ts. Run `bun run fonts` in packages/ui after changing a font file. */",
+    ...faces.map(webFace),
+    ...(await Promise.all(fallbacks.map(fallbackFace))),
+  ].join("\n\n")}\n`;
+
+if (import.meta.main) await Bun.write(fontsCssFile, await fontsCss());
