@@ -1,20 +1,14 @@
-import { blobatar, traits } from "blobatar";
-import { layout } from "blobatar/blob";
+import { traits } from "blobatar";
 import { happy, idle, sad, scared, surprised, thinking, unsure } from "blobatar/expression";
 import { idleSeeds } from "blobatar/idle";
+import { smallMark, starPoints, starStroke } from "../src/mark/star.ts";
+import { type Body, type Ellipse, type Eye, faceFit, superellipse } from "./blobatar-face.ts";
 
 const seed = "pip";
 
-// Every trait the layout reads is pinned, so the seed only names Pip and no hash moves an eye. Pip keeps its own star
-// as the body and takes only the eyes, so the round body these traits describe is never drawn.
-const pin = {
-  shape: 0.1,
-  "body.x": 0.5,
-  "body.y": 0.5,
+// Every trait the face fit reads is pinned, so the seed only names Pip and no hash moves an eye.
+export const pin = {
   "body.r": 0.5,
-  "body.ratio": 0.5,
-  "body.n": 0.5,
-  "body.pts": 0.5,
   "eye.rx": 0.15,
   "eye.ratio": 0.62,
   "eye.scale": 0.3,
@@ -28,21 +22,66 @@ const pin = {
   "gaze.y": 0.85,
 };
 
-const expressions = { idle, happy, thinking, surprised, unsure, sad, scared };
+export const expressions = { idle, happy, thinking, surprised, unsure, sad, scared };
 
 export type PipPose = keyof typeof expressions;
 
+const corners = starPoints.split(" ").map((point) => point.split(",").map(Number) as [number, number]);
+
+const toSegment = (x: number, y: number, [ax, ay]: [number, number], [bx, by]: [number, number]) => {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const along = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy)));
+  return Math.hypot(x - (ax + along * dx), y - (ay + along * dy));
+};
+
+const insidePolygon = (x: number, y: number) => {
+  let inside = false;
+  for (let i = 0, j = corners.length - 1; i < corners.length; j = i++) {
+    const [xi, yi] = corners[i] ?? [0, 0];
+    const [xj, yj] = corners[j] ?? [0, 0];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+};
+
+// Signed distance from a point to the edge of the star as drawn, its fill polygon plus half the fill stroke.
+// Positive is inside.
+export const room = (x: number, y: number) => {
+  const edge = Math.min(
+    ...corners.map((corner, index) => toSegment(x, y, corner, corners[(index + 1) % corners.length] ?? corner)),
+  );
+  return insidePolygon(x, y) ? edge + starStroke.fill / 2 : starStroke.fill / 2 - edge;
+};
+
+const centre = { x: 50, y: 54 };
+
+// The star's face: the largest circle about its centre that the drawn star contains, raised 2.66 units so the eyes
+// sit where the design puts them. This is the one number a silhouette Blobatar doesn't ship has to supply.
+const inscribed = room(centre.x, centre.y);
+export const face: Ellipse = { cx: centre.x, cy: centre.y - 2.66, rx: inscribed, ry: inscribed };
+
+// The design draws Pip's eyes at 0.82 of a blobatar's above 48px, and at full size below, where a small mark would
+// lose them. The fit sizes eyes against the body radius, so that scale is the body's size.
+const largeEyes = 0.82;
+
+export const bodyFor = (size: number): Body => {
+  const radius = traits(seed, true, pin).num("body.r", 31, 38) * (size <= smallMark ? 1 : largeEyes);
+  return { cx: centre.x, cy: centre.y, rx: radius, ry: radius, n: 2, rot: 0 };
+};
+
+export const fitEyes = (size: number): Array<Eye> => faceFit(traits(seed, true, pin), bodyFor(size), face);
+
 const round = (value: number) => Math.round(value * 100) / 100;
 
-const eyeInk = "#000002";
-
-const eyePaths = () => {
-  const svg = blobatar(seed, { traits: pin, palette: { head: "#000001", eye: eyeInk }, contrast: false });
-  const group = svg.match(new RegExp(`<g fill="${eyeInk}">(.*?)</g>`))?.[1];
-  const paths = [...(group ?? "").matchAll(/<path d="([^"]+)"\/>/g)].map((match) => match[1] ?? "");
-  if (paths.length !== 2) throw new Error(`expected two eyes from blobatar, got ${paths.length}`);
-  return paths;
-};
+const bakeEyes = (size: number) =>
+  fitEyes(size).map((eye, index) => ({
+    d: superellipse(eye),
+    cx: round(eye.cx),
+    cy: round(eye.cy),
+    lean: round(eye.rot),
+    wrap: index === 0 ? -1 : 1,
+  }));
 
 const motionVars = () => {
   const s = idleSeeds(seed, { traits: pin });
@@ -61,27 +100,17 @@ const motionVars = () => {
   };
 };
 
-export const bakePip = () => {
-  const frames = layout(traits(seed, true, pin)).eyes;
-  const paths = eyePaths();
-  return {
-    eyes: frames.map((eye, index) => ({
-      d: paths[index] ?? "",
-      cx: round(eye.cx),
-      cy: round(eye.cy),
-      lean: round(eye.rot),
-      wrap: index === 0 ? -1 : 1,
-    })),
-    motion: motionVars(),
-    poses: Object.fromEntries(
-      Object.entries(expressions).map(([name, expression]) => [name, expression.vars(expression.p)]),
-    ) as Record<PipPose, Record<string, string>>,
-  };
-};
+export const bakePip = () => ({
+  eyes: { small: bakeEyes(smallMark), large: bakeEyes(smallMark + 1) },
+  motion: motionVars(),
+  poses: Object.fromEntries(
+    Object.entries(expressions).map(([name, expression]) => [name, expression.vars(expression.p)]),
+  ) as Record<PipPose, Record<string, string>>,
+});
 
 export const pipModule = (baked: ReturnType<typeof bakePip>) =>
   [
-    "// Generated by packages/ui/scripts/bake-pip.ts from blobatar's public API. Run `bun run bake:pip` after a blobatar upgrade.",
+    "// Generated by packages/ui/scripts/bake-pip.ts. Run `bun run bake:pip` after a blobatar upgrade.",
     "",
     `export const pip = ${JSON.stringify(baked, null, 2)} as const;`,
     "",

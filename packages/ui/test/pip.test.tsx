@@ -39,11 +39,11 @@ describe("pip", () => {
     }
   });
 
-  test("small marks get the larger eyes", () => {
-    const eyes = (size: number) =>
-      draw("idle", size).querySelector(".mo-eyes")?.parentElement?.getAttribute("transform");
-    expect(eyes(30)).toContain("scale(1)");
-    expect(eyes(48)).toContain("scale(1)");
-    expect(eyes(150)).toContain("scale(0.82)");
+  test("marks at 48px and under draw the larger eyes", () => {
+    const eye = (size: number) => draw("idle", size).querySelector(".mo-eye path")?.getAttribute("d");
+    expect(eye(30)).toBe(pip.eyes.small[0].d);
+    expect(eye(48)).toBe(pip.eyes.small[0].d);
+    expect(eye(49)).toBe(pip.eyes.large[0].d);
+    expect(pip.eyes.small[0].d).not.toBe(pip.eyes.large[0].d);
   });
 });
