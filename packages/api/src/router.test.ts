@@ -438,15 +438,18 @@ it.layer(signedInWith(queue.layer), { timeout: 30_000 })("opening the library", 
     }),
   );
 
-  it.effect("starts at most one sync a minute however often the owner opens it", () =>
+  it.effect("waits for a queued sync, then starts at most one a minute after the last one finished", () =>
     Effect.gen(function* () {
       yield* resetOwner;
       yield* openLibrary;
-      yield* TestClock.adjust("59 seconds");
+      yield* TestClock.adjust("70 seconds");
       expect(yield* openLibrary).toMatchObject({ state: "queued", requestedAt: "2026-11-05T12:55:30.000Z" });
+      const finished = DateTime.makeUnsafe(now + 40_000);
+      yield* Db.Db.use((db) => db.accounts.recordStarSync({ accountId: ada.account.id, etag: null, at: finished }));
+      expect(yield* openLibrary).toMatchObject({ state: "done", syncedAt: "2026-11-05T12:56:10.000Z" });
       expect(queue.sent).toHaveLength(1);
-      yield* TestClock.adjust("1 second");
-      expect(yield* openLibrary).toMatchObject({ state: "queued", requestedAt: "2026-11-05T12:56:30.000Z" });
+      yield* TestClock.adjust("30 seconds");
+      expect(yield* openLibrary).toMatchObject({ state: "queued", requestedAt: "2026-11-05T12:57:10.000Z" });
       expect(queue.sent).toHaveLength(2);
     }),
   );
