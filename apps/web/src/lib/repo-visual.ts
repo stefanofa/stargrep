@@ -8,14 +8,10 @@ export const avatarOwners: ReadonlySet<OwnerType> = new Set(["org"]);
 const avatarSize = 88;
 
 const sized = (url: string) => {
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname !== "avatars.githubusercontent.com") return url;
-    parsed.searchParams.set("s", String(avatarSize));
-    return parsed.toString();
-  } catch {
-    return url;
-  }
+  const parsed = new URL(url);
+  if (parsed.hostname !== "avatars.githubusercontent.com") return url;
+  parsed.searchParams.set("s", String(avatarSize));
+  return parsed.toString();
 };
 
 export const repoVisual = (
