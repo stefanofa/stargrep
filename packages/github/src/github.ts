@@ -8,7 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
-import * as Schema from "effect/Schema";
+import type * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as AccountLookup from "./account.ts";
 import {
@@ -22,19 +22,10 @@ import {
 } from "./errors.ts";
 import { apiHeaders } from "./headers.ts";
 import * as Owner from "./owner.ts";
+import * as RateLimit from "./rate-limit.ts";
 import * as Readme from "./readme.ts";
 import * as Facts from "./repo-facts.ts";
-import {
-  type Account,
-  type GraphQLError,
-  IntFromString,
-  type Login,
-  type ObjectId,
-  type RepoFacts,
-  type RepoName,
-  type RepoNodeId,
-  type Star,
-} from "./schemas.ts";
+import type { Account, GraphQLError, Login, ObjectId, RepoFacts, RepoName, RepoNodeId, Star } from "./schemas.ts";
 import * as StarCount from "./star-count.ts";
 import * as StarList from "./star-list.ts";
 import * as TokenBudget from "./token-budget.ts";
@@ -44,8 +35,6 @@ const MAX_RETRY_WAIT = Duration.minutes(1);
 const MAX_RETRIES = 3;
 
 const graphQLErrorType = /^[A-Z_]{1,40}$/;
-
-const decodeSeconds = Schema.decodeUnknownOption(IntFromString);
 
 const retrySchedule = Schedule.exponential("1 second").pipe(
   Schedule.setInputType<GitHubError>(),
@@ -64,6 +53,7 @@ const isRetryable = (error: GitHubError) => {
     case "status":
       return error.status !== null && error.status >= 500;
     case "graphql-errors":
+    case "malformed":
       return false;
   }
 };
@@ -86,37 +76,13 @@ export class GitHub extends Context.Service<
   }
 >()("@stargrep/github/github") {}
 
-interface Endpoint {
-  readonly operation: Operation;
-  readonly method: string;
-  readonly path: string;
-}
+type Endpoint = TokenGate.Endpoint;
 
-const rateLimitWait = (reply: TokenGate.Reply, now: number): Option.Option<number> =>
-  Option.orElse(
-    Option.map(decodeSeconds(reply.headers["retry-after"]), (seconds) => seconds * 1000),
-    () =>
-      reply.rateLimit.remaining.pipe(
-        Option.filter((remaining) => remaining === 0),
-        Option.flatMap(() => reply.rateLimit.resetAt),
-        Option.map((resetAt) => Math.max(0, resetAt - now)),
-      ),
-  );
-
-// GitHub sends a secondary rate limit as a 403 that can have quota left and no Retry-After, so only its message names it.
-const secondaryLimit = /secondary rate limit|abuse detection/i;
-
-const isRateLimit = (reply: TokenGate.Reply, now: number) =>
-  reply.status === 429 ||
-  (reply.status === 403 &&
-    (Option.isSome(rateLimitWait(reply, now)) || Option.exists(reply.body, (body) => secondaryLimit.test(body))));
-
-// GitHub asks for a one minute wait on a rate limit that names no reset time.
 const rateLimited = (endpoint: Endpoint, reply: TokenGate.Reply, now: number) =>
   new RateLimited({
     operation: endpoint.operation,
     resource: Option.getOrElse(reply.rateLimit.resource, () => TokenBudget.resourceOf(endpoint.path)),
-    retryAfterMillis: Option.getOrElse(rateLimitWait(reply, now), () => 60_000),
+    retryAfterMillis: RateLimit.retryAfterMillis(reply, now),
   });
 
 const classify = (endpoint: Endpoint, reply: TokenGate.Reply, now: number): Result.Result<string, GitHubError> => {
@@ -128,7 +94,7 @@ const classify = (endpoint: Endpoint, reply: TokenGate.Reply, now: number): Resu
   }
   if (reply.status === 401) return Result.fail(new Unauthorized({ operation: endpoint.operation }));
   if (reply.status === 404) return Result.fail(new NotFound({ operation: endpoint.operation, path: endpoint.path }));
-  if (isRateLimit(reply, now)) return Result.fail(rateLimited(endpoint, reply, now));
+  if (RateLimit.isRateLimit(reply, now)) return Result.fail(rateLimited(endpoint, reply, now));
   return Result.fail(new GitHubRequestFailed({ ...endpoint, status: reply.status, reason: "status" }));
 };
 

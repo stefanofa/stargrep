@@ -69,7 +69,9 @@ const layerGitHub = Layer.unwrap(
     const token = yield* Config.Redacted("GITHUB_TOKEN");
     const gate = yield* TokenGate.makeMemory({ share: yield* shareConfig });
     return GitHub.layer.pipe(
-      Layer.provideMerge(Layer.succeed(TokenGate.TokenGate, TokenGate.TokenGate.of({ execute: gate.execute(token) }))),
+      Layer.provideMerge(
+        Layer.succeed(TokenGate.TokenGate, TokenGate.TokenGate.of({ execute: gate.execute(TokenGate.fixed(token)) })),
+      ),
       Layer.merge(Layer.succeed(GateBudget, gate.budget)),
     );
   }).pipe(Effect.provide(layerLoggedFetch)),

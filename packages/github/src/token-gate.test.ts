@@ -161,9 +161,11 @@ describe("TokenGate.makeMemory across a restart", () => {
     return Effect.gen(function* () {
       const token = Redacted.make(Fake.token);
       const first = yield* TokenGate.makeMemory({ share: 0.5 as BudgetShare });
-      yield* first.execute(token)("list-stars", request);
-      yield* first.execute(token)("list-stars", request);
-      expect((yield* Effect.flip(first.execute(token)("list-stars", request)))._tag).toBe("TokenBudgetExhausted");
+      yield* first.execute(TokenGate.fixed(token))("list-stars", request);
+      yield* first.execute(TokenGate.fixed(token))("list-stars", request);
+      expect((yield* Effect.flip(first.execute(TokenGate.fixed(token))("list-stars", request)))._tag).toBe(
+        "TokenBudgetExhausted",
+      );
       const stored: unknown = JSON.parse(JSON.stringify((yield* first.budget).windows));
 
       const windows = TokenBudget.decodeWindows(stored);
@@ -174,7 +176,7 @@ describe("TokenGate.makeMemory across a restart", () => {
       });
       expect((yield* restarted.budget).windows).toEqual((yield* first.budget).windows);
       expect((yield* restarted.budget).share).toBe(0.7 as BudgetShare);
-      expect((yield* restarted.execute(token)("list-stars", request)).status).toBe(200);
+      expect((yield* restarted.execute(TokenGate.fixed(token))("list-stars", request)).status).toBe(200);
       expect(fake.sent).toHaveLength(3);
     }).pipe(Effect.provide(fake.client));
   });
@@ -244,4 +246,33 @@ describe("TokenGate.counting", () => {
       ),
     );
   });
+});
+
+describe("TokenGate.makeMemory with a renewable source", () => {
+  effect(
+    "sends a request once more with a new token after a 401 the source can renew, and never for a fixed token",
+    () => {
+      const fake = Fake.make((sent) =>
+        sent.headers.authorization === "Bearer stale"
+          ? { status: 401 }
+          : { body: [], headers: Fake.rateLimitHeaders(4000) },
+      );
+      return Effect.gen(function* () {
+        const gate = yield* TokenGate.makeMemory({ share: 1 as BudgetShare });
+        const tokens = ["stale", "fresh"];
+        const renewable: TokenGate.TokenSource = {
+          current: () => Effect.sync(() => Redacted.make(tokens[0] ?? "fresh")),
+          rejected: Effect.sync(() => tokens.shift() !== undefined),
+        };
+        const request = HttpClientRequest.get("https://api.github.com/users/octocat");
+        expect((yield* gate.execute(renewable)("account", request)).status).toBe(200);
+        expect((yield* gate.execute(TokenGate.fixed(Redacted.make("stale")))("account", request)).status).toBe(401);
+        expect(fake.sent.map((sent) => sent.headers.authorization)).toEqual([
+          "Bearer stale",
+          "Bearer fresh",
+          "Bearer stale",
+        ]);
+      }).pipe(Effect.provide(fake.client));
+    },
+  );
 });

@@ -189,7 +189,7 @@ Four workflows run the stages, and their jobs skip until the steps below are don
 
 2. Create two Neon API keys in the Neon console. Prod's key is an organization key, because the deploy from `main` creates the projects. The preview key is scoped to the project `stargrep-previews-us-east`, so create it after that deploy.
 
-3. Create a fine-grained GitHub token with read access to public repositories and no other permission. Give it an expiration no longer than its owner's organizations allow, 366 days by default. Each stage's Worker syncs stars and fetches READMEs with it, and uses half of each hourly window.
+3. Create a fine-grained GitHub token with read access to public repositories and no other permission. Give it an expiration no longer than its owner's organizations allow, 366 days by default. Each preview stage's Worker syncs stars and fetches READMEs with it, and uses half of each hourly window. Prod uses the GitHub App's installation token instead, as "The App's installation token" below explains.
 
    If the Worker misses an organization's stars, check that organization's token policy. GitHub lists only the stars a token can read. An organization can block a fine-grained token of one of its members, for example a token that outlives the organization's limit. That token then reads none of the organization's repos, public ones included.
 
@@ -202,14 +202,15 @@ Four workflows run the stages, and their jobs skip until the steps below are don
    gh api -X PUT 'repos/{owner}/{repo}/environments/preview'
    ```
 
-5. Add each environment's secrets, and the Cloudflare account ID as a repository variable. The variable turns the deploy jobs on. `deploy` reads secrets only from `production`, and the preview workflows only from `preview`. A workflow on any branch can read repository secrets and `preview` secrets, so keep prod's credentials only in `production` and keep no secrets at the repository level. Pull requests from forks get no Actions secrets by default, so their previews don't deploy, and `production` stays limited to `main` either way. Both environments can hold the same AI Gateway key and GitHub token. Each deploy binds `AI_GATEWAY_API_KEY` and `STARGREP_GITHUB_TOKEN` to the Worker as secrets. A `prod` deploy fails without either secret. A pull request stage or a local stage deploys without them. There, every GitHub call fails with `GitHubTokenMissing` and every model call with `AiKeyMissing`, so each pipeline message goes to the dead-letter queue on its first attempt.
+5. Add each environment's secrets, and the Cloudflare account ID as a repository variable. The variable turns the deploy jobs on. `deploy` reads secrets only from `production`, and the preview workflows only from `preview`. A workflow on any branch can read repository secrets and `preview` secrets, so keep prod's credentials only in `production` and keep no secrets at the repository level. Pull requests from forks get no Actions secrets by default, so their previews don't deploy, and `production` stays limited to `main` either way. Both environments can hold the same AI Gateway key. `preview` holds the personal GitHub token. `production` holds the App's private key, and the personal token too for as long as prod may need to go back to it. Each deploy binds `AI_GATEWAY_API_KEY` and the one GitHub credential its stage reads with to the Worker as secrets. A `prod` deploy fails without the AI Gateway key or the credential `STARGREP_GITHUB_SERVER_TOKEN` picks, with the App's client ID for the App. A pull request stage or a local stage deploys without them. There, every GitHub call fails with `GitHubTokenMissing` and every model call with `AiKeyMissing`, so each pipeline message goes to the dead-letter queue on its first attempt.
 
    ```sh
    for env in production preview; do
-     for name in CLOUDFLARE_API_TOKEN NEON_API_KEY AI_GATEWAY_API_KEY STARGREP_GITHUB_TOKEN; do
+     for name in CLOUDFLARE_API_TOKEN NEON_API_KEY AI_GATEWAY_API_KEY; do
        gh secret set "$name" --env "$env"
      done
    done
+   for env in production preview; do gh secret set STARGREP_GITHUB_TOKEN --env "$env"; done
    gh variable set CLOUDFLARE_ACCOUNT_ID --body <account id>
    ```
 
@@ -220,6 +221,34 @@ Four workflows run the stages, and their jobs skip until the steps below are don
 8. Push to `main`. That deploy creates the Neon projects in stage `shared`, and then `prod`. A pull request stage fails with a missing reference until it has run.
 
 Every stage gets its own Neon branch. Prod's branch is in the project `stargrep-us-east`, and each preview stage's branch is in `stargrep-previews-us-east`. Neon deletes a preview branch about two weeks after its last deploy, in case its destroy job never ran.
+
+## The App's installation token
+
+Prod reads GitHub with the Stargrep GitHub App's installation token, as "GitHub access" in `docs/architecture.md` explains. The App needs no repository permission and its installation no repositories, because it reads only public data. The key never belongs in `preview`, which every branch can read, and any stage other than prod that sees `STARGREP_GITHUB_APP_PRIVATE_KEY` fails its deploy.
+
+1. In the App's settings, under "Private keys", generate a private key. GitHub downloads it as a PEM file.
+2. Install the App on the account that owns it. The App has no repository permissions, so GitHub asks for no repositories.
+3. Store the key in `production` straight from the file, so it never passes through a terminal, a chat, or the clipboard, and delete the file.
+
+   ```sh
+   gh secret set STARGREP_GITHUB_APP_PRIVATE_KEY --env production < stargrep-app.private-key.pem
+   rm stargrep-app.private-key.pem
+   ```
+
+4. Keep `STARGREP_GITHUB_TOKEN` in `production` until a prod deploy on the App has synced stars and enriched repos with no "Could not mint" or "GitHub forbade repos to the token" in the main Worker's logs. Then delete it.
+
+   ```sh
+   gh secret delete STARGREP_GITHUB_TOKEN --env production
+   ```
+
+The repository variable `STARGREP_GITHUB_SERVER_TOKEN` picks prod's server token. Unset, the prod deploy uses the App. To go back to the personal token without a code change, set it to `pat` and run the deploy workflow again. Set it back to `app`, or delete it, to return to the App. A `pat` deploy needs `STARGREP_GITHUB_TOKEN` in `production`, and the share follows the token: 0.9 on the App, 0.5 on the personal token.
+
+```sh
+gh variable set STARGREP_GITHUB_SERVER_TOKEN --body pat
+gh workflow run deploy.yml --ref main
+```
+
+A mint GitHub refuses fails each GitHub call with `GitHubTokenMissing` and logs "Could not mint a GitHub App installation token" with the reason: `key` for a key that does not import or sign, `jwt-rejected` for a revoked key, `forbidden` for a suspended App, or `installation` for an App not installed on its owner's account.
 
 ## State store maintenance
 

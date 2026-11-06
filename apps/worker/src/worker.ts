@@ -4,6 +4,7 @@ import * as Tokens from "@stargrep/auth/tokens";
 import { SyncRequests } from "@stargrep/core/stars";
 import * as GitHub from "@stargrep/github/github";
 import { budgetShare, budgetShareName, stageBudgetShare } from "@stargrep/runtime/budget-share";
+import { serverTokenKind, serverTokenName } from "@stargrep/runtime/server-token";
 import * as Tracing from "@stargrep/telemetry/cloudflare";
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
@@ -34,12 +35,14 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
   // The placement region matches the Neon projects in infra/database.run.ts, so queries stay in one region.
   Effect.gen(function* () {
     const { stage } = yield* Alchemy.Stack;
-    yield* requireStageSecrets(stage);
+    const kind = yield* serverTokenKind;
+    yield* requireStageSecrets(stage, kind);
     return {
       main: import.meta.url,
       env: {
         DATABASE_MIGRATIONS: yield* DatabaseMigrations,
-        [budgetShareName]: String(yield* stageBudgetShare(stage)),
+        [budgetShareName]: String(yield* stageBudgetShare(stage, kind)),
+        [serverTokenName]: kind,
         ...(yield* tokenBindings(stage)),
       },
       placement: { region: "aws:us-east-1" },

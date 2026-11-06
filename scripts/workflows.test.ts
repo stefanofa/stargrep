@@ -43,7 +43,12 @@ describe("workflow secrets", () => {
       job: `${name}:${id}`,
       environment: (typeof job.environment === "string" ? job.environment : job.environment?.name) ?? "none",
       readsSecrets: JSON.stringify([workflow.env, job]).includes("secrets."),
+      readsAppKey: JSON.stringify([workflow.env, job]).includes("STARGREP_GITHUB_APP_PRIVATE_KEY"),
     }));
+  });
+
+  test("only the prod deploy reads the GitHub App's private key", () => {
+    expect(jobs.filter((job) => job.readsAppKey).map((job) => job.job)).toEqual(["deploy.yml:prod"]);
   });
 
   test("the prod deploy reads secrets from production and every preview job from preview", () => {

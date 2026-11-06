@@ -32,8 +32,16 @@ jobs:
       - uses: ./.github/actions/setup
       - name: Stop early when a pipeline or sign-in secret is missing
         run: |
-          if [ -z "$STARGREP_GITHUB_TOKEN" ] || [ -z "$AI_GATEWAY_API_KEY" ]; then
-            echo "Prod needs STARGREP_GITHUB_TOKEN and AI_GATEWAY_API_KEY. The prod deploy would fail on them later."
+          if [ -z "$AI_GATEWAY_API_KEY" ]; then
+            echo "Prod needs AI_GATEWAY_API_KEY. The prod deploy would fail on it later."
+            exit 1
+          fi
+          if [ "$STARGREP_GITHUB_SERVER_TOKEN" = pat ] && [ -z "$STARGREP_GITHUB_TOKEN" ]; then
+            echo "STARGREP_GITHUB_SERVER_TOKEN is pat, so prod needs STARGREP_GITHUB_TOKEN. The prod deploy would fail on it later."
+            exit 1
+          fi
+          if [ "$STARGREP_GITHUB_SERVER_TOKEN" = app ] && [ -z "$STARGREP_GITHUB_APP_PRIVATE_KEY" ]; then
+            echo "STARGREP_GITHUB_SERVER_TOKEN is app, so prod needs STARGREP_GITHUB_APP_PRIVATE_KEY. The prod deploy would fail on it later."
             exit 1
           fi
           if [ -z "$STARGREP_GITHUB_APP_CLIENT_ID" ] || [ -z "$STARGREP_GITHUB_APP_CLIENT_SECRET" ] || [ -z "$BETTER_AUTH_SECRET" ] || [ -z "$AUTH_PROXY_SECRET" ]; then
@@ -42,6 +50,8 @@ jobs:
           fi
         env:
           AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+          STARGREP_GITHUB_SERVER_TOKEN: ${{ vars.STARGREP_GITHUB_SERVER_TOKEN || 'app' }}
+          STARGREP_GITHUB_APP_PRIVATE_KEY: ${{ secrets.STARGREP_GITHUB_APP_PRIVATE_KEY }}
           STARGREP_GITHUB_TOKEN: ${{ secrets.STARGREP_GITHUB_TOKEN }}
           STARGREP_GITHUB_APP_CLIENT_ID: ${{ vars.STARGREP_GITHUB_APP_CLIENT_ID }}
           STARGREP_GITHUB_APP_CLIENT_SECRET: ${{ secrets.STARGREP_GITHUB_APP_CLIENT_SECRET }}
@@ -56,6 +66,8 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+          STARGREP_GITHUB_SERVER_TOKEN: ${{ vars.STARGREP_GITHUB_SERVER_TOKEN || 'app' }}
+          STARGREP_GITHUB_APP_PRIVATE_KEY: ${{ secrets.STARGREP_GITHUB_APP_PRIVATE_KEY }}
           STARGREP_GITHUB_TOKEN: ${{ secrets.STARGREP_GITHUB_TOKEN }}
           STARGREP_GITHUB_APP_CLIENT_ID: ${{ vars.STARGREP_GITHUB_APP_CLIENT_ID }}
           STARGREP_GITHUB_APP_CLIENT_SECRET: ${{ secrets.STARGREP_GITHUB_APP_CLIENT_SECRET }}

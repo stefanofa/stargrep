@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Metric from "effect/Metric";
@@ -5,6 +6,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import type { Operation } from "./errors.ts";
+import * as RateLimit from "./rate-limit.ts";
 import { BudgetShare } from "./schemas.ts";
 import * as TokenGate from "./token-gate.ts";
 
@@ -20,18 +22,11 @@ export const fallbacks = Metric.counter("stargrep_github_fallbacks", {
     "Jobs a user started that moved to the server's GitHub token, by reason: budget, unauthorized, rate-limited, token-unavailable.",
 });
 
-// GraphQL answers a spent window with a 200 whose errors name RATE_LIMITED.
-const graphQLRateLimited = /"type"\s*:\s*"RATE_LIMITED"/;
-
 // A 401 means the token expired or the user revoked it. A rate limit with nothing remaining means the user's own tools
 // spent the window. A secondary rate limit keeps quota, so the GitHub client waits it out on the same token.
-const replyReason = (reply: TokenGate.Reply): Option.Option<FallbackReason> => {
+const replyReason = (reply: TokenGate.Reply, now: number): Option.Option<FallbackReason> => {
   if (reply.status === 401) return Option.some("unauthorized");
-  const spent =
-    reply.status === 403 ||
-    reply.status === 429 ||
-    (TokenGate.isSuccess(reply.status) && Option.exists(reply.body, (body) => graphQLRateLimited.test(body)));
-  return spent && Option.contains(reply.rateLimit.remaining, 0) ? Option.some("rate-limited") : Option.none();
+  return RateLimit.isWindowSpent(reply, now) ? Option.some("rate-limited") : Option.none();
 };
 
 const logFallback = (reason: FallbackReason, operation: Operation) => {
@@ -77,7 +72,7 @@ export const prefer = Effect.fn("FallbackGate.prefer")(function* (
           return yield* sent.failure;
       }
     }
-    const reason = replyReason(sent.success);
+    const reason = replyReason(sent.success, yield* Clock.currentTimeMillis);
     return Option.isSome(reason) ? yield* fallBack(reason.value, operation, request) : sent.success;
   });
 
