@@ -64,7 +64,7 @@ const retired = (activity: Activity) => activity.state === "archived" || activit
 
 const heroText = {
   name: "tiles:sm:text-[34px] tiles:sm:leading-[40px]",
-  reason: "tiles:text-foreground tiles:sm:text-lg",
+  reason: "tiles:text-foreground tiles:sm:line-clamp-3 tiles:sm:text-lg",
 };
 
 const listText = "list:text-sm list:text-muted-foreground";
@@ -161,10 +161,10 @@ export function ResultItem({
         ) : (
           <p
             className={cn(
-              "font-sans text-base text-secondary-foreground",
+              "line-clamp-4 font-sans text-base text-secondary-foreground",
               dim && "text-muted-foreground",
               hero && heroText.reason,
-              "list:text-base",
+              "list:line-clamp-2 list:text-base",
             )}
           >
             {highlight(result.reason, result.matches)}

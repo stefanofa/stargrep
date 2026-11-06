@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { searchText } from "../src/lib/keyword.ts";
 import type { LibraryEntry } from "../src/lib/library-collection.ts";
-import { toDetail } from "../src/lib/present.ts";
+import { toDetail, toResult } from "../src/lib/present.ts";
 
 const entry = (description: string | null, summary: string | null): LibraryEntry => {
   const repo = {
@@ -41,4 +41,10 @@ describe("the repo panel's detail", () => {
     expect(toDetail(entry("Widgets for charts.", "Widgets for charts."), at).summary).toBeUndefined();
     expect(toDetail(entry("Widgets for charts.", null), at).summary).toBeUndefined();
   });
+});
+
+test("the panel shows the same repo visual as the card", () => {
+  const repo = entry("Widgets for charts.", null);
+  expect(toDetail(repo, at).visual).toEqual(toResult(repo, at).visual);
+  expect(toDetail(repo, at).visual).toMatchObject({ kind: "avatar", letters: "ra" });
 });
