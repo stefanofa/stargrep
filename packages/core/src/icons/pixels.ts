@@ -7,6 +7,9 @@ export interface Rgba {
 }
 
 const visibleAlpha = 16;
+const minCoverage = 0.02;
+// One colour over most of the square, such as a favicon's background left behind when its glyph did not render.
+const flat = { minFill: 0.92, maxSpread: 8 };
 
 interface Box {
   readonly x: number;
@@ -15,6 +18,7 @@ interface Box {
   readonly height: number;
 }
 
+// The box around the visible pixels, or the whole canvas when none are, which `blank` then rejects by its coverage.
 export const visible = (image: Rgba) => {
   let count = 0;
   let [left, top, right, bottom] = [image.width, image.height, -1, -1];
@@ -28,7 +32,10 @@ export const visible = (image: Rgba) => {
       bottom = Math.max(bottom, y);
     }
   }
-  const box: Box | null = right < 0 ? null : { x: left, y: top, width: right - left + 1, height: bottom - top + 1 };
+  const box: Box =
+    right < 0
+      ? { x: 0, y: 0, width: image.width, height: image.height }
+      : { x: left, y: top, width: right - left + 1, height: bottom - top + 1 };
   return { coverage: count / (image.width * image.height), box };
 };
 
@@ -72,7 +79,7 @@ export const fit = (image: Rgba, box: Box, maxSide: number): Rgba => {
 };
 
 // How much of the square is covered, and how far the covered colours stray from their mean, weighted by alpha.
-export const flatness = (image: Rgba) => {
+const flatness = (image: Rgba) => {
   let [weight, r, g, b] = [0, 0, 0, 0];
   for (let at = 0; at < image.data.length; at += 4) {
     const alpha = (image.data[at + 3] ?? 0) / 255;
@@ -90,6 +97,13 @@ export const flatness = (image: Rgba) => {
     variance += alpha * (dr * dr + dg * dg + db * db);
   }
   return { fill: weight / (image.width * image.height), spread: Math.sqrt(variance / weight) };
+};
+
+// Nothing to show: almost no visible pixels in the source, or one flat colour over most of the fitted icon.
+export const blank = (coverage: number, icon: Rgba) => {
+  if (coverage < minCoverage) return true;
+  const { fill, spread } = flatness(icon);
+  return fill >= flat.minFill && spread < flat.maxSpread;
 };
 
 export const aspectOf = (shape: { readonly width: number; readonly height: number }) =>
