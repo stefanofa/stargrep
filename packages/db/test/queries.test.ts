@@ -38,7 +38,6 @@ import {
 } from "./fixtures.ts";
 
 const syncCooldown = Duration.minutes(10);
-const syncLifetime = Duration.days(1);
 const summaryOf = (id: RepoId) => `summary of ${id}`;
 
 const embedSummarized = (db: Db.Db["Service"], id: RepoId, vector: Embedding) =>
@@ -295,7 +294,6 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           login: login(name),
           at: at(time),
           cooldown: syncCooldown,
-          lifetime: syncLifetime,
           overtakesWaiting: false,
         });
       const first = at("2026-11-04T12:00:00Z");
@@ -332,7 +330,6 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           login: login("stale"),
           at: at(time),
           cooldown: syncCooldown,
-          lifetime: syncLifetime,
           overtakesWaiting: false,
         });
       expect(yield* claim("2026-11-04T13:00:00Z")).toBe(true);
@@ -360,7 +357,6 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           login: login(name),
           at: at("2026-11-04T15:00:00Z"),
           cooldown: syncCooldown,
-          lifetime: syncLifetime,
           overtakesWaiting: false,
         });
       yield* claim("ghost");
@@ -384,7 +380,6 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           login: login("waiter"),
           at: at(time),
           cooldown: syncCooldown,
-          lifetime: syncLifetime,
           overtakesWaiting: false,
         });
       expect(yield* claim("2026-11-04T16:00:00Z")).toBe(true);
@@ -407,7 +402,6 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           login: login("overtaken"),
           at: at(time),
           cooldown: syncCooldown,
-          lifetime: syncLifetime,
           overtakesWaiting,
         });
       expect(yield* claim("2026-11-04T19:00:00Z", false)).toBe(true);
@@ -440,7 +434,6 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
             login: login(name),
             at: at(now),
             cooldown: syncCooldown,
-            lifetime: syncLifetime,
             overtakesWaiting: false,
           })
           .pipe(Effect.andThen(db.syncRequests.schedule(login(name), at(now), at(startsAt))));
@@ -456,7 +449,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     }),
   );
 
-  test.effect("deletes requests older than their lifetime when another login claims", () =>
+  test.effect("prunes the requests made before a time and keeps the later ones", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
       const claim = (name: string, time: string) =>
@@ -464,12 +457,11 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           login: login(name),
           at: at(time),
           cooldown: syncCooldown,
-          lifetime: syncLifetime,
           overtakesWaiting: false,
         });
       yield* claim("expired", "2026-11-01T08:00:00Z");
       yield* claim("recent", "2026-11-05T07:00:00Z");
-      yield* claim("newcomer", "2026-11-05T08:00:00Z");
+      yield* db.syncRequests.prune(at("2026-11-04T08:00:00Z"));
       expect(yield* db.syncRequests.get(login("expired"))).toEqual(Option.none());
       expect(Option.isSome(yield* db.syncRequests.get(login("recent")))).toBe(true);
     }),
@@ -498,7 +490,10 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       expect((yield* Effect.flip(db.accounts.setStarredCount({ accountId: id, starredCount: 1 })))._tag).toBe(
         "AccountNotFound",
       );
-      yield* db.accounts.upsert(account(id, { followers: null }), 2431);
+      yield* db.accounts.upsertLooked({
+        account: { ...account(id, { followers: null }), publicRepos: 3 },
+        starredTotal: 2431,
+      });
       expect(yield* db.accounts.require(id)).toMatchObject({ followers: null, starredCount: 2431 });
       yield* db.accounts.upsert(account(id, { followers: 5 }));
       expect(yield* db.accounts.require(id)).toMatchObject({ followers: 5, starredCount: 2431 });

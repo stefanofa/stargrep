@@ -90,10 +90,10 @@ const recordingLine = (fail = false) => {
   const layer = Layer.succeed(
     Db.Db,
     Db.Db.of({
-      syncLine: {
+      rateLines: {
         reserve: (reservation: Db.Reservation) =>
           fail
-            ? Effect.fail(new DbQueryFailed({ operation: "syncLine.reserve", reason: "transport", sqlState: null }))
+            ? Effect.fail(new DbQueryFailed({ operation: "rateLines.reserve", reason: "transport", sqlState: null }))
             : Effect.sync(() => {
                 const { line, cost, force } = reservation;
                 reserved.push({ line, units: Duration.toMillis(cost) / 1_800, force });

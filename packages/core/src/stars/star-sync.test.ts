@@ -577,7 +577,7 @@ const owner: SyncRequests.Requester = { _tag: "owner" };
 
 const begin = Effect.gen(function* () {
   yield* reset();
-  yield* query("truncate sync_requests, sync_lines");
+  yield* query("truncate sync_requests, rate_lines");
   syncs.sent.length = 0;
   owners.owners.clear();
   owners.lookups.length = 0;
@@ -594,7 +594,7 @@ const starred = (list: Array<Starred>) => {
 };
 
 const lineUnits = Effect.flatMap(DateTime.now, (now) =>
-  Db.Db.use((db) => db.syncLine.wait("all", now, Duration.zero)),
+  Db.Db.use((db) => db.rateLines.wait("all", now, Duration.zero)),
 ).pipe(Effect.map((wait) => Duration.toMillis(wait) / 1_800));
 
 // Admits ada's sync, then runs and bills the message it queued as the sync-stars consumer does. served counts the
@@ -730,7 +730,7 @@ it.layer(admission, { timeout: 30_000 })("SyncRequests with StarSync", (it) => {
       const at = yield* now;
       starred(newestFirst(300).map((star, i) => ({ repo: star.repo, at: at - (i + 1) * second })));
       yield* Db.Db.use((db) =>
-        db.syncLine.reserve({
+        db.rateLines.reserve({
           line: "all",
           at: DateTime.makeUnsafe(at),
           cost: Duration.millis(300 * 1_800),

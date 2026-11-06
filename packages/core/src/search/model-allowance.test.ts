@@ -170,7 +170,7 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
       yield* clearLines;
       yield* takeAll("network-d", 35);
       const now = yield* DateTime.now;
-      const busy = yield* Db.Db.use((db) => db.syncLine.wait("model/all", now, Duration.zero));
+      const busy = yield* Db.Db.use((db) => db.rateLines.wait("model/all", now, Duration.zero));
       expect(busy).toEqual(Duration.seconds(18));
     }),
   );

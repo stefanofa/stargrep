@@ -113,7 +113,7 @@ const reset = Effect.gen(function* () {
   for (const [index, login] of ["octocat", "swarm", "hubot", "grace", "linus", "ada", "alan"].entries()) {
     github.owners.set(login, user(login, login === "octocat" ? 583231 : 9000 + index, 42));
   }
-  yield* (yield* TestDatabase.TestDatabase).query("truncate github_accounts, sync_requests, sync_lines cascade");
+  yield* (yield* TestDatabase.TestDatabase).query("truncate github_accounts, sync_requests, rate_lines cascade");
   yield* TestClock.setTime(start);
 });
 
@@ -160,14 +160,14 @@ const row = (login: string) => Db.Db.use((db) => db.syncRequests.get(login as Lo
 
 // How many units the line holds past now.
 const lineUnits = Effect.flatMap(DateTime.now, (now) =>
-  Db.Db.use((db) => db.syncLine.wait("all", now, Duration.zero)).pipe(
+  Db.Db.use((db) => db.rateLines.wait("all", now, Duration.zero)).pipe(
     Effect.map((wait) => Duration.toMillis(wait) / unitMillis),
   ),
 );
 
 const reserveUnits = (db: Db.Db["Service"], count: number) =>
   Effect.flatMap(DateTime.now, (now) =>
-    db.syncLine.reserve({
+    db.rateLines.reserve({
       line: "all",
       at: now,
       cost: units(count),
@@ -510,6 +510,22 @@ it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (i
     }),
   );
 
+  it.effect("prunes requests older than a day and lines the clock has passed, and keeps the rest", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      yield* request("octocat");
+      yield* TestClock.adjust("23 hours");
+      yield* request("hubot", anyone("caller-b"));
+      yield* TestClock.adjust("2 hours");
+      yield* fill(10);
+      yield* SyncRequests.prune();
+      expect(yield* row("octocat")).toEqual(Option.none());
+      expect(Option.isSome(yield* row("hubot"))).toBe(true);
+      const keys = yield* (yield* TestDatabase.TestDatabase).query("select key from rate_lines order by key");
+      expect(keys).toEqual([{ key: "all" }]);
+    }),
+  );
+
   it.effect("answers a login GitHub does not have as not found, from the claim row for 10 minutes", () =>
     Effect.gen(function* () {
       yield* reset;
@@ -720,7 +736,7 @@ it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (i
     Effect.gen(function* () {
       yield* reset;
       const facts = user("octocat", 583231, 2_431).account;
-      yield* Db.Db.use((db) => db.accounts.upsert(facts, 2_431));
+      yield* Db.Db.use((db) => db.accounts.upsertLooked({ account: facts, starredTotal: 2_431 }));
       yield* fill(4_500);
       expect(yield* request("octocat", owner)).toEqual({
         state: "queued",
@@ -737,7 +753,7 @@ it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (i
   it.effect("pushes the next signed-out start later by what the owner's sync costs", () =>
     Effect.gen(function* () {
       yield* reset;
-      yield* Db.Db.use((db) => db.accounts.upsert(user("linus", 9004, 2_431).account, 2_431));
+      yield* Db.Db.use((db) => db.accounts.upsertLooked(user("linus", 9004, 2_431)));
       yield* fill(300);
       yield* request("linus", owner);
       expect(yield* request("octocat")).toMatchObject({ state: "waiting", startsAt: at(start + 128 * unitMillis) });
@@ -959,7 +975,6 @@ const releasedClaimCases = (test: {
         login,
         at: at(start),
         cooldown: Duration.minutes(10),
-        lifetime: SyncRequests.requestLifetime,
         overtakesWaiting: false,
       });
       const asleep = yield* Queue.unbounded<void>();
@@ -990,7 +1005,6 @@ const releasedClaimCases = (test: {
           login,
           at: now,
           cooldown: Duration.minutes(10),
-          lifetime: SyncRequests.requestLifetime,
           overtakesWaiting: false,
         }),
       );

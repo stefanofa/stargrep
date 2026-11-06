@@ -2,7 +2,7 @@
   "type": "diff",
   "version": "9",
   "dialect": "postgres",
-  "id": "93b0eb08-314c-4011-bb86-d8e68b78ab06",
+  "id": "78d18c52-4809-4c78-aa0d-73e0d0aea9ee",
   "prevIds": [
     "0302bd73-2cf1-448d-9d08-6a22d4358f19"
   ],
@@ -26,15 +26,15 @@
       "statementTarget": [
         "table",
         "public",
-        "sync_lines"
+        "rate_lines"
       ],
       "writes": [
-        "s|tbl|public.sync_lines",
-        "n|tbl|public.sync_lines",
-        "e|tbl|public.sync_lines",
-        "n|rel|public.sync_lines",
-        "n|type|public.sync_lines",
-        "n|rel|public.sync_lines_pkey"
+        "s|tbl|public.rate_lines",
+        "n|tbl|public.rate_lines",
+        "e|tbl|public.rate_lines",
+        "n|rel|public.rate_lines",
+        "n|type|public.rate_lines",
+        "n|rel|public.rate_lines_pkey"
       ],
       "reads": [
         "n|sch|public"
@@ -64,7 +64,7 @@
       "op": "create",
       "row": {
         "schema": "public",
-        "name": "sync_lines",
+        "name": "rate_lines",
         "isRlsEnabled": false,
         "entityType": "tables"
       }
@@ -73,7 +73,7 @@
       "op": "create",
       "row": {
         "schema": "public",
-        "table": "sync_lines",
+        "table": "rate_lines",
         "name": "key",
         "type": "text",
         "typeSchema": null,
@@ -89,7 +89,7 @@
       "op": "create",
       "row": {
         "schema": "public",
-        "table": "sync_lines",
+        "table": "rate_lines",
         "name": "busy_until",
         "type": "timestamp with time zone",
         "typeSchema": null,
@@ -121,8 +121,8 @@
       "op": "create",
       "row": {
         "schema": "public",
-        "table": "sync_lines",
-        "name": "sync_lines_pkey",
+        "table": "rate_lines",
+        "name": "rate_lines_pkey",
         "columns": [
           "key"
         ],
@@ -137,7 +137,8 @@
         "values": [
           "pending",
           "failed",
-          "missing"
+          "missing",
+          "claimed"
         ]
       }
     }

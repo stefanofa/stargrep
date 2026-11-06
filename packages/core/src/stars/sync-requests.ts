@@ -123,7 +123,7 @@ const pagesOf = (read: StarRead) =>
 export const costOf = (read: StarRead): number => 1 + (read._tag === "every" ? 2 : 0) + pagesOf(read);
 
 const reserve = (db: Db.Db["Service"], at: DateTime.Utc, units: number, force: boolean) =>
-  db.syncLine.reserve({
+  db.rateLines.reserve({
     line: "all",
     at,
     cost: Duration.times(unit, units),
@@ -186,6 +186,15 @@ const policies: Record<Requester["_tag"], Policy> = {
 const queuedWait = Duration.minutes(10);
 
 export const requestLifetime = Duration.days(1);
+
+// A request past its lifetime and a line the clock has passed both answer as if they had no row, so the prune only keeps
+// the tables small.
+export const prune = Effect.fn("SyncRequests.prune")(function* () {
+  const db = yield* Db.Db;
+  const now = yield* DateTime.now;
+  yield* db.syncRequests.prune(DateTime.subtractDuration(now, requestLifetime));
+  yield* db.rateLines.prune(now);
+});
 
 // A claim writes starts_at once its message is sent, so a pending row without one is a claim whose lookup or
 // reservation still runs. The lookup gives up after 5 seconds, so a request that finds such a claim reads the row again
@@ -269,7 +278,7 @@ const make = Effect.gen(function* () {
   });
 
   const reserveNewLogin = (caller: Db.CallerKey, at: DateTime.Utc) =>
-    db.syncLine.reserve({
+    db.rateLines.reserve({
       line: Db.callerLine(caller),
       at,
       cost: callerLimit.every,
@@ -355,14 +364,14 @@ const make = Effect.gen(function* () {
     const syncedAt = syncedAtOf(current);
     const neverSynced = syncedAt === null;
     if (by._tag === "anyone") {
-      const wait = yield* db.syncLine.wait("all", now, tolerance);
+      const wait = yield* db.rateLines.wait("all", now, tolerance);
       if (Duration.isGreaterThan(wait, line.maxWait)) {
         yield* decide("line-full", 0, wait);
         return yield* new SyncBusy({ reason: "line-full" });
       }
     }
 
-    const claim = { login, at: now, cooldown, lifetime: requestLifetime, overtakesWaiting: policy.overtakesWaiting };
+    const claim = { login, at: now, cooldown, overtakesWaiting: policy.overtakesWaiting };
     if (!(yield* db.syncRequests.claim(claim))) {
       const winner = yield* read(login, now);
       // A winner already released leaves the login free to claim again after the wait.
@@ -407,7 +416,7 @@ const make = Effect.gen(function* () {
       return yield* new LoginNotFound({ login });
     }
     const { account: facts, starredTotal } = found.value;
-    yield* db.accounts.upsert(facts, starredTotal);
+    yield* db.accounts.upsertLooked(found.value);
     const looked: Looked = { starredTotal, accountType: facts.type };
 
     if (facts.type === "org") {

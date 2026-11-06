@@ -30,7 +30,7 @@ export const starSource = pgEnum("star_source", ["gharchive", "api"]);
 export const followSource = pgEnum("follow_source", ["github", "stargrep"]);
 export const collectionKind = pgEnum("collection_kind", ["user", "editorial"]);
 export const searchScope = pgEnum("search_scope", ["stars", "network", "global"]);
-export const syncRequestOutcome = pgEnum("sync_request_outcome", ["pending", "failed", "missing"]);
+export const syncRequestOutcome = pgEnum("sync_request_outcome", ["pending", "failed", "missing", "claimed"]);
 export const iconSource = pgEnum("icon_source", ["repo-file", "readme-image", "homepage"]);
 export const iconPlate = pgEnum("icon_plate", ["none", "light", "dark"]);
 
@@ -239,9 +239,9 @@ export const syncRequests = pgTable(
   (table) => [index("sync_requests_requested_at_idx").on(table.requestedAt)],
 );
 
-// One row per line. Signed-out syncs reserve GitHub requests in one line, and each caller's new logins in a line of
-// its own. A line is clear once the clock passes busy_until, the same as a line with no row.
-export const syncLines = pgTable("sync_lines", {
+// One row per rate line, such as the GitHub requests every signed-out sync reserves and each network's share of them.
+// A line is clear once the clock passes busy_until, the same as a line with no row.
+export const rateLines = pgTable("rate_lines", {
   key: text("key").primaryKey(),
   busyUntil: time("busy_until").notNull(),
 });

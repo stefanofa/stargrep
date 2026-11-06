@@ -16,17 +16,17 @@ const start = at("2026-11-06T09:00:00Z");
 const later = (count: number) => DateTime.addDuration(start, units(count));
 
 const reserve = (time: DateTime.Utc, cost: number, force = false) =>
-  Db.Db.use((db) => db.syncLine.reserve({ line: "all", at: time, cost: units(cost), tolerance, maxWait, force }));
+  Db.Db.use((db) => db.rateLines.reserve({ line: "all", at: time, cost: units(cost), tolerance, maxWait, force }));
 
 const busyFor = (time: DateTime.Utc, line: Db.LineKey = "all") =>
-  Db.Db.use((db) => db.syncLine.wait(line, time, Duration.zero));
+  Db.Db.use((db) => db.rateLines.wait(line, time, Duration.zero));
 
 // A caller's line: 4 new logins at once, then one every 15 minutes, and never a wait.
 const quarter = Duration.minutes(15);
 const caller = (name: string) => Db.callerLine(Db.CallerKey.make(name));
 const reserveNew = (name: string, time: DateTime.Utc) =>
   Db.Db.use((db) =>
-    db.syncLine.reserve({
+    db.rateLines.reserve({
       line: caller(name),
       at: time,
       cost: quarter,
@@ -36,11 +36,13 @@ const reserveNew = (name: string, time: DateTime.Utc) =>
     }),
   );
 
+const adjust = (time: DateTime.Utc, count: number) => Db.Db.use((db) => db.rateLines.adjust("all", time, units(count)));
+
 const query = (text: string) => TestDatabase.TestDatabase.use((database) => database.query(text));
 
-const clear = query("delete from sync_lines");
+const clear = query("delete from rate_lines");
 
-const lines = Effect.map(query("select key from sync_lines order by key"), (rows) =>
+const lines = Effect.map(query("select key from rate_lines order by key"), (rows) =>
   (rows as ReadonlyArray<{ readonly key: string }>).map((row) => row.key),
 );
 
@@ -48,7 +50,7 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | Test
   test.effect("starts a reservation on an empty line now and moves the line by its cost", () =>
     Effect.gen(function* () {
       yield* clear;
-      expect(yield* Db.Db.use((db) => db.syncLine.wait("all", start, tolerance))).toEqual(Duration.zero);
+      expect(yield* Db.Db.use((db) => db.rateLines.wait("all", start, tolerance))).toEqual(Duration.zero);
       expect(yield* reserve(start, 27)).toEqual(Option.some(start));
       expect(yield* busyFor(start)).toEqual(units(27));
     }),
@@ -59,7 +61,7 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | Test
       yield* clear;
       for (let index = 0; index < 8; index++) expect(yield* reserve(start, 27)).toEqual(Option.some(start));
       expect(yield* reserve(start, 27)).toEqual(Option.some(later(8 * 27 - 200)));
-      expect(yield* Db.Db.use((db) => db.syncLine.wait("all", start, tolerance))).toEqual(units(9 * 27 - 200));
+      expect(yield* Db.Db.use((db) => db.rateLines.wait("all", start, tolerance))).toEqual(units(9 * 27 - 200));
     }),
   );
 
@@ -89,7 +91,7 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | Test
       yield* clear;
       yield* reserve(start, 4_000);
       const after = later(4_001);
-      expect(yield* Db.Db.use((db) => db.syncLine.wait("all", after, tolerance))).toEqual(Duration.zero);
+      expect(yield* Db.Db.use((db) => db.rateLines.wait("all", after, tolerance))).toEqual(Duration.zero);
       expect(yield* reserve(after, 27)).toEqual(Option.some(after));
       expect(yield* busyFor(after)).toEqual(units(27));
     }),
@@ -114,26 +116,59 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | Test
       }),
   );
 
-  test.effect("deletes the lines the clock has passed when it reserves, and keeps the busy ones", () =>
+  test.effect("prunes the lines the clock has passed, and keeps the busy ones", () =>
     Effect.gen(function* () {
       yield* clear;
       yield* reserveNew("caller-a", start);
       yield* reserveNew("caller-b", DateTime.addDuration(start, Duration.minutes(10)));
       yield* reserve(start, 27);
-      expect(yield* lines).toEqual(["all", "caller/caller-a", "caller/caller-b"]);
+      const twenty = DateTime.addDuration(start, Duration.minutes(20));
+      yield* Db.Db.use((db) => db.rateLines.prune(twenty));
+      expect(yield* lines).toEqual(["caller/caller-b"]);
+      expect(yield* reserveNew("caller-a", twenty)).toEqual(Option.some(twenty));
+    }),
+  );
 
-      yield* reserve(DateTime.addDuration(start, Duration.minutes(20)), 1);
-      expect(yield* lines).toEqual(["all", "caller/caller-b"]);
-      expect(yield* reserveNew("caller-a", DateTime.addDuration(start, Duration.minutes(20)))).toEqual(
-        Option.some(DateTime.addDuration(start, Duration.minutes(20))),
-      );
+  test.effect("bills a line by a positive adjustment, as a forced reservation would", () =>
+    Effect.gen(function* () {
+      yield* clear;
+      yield* adjust(start, 30);
+      expect(yield* busyFor(start)).toEqual(units(30));
+      yield* adjust(later(10), 5);
+      expect(yield* busyFor(start)).toEqual(units(35));
+      yield* adjust(later(100), 5);
+      expect(yield* busyFor(later(100))).toEqual(units(5));
+    }),
+  );
+
+  test.effect("releases a line by a negative adjustment, never earlier than now", () =>
+    Effect.gen(function* () {
+      yield* clear;
+      yield* reserve(start, 300);
+      yield* adjust(start, -100);
+      expect(yield* busyFor(start)).toEqual(units(200));
+      expect(yield* reserve(start, 1)).toEqual(Option.some(start));
+      yield* adjust(later(150), -500);
+      expect(yield* busyFor(later(150))).toEqual(Duration.zero);
+      yield* adjust(later(150), 2);
+      expect(yield* busyFor(later(150))).toEqual(units(2));
+    }),
+  );
+
+  test.effect("leaves a released line with no row clear", () =>
+    Effect.gen(function* () {
+      yield* clear;
+      yield* adjust(start, -40);
+      expect(yield* busyFor(start)).toEqual(Duration.zero);
+      expect(yield* reserve(start, 27)).toEqual(Option.some(start));
+      expect(yield* busyFor(start)).toEqual(units(27));
     }),
   );
 };
 
-it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 30_000 })("PGlite sync line", cases);
+it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 30_000 })("PGlite rate lines", cases);
 it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 30_000 })(
-  "node-postgres sync line",
+  "node-postgres rate lines",
   (test) => {
     cases(test);
 

@@ -8,11 +8,11 @@ import type { DbQueryFailed } from "./errors.ts";
 import * as NodePostgres from "./node-postgres.ts";
 import * as Postgres from "./postgres.ts";
 import * as Accounts from "./queries/accounts.ts";
+import * as RateLines from "./queries/rate-lines.ts";
 import * as Repos from "./queries/repos.ts";
 import * as Search from "./queries/search.ts";
 import * as Settings from "./queries/settings.ts";
 import * as Stars from "./queries/stars.ts";
-import * as SyncLine from "./queries/sync-line.ts";
 import * as SyncRequests from "./queries/sync-requests.ts";
 import * as Usage from "./queries/usage.ts";
 
@@ -24,6 +24,8 @@ export type {
   StarredCount,
   StarSync,
 } from "./queries/accounts.ts";
+export type { LineKey, Reservation } from "./queries/rate-lines.ts";
+export { CallerKey, callerLine } from "./queries/rate-lines.ts";
 export type {
   DueIcon,
   EnrichFailures,
@@ -61,8 +63,6 @@ export type {
   StarsSnapshot,
   StarsUpsert,
 } from "./queries/stars.ts";
-export type { LineKey, Reservation } from "./queries/sync-line.ts";
-export { CallerKey, callerLine } from "./queries/sync-line.ts";
 export type { Settlement, SyncClaim, SyncRequest } from "./queries/sync-requests.ts";
 export type { UsageCall, UsageCounts, UsageDay } from "./queries/usage.ts";
 export { enrichFailureCap } from "./schema.ts";
@@ -75,7 +75,7 @@ export class Db extends Context.Service<
     readonly stars: Stars.Queries;
     readonly search: Search.Queries;
     readonly syncRequests: SyncRequests.Queries;
-    readonly syncLine: SyncLine.Queries;
+    readonly rateLines: RateLines.Queries;
     readonly usage: Usage.Queries;
   }
 >()("@stargrep/db/db") {}
@@ -119,7 +119,7 @@ export const layer = (options: Options) =>
           stars: yield* Stars.make,
           search: yield* Search.make(embeddingModel),
           syncRequests: yield* SyncRequests.make,
-          syncLine: yield* SyncLine.make,
+          rateLines: yield* RateLines.make,
           usage: yield* Usage.make,
         });
       }),

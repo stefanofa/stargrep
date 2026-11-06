@@ -1,5 +1,5 @@
 import type { Login } from "@stargrep/github/schemas";
-import { and, eq, gt, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, gt, lt, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import * as Arr from "effect/Array";
 import type * as DateTime from "effect/DateTime";
@@ -23,7 +23,6 @@ export interface SyncClaim {
   readonly at: DateTime.Utc;
   // Counted from when the held request starts, so a request waiting in line keeps its login until it has run.
   readonly cooldown: Duration.Duration;
-  readonly lifetime: Duration.Duration;
   // Also wins over a request still waiting in line, for a requester who never waits.
   readonly overtakesWaiting: boolean;
 }
@@ -43,6 +42,8 @@ export interface Queries {
   ) => Effect.Effect<void, DbQueryFailed>;
   // released deletes the row, so the next request claims at once.
   readonly settle: (login: Login, requestedAt: DateTime.Utc, outcome: Settlement) => Effect.Effect<void, DbQueryFailed>;
+  // Deletes every request made before the given time.
+  readonly prune: (before: DateTime.Utc) => Effect.Effect<void, DbQueryFailed>;
 }
 
 const decodeRequests = rowsDecoder(SyncRequest);
@@ -52,8 +53,6 @@ const keyOf = (login: Login) => login.toLowerCase();
 
 const before = (time: Date, duration: Duration.Duration) =>
   sql`${time}::timestamptz - ${`${Duration.toMillis(duration)} milliseconds`}::interval`;
-
-const pruneBatch = 100;
 
 const cooledDown = (time: Date, cooldown: Duration.Duration) =>
   sql`coalesce(${syncRequests.startsAt}, ${syncRequests.requestedAt}) <= ${before(time, cooldown)}`;
@@ -72,27 +71,8 @@ export const make = Effect.gen(function* () {
           .from(syncRequests)
           .where(eq(syncRequests.login, keyOf(login))),
       ).pipe(Effect.flatMap(decodeRequests("syncRequests.get")), Effect.map(Arr.head)),
-    claim: Effect.fn("Db.syncRequests.claim")(function* ({
-      login,
-      at,
-      cooldown,
-      lifetime,
-      overtakesWaiting,
-    }: SyncClaim) {
+    claim: Effect.fn("Db.syncRequests.claim")(function* ({ login, at, cooldown, overtakesWaiting }: SyncClaim) {
       const requestedAt = yield* encodeTime(at);
-      yield* run("syncRequests.prune", (db) =>
-        db.delete(syncRequests).where(
-          inArray(
-            syncRequests.login,
-            db
-              .select({ login: syncRequests.login })
-              .from(syncRequests)
-              .where(lt(syncRequests.requestedAt, before(requestedAt, lifetime)))
-              .limit(pruneBatch)
-              .for("update", { skipLocked: true }),
-          ),
-        ),
-      );
       const claimed = yield* run("syncRequests.claim", (db) =>
         db
           .insert(syncRequests)
@@ -138,6 +118,13 @@ export const make = Effect.gen(function* () {
               ? db.delete(syncRequests).where(holding(login, time))
               : db.update(syncRequests).set({ outcome }).where(holding(login, time)),
           ),
+        ),
+        Effect.asVoid,
+      ),
+    prune: (time) =>
+      encodeTime(time).pipe(
+        Effect.flatMap((cutoff) =>
+          run("syncRequests.prune", (db) => db.delete(syncRequests).where(lt(syncRequests.requestedAt, cutoff))),
         ),
         Effect.asVoid,
       ),

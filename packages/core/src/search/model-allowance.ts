@@ -73,7 +73,7 @@ export const layerMetered = (caller: Db.CallerKey) =>
           yield* Effect.annotateCurrentSpan("model.call", call);
           const at = yield* DateTime.now;
           for (const { reason, line, rate } of lines) {
-            const started = yield* db.syncLine.reserve(reservation(line, rate, at)).pipe(
+            const started = yield* db.rateLines.reserve(reservation(line, rate, at)).pipe(
               Effect.catch((error) =>
                 Effect.logWarning("Model allowance could not be read, so the call is refused", {
                   error: error._tag,

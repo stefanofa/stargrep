@@ -1,3 +1,4 @@
+import type { Owner } from "@stargrep/github/owner";
 import { GitHubAccountId, Login } from "@stargrep/github/schemas";
 import { eq, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
@@ -57,8 +58,9 @@ export interface OwnedRepoStars {
 }
 
 export interface Queries {
-  // A starred count, when given, is written with the facts.
-  readonly upsert: (facts: AccountFacts, starredCount?: number) => Effect.Effect<void, DbQueryFailed>;
+  readonly upsert: (facts: AccountFacts) => Effect.Effect<void, DbQueryFailed>;
+  // Writes what a lookup of the login found: its facts and how many repos it starred.
+  readonly upsertLooked: (owner: Owner) => Effect.Effect<void, DbQueryFailed>;
   readonly claim: (claim: AccountClaim) => Effect.Effect<void, DbQueryFailed>;
   readonly claimedBy: (userId: UserId) => Effect.Effect<Option.Option<Account>, DbQueryFailed | DbRowInvalid>;
   readonly get: (id: GitHubAccountId) => Effect.Effect<Option.Option<Account>, DbQueryFailed | DbRowInvalid>;
@@ -76,17 +78,20 @@ const encodeTime = writeEncoder(Schema.DateTimeUtcFromDate);
 export const make = Effect.gen(function* () {
   const { run } = yield* Postgres.Postgres;
 
+  const upsert = (operation: "accounts.upsert" | "accounts.upsertLooked", facts: AccountFacts, starredCount?: number) =>
+    encodeFacts(facts).pipe(
+      Effect.flatMap((values) => {
+        const row = starredCount === undefined ? values : { ...values, starredCount };
+        const { id: _, ...changes } = row;
+        return run(operation, (db) =>
+          db.insert(githubAccounts).values(row).onConflictDoUpdate({ target: githubAccounts.id, set: changes }),
+        );
+      }),
+    );
+
   return {
-    upsert: (facts, starredCount) =>
-      encodeFacts(facts).pipe(
-        Effect.flatMap((values) => {
-          const row = starredCount === undefined ? values : { ...values, starredCount };
-          const { id: _, ...changes } = row;
-          return run("accounts.upsert", (db) =>
-            db.insert(githubAccounts).values(row).onConflictDoUpdate({ target: githubAccounts.id, set: changes }),
-          );
-        }),
-      ),
+    upsert: (facts) => upsert("accounts.upsert", facts),
+    upsertLooked: (owner) => upsert("accounts.upsertLooked", owner.account, owner.starredTotal),
     claim: ({ facts, userId, starredCount }) =>
       encodeFacts(facts).pipe(
         Effect.flatMap((values) => {
