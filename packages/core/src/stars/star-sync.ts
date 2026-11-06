@@ -97,7 +97,12 @@ const make = Effect.gen(function* () {
     if (Arr.isReadonlyArrayNonEmpty(pending)) yield* queue.send(pending.map((repoId) => ({ repoId })));
 
     const snapshotReady = !pages.some((page) => page.stopped) && Option.isSome(countBefore);
-    const shifted = snapshotReady && countBefore.value !== (yield* countStars);
+    const countAfter = snapshotReady ? Option.some(yield* countStars) : Option.none<number>();
+    const shifted = Option.isSome(countAfter) && Option.isSome(countBefore) && countBefore.value !== countAfter.value;
+    const counted = Option.orElse(countAfter, () => countBefore);
+    if (Option.isSome(counted)) {
+      yield* db.accounts.setStarredCount({ accountId: account.id, starredCount: counted.value });
+    }
     const snapshot =
       snapshotReady && !shifted
         ? yield* db.stars.applySnapshot({

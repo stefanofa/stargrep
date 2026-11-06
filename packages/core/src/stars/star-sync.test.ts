@@ -136,7 +136,34 @@ const range = (from: number, to: number) => Array.from({ length: to - from + 1 }
 
 const sentRepos = () => sent.map((message) => message.repoId as number);
 
+const starredCount = (accountId: GitHubAccountId) =>
+  Effect.map(
+    Db.Db.use((db) => db.accounts.require(accountId)),
+    (found) => found.starredCount,
+  );
+
 const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | TestDatabase.TestDatabase> }) => {
+  test.effect("stores the starred total whenever a read counts the stars, and an org's as 0", () =>
+    Effect.gen(function* () {
+      yield* reset();
+      const list = newestFirst(3);
+      const id = yield* account(11, "counter", list);
+      yield* sync(id);
+      expect(yield* starredCount(id)).toBe(3);
+
+      yield* TestClock.adjust("2 minutes");
+      list.unshift({ repo: 99, at: syncTime + minute });
+      yield* sync(id);
+      expect(yield* starredCount(id)).toBe(3);
+      yield* sync(id, "full");
+      expect(yield* starredCount(id)).toBe(4);
+
+      const org = yield* account(12, "an-org", [], "org");
+      yield* sync(org);
+      expect(yield* starredCount(org)).toBe(0);
+    }),
+  );
+
   test.effect("writes every star on a first sync and enqueues each new repo once", () =>
     Effect.gen(function* () {
       yield* reset();
