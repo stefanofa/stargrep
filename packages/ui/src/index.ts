@@ -36,4 +36,5 @@ export { type StarredDay, type StarredWeek, StarredWeeks } from "./components/st
 export { Tile, type TileVariant } from "./components/tile.tsx";
 export { Tooltip } from "./components/tooltip.tsx";
 export { useStoredView, type View, ViewToggle } from "./components/view-toggle.tsx";
+export { cn } from "./lib/cn.ts";
 export { Pip, type PipPose, pipPoses } from "./mark/pip.tsx";

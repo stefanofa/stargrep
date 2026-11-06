@@ -1,4 +1,4 @@
-import { type MouseEvent, type ReactNode, useId, useLayoutEffect, useRef, useState } from "react";
+import { type MouseEvent, type ReactNode, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Skeleton as Measured } from "skullet/react";
 import { cn } from "../lib/cn.ts";
 import { NetworkAvatars, type Person } from "./avatar.tsx";
@@ -296,6 +296,16 @@ const entrances: Record<Entrance, { full: Keyframe[]; reduced: Keyframe[] | null
     "fade-in": { full: [{ opacity: 0 }, {}], reduced: null, timing: { duration: 150, easing: "ease-out" } },
   };
 
+const unsubscribe = () => () => {};
+
+// False while React hydrates server HTML. A result painted by the server is already on screen, so it gets no entrance.
+const useMountedLive = () =>
+  useSyncExternalStore(
+    unsubscribe,
+    () => true,
+    () => false,
+  );
+
 // Script animations, unlike CSS ones, keep running when React moves a reordered item's node, so typing never replays them.
 function Entry({
   entrance,
@@ -307,7 +317,8 @@ function Entry({
   children: ReactNode;
 }) {
   const item = useRef<HTMLLIElement>(null);
-  const [onMount] = useState(entrance);
+  const live = useMountedLive();
+  const [onMount] = useState(live ? entrance : null);
   useLayoutEffect(() => {
     if (onMount === null) return;
     const { full, reduced, timing } = entrances[onMount];

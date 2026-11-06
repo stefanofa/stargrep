@@ -1,5 +1,13 @@
 import { Input } from "@base-ui/react/input";
-import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { cn } from "../lib/cn.ts";
 import { Badge } from "./badge.tsx";
 import { Button } from "./button.tsx";
@@ -66,6 +74,7 @@ export function SearchTile({
   onRemoveFilter,
   label = "Search your stars",
   placeholder,
+  owner,
   status,
   controls,
   progress,
@@ -79,6 +88,7 @@ export function SearchTile({
   onRemoveFilter?: (filter: Filter) => void;
   label?: string;
   placeholder?: string | undefined;
+  owner?: ReactNode;
   status?: ReactNode;
   controls?: ReactNode;
   progress?: TileProgress | undefined;
@@ -91,6 +101,13 @@ export function SearchTile({
     setOwn(next);
     onQueryChange?.(next);
   };
+
+  // A server-rendered tile takes typing before its script arrives, so it adopts what the input holds when it hydrates.
+  const typedEarly = useRef({ current, change });
+  useLayoutEffect(() => {
+    const typed = input.current?.value;
+    if (typed !== undefined && typed !== typedEarly.current.current) typedEarly.current.change(typed);
+  }, []);
 
   useEffect(() => {
     const focusOnSlash = (event: globalThis.KeyboardEvent) => {
@@ -120,9 +137,15 @@ export function SearchTile({
   return (
     <div className={cn("relative", className)}>
       <Tile className="flex flex-col overflow-clip p-0 has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-accent">
-        <search className="flex flex-col gap-[18px] px-[22px] pt-4 pb-5 sm:px-8 sm:pt-7 sm:pb-6">
+        <search
+          className={cn(
+            "flex flex-col gap-[18px] px-[22px] pt-4 pb-5 sm:px-8 sm:pt-7 sm:pb-6",
+            owner !== undefined && "sm:pt-[22px] sm:pb-5 sm:pl-6",
+          )}
+        >
           <form onSubmit={submit} className="flex items-center gap-3 sm:gap-4">
-            <SearchIcon className="size-[22px] shrink-0 sm:size-[26px]" />
+            <SearchIcon className={cn("size-[22px] shrink-0 sm:size-[26px]", owner !== undefined && "sm:hidden")} />
+            {owner !== undefined && <div className="contents max-sm:hidden">{owner}</div>}
             <Input
               ref={input}
               type="search"
@@ -150,7 +173,10 @@ export function SearchTile({
         {strip && (
           <div className="max-sm:order-first sm:pr-5 sm:pb-1.5 sm:pl-8">
             <div className="flex min-h-16 items-center justify-between gap-2 border-muted pr-3 pl-[22px] max-sm:pt-[3px] sm:gap-6 sm:border-t-[1.5px] sm:px-0">
-              <div className="min-w-0">{status}</div>
+              <div className="flex min-w-0 items-center gap-2.5">
+                {owner !== undefined && <div className="contents sm:hidden">{owner}</div>}
+                {status}
+              </div>
               <div className="flex shrink-0 items-center gap-2.5">{controls}</div>
             </div>
             <div aria-hidden className="mx-[22px] h-[1.5px] bg-muted sm:hidden" />
@@ -167,9 +193,9 @@ export function SearchTile({
   );
 }
 
-export type StatusIcon = "busy" | "synced" | "found" | "done" | "failed";
+export type StatusIcon = "busy" | "synced" | "found" | "done" | "paused" | "failed";
 
-const statusIcons: ReadonlyArray<StatusIcon> = ["busy", "synced", "found", "done", "failed"];
+const statusIcons: ReadonlyArray<StatusIcon> = ["busy", "synced", "found", "done", "paused", "failed"];
 
 function Glyph({ icon, shown }: { icon: StatusIcon; shown: boolean }) {
   const common = { viewBox: "0 0 16 16", fill: "none", className: "size-4" } as const;
@@ -218,6 +244,19 @@ function Glyph({ icon, shown }: { icon: StatusIcon; shown: boolean }) {
           />
         </svg>
       );
+    case "paused":
+      return (
+        <svg aria-hidden {...common}>
+          <circle cx="8" cy="8" r="6" stroke="var(--color-muted-foreground)" strokeWidth="1.5" />
+          <path
+            d="M8 5v3.2l2 1.3"
+            stroke="var(--color-muted-foreground)"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      );
     case "failed":
       return (
         <svg aria-hidden {...common}>
@@ -251,14 +290,18 @@ function Glyphs({ icon, instant }: { icon: StatusIcon; instant: boolean }) {
 export function StatusLine({
   icon,
   label,
+  phoneLabel,
   detail,
+  phoneDetail,
   continues = false,
   instant = false,
   action,
 }: {
   icon: StatusIcon;
   label: string;
+  phoneLabel?: string | undefined;
   detail?: string | undefined;
+  phoneDetail?: string | undefined;
   continues?: boolean | undefined;
   instant?: boolean | undefined;
   action?: ReactNode;
@@ -284,18 +327,34 @@ export function StatusLine({
               key={icon}
               className={cn("inline-block max-sm:block max-sm:truncate", settles && "motion-safe:animate-settle")}
             >
-              {label}
+              {phoneLabel === undefined ? (
+                label
+              ) : (
+                <>
+                  <span className="sm:hidden">{phoneLabel}</span>
+                  <span className="max-sm:hidden">{label}</span>
+                </>
+              )}
             </span>
           </span>
+          {/* A new label starts a new status sentence, so its detail is new text rather than old text pushed aside. */}
           {detail && (
             <span
+              key={label}
               className={cn(
                 "text-sm text-muted-foreground max-sm:line-clamp-1 sm:text-base",
                 Boolean(action) && "max-sm:hidden",
               )}
             >
               <span className="max-sm:hidden">{continues ? " " : " · "}</span>
-              {detail}
+              {phoneDetail === undefined ? (
+                detail
+              ) : (
+                <>
+                  <span className="sm:hidden">{phoneDetail}</span>
+                  <span className="max-sm:hidden">{detail}</span>
+                </>
+              )}
             </span>
           )}
         </p>

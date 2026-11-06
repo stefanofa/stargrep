@@ -27,6 +27,13 @@ const since = (iso: string, at: number) => {
   return relative.format(-Math.floor(days / 365), "year");
 };
 
+export const startsIn = (iso: string, at: number) => {
+  const minutes = Math.ceil((millis(iso) - at) / 60_000);
+  if (minutes <= 1) return "starting any moment";
+  if (minutes < 90) return `starts in about ${minutes} min`;
+  return `starts in about ${Math.round(minutes / 60)} hours`;
+};
+
 export const syncedAgo = (iso: string, at: number) => {
   const minutes = Math.floor((at - millis(iso)) / 60_000);
   if (minutes < 1) return "synced just now";

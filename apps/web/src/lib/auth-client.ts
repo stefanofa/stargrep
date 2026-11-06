@@ -8,7 +8,7 @@ const post = (path: string, body: object = {}) =>
 export const signIn = async () => {
   const response = await post("/auth/sign-in/social", {
     provider: "github",
-    callbackURL: "/search",
+    callbackURL: "/",
     errorCallbackURL: "/",
   });
   if (!response.ok) throw new Error(`Sign-in answered ${response.status}`);

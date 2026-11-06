@@ -57,7 +57,9 @@ function CountTile({
             <Digits>{formatCount(count)}</Digits>
           )}
         </p>
-        <p className="font-display text-lg leading-6 font-semibold sm:text-2xl">
+        {/* Phones wrap "of 27 stars, still arriving" to two lines, so the caption keeps two lines once the import is
+            done and the library below never moves. */}
+        <p className="font-display text-lg leading-6 font-semibold max-sm:min-h-[2lh] sm:text-2xl">
           {arriving === undefined
             ? "stars"
             : arriving.total === null
@@ -97,18 +99,14 @@ function LanguagesTile({
         shares.length > 0 && <LanguageBar languages={shares} />
       )}
       <nav aria-label="Filter by language" className="flex flex-wrap gap-2">
-        <Link
-          to="/search"
-          search={(previous) => ({ ...previous, lang: undefined })}
-          className={chip(language === undefined)}
-        >
+        <Link to="." search={(previous) => ({ ...previous, lang: undefined })} className={chip(language === undefined)}>
           All
         </Link>
         {shares === undefined && waitingChips.map((width) => <Skeleton key={width} className={`h-9 ${width}`} />)}
         {(shares ?? []).slice(0, 3).map((share) => (
           <Link
             key={share.name}
-            to="/search"
+            to="."
             search={(previous) => ({ ...previous, lang: share.name })}
             className={chip(language === share.name)}
           >
@@ -126,17 +124,18 @@ function MonthHeading({ heading, size, arriving }: { heading: string; size: numb
       <span className="font-display text-2xl font-semibold tracking-snug">{heading}</span>
       <span className="font-sans text-base text-muted-foreground tabular-nums">
         {stars(size)}
-        {arriving && " so far"}
+        {/* Phones leave "so far" to the status line, so the heading keeps one line when the import finishes. */}
+        {arriving && <span className="max-sm:hidden"> so far</span>}
       </span>
     </h2>
   );
 }
 
-export function LibraryPlaceholder({ view }: { view: View }) {
+export function LibraryPlaceholder({ view, arriving }: { view: View; arriving?: Arriving | undefined }) {
   return (
     <>
       <div aria-busy className="grid gap-gap lg:grid-cols-2">
-        <CountTile count={undefined} arriving={undefined} pose="idle" />
+        <CountTile count={undefined} arriving={arriving} pose="idle" />
         <LanguagesTile shares={undefined} language={undefined} />
       </div>
       <section className="flex flex-col gap-gap pt-3">
