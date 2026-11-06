@@ -128,6 +128,8 @@ Sign-in needs a GitHub App. `.github/app-manifest.json` describes it: private un
    gh variable set AUTH_PROXY_ORIGIN --body https://stargrep.com
    ```
 
+Each deploy also binds the client ID and the Better Auth secret to the main Worker, and the client secret when the stage signs in directly. The main Worker reads a signed-in user's token with them for the work that user started. A preview signs in through prod and has no client secret, so its main Worker cannot refresh an expired token.
+
 A `prod` deploy fails without `STARGREP_GITHUB_APP_CLIENT_ID`, `STARGREP_GITHUB_APP_CLIENT_SECRET`, `BETTER_AUTH_SECRET`, or `AUTH_PROXY_SECRET`. `AUTH_PROXY_ORIGIN` must be an https origin with no path. A preview deploy that has the client ID but neither `AUTH_PROXY_ORIGIN` nor the client secret fails too, so set the proxy origin before you remove a client secret from `preview`.
 
 To sign in on the local stage, export `STARGREP_GITHUB_APP_CLIENT_ID`, `STARGREP_GITHUB_APP_CLIENT_SECRET`, and any `BETTER_AUTH_SECRET` before `bun run --cwd infra dev`. The manifest registers `http://localhost:1340/auth/callback/github`.
