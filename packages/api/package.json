@@ -3,12 +3,16 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./answer-cache": "./src/answer-cache.ts",
+    "./caller": "./src/caller.ts",
     "./contract": "./src/contract.ts",
     "./errors": "./src/errors.ts",
     "./icon-host": "./src/icon-host.ts",
-    "./router": "./src/router.ts",
     "./middleware/instrumentation": "./src/middleware/instrumentation.ts",
-    "./sync-limiter": "./src/sync-limiter.ts",
+    "./public-config": "./src/public-config.ts",
+    "./rate-limiter": "./src/rate-limiter.ts",
+    "./router": "./src/router.ts",
+    "./services": "./src/services.ts",
     "./viewers": "./src/viewers.ts"
   },
   "scripts": {
@@ -27,6 +31,7 @@
   },
   "devDependencies": {
     "@effect/tsgo": "catalog:",
+    "@stargrep/ai": "workspace:*",
     "@stargrep/config": "workspace:*",
     "@stargrep/telemetry": "workspace:*",
     "@stargrep/testing": "workspace:*",

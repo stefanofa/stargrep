@@ -1,4 +1,5 @@
 import type { WebsiteEnv } from "../../website.ts";
+import type { OwnerWorker } from "./owner-lookup.ts";
 
 export interface WebEnv {
   readonly DATABASE: Hyperdrive;
@@ -6,8 +7,12 @@ export interface WebEnv {
   readonly SYNC_STARS: Queue<unknown>;
   readonly SYNC_PER_CALLER: RateLimit;
   readonly SYNC_OVERALL: RateLimit;
-  readonly WORKER: Fetcher;
+  readonly SEARCH_PER_CALLER: RateLimit;
+  readonly STARS_PER_CALLER: RateLimit;
+  readonly WORKER: Fetcher & OwnerWorker;
   readonly ICONS: R2Bucket;
+  readonly CALLER_KEY: string;
+  readonly GITHUB_BUDGET_SHARE: string;
   readonly AI_GATEWAY_API_KEY?: string;
 }
 

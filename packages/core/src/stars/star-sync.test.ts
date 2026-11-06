@@ -3,15 +3,18 @@ import * as Db from "@stargrep/db";
 import type { EmbeddingModelId } from "@stargrep/db/embedding";
 import * as TestDatabase from "@stargrep/db/test-database";
 import * as Fake from "@stargrep/github/github.fixture";
-import type { GitHubAccountId, Login } from "@stargrep/github/schemas";
+import { BudgetShare, type GitHubAccountId, type Login } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import * as EnrichQueue from "../repos/enrich-queue.ts";
-import type * as DiffPage from "./diff-page.ts";
+import * as OwnerLookup from "./owner-lookup.ts";
 import * as StarSync from "./star-sync.ts";
+import * as SyncQueue from "./sync-queue.ts";
+import * as SyncRequests from "./sync-requests.ts";
 
 const embeddingModel = "test/model" as EmbeddingModelId;
 const second = 1_000;
@@ -128,7 +131,7 @@ const activeRepos = (accountId: GitHubAccountId) =>
 const starredAt = (accountId: GitHubAccountId, repo: number) =>
   Effect.map(rows(accountId), (all) => all.find((row) => row.repo === repo && row.unstarredAt === null)?.starredAt);
 
-const report = (values: Partial<DiffPage.SyncReport>) => expect.objectContaining(values);
+const report = (values: Partial<StarSync.SyncReport>) => expect.objectContaining(values);
 
 const byNumber = (a: number, b: number) => a - b;
 
@@ -136,7 +139,34 @@ const range = (from: number, to: number) => Array.from({ length: to - from + 1 }
 
 const sentRepos = () => sent.map((message) => message.repoId as number);
 
+const starredCount = (accountId: GitHubAccountId) =>
+  Effect.map(
+    Db.Db.use((db) => db.accounts.require(accountId)),
+    (found) => found.starredCount,
+  );
+
 const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | TestDatabase.TestDatabase> }) => {
+  test.effect("stores the starred total whenever a read counts the stars, and an org's as 0", () =>
+    Effect.gen(function* () {
+      yield* reset();
+      const list = newestFirst(3);
+      const id = yield* account(11, "counter", list);
+      yield* sync(id);
+      expect(yield* starredCount(id)).toBe(3);
+
+      yield* TestClock.adjust("2 minutes");
+      list.unshift({ repo: 99, at: syncTime + minute });
+      yield* sync(id);
+      expect(yield* starredCount(id)).toBe(3);
+      yield* sync(id, "full");
+      expect(yield* starredCount(id)).toBe(4);
+
+      const org = yield* account(12, "an-org", [], "org");
+      yield* sync(org);
+      expect(yield* starredCount(org)).toBe(0);
+    }),
+  );
+
   test.effect("writes every star on a first sync and enqueues each new repo once", () =>
     Effect.gen(function* () {
       yield* reset();
@@ -526,3 +556,210 @@ it.layer(layerOn(TestDatabase.layerNodePostgres({ embeddingModel })), { timeout:
   "StarSync on Postgres",
   cases,
 );
+
+const owners = OwnerLookup.layerMemory();
+const syncs = SyncQueue.layerMemory();
+
+const share = BudgetShare.make(0.5);
+
+const admission = SyncRequests.layer(share).pipe(
+  Layer.provideMerge(layerOn(TestDatabase.layerMemory({ embeddingModel }))),
+  Layer.provideMerge(owners.layer),
+  Layer.provideMerge(syncs.layer),
+);
+
+const ada = { id: 7 as GitHubAccountId, login: "ada" as Login };
+const anyone: SyncRequests.Requester = { _tag: "anyone", caller: Db.CallerKey.make("caller-a") };
+const owner: SyncRequests.Requester = { _tag: "owner" };
+
+const begin = Effect.gen(function* () {
+  yield* reset();
+  yield* query("truncate sync_requests, rate_lines");
+  syncs.sent.length = 0;
+  owners.owners.clear();
+  owners.lookups.length = 0;
+  users.set("ada", ada);
+});
+
+// GitHub lists these stars for ada, and a lookup reports their count.
+const starred = (list: Array<Starred>) => {
+  lists.set("ada", list);
+  owners.owners.set("ada", {
+    account: { ...ada, type: "user", name: null, avatarUrl: null, followers: 1, publicRepos: 2 },
+    starredTotal: list.length,
+  });
+};
+
+const lineUnits = Effect.flatMap(DateTime.now, (now) =>
+  Db.Db.use((db) => db.rateLines.wait("all", now, Duration.zero)),
+).pipe(Effect.map((wait) => Duration.toMillis(wait) / 1_800));
+
+// Admits ada's sync, then runs the message it queued and reconciles the line as the sync-stars consumer does on a first
+// delivery. served counts the lookups and the GitHub requests the run made, and paid what the line took for them.
+const admitAndRun = (by: SyncRequests.Requester) =>
+  Effect.gen(function* () {
+    const before = yield* lineUnits;
+    const lookups = owners.lookups.length;
+    const queued = syncs.sent.length;
+    github.sent.length = 0;
+    yield* SyncRequests.SyncRequests.use((service) => service.request(ada.login, by));
+    const message = syncs.sent[queued];
+    if (message === undefined) throw new Error("the request queued no sync");
+    yield* StarSync.StarSync.use((service) => service.syncLogin(message));
+    yield* SyncRequests.reconcileSync(SyncRequests.allRate(share), message.reserved ?? 0, github.sent.length);
+    return {
+      message,
+      served: owners.lookups.length - lookups + github.sent.length,
+      paid: (yield* lineUnits) - before,
+    };
+  });
+
+const paidInFull = (run: { readonly served: number; readonly paid: number }) => expect(run.paid).toBe(run.served);
+
+const now = Effect.map(DateTime.now, DateTime.toEpochMillis);
+
+it.layer(admission, { timeout: 30_000 })("SyncRequests with StarSync", (it) => {
+  it.effect("pays for a first read, its counts included", () =>
+    Effect.gen(function* () {
+      yield* begin;
+      starred(newestFirst(1));
+      paidInFull(yield* admitAndRun(anyone));
+    }),
+  );
+
+  it.effect("pays for an incremental read after 500 new stars", () =>
+    Effect.gen(function* () {
+      yield* begin;
+      starred(newestFirst(1));
+      yield* admitAndRun(anyone);
+      yield* TestClock.adjust("11 minutes");
+      starred([...newestFirst(500, 2).map((star) => ({ ...star, at: star.at + 2 * minute })), ...newestFirst(1)]);
+      paidInFull(yield* admitAndRun(anyone));
+    }),
+  );
+
+  it.effect("pays for an incremental read that crosses a page boundary", () =>
+    Effect.gen(function* () {
+      yield* begin;
+      starred(newestFirst(2));
+      yield* admitAndRun(anyone);
+      yield* TestClock.adjust("11 minutes");
+      starred([...Array.from({ length: 99 }, (_, i) => ({ repo: 3 + i, at: syncTime + minute })), ...newestFirst(2)]);
+      paidInFull(yield* admitAndRun(anyone));
+    }),
+  );
+
+  it.effect("pays for an incremental read after 500 stars were swapped at an unchanged total", () =>
+    Effect.gen(function* () {
+      yield* begin;
+      starred(newestFirst(501));
+      yield* admitAndRun(anyone);
+      yield* TestClock.adjust("11 minutes");
+      starred([
+        ...Array.from({ length: 500 }, (_, i) => ({ repo: 502 + i, at: syncTime + minute })),
+        ...newestFirst(1),
+      ]);
+      paidInFull(yield* admitAndRun(anyone));
+    }),
+  );
+
+  it.effect("pays for an incremental read after unstars the stored count does not show", () =>
+    Effect.gen(function* () {
+      yield* begin;
+      starred(newestFirst(1_000));
+      yield* admitAndRun(anyone);
+      yield* TestClock.adjust("11 minutes");
+      const at = yield* now;
+      const fresh = Array.from({ length: 400 }, (_, i) => ({ repo: 5_000 + i, at: at - (i + 1) * minute }));
+      starred([...fresh, ...newestFirst(500)]);
+      paidInFull(yield* admitAndRun(anyone));
+    }),
+  );
+
+  it.effect("pays for an incremental read after repos were starred again", () =>
+    Effect.gen(function* () {
+      yield* begin;
+      starred(newestFirst(300));
+      yield* admitAndRun(anyone);
+      yield* TestClock.adjust("11 minutes");
+      const at = yield* now;
+      starred(newestFirst(300).map((star, i) => ({ repo: star.repo, at: at - (i + 1) * second })));
+      paidInFull(yield* admitAndRun(anyone));
+    }),
+  );
+
+  it.effect("makes the owner pay for new stars its stored count does not show", () =>
+    Effect.gen(function* () {
+      yield* begin;
+      starred(newestFirst(100));
+      yield* admitAndRun(anyone);
+      yield* TestClock.adjust("11 minutes");
+      const at = yield* now;
+      lists.set("ada", [
+        ...Array.from({ length: 500 }, (_, i) => ({ repo: 5_000 + i, at: at - (i + 1) * second })),
+        ...newestFirst(100),
+      ]);
+      const run = yield* admitAndRun(owner);
+      expect(run.message.mode).toBe("incremental");
+      paidInFull(run);
+    }),
+  );
+
+  it.effect("makes the owner pay for a weekly full read", () =>
+    Effect.gen(function* () {
+      yield* begin;
+      starred(newestFirst(250));
+      yield* admitAndRun(anyone);
+      yield* TestClock.adjust("8 days");
+      const run = yield* admitAndRun(owner);
+      expect(run.message.mode).toBe("full");
+      paidInFull(run);
+    }),
+  );
+
+  it.effect("pushes the next signed-out start later by what a sync spent past its reservation", () =>
+    Effect.gen(function* () {
+      yield* begin;
+      starred(newestFirst(300));
+      yield* admitAndRun(anyone);
+      yield* TestClock.adjust("11 minutes");
+      const at = yield* now;
+      starred(newestFirst(300).map((star, i) => ({ repo: star.repo, at: at - (i + 1) * second })));
+      yield* Db.Db.use((db) =>
+        db.rateLines.reserve({
+          line: "all",
+          at: DateTime.makeUnsafe(at),
+          cost: Duration.millis(300 * 1_800),
+          tolerance: Duration.zero,
+          maxWait: Duration.zero,
+          force: true,
+        }),
+      );
+      const run = yield* admitAndRun(anyone);
+      expect(run.message.reserved).toBe(2);
+      expect(run.served).toBe(1 + 1 + 3);
+
+      users.set("grace", { id: 8, login: "grace" });
+      owners.owners.set("grace", {
+        account: {
+          id: 8 as GitHubAccountId,
+          login: "grace" as Login,
+          type: "user",
+          name: null,
+          avatarUrl: null,
+          followers: 1,
+          publicRepos: 2,
+        },
+        starredTotal: 1,
+      });
+      const next = yield* SyncRequests.SyncRequests.use((service) =>
+        service.request("grace" as Login, { _tag: "anyone", caller: Db.CallerKey.make("caller-b") }),
+      );
+      const burst = SyncRequests.allRate(share).burstUnits;
+      expect(next).toMatchObject({
+        state: "waiting",
+        startsAt: DateTime.makeUnsafe(at + (300 + run.served + SyncRequests.lookupCost - burst) * 1_800),
+      });
+    }),
+  );
+});

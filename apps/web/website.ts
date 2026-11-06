@@ -1,6 +1,8 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import { apiKeyName } from "@stargrep/ai/gateway";
+import { demoLoginName } from "@stargrep/api/public-config";
 import { bindings, githubSignIn, names, optionalSecret, required } from "@stargrep/auth/config";
+import { budgetShareName, stageBudgetShare } from "@stargrep/runtime/budget-share";
 import { aiGatewayKey } from "@stargrep/runtime/config";
 import MainWorker from "@stargrep/worker";
 import { Database, DatabaseMigrations } from "@stargrep/worker/database";
@@ -8,12 +10,15 @@ import { prodWebHosting } from "@stargrep/worker/domain";
 import { Icons } from "@stargrep/worker/icons";
 import { SyncStars } from "@stargrep/worker/queues";
 import * as Alchemy from "alchemy";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 const SearchCache = Cloudflare.KV.Namespace("SearchCache");
 
 const BetterAuthSecret = Alchemy.makeRandom("BetterAuthSecret");
+
+const CallerKey = Alchemy.makeRandom("CallerKey");
 
 const signInBindings = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;
@@ -47,6 +52,7 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
   Effect.gen(function* () {
     const { stage } = yield* Alchemy.Stack;
     const key = yield* aiGatewayKey;
+    const demoLogin = yield* Config.option(Config.String(demoLoginName));
     return {
       rootDir: new URL(".", import.meta.url).pathname,
       memo: { include: ["**/*", "../../packages/*/src/**", "../../packages/*/package.json"], lockfile: true },
@@ -60,6 +66,8 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
         SEARCH_CACHE: SearchCache,
         SYNC_STARS: SyncStars,
         WORKER: MainWorker,
+        CALLER_KEY: yield* CallerKey,
+        [budgetShareName]: String(yield* stageBudgetShare(stage)),
         ICONS: yield* Icons,
         SYNC_PER_CALLER: Cloudflare.RateLimit("SYNC_PER_CALLER", {
           namespaceId: namespaceId(stage, "sync-per-caller"),
@@ -69,7 +77,16 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
           namespaceId: namespaceId(stage, "sync-overall"),
           simple: { limit: 60, period: 60 },
         }),
+        SEARCH_PER_CALLER: Cloudflare.RateLimit("SEARCH_PER_CALLER", {
+          namespaceId: namespaceId(stage, "search-per-caller"),
+          simple: { limit: 120, period: 60 },
+        }),
+        STARS_PER_CALLER: Cloudflare.RateLimit("STARS_PER_CALLER", {
+          namespaceId: namespaceId(stage, "stars-per-caller"),
+          simple: { limit: 60, period: 60 },
+        }),
         ...Option.match(key, { onNone: () => ({}), onSome: (value) => ({ [apiKeyName]: value }) }),
+        ...Option.match(demoLogin, { onNone: () => ({}), onSome: (value) => ({ [demoLoginName]: value }) }),
         ...(yield* signInBindings),
       },
     };

@@ -1,11 +1,13 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import { type FetchIcon, IconQueue } from "@stargrep/core/icons";
-import type { EnrichRepo } from "@stargrep/core/repos";
-import type { StarSync } from "@stargrep/core/stars";
+import type { EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
+import { StarSync, type SyncRequests } from "@stargrep/core/stars";
 import type * as Db from "@stargrep/db";
+import * as GitHub from "@stargrep/github/github";
+import type * as TokenGate from "@stargrep/github/token-gate";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
-import type * as Layer from "effect/Layer";
+import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as EnrichRepoConsumer from "./consumers/enrich-repo.ts";
 import * as FetchIconConsumer from "./consumers/fetch-icon.ts";
@@ -47,15 +49,22 @@ const consume = Effect.fn("Queues.consume")(function* <A, R, D, E>(
   );
 });
 
+const syncs = StarSync.layer.pipe(Layer.provide(GitHub.layer));
+
 export const consumeAll = <E>(
-  runtime: Layer.Layer<StarSync.StarSync | EnrichRepo.EnrichRepo | FetchIcon.FetchIcon | Db.Db, E, RuntimeContext>,
+  runtime: Layer.Layer<
+    TokenGate.TokenGate | EnrichQueue.EnrichQueue | EnrichRepo.EnrichRepo | FetchIcon.FetchIcon | Db.Db,
+    E,
+    RuntimeContext
+  >,
+  line: SyncRequests.Rate,
 ) =>
   Effect.all([
     consume(
       queueNames.syncStars,
       { queue: SyncStars, deadLetters: SyncStarsDeadLetters },
       { batchSize: 5, maxWaitTime: "1 second", ...retries },
-      SyncStarsConsumer.pipeline,
+      SyncStarsConsumer.pipeline(line, syncs),
       runtime,
     ),
     consume(

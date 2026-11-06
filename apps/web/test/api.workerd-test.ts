@@ -4,10 +4,10 @@ import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { ContractRouterClient } from "@orpc/contract";
 import type { contract } from "@stargrep/api/contract";
-import type { ApiServices } from "@stargrep/api/router";
+import type { ApiServices } from "@stargrep/api/services";
 import { SearchCache } from "@stargrep/core/search";
 import { DbQueryFailed } from "@stargrep/db/errors";
-import { Login } from "@stargrep/github/schemas";
+import { BudgetShare } from "@stargrep/github/schemas";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -18,8 +18,10 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 import { layerSearchCache } from "../src/server/adapters.ts";
 import { layerRequest } from "../src/server/layers.ts";
-import { makeServer } from "../src/server/serve.ts";
-import { queue, syncRequests } from "./entry.ts";
+import { requested, waitingStart } from "./entry.ts";
+import { testServer } from "./serve.ts";
+
+const share = BudgetShare.make(0.5);
 
 // biome-ignore lint/suspicious/noExplicitAny: response bodies are read as untyped JSON in these tests.
 type Json = any;
@@ -152,22 +154,22 @@ describe("when the services cannot start", () => {
   const failing: Layer.Layer<ApiServices, DbQueryFailed> = Layer.unwrap(
     Effect.fail(new DbQueryFailed({ operation: "settings.adopt", reason: "transport", sqlState: null })),
   );
-  const send = sendTo(makeServer(() => failing, Layer.empty));
+  const send = sendTo(testServer(() => failing));
 
   it("still validates input and lists tools, and fails a search with service unavailable", async () => {
     expect((await send("/api/search", post({ login: "ada", q: "" }))).status).toBe(400);
     const down = await send("/api/search", post({ login: "ada", q: "dashboards" }));
     expect([down.status, down.body.code]).toEqual([503, "SERVICE_UNAVAILABLE"]);
     expect(down.body.data.traceId).toEqual(traceId);
-    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(4);
+    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(6);
   });
 });
 
 describe("when the server fails outside the API", () => {
   const send = sendTo(
-    makeServer(() => {
+    testServer(() => {
       throw new Error("request layer defect");
-    }, Layer.empty),
+    }),
   );
 
   it("answers 500 in each transport's error shape with the request's trace ID", async () => {
@@ -189,7 +191,7 @@ describe("when the server fails outside the API", () => {
 });
 
 describe("when the database is unreachable", () => {
-  const send = sendTo(makeServer((request) => layerRequest(env, Option.none(), Option.none(), request), Layer.empty));
+  const send = sendTo(testServer((request) => layerRequest(env, Option.none(), share, Option.none(), request)));
 
   it("answers a body that is not JSON with 400 and the request's trace ID on every transport", async () => {
     const malformed: RequestInit = {
@@ -235,7 +237,7 @@ describe("when the database is unreachable", () => {
       data: { traceId },
     });
 
-    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(4);
+    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(6);
     expect(JSON.stringify([viaRest, viaRpc, viaMcp])).not.toContain("postgres://");
   });
 });
@@ -244,8 +246,10 @@ describe("mcp", () => {
   it("lists every procedure as a tool with an input schema", async () => {
     const { tools } = await mcp("tools/list", {});
     expect(tools.map((each: { name: string }) => each.name).sort()).toEqual([
+      "config",
       "getRepo",
       "search",
+      "stars",
       "syncStatus",
       "triggerSync",
     ]);
@@ -256,58 +260,64 @@ describe("mcp", () => {
 });
 
 describe("sync", () => {
-  it("queues a login once and rate limits one caller without blocking another", async () => {
-    const from = (ip: string) => ({ method: "POST", headers: { "cf-connecting-ip": ip } });
+  const from = (ip: string) => ({ method: "POST", headers: { "cf-connecting-ip": ip } });
+
+  it("asks admission for anyone's sync under the network's key, and limits one network without blocking another", async () => {
     const first = await rest("/sync/octocat", from("192.0.2.1"));
-    expect(first.status).toBe(202);
-    expect(first.body).toMatchObject({ login: "octocat", state: "queued", syncedAt: null });
-    expect((await rest("/sync/octocat", from("192.0.2.1"))).body.state).toBe("queued");
-    expect(queue.sent).toEqual([
-      {
-        login: "octocat",
-        mode: "incremental",
-        requestedAt: DateTime.toUtc(DateTime.makeUnsafe(first.body.requestedAt)),
-      },
+    expect([first.status, first.body]).toEqual([
+      202,
+      expect.objectContaining({ login: "octocat", state: "queued", syncedAt: null, waiting: null }),
     ]);
-
     const statuses = [];
-    for (let attempt = 0; attempt < 4; attempt++)
+    for (let attempt = 0; attempt < 5; attempt++)
       statuses.push((await rest("/sync/octocat", from("192.0.2.1"))).status);
-    expect(statuses).toEqual([202, 202, 202, 429]);
+    expect(statuses).toEqual([202, 202, 202, 202, 429]);
     expect((await rest("/sync/octocat", from("192.0.2.2"))).status).toBe(202);
-    expect((await rest("/sync/octocat")).body).toMatchObject({ state: "queued" });
+
+    const callers = requested.filter((request) => request.login === "octocat").map((request) => request.by);
+    expect(callers).toHaveLength(6);
+    expect(callers.every((by) => by._tag === "anyone" && /^[0-9a-f]{32}$/.test(by.caller))).toBe(true);
+    expect(new Set(callers.map((by) => (by._tag === "anyone" ? by.caller : "")))).toHaveProperty("size", 2);
   });
 
-  it("queues one job when the same login is triggered many times at once", async () => {
-    const replies = await Promise.all(
-      ["192.0.2.20", "192.0.2.21", "192.0.2.22"].map((ip) =>
-        rest("/sync/Swarm-Race", { method: "POST", headers: { "cf-connecting-ip": ip } }),
-      ),
-    );
-    expect(replies.map((reply) => [reply.status, reply.body.state])).toEqual([
-      [202, "queued"],
-      [202, "queued"],
-      [202, "queued"],
-    ]);
-    expect(new Set(replies.map((reply) => reply.body.requestedAt)).size).toBe(1);
-    expect(queue.sent.filter((request) => request.login.toLowerCase() === "swarm-race")).toHaveLength(1);
+  it("answers what admission refuses with each refusal's status and a trace ID", async () => {
+    const cases = [
+      ["ghost-login", 404, "LOGIN_NOT_FOUND"],
+      ["budget-spent", 503, "SYNC_BUSY"],
+      ["line-full", 503, "SYNC_BUSY"],
+      ["github-down", 503, "SERVICE_UNAVAILABLE"],
+    ] as const;
+    for (const [login, status, code] of cases) {
+      const refused = await rest(`/sync/${login}`, from("192.0.2.30"));
+      expect([refused.status, refused.body.code, refused.body.data.traceId]).toEqual([status, code, traceId]);
+    }
   });
 
-  it("reports a dead-lettered sync as failed, and ignores the dead letter of an older request", async () => {
-    const queued = await rest("/sync/Hubot", { method: "POST", headers: { "cf-connecting-ip": "192.0.2.9" } });
-    expect(queued.status).toBe(202);
-    const requestedAt = DateTime.toUtc(DateTime.makeUnsafe(queued.body.requestedAt));
-    await Effect.runPromise(
-      syncRequests.markFailed(Login.make("hubot"), DateTime.subtract(requestedAt, { minutes: 11 })),
-    );
-    expect((await rest("/sync/hubot")).body.state).toBe("queued");
-    await Effect.runPromise(syncRequests.markFailed(Login.make("hubot"), requestedAt));
-    expect((await rest("/sync/hubot")).body).toMatchObject({ login: "hubot", state: "failed", syncedAt: null });
+  it("reports a sync waiting in line with its place and start, and an org done with a starred total of 0", async () => {
+    expect((await rest("/sync/Patient", from("192.0.2.33"))).body).toMatchObject({
+      login: "Patient",
+      state: "waiting",
+      waiting: { ahead: 2, startsAt: DateTime.formatIso(waitingStart) },
+      starredTotal: 42,
+      accountType: "user",
+    });
+    expect((await rest("/sync/an-org", from("192.0.2.33"))).body).toMatchObject({
+      state: "done",
+      starredTotal: 0,
+      accountType: "org",
+      waiting: null,
+    });
   });
 
   it("reports how many of a login's stars are read, and zeros for a login Stargrep does not know", async () => {
-    expect((await rest("/sync/ada")).body.enrichment).toEqual({ total: 1, read: 1, failed: 0 });
-    expect((await rest("/sync/nobody-known")).body.enrichment).toEqual({ total: 0, read: 0, failed: 0 });
+    expect((await rest("/sync/ada")).body).toMatchObject({
+      state: "done",
+      enrichment: { total: 1, read: 1, failed: 0 },
+    });
+    expect((await rest("/sync/nobody-known")).body).toMatchObject({
+      state: "unknown",
+      enrichment: { total: 0, read: 0, failed: 0 },
+    });
   });
 
   it("rejects a login GitHub would not issue", async () => {
@@ -353,9 +363,30 @@ describe("getRepo and the spec", () => {
   it("lists every procedure in the OpenAPI document with only finite numbers", async () => {
     const response = await call("/openapi.json");
     const text = await response.text();
-    expect(Object.keys(JSON.parse(text).paths).sort()).toEqual(["/repos/{id}", "/search", "/sync/{login}"]);
+    expect(Object.keys(JSON.parse(text).paths).sort()).toEqual([
+      "/config",
+      "/repos/{id}",
+      "/search",
+      "/stars/{login}",
+      "/sync/{login}",
+    ]);
     expect(text).not.toMatch(/Infinity|NaN/);
     expect(JSON.parse(text).security).toEqual([]);
+  });
+
+  it("documents the stars cursor as the string a page's nextCursor gives, in and out", async () => {
+    const document: Json = await (await call("/openapi.json")).json();
+    const stars = document.paths["/stars/{login}"].get;
+    const cursor = stars.parameters.find((parameter: Json) => parameter.name === "cursor");
+    expect([cursor.required ?? false, cursor.schema.type]).toEqual([false, "string"]);
+    const page = stars.responses["200"].content["application/json"].schema;
+    expect(page.properties.nextCursor.anyOf.map((option: Json) => option.type)).toEqual(["string", "null"]);
+  });
+
+  it("answers a cursor it never issued with 400 and the issue, over REST", async () => {
+    const refused = await rest("/stars/ada?cursor=1700000000000-0");
+    expect([refused.status, refused.body.code, refused.body.data.traceId]).toEqual([400, "BAD_REQUEST", traceId]);
+    expect(refused.body.data.issues[0].path).toEqual(["cursor", "repoId"]);
   });
 });
 

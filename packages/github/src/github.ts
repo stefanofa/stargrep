@@ -21,6 +21,7 @@ import {
   Unauthorized,
 } from "./errors.ts";
 import { apiHeaders } from "./headers.ts";
+import * as Owner from "./owner.ts";
 import * as Readme from "./readme.ts";
 import * as Facts from "./repo-facts.ts";
 import {
@@ -71,6 +72,8 @@ export class GitHub extends Context.Service<
   GitHub,
   {
     readonly account: (login: Login) => Effect.Effect<Account, GitHubError>;
+    // None when GitHub has no user or org with the login.
+    readonly owner: (login: Login) => Effect.Effect<Option.Option<Owner.Owner>, GitHubError>;
     readonly starPages: (login: Login) => Stream.Stream<ReadonlyArray<Star>, GitHubError>;
     readonly stars: (login: Login) => Stream.Stream<Star, GitHubError>;
     readonly starCount: (login: Login) => Effect.Effect<number, GitHubError>;
@@ -182,6 +185,19 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const owner = Effect.fn("GitHub.owner")(function* (login: Login) {
+    return yield* exchange("owner", Owner.request(login), (raw, reply, endpoint, now) =>
+      Effect.gen(function* () {
+        const body = yield* Owner.decodeResponse(raw);
+        const errors = body.errors ?? [];
+        const found = body.data?.repositoryOwner;
+        if (found === null && errors.every((error) => error.type === "NOT_FOUND")) return Option.none();
+        if (errors.length > 0 || !found) return yield* graphQLFailure(endpoint, reply, now, errors);
+        return Option.some(Owner.toOwner(found));
+      }),
+    );
+  });
+
   const starPage = Effect.fn("GitHub.starPage")(function* (login: Login, page: number) {
     return yield* exchange("list-stars", StarList.request(login, page), (body, reply, endpoint) =>
       Effect.gen(function* () {
@@ -239,7 +255,7 @@ const make = Effect.gen(function* () {
     return yield* exchange("readme", Readme.request(input), (body) => Effect.succeed(body));
   });
 
-  return GitHub.of({ account, starPages, stars, starCount, repoFacts, readme });
+  return GitHub.of({ account, owner, starPages, stars, starCount, repoFacts, readme });
 });
 
 export const layer = Layer.effect(GitHub, make);

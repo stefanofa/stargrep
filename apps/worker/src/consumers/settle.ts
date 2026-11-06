@@ -7,6 +7,7 @@ import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Match from "effect/Match";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -138,11 +139,13 @@ const sendOrRetry = Effect.fn("Consumer.sendOrRetry")(function* (
   message.ack();
 });
 
+// resend is the body a deferred message goes out again with, by default the one it arrived with.
 export const settle = Effect.fn("Consumer.settle")(function* (
   queues: Queues,
   message: Message,
   settlement: Settlement,
   now: number,
+  resend: unknown = message.body,
 ) {
   const fields = { queue: queues.name, messageId: message.id, attempts: message.attempts };
   switch (settlement._tag) {
@@ -164,7 +167,7 @@ export const settle = Effect.fn("Consumer.settle")(function* (
     case "Defer": {
       const delay = delaySeconds(settlement.until, now);
       yield* Effect.logInfo("Queue message deferred", { ...fields, error: settlement.error, delay });
-      return yield* sendOrRetry(queues.sendLater(message.body, delay), message, fields, delay);
+      return yield* sendOrRetry(queues.sendLater(resend, delay), message, fields, delay);
     }
     case "DeadLetter":
       yield* Effect.logWarning("Queue message dead-lettered", { ...fields, error: settlement.error });
@@ -172,13 +175,21 @@ export const settle = Effect.fn("Consumer.settle")(function* (
   }
 });
 
+// A decoded body and how many times the queue has delivered it, 1 on its first delivery.
+export interface Delivery<A> {
+  readonly body: A;
+  readonly attempts: number;
+}
+
 export interface Pipeline<A, R, D = never> {
   readonly decode: (body: unknown) => Result.Result<A, Schema.SchemaError>;
   readonly run: (
-    bodies: ReadonlyArray<A>,
+    deliveries: ReadonlyArray<Delivery<A>>,
   ) => Effect.Effect<ReadonlyArray<Result.Result<Settlement, Failure>>, never, R>;
   readonly describe: (body: A) => Record<string, unknown>;
   readonly onDeadLetter: (body: A) => Effect.Effect<void, never, D>;
+  // The body a deferred message goes out again with. None sends the body it arrived with.
+  readonly resend: (body: A) => Option.Option<unknown>;
 }
 
 export const pipeline = <S extends Schema.Decoder<unknown>, R, D = never>(options: {
@@ -186,11 +197,13 @@ export const pipeline = <S extends Schema.Decoder<unknown>, R, D = never>(option
   readonly run: Pipeline<S["Type"], R>["run"];
   readonly describe: Pipeline<S["Type"], R>["describe"];
   readonly onDeadLetter?: Pipeline<S["Type"], R, D>["onDeadLetter"];
+  readonly resend?: Pipeline<S["Type"], R>["resend"];
 }): Pipeline<S["Type"], R, D> => ({
   decode: Schema.decodeUnknownResult(options.schema),
   run: options.run,
   describe: options.describe,
   onDeadLetter: options.onDeadLetter ?? (() => Effect.void),
+  resend: options.resend ?? (() => Option.none()),
 });
 
 export const processBatch = Effect.fn("Consumer.processBatch")(function* <A, R, D>(
@@ -202,20 +215,23 @@ export const processBatch = Effect.fn("Consumer.processBatch")(function* <A, R, 
   const valid = decoded.flatMap(({ message, body }) =>
     Result.isSuccess(body) ? [{ message, body: body.success }] : [],
   );
-  const outcomes = yield* pipeline.run(valid.map(({ body }) => body));
+  const outcomes = yield* pipeline.run(valid.map(({ message, body }) => ({ body, attempts: message.attempts })));
   if (outcomes.length !== valid.length) {
     return yield* Effect.die(`A pipeline returned ${outcomes.length} outcomes for ${valid.length} bodies`);
   }
   const now = yield* Clock.currentTimeMillis;
   const undecodable = decoded.flatMap(({ message, body }) =>
-    Result.isFailure(body) ? [{ message, settlement: Settlement.DeadLetter({ error: "SchemaError" }) }] : [],
+    Result.isFailure(body)
+      ? [{ message, settlement: Settlement.DeadLetter({ error: "SchemaError" }), resend: message.body }]
+      : [],
   );
-  const settled = Arr.zipWith(valid, outcomes, ({ message }, outcome) => ({
+  const settled = Arr.zipWith(valid, outcomes, ({ message, body }, outcome) => ({
     message,
     settlement: Result.match(outcome, { onSuccess: (done) => done, onFailure: (error) => afterFailure(error, now) }),
+    resend: Option.getOrElse(pipeline.resend(body), () => message.body),
   }));
-  yield* Effect.forEach([...undecodable, ...settled], ({ message, settlement }) =>
-    settle(queues, message, settlement, now),
+  yield* Effect.forEach([...undecodable, ...settled], ({ message, settlement, resend }) =>
+    settle(queues, message, settlement, now, resend),
   );
 });
 

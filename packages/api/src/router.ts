@@ -1,39 +1,41 @@
 import "@orpc/effect/extensions/effect";
-import { middlewareGen, type WithEffectContext } from "@orpc/effect";
+import type { WithEffectContext } from "@orpc/effect";
 import { implement } from "@orpc/server";
-import { MetricRegistry, Search } from "@stargrep/core/search";
+import { MetricRegistry, QueryPlan, Search } from "@stargrep/core/search";
 import { SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import type { DbQueryFailed, DbRowInvalid, RepoNotFound } from "@stargrep/db/errors";
 import type { Login } from "@stargrep/github/schemas";
-import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { contract, type RepoInput, type SearchInput, type SyncInput } from "./contract.ts";
+import { type AnswerContext, type AnswerPolicy, cachedAnswer } from "./answer-cache.ts";
+import { Caller } from "./caller.ts";
+import {
+  contract,
+  maxStarsPage,
+  type PublicConfig,
+  PublicStars,
+  type RepoInput,
+  type SearchInput,
+  SearchOutput,
+  StarsCursor,
+  type SyncInput,
+} from "./contract.ts";
 import { errorStatus, type WireCode, wireError } from "./errors.ts";
 import { IconHost, iconUrl } from "./icon-host.ts";
 import { instrumentation, type ProcedureTime, type Transport } from "./middleware/instrumentation.ts";
-import { SyncLimiter, type SyncLimiterUnavailable, type SyncRateLimited } from "./sync-limiter.ts";
+import { type RateLimited, RateLimiter, type RateLimiterUnavailable, type RateLimitKind } from "./rate-limiter.ts";
+import type { ApiServices, ApiServicesUnavailable } from "./services.ts";
+import * as Services from "./services.ts";
 import { requestOwnerSync, type ViewerError, Viewers } from "./viewers.ts";
 
-export type ApiServices = Db.Db | Search.Search | SyncRequests.SyncRequests | SyncLimiter | Viewers | IconHost;
-
-export class ApiServicesUnavailable extends Schema.TaggedError<
-  ApiServicesUnavailable,
-  { readonly brand: unique symbol }
->()("ApiServicesUnavailable", {
-  failure: Schema.String,
-}) {
-  override get message(): string {
-    return `The API services failed to start with ${this.failure}`;
-  }
-}
-
-export interface ApiContext extends WithEffectContext<never> {
+export interface ApiContext extends WithEffectContext<never>, AnswerContext {
   readonly transport: Transport;
+  readonly publicConfig: PublicConfig;
   readonly procedureTime: ProcedureTime;
-  readonly services: Effect.Effect<Context.Context<ApiServices>, ApiServicesUnavailable>;
 }
 
 type ApiFailure =
@@ -42,24 +44,28 @@ type ApiFailure =
   | RepoNotFound
   | DbQueryFailed
   | DbRowInvalid
-  | SyncRateLimited
-  | SyncLimiterUnavailable
+  | RateLimited
+  | RateLimiterUnavailable
   | ViewerError
   | ApiServicesUnavailable;
 
 const wireCodes = {
   NotSignedIn: "UNAUTHORIZED",
   AccountNotSynced: "ACCOUNT_NOT_SYNCED",
+  LoginNotFound: "LOGIN_NOT_FOUND",
   RepoNotFound: "REPO_NOT_FOUND",
   SearchScopeUnavailable: "SCOPE_UNAVAILABLE",
-  SyncRateLimited: "TOO_MANY_REQUESTS",
+  RateLimited: "TOO_MANY_REQUESTS",
+  NewAccountLimited: "TOO_MANY_REQUESTS",
+  SyncBusy: "SYNC_BUSY",
   AiKeyMissing: "SERVICE_UNAVAILABLE",
   AiRequestFailed: "SERVICE_UNAVAILABLE",
   AiTimeout: "SERVICE_UNAVAILABLE",
   AiUnavailable: "SERVICE_UNAVAILABLE",
   ApiServicesUnavailable: "SERVICE_UNAVAILABLE",
   DbQueryFailed: "SERVICE_UNAVAILABLE",
-  SyncLimiterUnavailable: "SERVICE_UNAVAILABLE",
+  OwnerLookupFailed: "SERVICE_UNAVAILABLE",
+  RateLimiterUnavailable: "SERVICE_UNAVAILABLE",
   SyncQueueFailed: "SERVICE_UNAVAILABLE",
   ViewerUnavailable: "SERVICE_UNAVAILABLE",
   AiModelNotFound: "INTERNAL_SERVER_ERROR",
@@ -78,18 +84,24 @@ const toWire = (traceId: string) => (error: ApiFailure) => {
       );
 };
 
+type HandlerContext = ApiContext & { readonly traceId: string };
+
+// Builds the request's services only when a procedure runs, after oRPC has validated its input.
+const withServices = <A>(context: HandlerContext, run: Effect.Effect<A, ApiFailure, ApiServices>) =>
+  Services.withServices(context.services, run).pipe(Effect.catch(toWire(context.traceId)));
+
 const handle = <I, O>(run: (input: I) => Effect.Effect<O, ApiFailure, ApiServices>) =>
-  function* ({ input, context }: { readonly input: I; readonly context: { readonly traceId: string } }) {
-    return yield* run(input).pipe(Effect.catch(toWire(context.traceId)));
+  function* ({ input, context }: { readonly input: I; readonly context: HandlerContext }) {
+    return yield* withServices(context, run(input));
   };
 
-const provideServices = middlewareGen<ApiContext & { readonly traceId: string }, WithEffectContext<ApiServices>>(
-  function* ({ context, next }) {
-    const services = yield* context.services.pipe(Effect.catch(toWire(context.traceId)));
-    // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC types every downstream failure as unknown.
-    return yield* next({ context: { "effect/context": Context.merge(context["effect/context"], services) } });
-  },
-);
+const cached = <A>(
+  context: HandlerContext,
+  policy: AnswerPolicy<A>,
+  key: string,
+  compute: Effect.Effect<A, ApiFailure, ApiServices>,
+  admit: Effect.Effect<void, ApiFailure, ApiServices>,
+) => cachedAnswer(context, policy, key, compute, admit).pipe(Effect.catch(toWire(context.traceId)));
 
 const iso = (time: DateTime.Utc | null) => (time === null ? null : DateTime.formatIso(time));
 
@@ -111,13 +123,97 @@ const repoFields = (repo: Db.Repo, icons: IconHost["Service"]) => ({
   ownerAvatarUrl: repo.ownerAvatarUrl,
 });
 
+const libraryRepo = (entry: Db.LibraryEntry, icons: IconHost["Service"]) => ({
+  ...repoFields(entry.repo, icons),
+  keywords: entry.repo.keywords,
+  starredAt: DateTime.formatIso(entry.starredAt),
+  stars: entry.stars,
+  read: entry.read,
+});
+
+const searchAnswer = Effect.fnUntraced(function* (input: typeof SearchInput.Type) {
+  const scope: Search.Scope = input.scope === "global" ? { _tag: "global" } : { _tag: input.scope, login: input.login };
+  const outcome = yield* (yield* Search.Search).search({ scope, query: input.q, limit: input.limit });
+  const icons = yield* IconHost;
+  return {
+    planSource: outcome.planSource,
+    results: outcome.results.map((result) => ({
+      ...repoFields(result.repo, icons),
+      reason: Search.reasonLine(result),
+      rankedBy: result.metrics.flatMap(({ metric, value }) =>
+        value === null ? [] : [MetricRegistry.registry[metric].format(value)],
+      ),
+      metrics: result.metrics,
+    })),
+  };
+});
+
+// A planner failure answers with the words as typed, so that answer is never kept for the next visitor.
+const searchAnswers: AnswerPolicy<typeof SearchOutput.Type> = {
+  procedure: "search",
+  json: Schema.fromJsonString(SearchOutput),
+  fresh: Duration.minutes(5),
+  stale: Duration.days(1),
+  keep: (answer) => answer.planSource !== "fallback",
+};
+
+// Only the demo account's own stars are cached, so the landing page answers without building any service.
+const demoSearchKey = (input: typeof SearchInput.Type, config: PublicConfig) => {
+  const login = input.login.toLowerCase();
+  return input.scope === "stars" && login === config.demoLogin.toLowerCase()
+    ? Option.some(`search/${login}/${input.scope}/${input.limit}/${QueryPlan.normalize(input.q).toLowerCase()}`)
+    : Option.none();
+};
+
+const admit = (kind: RateLimitKind) => RateLimiter.use((limiter) => limiter.acquire(kind));
+
+const starsAnswers: AnswerPolicy<typeof PublicStars.Type> = {
+  procedure: "stars",
+  json: Schema.fromJsonString(PublicStars),
+  fresh: Duration.seconds(10),
+  stale: Duration.zero,
+  keep: () => true,
+};
+
+const encodeCursor = Schema.encodeSync(StarsCursor);
+
+// Stars are read and cached in pages of 100 or 1,000, so a client cannot miss the cache by asking for another limit.
+const pageSizeFor = (limit: number) => (limit <= 100 ? 100 : maxStarsPage);
+
+const starsPage = Effect.fnUntraced(function* (login: Login, size: number, after: Option.Option<Db.StarsPosition>) {
+  const db = yield* Db.Db;
+  const account = yield* db.accounts.byLogin(login);
+  if (Option.isNone(account)) return yield* new Search.AccountNotSynced({ login });
+  const page = yield* db.stars.page(account.value.id, { limit: size, after });
+  const icons = yield* IconHost;
+  return {
+    login: account.value.login,
+    repos: page.entries.map((entry) => libraryRepo(entry, icons)),
+    nextCursor: Option.getOrNull(Option.map(page.next, encodeCursor)),
+  };
+});
+
+// Answers the first limit repos of a page, and continues after the last one answered.
+const firstOf = (page: typeof PublicStars.Type, limit: number): typeof PublicStars.Type => {
+  const last = page.repos[limit - 1];
+  if (page.repos.length <= limit || last === undefined) return page;
+  return {
+    ...page,
+    repos: page.repos.slice(0, limit),
+    nextCursor: encodeCursor({ starredAt: DateTime.makeUnsafe(last.starredAt), repoId: last.id }),
+  };
+};
+
 const syncStatus =
   (login: Login) =>
   ([status, enrichment]: readonly [SyncRequests.SyncStatus, Db.EnrichmentProgress]) => ({
     login,
     state: status.state,
-    requestedAt: status.state === "queued" || status.state === "failed" ? iso(status.requestedAt) : null,
+    requestedAt: status.state === "unknown" || status.state === "done" ? null : iso(status.requestedAt),
     syncedAt: status.state === "unknown" ? null : iso(status.syncedAt),
+    waiting: status.state === "waiting" ? { ahead: status.ahead, startsAt: DateTime.formatIso(status.startsAt) } : null,
+    starredTotal: status.starredTotal,
+    accountType: status.accountType,
     enrichment,
   });
 
@@ -127,46 +223,30 @@ const withProgress = <E, R>(login: Login, status: Effect.Effect<SyncRequests.Syn
   );
 
 const implementer = implement(contract).$context<ApiContext>();
-// Router-level middleware such as instrumentation runs before input validation, so a validation error gets a trace ID.
-// Procedure-level middleware such as provideServices runs after it, so a bad request never builds the services.
 const os = implementer.use(instrumentation);
 
 export const router = implementer.router({
-  search: os.search.use(provideServices).effect(
-    handle((input: typeof SearchInput.Type) =>
-      Effect.gen(function* () {
-        const scope: Search.Scope =
-          input.scope === "global" ? { _tag: "global" } : { _tag: input.scope, login: input.login };
-        const outcome = yield* (yield* Search.Search).search({ scope, query: input.q, limit: input.limit });
-        const icons = yield* IconHost;
-        return {
-          planSource: outcome.planSource,
-          results: outcome.results.map((result) => ({
-            ...repoFields(result.repo, icons),
-            reason: Search.reasonLine(result),
-            rankedBy: result.metrics.flatMap(({ metric, value }) =>
-              value === null ? [] : [MetricRegistry.registry[metric].format(value)],
-            ),
-            metrics: result.metrics,
-          })),
-        };
-      }),
-    ),
-  ),
+  search: os.search.effect(function* ({ input, context }) {
+    return yield* Option.match(demoSearchKey(input, context.publicConfig), {
+      onNone: () => withServices(context, Effect.andThen(admit("search"), searchAnswer(input))),
+      onSome: (key) => cached(context, searchAnswers, key, searchAnswer(input), admit("search")),
+    });
+  }),
 
-  triggerSync: os.triggerSync.use(provideServices).effect(
+  triggerSync: os.triggerSync.effect(
     handle((input: typeof SyncInput.Type) =>
       Effect.gen(function* () {
-        yield* (yield* SyncLimiter).acquire;
+        yield* admit("sync");
+        const { key } = yield* Caller;
         return yield* withProgress(
           input.login,
-          SyncRequests.SyncRequests.use((requests) => requests.request(input.login, "anyone")),
+          SyncRequests.SyncRequests.use((requests) => requests.request(input.login, { _tag: "anyone", caller: key })),
         );
       }),
     ),
   ),
 
-  syncStatus: os.syncStatus.use(provideServices).effect(
+  syncStatus: os.syncStatus.effect(
     handle((input: typeof SyncInput.Type) =>
       withProgress(
         input.login,
@@ -176,7 +256,7 @@ export const router = implementer.router({
   ),
 
   // The page reads syncStatus only after viewer answers, so a sync claimed here is already queued when it looks.
-  viewer: os.viewer.use(provideServices).effect(
+  viewer: os.viewer.effect(
     handle(() =>
       Effect.gen(function* () {
         const { account } = yield* (yield* Viewers).current;
@@ -191,26 +271,32 @@ export const router = implementer.router({
     ),
   ),
 
-  library: os.library.use(provideServices).effect(
+  library: os.library.effect(
     handle(() =>
       Effect.gen(function* () {
         const { account } = yield* (yield* Viewers).current;
         const entries = yield* (yield* Db.Db).stars.library(account.id);
         const icons = yield* IconHost;
-        return {
-          repos: entries.map((entry) => ({
-            ...repoFields(entry.repo, icons),
-            keywords: entry.repo.keywords,
-            starredAt: DateTime.formatIso(entry.starredAt),
-            stars: entry.stars,
-            read: entry.read,
-          })),
-        };
+        return { repos: entries.map((entry) => libraryRepo(entry, icons)) };
       }),
     ),
   ),
 
-  getRepo: os.getRepo.use(provideServices).effect(
+  stars: os.stars.effect(function* ({ input, context }) {
+    const size = pageSizeFor(input.limit);
+    const after = Option.fromUndefinedOr(input.cursor);
+    const key = `stars/${input.login.toLowerCase()}/${size}/${Option.match(after, { onNone: () => "", onSome: encodeCursor })}`;
+    const page = yield* cached(context, starsAnswers, key, starsPage(input.login, size, after), admit("stars"));
+    context.resHeaders?.set("cache-control", "public, max-age=10");
+    return firstOf(page, input.limit);
+  }),
+
+  config: os.config.handler(({ context }) => {
+    context.resHeaders?.set("cache-control", "public, max-age=300");
+    return context.publicConfig;
+  }),
+
+  getRepo: os.getRepo.effect(
     handle((input: typeof RepoInput.Type) =>
       Effect.all([Db.Db.use((db) => db.repos.require(input.id)), IconHost]).pipe(
         Effect.map(([repo, icons]) => ({

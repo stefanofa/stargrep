@@ -166,10 +166,14 @@ const web = Effect.gen(function* () {
   const tools = yield* post("/mcp", { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
   const toolList = tools.body;
   return [
-    check("the OpenAPI document lists every route", paths.join(" ") === "/repos/{id} /search /sync/{login}", {
-      status: spec.status,
-      paths,
-    }),
+    check(
+      "the OpenAPI document lists every route",
+      paths.join(" ") === "/config /repos/{id} /search /stars/{login} /sync/{login}",
+      {
+        status: spec.status,
+        paths,
+      },
+    ),
     check(
       "an empty search query answers 400 with a trace ID",
       emptyQuery.status === 400 && emptyQueryBody.data?.traceId !== undefined,
@@ -185,8 +189,10 @@ const web = Effect.gen(function* () {
       { status: unsynced.status, code: unsyncedBody.code },
     ),
     check(
-      "MCP lists the four tools",
-      ["search", "triggerSync", "syncStatus", "getRepo"].every((name) => toolList.includes(`"name":"${name}"`)),
+      "MCP lists the six tools",
+      ["search", "triggerSync", "syncStatus", "getRepo", "stars", "config"].every((name) =>
+        toolList.includes(`"name":"${name}"`),
+      ),
       { status: tools.status },
     ),
   ];

@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import type { GitHubSignIn } from "@stargrep/auth/config";
 import { acquirePool } from "@stargrep/db/node-postgres";
+import { BudgetShare } from "@stargrep/github/schemas";
 import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -9,8 +10,11 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import { describe, expect, it } from "vitest";
 import { layerAuthRequest, layerRequest } from "../src/server/layers.ts";
-import { makeAuthServer, makeServer } from "../src/server/serve.ts";
+import { makeAuthServer } from "../src/server/serve.ts";
 import { ada, type TokenExchange } from "./fake-github.ts";
+import { testServer } from "./serve.ts";
+
+const share = BudgetShare.make(0.5);
 
 interface AuthTestEnv {
   readonly AUTH_LOCAL_DATABASE: Hyperdrive;
@@ -28,10 +32,10 @@ const stage = (origin: string, database: Hyperdrive, github: GitHubSignIn) => {
   const config = { secret: Redacted.make(`auth-secret ${origin}`), github };
   const stageEnv = { ...env, DATABASE: database };
   const auth = makeAuthServer(
-    (request) => Option.some(layerAuthRequest(stageEnv, Option.none(), config, request)),
+    (request) => Option.some(layerAuthRequest(stageEnv, Option.none(), share, config, request)),
     Layer.empty,
   );
-  const api = makeServer((request) => layerRequest(stageEnv, Option.none(), Option.some(config), request), Layer.empty);
+  const api = testServer((request) => layerRequest(stageEnv, Option.none(), share, Option.some(config), request));
   const cookies = new Map<string, string>();
   const send = async (path: string, init: RequestInit = {}) => {
     const headers = new Headers(init.headers);
@@ -208,7 +212,8 @@ describe("direct sign-in", () => {
       databases.AUTH_LOCAL_DATABASE,
       `update github_accounts set stars_synced_at = now() - interval '2 minutes',
          stars_full_synced_at = now() - interval '2 minutes' where login = 'ada';
-       update sync_requests set requested_at = now() - interval '3 minutes' where login = 'ada'`,
+       update sync_requests set requested_at = now() - interval '3 minutes', starts_at = now() - interval '3 minutes'
+         where login = 'ada'`,
     );
     const before = await syncStatus(await local.send("/api/sync/ada"));
     expect(before).toMatchObject({ state: "done" });

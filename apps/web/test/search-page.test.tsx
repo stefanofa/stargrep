@@ -115,6 +115,9 @@ const status = (extra: Partial<Server["status"]>): Server["status"] => ({
   state: "done",
   requestedAt: "2026-11-05T10:00:00.000Z",
   syncedAt: "2026-11-05T10:00:00.000Z",
+  waiting: null,
+  starredTotal: null,
+  accountType: null,
   enrichment: allRead,
   ...extra,
 });

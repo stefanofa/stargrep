@@ -1,3 +1,4 @@
+import type { Owner } from "@stargrep/github/owner";
 import { GitHubAccountId, Login } from "@stargrep/github/schemas";
 import { eq, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
@@ -46,6 +47,11 @@ export interface AccountClaim {
   readonly starredCount: number;
 }
 
+export interface StarredCount {
+  readonly accountId: GitHubAccountId;
+  readonly starredCount: number;
+}
+
 export interface OwnedRepoStars {
   readonly accountId: GitHubAccountId;
   readonly stars: number;
@@ -53,12 +59,15 @@ export interface OwnedRepoStars {
 
 export interface Queries {
   readonly upsert: (facts: AccountFacts) => Effect.Effect<void, DbQueryFailed>;
+  // Writes what a lookup of the login found: its facts and how many repos it starred.
+  readonly upsertLooked: (owner: Owner) => Effect.Effect<void, DbQueryFailed>;
   readonly claim: (claim: AccountClaim) => Effect.Effect<void, DbQueryFailed>;
   readonly claimedBy: (userId: UserId) => Effect.Effect<Option.Option<Account>, DbQueryFailed | DbRowInvalid>;
   readonly get: (id: GitHubAccountId) => Effect.Effect<Option.Option<Account>, DbQueryFailed | DbRowInvalid>;
   readonly byLogin: (login: Login) => Effect.Effect<Option.Option<Account>, DbQueryFailed | DbRowInvalid>;
   readonly require: (id: GitHubAccountId) => Effect.Effect<Account, DbQueryFailed | DbRowInvalid | AccountNotFound>;
   readonly setOwnedRepoStars: (input: OwnedRepoStars) => Effect.Effect<void, DbQueryFailed | AccountNotFound>;
+  readonly setStarredCount: (input: StarredCount) => Effect.Effect<void, DbQueryFailed | AccountNotFound>;
   readonly recordStarSync: (sync: StarSync) => Effect.Effect<void, DbQueryFailed | AccountNotFound>;
 }
 
@@ -69,16 +78,20 @@ const encodeTime = writeEncoder(Schema.DateTimeUtcFromDate);
 export const make = Effect.gen(function* () {
   const { run } = yield* Postgres.Postgres;
 
+  const upsert = (operation: "accounts.upsert" | "accounts.upsertLooked", facts: AccountFacts, starredCount?: number) =>
+    encodeFacts(facts).pipe(
+      Effect.flatMap((values) => {
+        const row = starredCount === undefined ? values : { ...values, starredCount };
+        const { id: _, ...changes } = row;
+        return run(operation, (db) =>
+          db.insert(githubAccounts).values(row).onConflictDoUpdate({ target: githubAccounts.id, set: changes }),
+        );
+      }),
+    );
+
   return {
-    upsert: (facts) =>
-      encodeFacts(facts).pipe(
-        Effect.flatMap((values) => {
-          const { id: _, ...changes } = values;
-          return run("accounts.upsert", (db) =>
-            db.insert(githubAccounts).values(values).onConflictDoUpdate({ target: githubAccounts.id, set: changes }),
-          );
-        }),
-      ),
+    upsert: (facts) => upsert("accounts.upsert", facts),
+    upsertLooked: (owner) => upsert("accounts.upsertLooked", owner.account, owner.starredTotal),
     claim: ({ facts, userId, starredCount }) =>
       encodeFacts(facts).pipe(
         Effect.flatMap((values) => {
@@ -122,6 +135,14 @@ export const make = Effect.gen(function* () {
         db
           .update(githubAccounts)
           .set({ ownedRepoStars: input.stars })
+          .where(eq(githubAccounts.id, input.accountId))
+          .returning({ id: githubAccounts.id }),
+      ).pipe(Effect.flatMap(requireRow(() => new AccountNotFound({ accountId: input.accountId })))),
+    setStarredCount: (input) =>
+      run("accounts.setStarredCount", (db) =>
+        db
+          .update(githubAccounts)
+          .set({ starredCount: input.starredCount })
           .where(eq(githubAccounts.id, input.accountId))
           .returning({ id: githubAccounts.id }),
       ).pipe(Effect.flatMap(requireRow(() => new AccountNotFound({ accountId: input.accountId })))),

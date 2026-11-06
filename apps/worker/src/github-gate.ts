@@ -1,12 +1,12 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as TokenBudget from "@stargrep/github/token-budget";
 import * as TokenGate from "@stargrep/github/token-gate";
+import { budgetShare } from "@stargrep/runtime/budget-share";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { budgetShare } from "./budget-share.ts";
 import { inRuntime } from "./layers.ts";
 import { githubToken } from "./secrets.ts";
 

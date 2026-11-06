@@ -10,6 +10,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as OtlpExporter from "effect/observability/OtlpExporter";
 import * as OtlpSerialization from "effect/observability/OtlpSerialization";
 import * as Stream from "effect/Stream";
@@ -255,6 +256,80 @@ describe("starCount", () => {
       expect(error).toMatchObject({ _tag: "GitHubRequestFailed", operation: "star-count", reason: "graphql-errors" });
     }).pipe(Effect.provide(fake.layer));
   });
+});
+
+describe("owner", () => {
+  const lookup = (body: unknown) => {
+    const fake = Fake.layer(() => Fake.ownerReply(body));
+    return {
+      fake,
+      owner: Effect.flatMap(GitHub.GitHub, (github) => github.owner(login)).pipe(Effect.provide(fake.layer)),
+    };
+  };
+
+  effect("reads a user's facts and starred total in one GraphQL request", () => {
+    const { fake, owner } = lookup(Fake.ownerBodies.user);
+    return Effect.gen(function* () {
+      expect(yield* owner).toEqual(
+        Option.some({
+          account: {
+            id: 583231,
+            login: "octocat",
+            type: "user",
+            name: "The Octocat",
+            avatarUrl: Fake.ownerBodies.user.data.repositoryOwner.avatarUrl,
+            followers: 24947,
+            publicRepos: 8,
+          },
+          starredTotal: 3,
+        }) as never,
+      );
+      expect(fake.sent.map((sent) => [sent.url.pathname, JSON.parse(sent.body ?? "{}").variables])).toEqual([
+        ["/graphql", { login: "octocat" }],
+      ]);
+    });
+  });
+
+  effect("reads an org with no follower count and a starred total of 0", () => {
+    const { owner } = lookup(Fake.ownerBodies.org);
+    return Effect.gen(function* () {
+      expect(Option.getOrThrow(yield* owner)).toEqual({
+        account: {
+          id: 9919,
+          login: "github",
+          type: "org",
+          name: "GitHub",
+          avatarUrl: "https://avatars.githubusercontent.com/u/9919?v=4",
+          followers: null,
+          publicRepos: 572,
+        },
+        starredTotal: 0,
+      } as never);
+    });
+  });
+
+  effect("answers none for a login GitHub has no user or org for", () => {
+    const { owner } = lookup(Fake.ownerBodies.missing);
+    return Effect.gen(function* () {
+      expect(yield* owner).toEqual(Option.none());
+    });
+  });
+
+  effect("fails with GitHubRequestFailed on other GraphQL errors", () =>
+    Effect.gen(function* () {
+      const failed = yield* Effect.flip(lookup({ data: null, errors: [{ type: "INTERNAL", message: "boom" }] }).owner);
+      expect(failed).toMatchObject({ _tag: "GitHubRequestFailed", operation: "owner", reason: "graphql-errors" });
+    }),
+  );
+
+  effect("fails with GitHubResponseInvalid when the owner does not match the schema", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        lookup({ data: { repositoryOwner: { __typename: "User", login: "octocat" } } }).owner,
+      );
+      expect(error).toMatchObject({ _tag: "GitHubResponseInvalid", operation: "owner", reason: "schema-mismatch" });
+    }),
+  );
 });
 
 describe("rate limits", () => {

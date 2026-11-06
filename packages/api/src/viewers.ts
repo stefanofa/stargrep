@@ -48,6 +48,6 @@ export class Viewers extends Context.Service<
 
 // A sync that fails to queue never fails the sign-in or the viewer call.
 export const requestOwnerSync = (login: Login, after: "sign-in" | "library open") =>
-  SyncRequests.SyncRequests.use((requests) => requests.request(login, "owner")).pipe(
+  SyncRequests.SyncRequests.use((requests) => requests.request(login, { _tag: "owner" })).pipe(
     Effect.catch((error) => Effect.logWarning("Owner sync was not queued", { after, failure: error._tag })),
   );

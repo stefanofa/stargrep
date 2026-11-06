@@ -17,20 +17,42 @@ export default defineConfig({
         ratelimits: {
           SYNC_PER_CALLER: { namespace_id: "1", simple: { limit: 5, period: 60 } },
           SYNC_OVERALL: { namespace_id: "2", simple: { limit: 60, period: 60 } },
+          SEARCH_PER_CALLER: { namespace_id: "3", simple: { limit: 120, period: 60 } },
+          STARS_PER_CALLER: { namespace_id: "7", simple: { limit: 60, period: 60 } },
         },
+        bindings: { CALLER_KEY: "test-caller-key", GITHUB_BUDGET_SHARE: "0.5" },
         serviceBindings: { WORKER: "main-worker" },
         workers: [
           {
-            // Stands in for the main Worker and echoes what it receives, so a test sees exactly what was forwarded.
+            // Stands in for the main Worker. Its fetch echoes what it receives, so a test sees exactly what was forwarded,
+            // and lookupOwner answers by login the way the real RPC method does.
             name: "main-worker",
             modules: true,
             compatibilityDate: "2026-11-01",
-            script: `export default {
-              fetch: (request) => Response.json(
-                { method: request.method, url: request.url, probe: request.headers.get("x-probe") },
-                { headers: { "x-answered-by": "main" } },
-              ),
-            };`,
+            script: `import { WorkerEntrypoint } from "cloudflare:workers";
+            const idOf = (login) => [...login].reduce((hash, char) => (hash * 31 + char.charCodeAt(0)) % 1000000007, 7) + 1;
+            const account = (login, type) => ({
+              id: idOf(login), login, type, name: null, avatarUrl: null, followers: type === "user" ? 1 : null, publicRepos: 2,
+            });
+            export default class extends WorkerEntrypoint {
+              fetch(request) {
+                return Response.json(
+                  { method: request.method, url: request.url, probe: request.headers.get("x-probe") },
+                  { headers: { "x-answered-by": "main" } },
+                );
+              }
+              lookupOwner(login) {
+                switch (login.toLowerCase()) {
+                  case "ghost-login": return { _tag: "Missing" };
+                  case "budget-spent": return { _tag: "Unavailable", reason: "budget" };
+                  case "github-down": return { _tag: "Unavailable", reason: "github" };
+                  case "malformed": return { _tag: "Found", owner: { starredTotal: "many" } };
+                  case "envelope": return { _tag: "~alchemy/rpc/error", error: { _tag: "Boom" } };
+                  case "an-org": return { _tag: "Found", owner: { account: account(login, "org"), starredTotal: 0 } };
+                  default: return { _tag: "Found", owner: { account: account(login, "user"), starredTotal: 42 } };
+                }
+              }
+            }`,
           },
         ],
         outboundService: fakeGitHub,

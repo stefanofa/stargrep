@@ -30,7 +30,7 @@ export const starSource = pgEnum("star_source", ["gharchive", "api"]);
 export const followSource = pgEnum("follow_source", ["github", "stargrep"]);
 export const collectionKind = pgEnum("collection_kind", ["user", "editorial"]);
 export const searchScope = pgEnum("search_scope", ["stars", "network", "global"]);
-export const syncRequestOutcome = pgEnum("sync_request_outcome", ["pending", "failed"]);
+export const syncRequestOutcome = pgEnum("sync_request_outcome", ["pending", "failed", "missing", "claimed"]);
 export const iconSource = pgEnum("icon_source", ["repo-file", "readme-image", "homepage"]);
 export const iconPlate = pgEnum("icon_plate", ["none", "light", "dark"]);
 
@@ -233,9 +233,19 @@ export const syncRequests = pgTable(
     login: text("login").primaryKey(),
     requestedAt: time("requested_at").notNull(),
     outcome: syncRequestOutcome("outcome").notNull(),
+    // When a sent sync starts: requested_at, or the start of its turn in line. Null while the request is claimed and
+    // not yet sent, and for a missing login.
+    startsAt: time("starts_at"),
   },
   (table) => [index("sync_requests_requested_at_idx").on(table.requestedAt)],
 );
+
+// One row per rate line, such as the GitHub requests every signed-out sync reserves and each network's share of them.
+// A line is clear once the clock passes busy_until, the same as a line with no row.
+export const rateLines = pgTable("rate_lines", {
+  key: text("key").primaryKey(),
+  busyUntil: time("busy_until").notNull(),
+});
 
 export const searchEvents = pgTable("search_events", {
   id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),

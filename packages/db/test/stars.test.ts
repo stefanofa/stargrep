@@ -107,6 +107,50 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
     }),
   );
 
+  test.effect("pages through active stars newest first, ties by repo ID, with no gap and no repeat", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const id = accountId(305);
+      const [newest, tieLow, tieHigh, oldest, gone] = [
+        repoId(3502),
+        repoId(3503),
+        repoId(3504),
+        repoId(3505),
+        repoId(3506),
+      ];
+      yield* db.accounts.upsert(account(id));
+      yield* db.repos.upsertRefs([newest, tieLow, tieHigh, oldest, gone].map((repo) => ref(repo)));
+      const kept = [
+        starred(oldest, "2026-01-01T00:00:00Z"),
+        starred(tieHigh, "2026-02-01T00:00:00Z"),
+        starred(tieLow, "2026-02-01T00:00:00Z"),
+        starred(newest, "2026-03-01T00:00:00Z"),
+      ];
+      yield* db.stars.upsert({ accountId: id, stars: [...kept, starred(gone, "2026-04-01T00:00:00Z")] });
+      yield* db.stars.applySnapshot({ accountId: id, stars: kept, at: at("2026-05-01T00:00:00Z") });
+
+      const pages: Array<ReadonlyArray<RepoId>> = [];
+      let after = Option.none<Db.StarsPosition>();
+      do {
+        const page = yield* db.stars.page(id, { limit: 2, after });
+        pages.push(page.entries.map((entry) => entry.repo.id));
+        after = page.next;
+      } while (Option.isSome(after));
+      expect(pages).toEqual([
+        [newest, tieLow],
+        [tieHigh, oldest],
+      ]);
+
+      const whole = yield* db.stars.page(id, { limit: 4, after: Option.none() });
+      expect([whole.entries.length, Option.isNone(whole.next)]).toEqual([4, true]);
+      expect(whole.entries).toEqual(yield* db.stars.library(id));
+      expect(yield* db.stars.page(accountId(999_996), { limit: 2, after: Option.none() })).toEqual({
+        entries: [],
+        next: Option.none(),
+      });
+    }),
+  );
+
   test.effect("marks stars missing from a full list as unstarred, once", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;

@@ -9,10 +9,15 @@ const TraceData = Schema.Struct({
 
 const wire = {
   UNAUTHORIZED: { status: 401, message: "Sign in with GitHub to see your stars." },
+  LOGIN_NOT_FOUND: { status: 404, message: "GitHub has no user or org with this login." },
   ACCOUNT_NOT_SYNCED: { status: 404, message: "Stargrep has not synced this login's stars yet. Trigger a sync first." },
   REPO_NOT_FOUND: { status: 404, message: "Stargrep has no repo with this ID." },
   SCOPE_UNAVAILABLE: { status: 422, message: "This search scope is not available yet." },
-  TOO_MANY_REQUESTS: { status: 429, message: "Too many sync requests. Try again in a minute." },
+  TOO_MANY_REQUESTS: { status: 429, message: "Too many requests from your network. Try again in a minute." },
+  SYNC_BUSY: {
+    status: 503,
+    message: "Stargrep is importing as many accounts as GitHub allows right now. Try again later.",
+  },
   SERVICE_UNAVAILABLE: { status: 503, message: "Stargrep could not reach a service it needs. Try again shortly." },
   INTERNAL_SERVER_ERROR: { status: 500, message: "Stargrep failed to answer." },
 };

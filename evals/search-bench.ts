@@ -4,7 +4,7 @@ import * as Fake from "@stargrep/ai/fake";
 import * as Gateway from "@stargrep/ai/gateway";
 import * as Models from "@stargrep/ai/models";
 import { tokensSpent } from "@stargrep/ai/port";
-import { QueryPlan, QueryPlanner, Search, SearchCache } from "@stargrep/core/search";
+import { ModelAllowance, QueryPlan, QueryPlanner, Search, SearchCache } from "@stargrep/core/search";
 import * as Db from "@stargrep/db";
 import { anyDistance } from "@stargrep/db/embedding";
 import { Login } from "@stargrep/github/schemas";
@@ -94,7 +94,11 @@ const uncached = Layer.effect(
 const searchWith = (cache: Layer.Layer<SearchCache.SearchCache>) =>
   Search.make.pipe(
     Effect.provide(
-      QueryPlanner.layer.pipe(Layer.provideMerge(cache), Layer.provide(Gateway.layerPlannerTextGeneration)),
+      QueryPlanner.layer.pipe(
+        Layer.provideMerge(cache),
+        Layer.provide(Gateway.layerPlannerTextGeneration),
+        Layer.provideMerge(ModelAllowance.layerUnmetered),
+      ),
     ),
   );
 

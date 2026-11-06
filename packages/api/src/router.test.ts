@@ -1,13 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { createRouterClient, ORPCError } from "@orpc/server";
 import { QueryPlan, Search } from "@stargrep/core/search";
-import { SyncQueue, SyncRequests } from "@stargrep/core/stars";
+import { OwnerLookup, SyncQueue, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import { UserId } from "@stargrep/db/auth-schema";
 import type { EmbeddingModelId } from "@stargrep/db/embedding";
 import { DbQueryFailed, RepoNotFound } from "@stargrep/db/errors";
 import * as TestDatabase from "@stargrep/db/test-database";
-import type { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
+import {
+  BudgetShare,
+  type GitHubAccountId,
+  type Login,
+  type RepoId,
+  type RepoName,
+  type RepoNodeId,
+} from "@stargrep/github/schemas";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
 import * as Context from "effect/Context";
@@ -19,10 +26,15 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
+import * as AnswerCache from "./answer-cache.ts";
+import { Caller } from "./caller.ts";
+import { GitHubLogin, type PublicConfig } from "./contract.ts";
+import { errorStatus, type WireCode } from "./errors.ts";
 import { IconHost } from "./icon-host.ts";
 import type { Transport } from "./middleware/instrumentation.ts";
-import { type ApiContext, type ApiServices, ApiServicesUnavailable, router } from "./router.ts";
-import { SyncLimiter, SyncLimiterUnavailable, SyncRateLimited } from "./sync-limiter.ts";
+import { RateLimited, RateLimiter, RateLimiterUnavailable, type RateLimitKind } from "./rate-limiter.ts";
+import { type ApiContext, router } from "./router.ts";
+import { type ApiServices, ApiServicesUnavailable, withServices } from "./services.ts";
 import { NotSignedIn, type Viewer, type ViewerError, Viewers, ViewerUnavailable } from "./viewers.ts";
 
 const canary = "PRIVATE_QUERY_CANARY";
@@ -64,9 +76,9 @@ const unchecked: Db.Repo = {
 
 interface Fakes {
   readonly search?: (request: Search.SearchRequest) => Effect.Effect<Search.SearchOutcome, Search.SearchError>;
-  readonly limiter?: Effect.Effect<void, SyncRateLimited | SyncLimiterUnavailable>;
+  readonly limiter?: (kind: RateLimitKind) => Effect.Effect<void, RateLimited | RateLimiterUnavailable>;
   readonly requests?: SyncRequests.SyncRequests["Service"];
-  readonly sent?: Array<Login>;
+  readonly sent?: Array<readonly [Login, SyncRequests.Requester]>;
   readonly viewer?: Effect.Effect<Viewer, ViewerError>;
 }
 
@@ -125,12 +137,19 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
   const requests =
     fakes.requests ??
     SyncRequests.SyncRequests.of({
-      request: (login) =>
+      request: (login, by) =>
         Effect.sync(() => {
-          fakes.sent?.push(login);
-          return { state: "queued", requestedAt: pushedAt, syncedAt: null };
+          fakes.sent?.push([login, by]);
+          return { state: "queued", requestedAt: pushedAt, syncedAt: null, starredTotal: null, accountType: null };
         }),
-      status: () => Effect.succeed({ state: "failed", requestedAt: pushedAt, syncedAt: null }),
+      status: () =>
+        Effect.succeed({
+          state: "failed",
+          requestedAt: pushedAt,
+          syncedAt: null,
+          starredTotal: null,
+          accountType: null,
+        }),
     });
   return Context.make(Db.Db, db).pipe(
     Context.add(
@@ -140,11 +159,28 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
       }),
     ),
     Context.add(SyncRequests.SyncRequests, requests),
-    Context.add(SyncLimiter, SyncLimiter.of({ acquire: fakes.limiter ?? Effect.void })),
+    Context.add(RateLimiter, RateLimiter.of({ acquire: fakes.limiter ?? (() => Effect.void) })),
     Context.add(Viewers, Viewers.of({ current: fakes.viewer ?? Effect.fail(new NotSignedIn()) })),
     Context.add(IconHost, IconHost.of({ origin: "https://stargrep.test" })),
+    Context.add(Caller, Caller.of({ key: Db.CallerKey.make("caller-test"), address: "192.0.2.1" })),
   );
 };
+
+const publicConfig: PublicConfig = {
+  demoLogin: GitHubLogin.make("ada"),
+  demoQuery: "terminal dashboards",
+  examples: ["postgres for ai agents"],
+  featured: [GitHubLogin.make("ada")],
+};
+
+// Runs a background refresh before it returns, with services of its own, so a TestClock test sees what it stored.
+const runNow =
+  (servicesEffect: ApiContext["services"], started?: Array<"refresh">): ApiContext["background"] =>
+  (run) =>
+    Effect.sync(() => started?.push("refresh")).pipe(
+      Effect.andThen(withServices(servicesEffect, run)),
+      Effect.catch((error) => Effect.logWarning("Refresh could not start", { error: error._tag })),
+    );
 
 const contextFor = (
   transport: Transport,
@@ -153,8 +189,11 @@ const contextFor = (
 ): ApiContext => ({
   "effect/context": Context.make(Tracer.Tracer, tracer),
   transport,
+  publicConfig,
   procedureTime: Ref.makeUnsafe(Option.none()),
   services: servicesEffect,
+  answerCache: AnswerCache.disabled,
+  background: runNow(servicesEffect),
 });
 
 const client = (fakes: Fakes = {}, transport: Transport = "rpc") => {
@@ -278,42 +317,108 @@ describe("search", () => {
 
 describe("sync", () => {
   test("queues a sync and reports a failed one", async () => {
-    const sent: Array<Login> = [];
+    const sent: Array<readonly [Login, SyncRequests.Requester]> = [];
     const { api } = client({ sent });
     expect(await api.triggerSync({ login: "octocat" })).toEqual({
       login: "octocat",
       state: "queued",
       requestedAt: "2026-10-01T08:00:00.000Z",
       syncedAt: null,
+      waiting: null,
+      starredTotal: null,
+      accountType: null,
       enrichment: reading,
     });
-    expect(sent).toEqual(["octocat" as Login]);
+    expect(sent).toEqual([["octocat" as Login, { _tag: "anyone", caller: Db.CallerKey.make("caller-test") }]]);
     expect(await api.syncStatus({ login: "octocat" })).toEqual({
       login: "octocat",
       state: "failed",
       requestedAt: "2026-10-01T08:00:00.000Z",
       syncedAt: null,
+      waiting: null,
+      starredTotal: null,
+      accountType: null,
       enrichment: reading,
     });
   });
 
-  test("refuses a caller over the rate limit without queueing, and treats a limiter outage as unavailable", async () => {
-    const sent: Array<Login> = [];
-    const limited = client({ sent, limiter: Effect.fail(new SyncRateLimited({ limit: "caller" })) });
+  test("refuses a caller over the sync limit without queueing", async () => {
+    const sent: Array<readonly [Login, SyncRequests.Requester]> = [];
+    const asked: Array<RateLimitKind> = [];
+    const limited = client({
+      sent,
+      limiter: (kind) =>
+        Effect.sync(() => asked.push(kind)).pipe(Effect.andThen(new RateLimited({ limit: "network" }))),
+    });
     expect((await failure(limited.api.triggerSync({ login: "octocat" }))).code).toBe("TOO_MANY_REQUESTS");
-    const down = client({ sent, limiter: Effect.fail(new SyncLimiterUnavailable({ cause: "down" })) });
-    expect((await failure(down.api.triggerSync({ login: "octocat" }))).code).toBe("SERVICE_UNAVAILABLE");
-    expect(sent).toEqual([]);
+    expect([asked, sent]).toEqual([["sync"], []]);
   });
 
   test("maps a sync queue failure to service unavailable", async () => {
     const { api } = client({
       requests: SyncRequests.SyncRequests.of({
         request: () => Effect.fail(new SyncQueue.SyncQueueFailed({ cause: "down" })),
-        status: () => Effect.succeed({ state: "unknown" }),
+        status: () => Effect.succeed({ state: "unknown", starredTotal: null, accountType: null }),
       }),
     });
     expect((await failure(api.triggerSync({ login: "octocat" }))).code).toBe("SERVICE_UNAVAILABLE");
+  });
+
+  test("maps a missing login, a busy line, a caller over its new logins, and a failed lookup", async () => {
+    const failingWith = (error: SyncRequests.SyncRequestError) =>
+      client({
+        requests: SyncRequests.SyncRequests.of({
+          request: () => Effect.fail(error),
+          status: () => Effect.succeed({ state: "unknown", starredTotal: null, accountType: null }),
+        }),
+      }).api.triggerSync({ login: "octocat" });
+    const cases = [
+      [new SyncRequests.LoginNotFound({ login: "octocat" }), "LOGIN_NOT_FOUND"],
+      [new SyncRequests.SyncBusy({ reason: "line-full" }), "SYNC_BUSY"],
+      [new SyncRequests.SyncBusy({ reason: "github-budget" }), "SYNC_BUSY"],
+      [new SyncRequests.NewAccountLimited(), "TOO_MANY_REQUESTS"],
+      [new OwnerLookup.OwnerLookupFailed({ reason: "timeout" }), "SERVICE_UNAVAILABLE"],
+    ] as const;
+    for (const [error, code] of cases) {
+      const wire = await failure(failingWith(error));
+      expect([wire.code, wire.data]).toEqual([code, traceData]);
+    }
+  });
+
+  test("reports a sync waiting in line with its place and start, and the login's starred total and type", async () => {
+    const startsAt = DateTime.makeUnsafe("2026-10-01T08:12:00Z");
+    const { api } = client({
+      requests: SyncRequests.SyncRequests.of({
+        request: () => Effect.die("not called"),
+        status: () =>
+          Effect.succeed({
+            state: "waiting",
+            requestedAt: pushedAt,
+            startsAt,
+            ahead: 3,
+            syncedAt: null,
+            starredTotal: 2_431,
+            accountType: "user",
+          }),
+      }),
+    });
+    expect(await api.syncStatus({ login: "octocat" })).toEqual({
+      login: "octocat",
+      state: "waiting",
+      requestedAt: "2026-10-01T08:00:00.000Z",
+      syncedAt: null,
+      waiting: { ahead: 3, startsAt: "2026-10-01T08:12:00.000Z" },
+      starredTotal: 2_431,
+      accountType: "user",
+      enrichment: reading,
+    });
+  });
+});
+
+describe("config", () => {
+  test("returns the public settings without building the request's services", async () => {
+    const context = contextFor("rest", Effect.die("the config needs no services"));
+    expect(await createRouterClient(router, { context }).config()).toEqual(publicConfig);
   });
 });
 
@@ -397,7 +502,8 @@ const syncedAccount = Effect.gen(function* () {
 });
 
 const signedInWith = (sender: Layer.Layer<SyncQueue.SyncQueue>) =>
-  SyncRequests.layer.pipe(
+  SyncRequests.layer(BudgetShare.make(0.5)).pipe(
+    Layer.provideMerge(OwnerLookup.layerMemory().layer),
     Layer.provideMerge(TestDatabase.layerMemory({ embeddingModel: "test/model" as EmbeddingModelId })),
     Layer.provideMerge(sender),
   );
@@ -433,7 +539,7 @@ it.layer(signedInWith(queue.layer), { timeout: 30_000 })("opening the library", 
         syncedAt: "2026-11-05T11:35:30.000Z",
       });
       expect(queue.sent).toEqual([
-        { login: ada.account.login, mode: "incremental", requestedAt: DateTime.makeUnsafe(now) },
+        { login: ada.account.login, mode: "incremental", requestedAt: DateTime.makeUnsafe(now), reserved: 2 },
       ]);
     }),
   );
@@ -491,3 +597,296 @@ test("validates input without starting the services, and maps a failed start to 
   expect(error.toJSON()).toMatchObject({ code: "SERVICE_UNAVAILABLE", data: traceData });
   expect(starts).toBe(1);
 });
+
+const demoSearch = (planSource: Search.SearchOutcome["planSource"] = "model") => {
+  const searched: Array<Search.SearchRequest> = [];
+  let builds = 0;
+  const fakes: Fakes = {
+    search: (request) =>
+      Effect.sync(() => {
+        searched.push(request);
+        const outcome = searchOutcome(request);
+        return {
+          ...outcome,
+          planSource,
+          results: outcome.results.map((result) => ({
+            ...result,
+            metrics: [{ metric: "stars" as const, value: searched.length }],
+          })),
+        };
+      }),
+  };
+  const built = Effect.sync(() => {
+    builds++;
+    return services(fakes);
+  });
+  const memory = AnswerCache.memory();
+  const call = (
+    input: { readonly login: string; readonly q: string; readonly scope?: "stars" | "network" },
+    servicesEffect: ApiContext["services"] = built,
+  ) =>
+    Effect.gen(function* () {
+      const resHeaders = new Headers();
+      const context: ApiContext = {
+        ...contextFor("rpc", servicesEffect),
+        "effect/context": yield* Effect.context<never>(),
+        answerCache: memory.cache,
+        resHeaders,
+      };
+      const answer = yield* Effect.promise(() => createRouterClient(router, { context }).search(input));
+      return { cache: resHeaders.get("x-answer-cache"), stars: answer.results[0]?.metrics[0]?.value, answer };
+    });
+  return { searched, builds: () => builds, memory, call };
+};
+
+const noServices = Effect.die("a cached answer needs no services");
+
+describe("the demo answer cache", () => {
+  it.effect("computes a demo search once, then serves it with no services, whatever the login's case and spacing", () =>
+    Effect.gen(function* () {
+      const demo = demoSearch();
+      expect(yield* demo.call({ login: "ada", q: "terminal dashboards" })).toMatchObject({ cache: "miss", stars: 1 });
+      expect(yield* demo.call({ login: "ADA", q: "  Terminal   dashboards " }, noServices)).toMatchObject({
+        cache: "hit",
+        stars: 1,
+      });
+      expect([demo.searched.length, demo.builds()]).toEqual([1, 1]);
+      expect([...demo.memory.entries.keys()]).toEqual(["search/ada/stars/20/terminal dashboards"]);
+    }),
+  );
+
+  it.effect("never stores an answer the planner could not plan", () =>
+    Effect.gen(function* () {
+      const demo = demoSearch("fallback");
+      const query = { login: "ada", q: "terminal dashboards" };
+      expect((yield* demo.call(query)).cache).toBe("miss");
+      expect((yield* demo.call(query)).cache).toBe("miss");
+      expect([demo.searched.length, demo.memory.entries.size]).toEqual([2, 0]);
+    }),
+  );
+
+  it.effect("never caches another login's search or another scope", () =>
+    Effect.gen(function* () {
+      const demo = demoSearch();
+      for (const query of [
+        { login: "grace", q: "terminal dashboards" },
+        { login: "ada", q: "terminal dashboards", scope: "network" as const },
+      ]) {
+        expect((yield* demo.call(query)).cache).toBeNull();
+        expect((yield* demo.call(query)).cache).toBeNull();
+      }
+      expect([demo.searched.length, demo.memory.entries.size]).toEqual([4, 0]);
+    }),
+  );
+
+  it.effect("takes from the network's search limit only when a search runs, never for a cached demo answer", () =>
+    Effect.gen(function* () {
+      const acquired: Array<RateLimitKind> = [];
+      let refuse = false;
+      const limiter = (kind: RateLimitKind) =>
+        Effect.suspend(() => {
+          acquired.push(kind);
+          return refuse ? Effect.fail(new RateLimited({ limit: "network" })) : Effect.void;
+        });
+      const demo = demoSearch();
+      const planned = (request: Search.SearchRequest) =>
+        Effect.succeed({ ...searchOutcome(request), planSource: "model" as const });
+      const limited = Effect.succeed(services({ search: planned, limiter }));
+      yield* demo.call({ login: "ada", q: "terminal dashboards" }, limited);
+      refuse = true;
+      expect((yield* demo.call({ login: "ada", q: "terminal dashboards" }, limited)).cache).toBe("hit");
+      expect(acquired).toEqual(["search"]);
+      const error = yield* Effect.promise(() =>
+        failure(client({ limiter }).api.search({ login: "ada", q: "other words" })),
+      );
+      expect([error.code, acquired]).toEqual(["TOO_MANY_REQUESTS", ["search", "search"]]);
+    }),
+  );
+});
+
+describe("rate limits", () => {
+  test("answer a refusal with 429 and a limiter outage with 503, for every limited procedure", async () => {
+    const calls = (api: ReturnType<typeof client>["api"]) => [
+      api.search({ login: "grace", q: "x" }),
+      api.triggerSync({ login: "octocat" }),
+      api.stars({ login: "grace" }),
+    ];
+    const refused = client({ limiter: () => Effect.fail(new RateLimited({ limit: "all" })) });
+    const down = client({ limiter: () => Effect.fail(new RateLimiterUnavailable({ cause: "down" })) });
+    for (const call of calls(refused.api)) {
+      const error = await failure(call);
+      expect([error.code, errorStatus[error.code as WireCode], error.data]).toEqual([
+        "TOO_MANY_REQUESTS",
+        429,
+        traceData,
+      ]);
+    }
+    for (const call of calls(down.api)) {
+      const error = await failure(call);
+      expect([error.code, errorStatus[error.code as WireCode]]).toEqual(["SERVICE_UNAVAILABLE", 503]);
+    }
+  });
+});
+
+describe("config headers", () => {
+  test("lets browsers keep the public settings for 5 minutes", async () => {
+    const resHeaders = new Headers();
+    const context = { ...contextFor("rest", Effect.die("the config needs no services")), resHeaders };
+    await createRouterClient(router, { context }).config();
+    expect(resHeaders.get("cache-control")).toBe("public, max-age=300");
+  });
+});
+
+const starAt = (repoId: number, iso: string) => ({
+  repoId: repoId as RepoId,
+  starredAt: DateTime.makeUnsafe(iso),
+  observedAt: DateTime.makeUnsafe(iso),
+  source: "api" as const,
+});
+
+const starsApi = Effect.gen(function* () {
+  const real = yield* Effect.context<Db.Db>();
+  const memory = AnswerCache.memory();
+  const limits: Array<RateLimitKind> = [];
+  let builds = 0;
+  const built = Effect.sync(() => {
+    builds++;
+    return Context.merge(services({ limiter: (kind) => Effect.sync(() => limits.push(kind)) }), real);
+  });
+  const stars = (input: { readonly login: string; readonly limit?: number; readonly cursor?: string }) =>
+    Effect.gen(function* () {
+      const resHeaders = new Headers();
+      const context: ApiContext = {
+        ...contextFor("rest", built),
+        "effect/context": yield* Effect.context<never>(),
+        answerCache: memory.cache,
+        resHeaders,
+      };
+      const page = yield* Effect.promise(() =>
+        createRouterClient(router, { context })
+          .stars(input)
+          .catch((error: unknown) => error),
+      );
+      return { page, cache: resHeaders.get("x-answer-cache"), cacheControl: resHeaders.get("cache-control") };
+    });
+  return { stars, limits, memory, builds: () => builds };
+});
+
+type StarsPage = { readonly repos: ReadonlyArray<{ readonly id: number }>; readonly nextCursor: string | null };
+
+const ids = (page: unknown) => (page as StarsPage).repos.map((repo) => repo.id);
+
+// Replaces every star the test database holds, one a day from New Year 2026, so each test starts from its own stars.
+const seedStars = (repoIds: ReadonlyArray<number>) =>
+  Effect.gen(function* () {
+    yield* (yield* TestDatabase.TestDatabase).query("delete from stars");
+    const db = yield* Db.Db;
+    const { id, type, login, name, avatarUrl, followers, publicRepos } = ada.account;
+    yield* db.accounts.upsert({ id, type, login, name, avatarUrl, followers, publicRepos });
+    yield* db.repos.upsertRefs(
+      repoIds.map((repoId) => ({
+        id: repoId as RepoId,
+        nodeId: `R_${repoId}` as RepoNodeId,
+        owner: "owner" as Login,
+        name: `repo-${repoId}` as RepoName,
+      })),
+    );
+    yield* db.stars.upsert({
+      accountId: id,
+      stars: repoIds.map((repoId, index) =>
+        starAt(
+          repoId,
+          DateTime.formatIso(DateTime.makeUnsafe(Date.parse("2026-01-01T00:00:00Z") + index * 86_400_000)),
+        ),
+      ),
+    });
+  });
+
+it.layer(TestDatabase.layerMemory({ embeddingModel: "test/model" as EmbeddingModelId }), { timeout: 30_000 })(
+  "public stars",
+  (it) => {
+    it.effect("pages a login's stars newest first through a cursor, and caches each page for 10 seconds", () =>
+      Effect.gen(function* () {
+        yield* seedStars([501, 502, 503]);
+        const { stars } = yield* starsApi;
+
+        const first = yield* stars({ login: "ADA", limit: 2 });
+        expect(first).toMatchObject({ cache: "miss", cacheControl: "public, max-age=10" });
+        expect(first.page).toMatchObject({
+          login: "ada",
+          repos: [
+            { id: 503, starredAt: "2026-01-03T00:00:00.000Z", read: false },
+            { id: 502, starredAt: "2026-01-02T00:00:00.000Z" },
+          ],
+          nextCursor: `${Date.parse("2026-01-02T00:00:00Z")}-502`,
+        });
+        const cursor = (first.page as StarsPage).nextCursor ?? "";
+        expect((yield* stars({ login: "ada", limit: 2, cursor })).page).toMatchObject({
+          repos: [{ id: 501 }],
+          nextCursor: null,
+        });
+
+        yield* seedStars([501, 502, 503, 504]);
+        yield* TestClock.adjust("9 seconds");
+        const cached = yield* stars({ login: "ada", limit: 2 });
+        expect([cached.cache, cached.page]).toEqual(["hit", first.page]);
+        yield* TestClock.adjust("2 seconds");
+        const next = yield* stars({ login: "ada", limit: 2 });
+        expect([next.cache, ids(next.page)]).toEqual(["miss", [504, 503]]);
+      }),
+    );
+
+    it.effect("reads 100 stars for any limit up to 100 and 1,000 above it, so other limits hit the same page", () =>
+      Effect.gen(function* () {
+        yield* seedStars([601, 602, 603, 604, 605]);
+        const { stars, memory } = yield* starsApi;
+        const two = yield* stars({ login: "ada", limit: 2 });
+        const three = yield* stars({ login: "ada", limit: 3 });
+        const all = yield* stars({ login: "ada", limit: 100 });
+        expect([two.cache, three.cache, all.cache]).toEqual(["miss", "hit", "hit"]);
+        expect([ids(three.page), (three.page as StarsPage).nextCursor]).toEqual([
+          [605, 604, 603],
+          `${Date.parse("2026-01-03T00:00:00Z")}-603`,
+        ]);
+        expect([ids(all.page), (all.page as StarsPage).nextCursor]).toEqual([[605, 604, 603, 602, 601], null]);
+
+        expect((yield* stars({ login: "ada", limit: 101 })).cache).toBe("miss");
+        expect((yield* stars({ login: "ada" })).cache).toBe("hit");
+        expect([...memory.entries.keys()]).toEqual(["stars/ada/100/", "stars/ada/1000/"]);
+      }),
+    );
+
+    it.effect("takes from the network's stars limit on a miss only", () =>
+      Effect.gen(function* () {
+        yield* seedStars([701, 702]);
+        const { stars, limits } = yield* starsApi;
+        yield* stars({ login: "ada", limit: 1 });
+        yield* stars({ login: "ada", limit: 2 });
+        expect(limits).toEqual(["stars"]);
+      }),
+    );
+
+    it.effect("says when Stargrep has not synced the login", () =>
+      Effect.gen(function* () {
+        const { stars } = yield* starsApi;
+        const unsynced = yield* stars({ login: "nobody-synced" });
+        expect(unsynced.page).toMatchObject({ code: "ACCOUNT_NOT_SYNCED", data: traceData });
+        expect(unsynced.cacheControl).toBeNull();
+      }),
+    );
+
+    it.effect("rejects a cursor it never issued at validation, with the issues and a trace ID, before any work", () =>
+      Effect.gen(function* () {
+        const { stars, limits, builds } = yield* starsApi;
+        for (const cursor of ["1700000000000-0", "1700000000000", "soon-42"]) {
+          const refused = (yield* stars({ login: "ada", cursor })).page as ORPCError<string, unknown>;
+          expect([refused.code, refused.data]).toEqual([
+            "BAD_REQUEST",
+            { issues: [expect.objectContaining({ path: expect.arrayContaining(["cursor"]) })], ...traceData },
+          ]);
+        }
+        expect([limits, builds()]).toEqual([[], 0]);
+      }),
+    );
+  },
+);

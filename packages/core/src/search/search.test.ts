@@ -14,6 +14,7 @@ import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { registry } from "./metric-registry.ts";
+import * as ModelAllowance from "./model-allowance.ts";
 import * as QueryPlan from "./query-plan.ts";
 import * as QueryPlanner from "./query-planner.ts";
 import * as Search from "./search.ts";
@@ -47,6 +48,7 @@ const layerSearch = <E>(db: Layer.Layer<Db.Db | Db.Transactions | TestDatabase.T
         ),
       ),
     ),
+    Layer.provideMerge(ModelAllowance.layerUnmetered),
     Layer.provideMerge(SearchCache.layerMemory),
     Layer.provideMerge(layerEmbeddings),
     Layer.provideMerge(db),
@@ -188,6 +190,7 @@ const searchCases = (test: {
     | Db.Db
     | TestDatabase.TestDatabase
     | Embeddings.Embeddings
+    | ModelAllowance.ModelAllowance
   >;
 }) => {
   const search = (request: Search.SearchRequest) =>

@@ -1,10 +1,11 @@
 import { GitHubAccountId, type Login, RepoId } from "@stargrep/github/schemas";
-import { and, desc, eq, isNull, type SQL, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, lt, or, type SQL, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import * as Arr from "effect/Array";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
@@ -56,6 +57,17 @@ export interface SnapshotChanges {
   readonly unstarred: ReadonlyArray<RepoId>;
 }
 
+export interface StarsPosition {
+  readonly starredAt: DateTime.Utc;
+  readonly repoId: RepoId;
+}
+
+export interface StarsPage {
+  readonly entries: ReadonlyArray<LibraryEntry>;
+  // Where the next page starts, or none when this page is the last.
+  readonly next: Option.Option<StarsPosition>;
+}
+
 export interface Queries {
   readonly upsert: (input: StarsUpsert) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
   readonly applySnapshot: (
@@ -65,6 +77,10 @@ export interface Queries {
   readonly library: (
     accountId: GitHubAccountId,
   ) => Effect.Effect<ReadonlyArray<LibraryEntry>, DbQueryFailed | DbRowInvalid>;
+  readonly page: (
+    accountId: GitHubAccountId,
+    options: { readonly limit: number; readonly after: Option.Option<StarsPosition> },
+  ) => Effect.Effect<StarsPage, DbQueryFailed | DbRowInvalid>;
   readonly enrichment: (login: Login) => Effect.Effect<EnrichmentProgress, DbQueryFailed | DbRowInvalid>;
 }
 
@@ -121,6 +137,40 @@ const writeStarsReturningVisibleChanges = (accountId: GitHubAccountId, events: s
   where prior.${column(stars.repoId)} is null
     or prior.${column(stars.unstarredAt)} is not null
     or prior.${column(stars.starredAt)} <> written.${column(stars.starredAt)}`;
+
+const encodePosition = (position: StarsPosition) =>
+  encodeTime(position.starredAt).pipe(Effect.map((starredAt) => Option.some({ starredAt, repoId: position.repoId })));
+
+// Newest star first, ties by repo ID, so a page continues after a position with no gap and no repeat.
+const libraryEntries = (
+  db: Postgres.Database,
+  accountId: GitHubAccountId,
+  after?: { readonly starredAt: string; readonly repoId: RepoId },
+) =>
+  db
+    .select({
+      repo: repoColumns,
+      starredAt: stars.starredAt,
+      stars: repoMetrics.stars,
+      read: sql<boolean>`not ${needsEnrichment}`,
+    })
+    .from(stars)
+    .innerJoin(repos, eq(repos.id, stars.repoId))
+    .leftJoin(repoMetrics, eq(repoMetrics.repoId, stars.repoId))
+    .where(
+      and(
+        eq(stars.accountId, accountId),
+        isNull(stars.unstarredAt),
+        after === undefined
+          ? undefined
+          : or(
+              lt(stars.starredAt, sql`${after.starredAt}::timestamptz`),
+              and(eq(stars.starredAt, sql`${after.starredAt}::timestamptz`), gt(stars.repoId, after.repoId)),
+            ),
+      ),
+    )
+    .orderBy(desc(stars.starredAt), stars.repoId)
+    .$dynamic();
 
 export const make = Effect.gen(function* () {
   const { run, withTransaction } = yield* Postgres.Postgres;
@@ -215,20 +265,24 @@ export const make = Effect.gen(function* () {
           .orderBy(desc(stars.starredAt), stars.repoId),
       ).pipe(Effect.flatMap(decodeStars("stars.list"))),
     library: (accountId) =>
-      run("stars.library", (db) =>
-        db
-          .select({
-            repo: repoColumns,
-            starredAt: stars.starredAt,
-            stars: repoMetrics.stars,
-            read: sql<boolean>`not ${needsEnrichment}`,
-          })
-          .from(stars)
-          .innerJoin(repos, eq(repos.id, stars.repoId))
-          .leftJoin(repoMetrics, eq(repoMetrics.repoId, stars.repoId))
-          .where(and(eq(stars.accountId, accountId), isNull(stars.unstarredAt)))
-          .orderBy(desc(stars.starredAt), stars.repoId),
-      ).pipe(Effect.flatMap(decodeLibrary("stars.library"))),
+      run("stars.library", (db) => libraryEntries(db, accountId)).pipe(Effect.flatMap(decodeLibrary("stars.library"))),
+    page: (accountId, { limit, after }) =>
+      Effect.flatMap(Option.match(after, { onNone: () => Effect.succeedNone, onSome: encodePosition }), (position) =>
+        run("stars.page", (db) => libraryEntries(db, accountId, Option.getOrUndefined(position)).limit(limit + 1)),
+      ).pipe(
+        Effect.flatMap(decodeLibrary("stars.page")),
+        Effect.map((rows) => {
+          const entries = rows.slice(0, limit);
+          const last = entries.at(-1);
+          return {
+            entries,
+            next:
+              rows.length > limit && last !== undefined
+                ? Option.some({ starredAt: last.starredAt, repoId: last.repo.id })
+                : Option.none(),
+          };
+        }),
+      ),
     // The account is chosen as accounts.byLogin chooses it, so the progress and the sync status describe one account.
     enrichment: (login) =>
       run("stars.enrichment", (db) =>

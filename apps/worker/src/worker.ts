@@ -1,4 +1,7 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
+import { SyncRequests } from "@stargrep/core/stars";
+import * as GitHub from "@stargrep/github/github";
+import { budgetShare, budgetShareName, stageBudgetShare } from "@stargrep/runtime/budget-share";
 import * as Tracing from "@stargrep/telemetry/cloudflare";
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
@@ -7,7 +10,6 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
-import { budgetShareName, stageBudgetShare } from "./budget-share.ts";
 import * as Crons from "./crons.ts";
 import { Database, DatabaseMigrations } from "./database.ts";
 import { prodWorkerHosting } from "./domain.ts";
@@ -15,6 +17,7 @@ import { tokenGate } from "./github-gate.ts";
 import { healthResponse } from "./health.ts";
 import { Icons } from "./icons/bucket.ts";
 import * as Layers from "./layers.ts";
+import * as OwnerLookup from "./owner-lookup.ts";
 import * as Queues from "./queues.ts";
 import { Readmes } from "./readmes.ts";
 import { requireStageSecrets } from "./secrets.ts";
@@ -41,17 +44,18 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
   Effect.gen(function* () {
     const database = yield* Cloudflare.Hyperdrive.Connect(Database);
     const iconQueue = yield* Cloudflare.Queues.WriteQueue(yield* Queues.FetchIcons);
+    const gate = yield* tokenGate;
     const runtime = Layers.layerRuntime({
       database: database.connectionString,
       readmes: yield* Cloudflare.R2.ReadWriteBucket(Readmes),
       icons: yield* Cloudflare.R2.ReadWriteBucket(Icons),
       enrichQueue: yield* Cloudflare.Queues.WriteQueue(yield* Queues.EnrichRepos),
       iconQueue,
-      tokenGate: yield* tokenGate,
+      tokenGate: gate,
       ai: yield* Effect.orDie(Layers.aiModels),
       adopted: yield* Ref.make(false),
     });
-    yield* Queues.consumeAll(runtime);
+    yield* Queues.consumeAll(runtime, SyncRequests.allRate(yield* Effect.orDie(budgetShare)));
     yield* Crons.scheduleAll(runtime);
     return {
       fetch: Effect.gen(function* () {
@@ -61,6 +65,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
         }
         return HttpServerResponse.empty({ status: 404 });
       }).pipe(Effect.orDie),
+      lookupOwner: OwnerLookup.lookupOwner(GitHub.layer.pipe(Layer.provide(gate))),
     };
   }).pipe(
     Effect.provide(

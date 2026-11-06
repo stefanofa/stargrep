@@ -4,7 +4,6 @@ import * as Gateway from "@stargrep/ai/gateway";
 import type * as TextGeneration from "@stargrep/ai/text-generation";
 import { FetchIcon, IconHttp, IconQueue, IconStore, Normalize } from "@stargrep/core/icons";
 import { BlobStore, EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
-import { StarSync } from "@stargrep/core/stars";
 import * as GitHub from "@stargrep/github/github";
 import type * as TokenGate from "@stargrep/github/token-gate";
 import { aiGatewayKey } from "@stargrep/runtime/config";
@@ -142,10 +141,10 @@ interface Bindings {
 // Built again for every invocation, because a socket opened in one request cannot serve another.
 export const layerRuntime = (bindings: Bindings) =>
   Layer.empty.pipe(
-    Layer.provideMerge(Layer.mergeAll(StarSync.layer, EnrichRepo.layer, FetchIcon.layer)),
+    Layer.provideMerge(Layer.mergeAll(EnrichRepo.layer, FetchIcon.layer)),
     Layer.provideMerge(
       Layer.mergeAll(
-        GitHub.layer.pipe(Layer.provide(bindings.tokenGate)),
+        GitHub.layer.pipe(Layer.provideMerge(bindings.tokenGate)),
         layerBlobStore(bindings.readmes),
         layerEnrichQueue(bindings.enrichQueue),
         layerIconQueue(bindings.iconQueue),

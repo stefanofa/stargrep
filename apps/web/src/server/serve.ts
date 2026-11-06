@@ -6,11 +6,14 @@ import { OpenAPIGenerator } from "@orpc/openapi";
 import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { COMMON_ERROR_STATUS_MAP, ORPCError, RPCSerializer } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
+import { ResponseHeadersHandlerPlugin } from "@orpc/server/plugins";
 import type { StandardHandlerInterceptor } from "@orpc/server/standard";
-import { signedIn } from "@stargrep/api/contract";
+import type { AnswerCache } from "@stargrep/api/answer-cache";
+import { type PublicConfig, signedIn } from "@stargrep/api/contract";
 import { errorStatus, wireError, withTraceId } from "@stargrep/api/errors";
 import type { Transport } from "@stargrep/api/middleware/instrumentation";
-import { type ApiContext, type ApiServices, ApiServicesUnavailable, router } from "@stargrep/api/router";
+import { type ApiContext, router } from "@stargrep/api/router";
+import { type ApiServices, ApiServicesUnavailable } from "@stargrep/api/services";
 import * as Auth from "@stargrep/auth/auth";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -48,8 +51,16 @@ const converters = [new EffectSchemaToJsonSchemaConverter({ cache: true })];
 const plugins = [new SmartCoercionHandlerPlugin({ converters })];
 const errorStatusMap = { ...COMMON_ERROR_STATUS_MAP, ...errorStatus };
 const interceptors = [traceErrors];
-const rpc = new RPCHandler<WebContext>(router, { errorStatusMap, interceptors });
-const rest = new OpenAPIHandler<WebContext>(router, { plugins, errorStatusMap, interceptors });
+const rpc = new RPCHandler<WebContext>(router, {
+  plugins: [new ResponseHeadersHandlerPlugin()],
+  errorStatusMap,
+  interceptors,
+});
+const rest = new OpenAPIHandler<WebContext>(router, {
+  plugins: [...plugins, new ResponseHeadersHandlerPlugin()],
+  errorStatusMap,
+  interceptors,
+});
 const anyoneCanCall = (_: unknown, path: ReadonlyArray<string>) => !signedIn.has(path.join("."));
 const registrar = new McpRegistrar(router, { converters, plugins, filter: anyoneCanCall });
 
@@ -173,24 +184,32 @@ const routes: ReadonlyArray<Route> = [
   },
 ];
 
-export const requestContext = Effect.fn("Web.requestContext")(function* (
-  transport: Transport,
-  layer: Layer.Layer<ApiServices, { readonly _tag: string }>,
-  requestTraceId: string,
-) {
+interface RequestOptions {
+  readonly transport: Transport;
+  readonly layer: Layer.Layer<ApiServices, { readonly _tag: string }>;
+  readonly requestTraceId: string;
+  readonly publicConfig: PublicConfig;
+  readonly answerCache: AnswerCache;
+  readonly background: ApiContext["background"];
+}
+
+export const requestContext = Effect.fn("Web.requestContext")(function* (options: RequestOptions) {
   const scope = yield* Scope.Scope;
   const services = yield* Effect.cached(
-    Layer.build(layer).pipe(
+    Layer.build(options.layer).pipe(
       Effect.provideService(Scope.Scope, scope),
       Effect.mapError((error) => new ApiServicesUnavailable({ failure: error._tag })),
     ),
   );
   return {
     "effect/context": yield* Effect.context<never>(),
-    transport,
+    transport: options.transport,
+    publicConfig: options.publicConfig,
     procedureTime: yield* Ref.make(Option.none<Duration.Duration>()),
     services,
-    requestTraceId,
+    answerCache: options.answerCache,
+    background: options.background,
+    requestTraceId: options.requestTraceId,
   } satisfies WebContext;
 });
 
@@ -212,11 +231,49 @@ const withTiming = (
   return timed;
 };
 
-const respond = (route: Route, request: Request, layerFor: RequestLayer) =>
+export interface ServerOptions {
+  readonly layerFor: RequestLayer;
+  readonly tracer: Layer.Layer<never>;
+  // Read on the first request, because TanStack Start's dev server loads the entry before env is set.
+  readonly publicConfig: () => PublicConfig;
+  readonly answerCache: (request: Request) => AnswerCache;
+  readonly waitUntil: (promise: Promise<unknown>) => void;
+}
+
+const refreshTimeout = Duration.seconds(25);
+
+// Work that outlives the response builds its own services, because the request's services close when it returns.
+const background =
+  (options: ServerOptions, request: Request): ApiContext["background"] =>
+  (run) =>
+    Effect.sync(() =>
+      options.waitUntil(
+        Effect.runPromise(
+          run.pipe(
+            Effect.provide(options.layerFor(request)),
+            Effect.timeout(refreshTimeout),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Background work failed", { failure: Cause.hasDies(cause) ? "defect" : "failure" }),
+            ),
+            Effect.withSpan("Web.background"),
+            Effect.provide(options.tracer),
+          ),
+        ),
+      ),
+    );
+
+const respond = (route: Route, request: Request, options: ServerOptions) =>
   Effect.useSpan(`Web.${route.transport}`, { kind: "server" }, (span) =>
     Effect.gen(function* () {
       const started = yield* Clock.currentTimeMillis;
-      const context = yield* requestContext(route.transport, layerFor(request), span.traceId);
+      const context = yield* requestContext({
+        transport: route.transport,
+        layer: options.layerFor(request),
+        requestTraceId: span.traceId,
+        publicConfig: options.publicConfig(),
+        answerCache: options.answerCache(request),
+        background: background(options, request),
+      });
       const response =
         (yield* Effect.promise(() => route.answer(request, context))) ?? route.fail(noRoute(span.traceId));
       const total = (yield* Clock.currentTimeMillis) - started;
@@ -281,10 +338,10 @@ export const makeAuthServer =
       : undefined;
 
 export const makeServer =
-  (layerFor: RequestLayer, tracer: Layer.Layer<never>) =>
+  (options: ServerOptions) =>
   (request: Request): Promise<Response> | undefined => {
     const pathname = new URL(request.url).pathname;
     const route = routes.find((candidate) => candidate.matches(pathname));
     if (route === undefined) return undefined;
-    return Effect.runPromise(respond(route, request, layerFor).pipe(Effect.provide(tracer)));
+    return Effect.runPromise(respond(route, request, options).pipe(Effect.provide(options.tracer)));
   };

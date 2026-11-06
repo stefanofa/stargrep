@@ -14,6 +14,9 @@ const sync = (extra: Partial<SyncStatus>): SyncStatus => ({
   state: "done",
   requestedAt: "2026-11-05T10:00:00.000Z",
   syncedAt: "2026-11-05T10:00:00.000Z",
+  waiting: null,
+  starredTotal: null,
+  accountType: null,
   enrichment: { total: 1776, read: 1776, failed: 0 },
   ...extra,
 });

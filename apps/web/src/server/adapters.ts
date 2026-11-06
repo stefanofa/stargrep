@@ -1,4 +1,3 @@
-import { SyncLimiter, SyncLimiterUnavailable, SyncRateLimited } from "@stargrep/api/sync-limiter";
 import { SearchCache } from "@stargrep/core/search";
 import { StarSync, SyncQueue } from "@stargrep/core/stars";
 import * as Digest from "effect/crypto/Digest";
@@ -35,33 +34,11 @@ export const layerSyncQueue = (queue: Queue<unknown>) =>
   Layer.succeed(
     SyncQueue.SyncQueue,
     SyncQueue.SyncQueue.of({
-      send: Effect.fn("SyncQueue.send")(function* (request: StarSync.LoginSyncRequest) {
+      send: Effect.fn("SyncQueue.send")(function* (request: StarSync.LoginSyncRequest, delay: Duration.Duration) {
         yield* Effect.tryPromise({
-          try: () => queue.send(encodeSyncRequest(request)),
+          try: () => queue.send(encodeSyncRequest(request), { delaySeconds: Math.ceil(Duration.toSeconds(delay)) }),
           catch: (cause) => new SyncQueue.SyncQueueFailed({ cause }),
         });
       }),
-    }),
-  );
-
-interface SyncLimits {
-  readonly perCaller: RateLimit;
-  readonly overall: RateLimit;
-}
-
-const withinLimit = (limit: RateLimit, key: string, name: SyncRateLimited["limit"]) =>
-  Effect.tryPromise({
-    try: () => limit.limit({ key }),
-    catch: (cause) => new SyncLimiterUnavailable({ cause }),
-  }).pipe(Effect.flatMap(({ success }) => (success ? Effect.void : Effect.fail(new SyncRateLimited({ limit: name })))));
-
-export const layerSyncLimiter = (limits: SyncLimits, caller: string) =>
-  Layer.succeed(
-    SyncLimiter,
-    SyncLimiter.of({
-      acquire: withinLimit(limits.perCaller, caller, "caller").pipe(
-        Effect.andThen(withinLimit(limits.overall, "all", "overall")),
-        Effect.withSpan("SyncLimiter.acquire"),
-      ),
     }),
   );

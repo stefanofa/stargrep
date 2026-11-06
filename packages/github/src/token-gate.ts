@@ -128,6 +128,19 @@ export const layerMemory = (options: MemoryOptions) =>
     Effect.map(makeMemory(options), ({ execute }) => TokenGate.of({ execute })),
   );
 
+// Counts each request the gate sent to GitHub, the client's retries and requests that failed included. A request the
+// gate refused for its budget or a missing token never left it.
+export const counting = (gate: TokenGate["Service"], sent: Ref.Ref<number>) => {
+  const count = Ref.update(sent, (total) => total + 1);
+  return TokenGate.of({
+    execute: Effect.fn("TokenGate.execute")(
+      (operation: Operation, request: HttpClientRequest.HttpClientRequest) => gate.execute(operation, request),
+      Effect.tap(() => count),
+      Effect.tapError((error) => (error._tag === "GitHubRequestFailed" ? count : Effect.void)),
+    ),
+  });
+};
+
 export const layerMissing = Layer.succeed(
   TokenGate,
   TokenGate.of({

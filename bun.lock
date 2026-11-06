@@ -164,6 +164,7 @@
       },
       "devDependencies": {
         "@effect/tsgo": "catalog:",
+        "@stargrep/ai": "workspace:*",
         "@stargrep/config": "workspace:*",
         "@stargrep/telemetry": "workspace:*",
         "@stargrep/testing": "workspace:*",
@@ -251,6 +252,7 @@
       "dependencies": {
         "@stargrep/ai": "workspace:*",
         "@stargrep/db": "workspace:*",
+        "@stargrep/github": "workspace:*",
         "effect": "catalog:",
       },
       "devDependencies": {

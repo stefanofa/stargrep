@@ -5,7 +5,7 @@ import * as Gateway from "@stargrep/ai/gateway";
 import * as Models from "@stargrep/ai/models";
 import { tokensSpent } from "@stargrep/ai/port";
 import * as TextGeneration from "@stargrep/ai/text-generation";
-import { QueryPlanner, Search, SearchCache } from "@stargrep/core/search";
+import { ModelAllowance, QueryPlanner, Search, SearchCache } from "@stargrep/core/search";
 import * as Db from "@stargrep/db";
 import { anyDistance, Embedding, EmbeddingModelId } from "@stargrep/db/embedding";
 import { createMigratedDatabase } from "@stargrep/db/local-database";
@@ -226,7 +226,12 @@ const checkTyposAndNonsense = (results: Sets<ReadonlyArray<Scored>>) => {
 const layerSearch = <E1, R1, E2, R2>(
   text: Layer.Layer<TextGeneration.TextGeneration, E1, R1>,
   cache: Layer.Layer<SearchCache.SearchCache, E2, R2>,
-) => Search.layer.pipe(Layer.provideMerge(QueryPlanner.layer.pipe(Layer.provide(text))), Layer.provideMerge(cache));
+) =>
+  Search.layer.pipe(
+    Layer.provideMerge(QueryPlanner.layer.pipe(Layer.provide(text))),
+    Layer.provideMerge(cache),
+    Layer.provideMerge(ModelAllowance.layerUnmetered),
+  );
 
 const tokenCounts = Effect.forEach([Models.plannerModel, Models.embeddingModel.id], (model) =>
   tokensSpent(model).pipe(Effect.map(({ input, output }) => `${model} ${input} in, ${output} out`)),

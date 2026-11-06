@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { IconHost } from "@stargrep/api/icon-host";
 import { NotSignedIn, Viewers } from "@stargrep/api/viewers";
 import { QueryPlan, Search } from "@stargrep/core/search";
-import { SyncQueue, SyncRequests } from "@stargrep/core/stars";
+import { OwnerLookup, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import { DbQueryFailed, RepoNotFound } from "@stargrep/db/errors";
 import type { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
@@ -10,9 +10,10 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { layerSyncLimiter } from "../src/server/adapters.ts";
+import { layerCaller } from "../src/server/caller.ts";
 import { withHealth } from "../src/server/health.ts";
-import { makeServer } from "../src/server/serve.ts";
+import { layerRateLimiter } from "../src/server/rate-limiter.ts";
+import { testServer } from "./serve.ts";
 
 export const repo: Db.Repo = {
   id: 42 as RepoId,
@@ -39,9 +40,55 @@ export const repo: Db.Repo = {
   ownerAvatarUrl: "https://avatars.githubusercontent.com/u/1",
 };
 
-const ada = { id: 7 as GitHubAccountId, login: "ada" as Login, starsSyncedAt: null };
+const ada = { id: 7 as GitHubAccountId, login: "ada" as Login, type: "user", starredCount: 1, starsSyncedAt: null };
 
-export const queue = SyncQueue.layerMemory();
+const starredAt = DateTime.makeUnsafe("2026-03-01T00:00:00Z");
+
+// Every sync request that reached admission, with who asked for it.
+export const requested: Array<{ readonly login: Login; readonly by: SyncRequests.Requester }> = [];
+
+export const waitingStart = DateTime.makeUnsafe("2026-11-06T09:01:30.500Z");
+
+const looked = { starredTotal: null, accountType: null };
+
+// Answers as admission would for the logins these tests use, because they test the router and the adapters around it.
+// Admission itself runs against real SQL in core.
+const admission = Layer.mock(SyncRequests.SyncRequests, {
+  request: Effect.fn("SyncRequests.request")(function* (login: Login, by: SyncRequests.Requester) {
+    requested.push({ login, by });
+    const requestedAt = yield* DateTime.now;
+    switch (login.toLowerCase()) {
+      case "ghost-login":
+        return yield* new SyncRequests.LoginNotFound({ login });
+      case "budget-spent":
+        return yield* new SyncRequests.SyncBusy({ reason: "github-budget" });
+      case "line-full":
+        return yield* new SyncRequests.SyncBusy({ reason: "line-full" });
+      case "github-down":
+        return yield* new OwnerLookup.OwnerLookupFailed({ reason: "github" });
+      case "an-org":
+        return { state: "done", syncedAt: requestedAt, starredTotal: 0, accountType: "org" } as const;
+      case "patient":
+        return {
+          state: "waiting",
+          requestedAt,
+          startsAt: waitingStart,
+          ahead: 2,
+          syncedAt: null,
+          starredTotal: 42,
+          accountType: "user",
+        } as const;
+      default:
+        return { state: "queued", requestedAt, syncedAt: null, ...looked } as const;
+    }
+  }),
+  status: (login) =>
+    Effect.succeed(
+      login === ada.login
+        ? { state: "done", syncedAt: starredAt, starredTotal: 1, accountType: "user" }
+        : { state: "unknown", ...looked },
+    ),
+});
 
 const search = Search.Search.of({
   search: Effect.fn("Search.search")(function* (request: Search.SearchRequest) {
@@ -58,53 +105,29 @@ const search = Search.Search.of({
   }),
 });
 
-const requests = new Map<string, Db.SyncRequest>();
-
-export const syncRequests: Db.Db["Service"]["syncRequests"] = {
-  get: (login) => Effect.sync(() => Option.fromUndefinedOr(requests.get(login.toLowerCase()))),
-  claim: ({ login, at, cooldown }) =>
-    Effect.sync(() => {
-      const current = requests.get(login.toLowerCase());
-      const claimed =
-        current === undefined || DateTime.isLessThanOrEqualTo(DateTime.addDuration(current.requestedAt, cooldown), at);
-      if (claimed)
-        requests.set(login.toLowerCase(), { login: login.toLowerCase(), requestedAt: at, outcome: "pending" });
-      return claimed;
-    }),
-  markFailed: (login, requestedAt) =>
-    Effect.sync(() => {
-      const current = requests.get(login.toLowerCase());
-      if (current !== undefined && DateTime.Equivalence(current.requestedAt, requestedAt)) {
-        requests.set(login.toLowerCase(), { ...current, outcome: "failed" });
-      }
-    }),
-};
-
 const db = {
-  accounts: { byLogin: (login: Login) => Effect.succeed(login === ada.login ? Option.some(ada) : Option.none()) },
+  accounts: {
+    byLogin: (login: Login) => Effect.succeed(login === ada.login ? Option.some(ada) : Option.none()),
+  },
   repos: {
     require: (id: RepoId) => (id === repo.id ? Effect.succeed(repo) : Effect.fail(new RepoNotFound({ repoId: id }))),
   },
   stars: {
+    page: () => Effect.succeed({ entries: [{ repo, starredAt, stars: 18_000, read: true }], next: Option.none() }),
     enrichment: (login: Login) =>
       Effect.succeed(login === ada.login ? { total: 1, read: 1, failed: 0 } : { total: 0, read: 0, failed: 0 }),
   },
-  syncRequests,
 } as unknown as Db.Db["Service"];
 
-const serve = makeServer(
-  (request) =>
-    Layer.mergeAll(
-      Layer.succeed(Search.Search, search),
-      Layer.succeed(Viewers, Viewers.of({ current: Effect.fail(new NotSignedIn()) })),
-      Layer.succeed(IconHost, IconHost.of({ origin: new URL(request.url).origin })),
-      SyncRequests.layer,
-      layerSyncLimiter(
-        { perCaller: env.SYNC_PER_CALLER, overall: env.SYNC_OVERALL },
-        request.headers.get("cf-connecting-ip") ?? "unknown",
-      ),
-    ).pipe(Layer.provideMerge(Layer.succeed(Db.Db, db)), Layer.provide(queue.layer)),
-  Layer.empty,
+const serve = testServer((request) =>
+  Layer.mergeAll(
+    Layer.succeed(Search.Search, search),
+    Layer.succeed(Viewers, Viewers.of({ current: Effect.fail(new NotSignedIn()) })),
+    Layer.succeed(IconHost, IconHost.of({ origin: new URL(request.url).origin })),
+    admission,
+    layerRateLimiter(env),
+    Layer.succeed(Db.Db, db),
+  ).pipe(Layer.provideMerge(layerCaller(env.CALLER_KEY, request))),
 );
 
 export default {
