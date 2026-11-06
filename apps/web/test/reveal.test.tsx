@@ -2,7 +2,7 @@ import "./register.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { useReveal } from "../src/lib/reveal.ts";
-import { revealedKey } from "../src/lib/reveal-script.ts";
+import { revealedKey, revealScript } from "../src/lib/reveal-script.ts";
 
 const root = () => document.documentElement;
 
@@ -27,15 +27,32 @@ describe("the staged reveal", () => {
     expect(root().dataset.reveal).toBeUndefined();
   });
 
-  test("any interaction jumps to the end", async () => {
+  test.each([
+    ["a key", () => document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))],
+    ["a click", () => document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }))],
+    ["a focus", () => document.body.dispatchEvent(new FocusEvent("focusin", { bubbles: true }))],
+  ])("%s anywhere on the page jumps to the end", async (_, interact) => {
     root().dataset.reveal = "pending";
     const { result } = renderHook(() => useReveal("rust tui library", true));
     await act(() => Bun.sleep(60));
     expect(result.current.typed?.length).toBeGreaterThan(0);
-    act(() => result.current.skip());
+    act(interact);
     expect(result.current.phase).toBe("done");
     expect(result.current.typed).toBeUndefined();
     expect(root().dataset.reveal).toBeUndefined();
+  });
+
+  test("plays nothing when the visitor is already in a field, typing", () => {
+    root().dataset.reveal = "pending";
+    const input = document.body.appendChild(document.createElement("input"));
+    input.focus();
+    try {
+      const { result } = renderHook(() => useReveal("rust tui", true));
+      expect(result.current.phase).toBe("done");
+      expect(root().dataset.reveal).toBeUndefined();
+    } finally {
+      input.remove();
+    }
   });
 
   test("plays nothing on a page without a first answer, and clears the mark", () => {
@@ -64,6 +81,46 @@ describe("the staged reveal", () => {
     } finally {
       if (visibility) Object.defineProperty(document, "visibilityState", visibility);
       else Reflect.deleteProperty(document, "visibilityState");
+    }
+  });
+});
+
+describe("the reveal script before the engine hydrates", () => {
+  const run = () => new Function(revealScript)();
+
+  test("marks a first visit and hides the query until the first interaction", () => {
+    run();
+    expect(root().dataset.reveal).toBe("pending");
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "t", bubbles: true }));
+    expect(root().dataset.reveal).toBeUndefined();
+  });
+
+  test.each(["pointerdown", "focusin", "input"])("a %s anywhere on the page cancels the reveal", (name) => {
+    run();
+    document.body.dispatchEvent(new Event(name, { bubbles: true }));
+    expect(root().dataset.reveal).toBeUndefined();
+  });
+
+  test("does nothing on a repeat visit", () => {
+    sessionStorage.setItem(revealedKey, "1");
+    run();
+    expect(root().dataset.reveal).toBeUndefined();
+  });
+
+  test("text typed before hydration stays, and the reveal never starts", async () => {
+    run();
+    const input = document.body.appendChild(document.createElement("input"));
+    try {
+      input.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      input.value = "terminal recorder";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      const { result } = renderHook(() => useReveal("let an ai agent control my iphone", true));
+      await act(() => Bun.sleep(60));
+      expect(result.current.phase).toBe("done");
+      expect(result.current.typed).toBeUndefined();
+      expect(input.value).toBe("terminal recorder");
+    } finally {
+      input.remove();
     }
   });
 });

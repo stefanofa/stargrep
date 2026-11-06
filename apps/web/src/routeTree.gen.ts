@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as LoginRouteImport } from './routes/$login'
+import { Route as AtChar123loginChar125RouteImport } from './routes/@{$login}'
 import { Route as SearchRouteImport } from './routes/search'
 
 const IndexRoute = IndexRouteImport.update({
@@ -23,6 +24,11 @@ const LoginRoute = LoginRouteImport.update({
   path: '/$login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AtChar123loginChar125Route = AtChar123loginChar125RouteImport.update({
+  id: '/@{$login}',
+  path: '/@{$login}',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SearchRoute = SearchRouteImport.update({
   id: '/search',
   path: '/search',
@@ -32,30 +38,34 @@ const SearchRoute = SearchRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$login': typeof LoginRoute
+  '/@{$login}': typeof AtChar123loginChar125Route
   '/search': typeof SearchRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$login': typeof LoginRoute
+  '/@{$login}': typeof AtChar123loginChar125Route
   '/search': typeof SearchRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/$login': typeof LoginRoute
+  '/@{$login}': typeof AtChar123loginChar125Route
   '/search': typeof SearchRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/$login' | '/search'
+  fullPaths: '/' | '/$login' | '/@{$login}' | '/search'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/$login' | '/search'
-  id: '__root__' | '/' | '/$login' | '/search'
+  to: '/' | '/$login' | '/@{$login}' | '/search'
+  id: '__root__' | '/' | '/$login' | '/@{$login}' | '/search'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LoginRoute: typeof LoginRoute
+  AtChar123loginChar125Route: typeof AtChar123loginChar125Route
   SearchRoute: typeof SearchRoute
 }
 
@@ -75,6 +85,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/@{$login}': {
+      id: '/@{$login}'
+      path: '/@{$login}'
+      fullPath: '/@{$login}'
+      preLoaderRoute: typeof AtChar123loginChar125RouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/search': {
       id: '/search'
       path: '/search'
@@ -88,6 +105,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
+  AtChar123loginChar125Route: AtChar123loginChar125Route,
   SearchRoute: SearchRoute,
 }
 export const routeTree = rootRouteImport

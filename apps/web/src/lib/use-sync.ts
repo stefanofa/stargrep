@@ -3,9 +3,9 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { useEffect, useState } from "react";
-import { type Refusal, refusalOf } from "./refusals.ts";
 import { api, type SyncStatus } from "./rpc.ts";
 import { readingIncomplete } from "./search-state.ts";
+import { forgetRefusal, type Refusal, refusalOf, rememberRefusal } from "./trouble.ts";
 
 const importing = Duration.seconds(2);
 const inLine = Duration.seconds(10);
@@ -52,8 +52,9 @@ export type SyncWatch =
   | { readonly kind: "watching"; readonly status: SyncStatus | undefined }
   | { readonly kind: Refusal };
 
-// The server may already have read the status, or have been refused when it asked for the sync. A refusal stays on
-// screen until the visitor tries again, so the page never asks twice on its own.
+// Rendering a page never starts an import, since crawlers and link previews render pages too. The browser asks once the
+// page is hydrated and its tab is visible. A refusal, from this page or remembered from an earlier load, stays on screen
+// until the visitor tries again, so the page never asks twice on its own.
 export function useSync(login: string, onProgress: () => void, initial?: SyncStatus, refused?: Refusal) {
   const [watch, setWatch] = useState<SyncWatch>(
     refused === undefined ? { kind: "watching", status: initial } : { kind: refused },
@@ -63,7 +64,10 @@ export function useSync(login: string, onProgress: () => void, initial?: SyncSta
   useEffect(() => {
     if (round === 0 && refused !== undefined) return;
     const client = api();
-    const trigger = Effect.tryPromise({ try: () => client.triggerSync({ login }), catch: triggerFailure });
+    const trigger = whenVisible.pipe(
+      Effect.andThen(Effect.tryPromise({ try: () => client.triggerSync({ login }), catch: triggerFailure })),
+      Effect.tap(() => Effect.sync(() => forgetRefusal(login))),
+    );
     const read = Effect.tryPromise({ try: () => client.syncStatus({ login }), catch: readFailure }).pipe(
       Effect.filterOrElse(
         (current) => current.state !== "unknown",
@@ -81,7 +85,10 @@ export function useSync(login: string, onProgress: () => void, initial?: SyncSta
         Effect.catchTags({
           SyncRefused: ({ refusal }) =>
             Effect.andThen(
-              Effect.sync(() => setWatch({ kind: refusal })),
+              Effect.sync(() => {
+                rememberRefusal(login, refusal);
+                setWatch({ kind: refusal });
+              }),
               Effect.never,
             ),
           SyncFailed: (error) => Effect.as(Effect.logWarning("sync status failed", error.cause), before),

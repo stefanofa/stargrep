@@ -22,6 +22,8 @@ export type Stage =
       readonly total: number | null;
       readonly read: number | null;
       readonly line: { readonly ahead: number; readonly startsAt: string } | null;
+      // Nobody has asked for the import yet. The page asks once it is open in a visible tab.
+      readonly starting: boolean;
     }
   | { readonly name: "refreshing"; readonly total: number; readonly arriving: number }
   | { readonly name: "reading"; readonly read: number; readonly settled: number; readonly total: number }
@@ -38,13 +40,14 @@ export const stageOf = ({
 }): Stage => {
   const enrichment = sync?.enrichment ?? null;
   const pending = sync?.state === "queued" || sync?.state === "waiting";
-  if (pending && sync?.syncedAt === null)
+  if ((pending || sync?.state === "unknown") && sync?.syncedAt === null)
     return {
       name: "importing",
       done: entries.length,
       total: starred === null ? null : Math.max(starred, entries.length),
       read: enrichment?.read ?? null,
       line: sync.waiting ?? null,
+      starting: sync.state === "unknown",
     };
   const arriving = entries.filter(factsPending).length;
   const backlog = enrichment === null ? 0 : enrichment.total - enrichment.read - enrichment.failed;
@@ -166,6 +169,12 @@ const withTime = (text: string, timeLeft: string | undefined) =>
 const browsing = (stage: Stage, synced: string | undefined, timeLeft: string | undefined, whose: Whose): Status => {
   switch (stage.name) {
     case "importing":
+      if (stage.starting)
+        return {
+          icon: "paused",
+          label: `ready to import ${theirs(whose)}`,
+          ...(whose === undefined ? {} : { phoneLabel: "ready to import" }),
+        };
       if (stage.line !== null)
         return {
           icon: "busy",

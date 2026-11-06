@@ -2,7 +2,6 @@ import fredoka from "@stargrep/ui/fonts/fredoka-latin-600-normal.woff2?url";
 import inter from "@stargrep/ui/fonts/inter-latin-wght-normal.woff2?url";
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import { loadSession } from "../lib/load-page.ts";
-import { revealScript } from "../lib/reveal-script.ts";
 import styles from "../styles.css?url";
 
 export const Route = createRootRoute({
@@ -27,10 +26,9 @@ export const Route = createRootRoute({
     ],
   }),
   component: () => (
-    // The reveal script marks <html> before hydration, so its attribute is expected to differ from the server's.
+    // The demo page's reveal script marks <html> before hydration, so its attribute is expected to differ from the server's.
     <html lang="en" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: revealScript }} />
         <HeadContent />
         {/* HeadContent keeps one meta per name, so the two theme colors render here instead. */}
         <meta name="theme-color" content="#f5f2ff" media="(prefers-color-scheme: light)" />

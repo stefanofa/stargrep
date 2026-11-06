@@ -1,9 +1,51 @@
 import { cn, Pip, type PipPose, Tile } from "@stargrep/ui";
+import type { Stage } from "../lib/search-state.ts";
 import { SignInButton } from "./sign-in-button.tsx";
 
 // The butter tile asks a visitor to sign in. While someone's stars import, it asks whether the visitor is them, since
 // owners skip the line, and rings Pip with the import's progress.
 export type Butter = { readonly kind: "join" } | { readonly kind: "claim"; readonly progress: number };
+
+export interface HeroCopy {
+  readonly subtitle: string;
+  readonly butter: Butter;
+}
+
+// What the hero says above a visitor's search. While someone's stars import, the butter tile becomes the claim tile.
+// The status line under it carries the counts and times, so the subtitle stays put while they tick.
+export const heroCopy = ({
+  stage,
+  troubled,
+  owner,
+  demoLogin,
+}: {
+  stage: Stage;
+  troubled: boolean;
+  owner: string;
+  demoLogin: string;
+}): HeroCopy => {
+  if (troubled) return { subtitle: "try any username.", butter: { kind: "join" } };
+  if (stage.name === "importing") {
+    const butter = {
+      kind: "claim",
+      progress: stage.total === null ? 0 : stage.done / Math.max(1, stage.total),
+    } as const;
+    return {
+      subtitle:
+        stage.line === null
+          ? `@${owner} is new here. their stars are on the way from github, and search covers the ones that landed.`
+          : `@${owner} is new here and waits in line for github. search covers their stars as they land.`,
+      butter,
+    };
+  }
+  return {
+    subtitle:
+      owner.toLowerCase() === demoLogin.toLowerCase()
+        ? `live results from @${owner}, our demo account. try any username.`
+        : `@${owner}'s stars, searched in plain words. try any username.`,
+    butter: { kind: "join" },
+  };
+};
 
 const radius = 68;
 const circumference = 2 * Math.PI * radius;
@@ -37,18 +79,24 @@ function ButterTile({ butter, pose }: { butter: Butter; pose: PipPose }) {
       variant="highlight"
       className="flex items-center gap-3.5 overflow-clip py-3.5 pr-3.5 pl-[18px] lg:w-[385px] lg:shrink-0 lg:flex-col lg:items-start lg:justify-between lg:gap-4 lg:px-[30px] lg:pt-[26px] lg:pb-6"
     >
-      <div
-        className={cn(
-          "relative flex size-14 shrink-0 items-center justify-center lg:absolute lg:top-4 lg:right-[18px] lg:size-[150px]",
-          !claim && "rounded-full bg-plate",
-        )}
-      >
-        {claim && <Ring progress={butter.progress} />}
+      {/* Both tiles keep one box for Pip: the claim tile shrinks the plate and Pip with a transform and rings them, so
+          the switch never moves anything. */}
+      <div className="relative flex size-14 shrink-0 items-center justify-center lg:absolute lg:top-4 lg:right-[18px] lg:size-[150px]">
         <div
-          className={cn("flex items-center justify-center", claim && "size-full rounded-full bg-plate lg:size-[124px]")}
-        >
-          <Pip pose={pose} size={claim ? 92 : 112} className="rotate-[10deg] max-lg:size-[42px]" />
-        </div>
+          className={cn(
+            "absolute inset-0 rounded-full bg-plate transition-transform duration-300 ease-out motion-reduce:transition-none",
+            claim && "lg:scale-[0.8267]",
+          )}
+        />
+        {claim && <Ring progress={butter.progress} />}
+        <Pip
+          pose={pose}
+          size={112}
+          className={cn(
+            "relative rotate-[10deg] transition-[scale] duration-300 ease-out motion-reduce:transition-none max-lg:size-[42px]",
+            claim && "lg:scale-[0.8214]",
+          )}
+        />
       </div>
       <h2
         className={cn(
@@ -81,7 +129,10 @@ export function Hero({ subtitle, butter, pose }: { subtitle: string; butter: But
         <h1 className="font-display text-[36px] leading-10 font-semibold tracking-tight text-balance sm:text-[64px] sm:leading-[68px]">
           search anyone's github stars in plain words
         </h1>
-        <p className="font-sans text-lg text-secondary-foreground max-sm:hidden">{subtitle}</p>
+        {/* Two lines whatever the state says, so the search below never moves when the state changes. */}
+        <p className="line-clamp-2 h-[2lh] font-sans text-lg text-pretty text-secondary-foreground max-sm:hidden">
+          {subtitle}
+        </p>
       </div>
       <ButterTile butter={butter} pose={pose} />
     </section>

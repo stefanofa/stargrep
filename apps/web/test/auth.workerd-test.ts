@@ -84,7 +84,7 @@ const startSignIn = async (from: Stage) => {
   const response = await from.send("/auth/sign-in/social", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ provider: "github", callbackURL: "/search", errorCallbackURL: "/" }),
+    body: JSON.stringify({ provider: "github", callbackURL: "/", errorCallbackURL: "/" }),
   });
   expect(response.status).toBe(200);
   const { url } = (await response.json()) as { url: string };
@@ -184,7 +184,7 @@ describe("direct sign-in", () => {
     expect(authorize.searchParams.get("code_challenge_method")).toBe("S256");
 
     const callback = await visit(local, githubReturn(authorize, { code: ada.code }));
-    expect([callback.status, location(callback).pathname]).toEqual([302, "/search"]);
+    expect([callback.status, location(callback).pathname]).toEqual([302, "/"]);
     expect(await githubSaw()).toEqual({
       exchanges: [
         {
@@ -256,7 +256,7 @@ describe("direct sign-in", () => {
       browser.send("/auth/link-social", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ provider: "github", callbackURL: "/search" }),
+        body: JSON.stringify({ provider: "github", callbackURL: "/" }),
       });
     expect(await json(await linkGitHub())).toEqual([
       200,
@@ -291,7 +291,7 @@ describe("sign-in proxied through prod", () => {
     });
 
     const signedIn = await visit(preview, completion);
-    expect([signedIn.status, location(signedIn).pathname]).toEqual([302, "/search"]);
+    expect([signedIn.status, location(signedIn).pathname]).toEqual([302, "/"]);
     expect((await githubSaw()).viewerReads).toBe(1);
     expect((await json(await preview.send("/api/viewer")))[1]).toMatchObject({ login: "ada" });
     expect(await json(await prod.send("/api/viewer"))).toEqual([

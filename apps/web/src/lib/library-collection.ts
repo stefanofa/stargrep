@@ -1,7 +1,7 @@
 import { createCollection } from "@tanstack/db";
 import { useEffect, useState } from "react";
 import { searchText } from "./keyword.ts";
-import { api, type LibraryRepo } from "./rpc.ts";
+import { api, type LibraryRepo, type SyncStatus } from "./rpc.ts";
 import { starsPages } from "./stars-pages.ts";
 
 export interface LibraryEntry extends LibraryRepo {
@@ -10,14 +10,14 @@ export interface LibraryEntry extends LibraryRepo {
 
 type Pages = AsyncIterable<ReadonlyArray<LibraryRepo>>;
 
-async function* onePage(repos: Promise<ReadonlyArray<LibraryRepo>>): Pages {
+export async function* onePage(repos: Promise<ReadonlyArray<LibraryRepo>>): Pages {
   yield await repos;
 }
 
 // A sync run commits the library as a snapshot, which replaces every row, so a repo unstarred on GitHub leaves the
 // collection at the next reload. The first run shows the first page as soon as it lands and appends the rest. Later
 // runs gather every page first, so a reload never shows a library cut down to its first page.
-export const makeLibrary = (load: () => Promise<ReadonlyArray<LibraryRepo>> | Pages, id = "library") => {
+export const makeLibrary = (load: () => Pages, id = "library") => {
   let shown = false;
   let failure: unknown;
   const collection = createCollection<LibraryEntry, number>({
@@ -32,8 +32,7 @@ export const makeLibrary = (load: () => Promise<ReadonlyArray<LibraryRepo>> | Pa
           commit();
         };
         const run = async () => {
-          const loaded = load();
-          const pages = Symbol.asyncIterator in loaded ? loaded : onePage(loaded);
+          const pages = load();
           const gathered: Array<LibraryRepo> = [];
           let first = true;
           for await (const page of pages) {
@@ -90,12 +89,24 @@ export type Library = ReturnType<typeof makeLibrary>;
 
 const libraries = new Map<string, Library>();
 
-export const getLibrary = (login: string, own: boolean) => {
+// A login whose sync status shows no stars synced yet has an empty library, so its first load asks for nothing. Its
+// import reloads the library as stars land.
+export const nothingSynced = (sync: SyncStatus | null) =>
+  sync !== null && sync.syncedAt === null && sync.enrichment.total === 0;
+
+export const getLibrary = (login: string, own: boolean, empty: boolean) => {
   const key = `${own ? "own" : "public"}:${login.toLowerCase()}`;
   const known = libraries.get(key);
   if (known !== undefined) return known;
   const client = api();
-  const load = () => (own ? client.library().then(({ repos }) => repos) : starsPages(client, login));
+  let skip = empty;
+  const load = (): Pages => {
+    if (skip) {
+      skip = false;
+      return onePage(Promise.resolve([]));
+    }
+    return own ? onePage(client.library().then(({ repos }) => repos)) : starsPages(client, login);
+  };
   const library = makeLibrary(load, `library:${key}`);
   libraries.set(key, library);
   return library;

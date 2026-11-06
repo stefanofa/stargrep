@@ -25,29 +25,25 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { keywordTerms, normalize } from "../lib/keyword.ts";
-import { getLibrary, type Library, useRecoveries } from "../lib/library-collection.ts";
+import { getLibrary, type Library, nothingSynced, useRecoveries } from "../lib/library-collection.ts";
 import { type PageData, type PageRequest, pageOwner, type Session } from "../lib/page-data.ts";
 import { pageView } from "../lib/page-view.ts";
 import { now, startsIn, toDetail } from "../lib/present.ts";
 import { withReply } from "../lib/results.ts";
 import { useReveal } from "../lib/reveal.ts";
-import { api, type Viewer, wireCode } from "../lib/rpc.ts";
+import type { Viewer } from "../lib/rpc.ts";
 import { librarySorts, type Params, searchSorts } from "../lib/search-params.ts";
 import { type Body, type Stage, stageOf } from "../lib/search-state.ts";
+import { libraryTrouble, type Trouble, troubleCopy } from "../lib/trouble.ts";
 import { useSemanticSearch } from "../lib/use-semantic.ts";
-import { type SyncWatch, useSync } from "../lib/use-sync.ts";
+import { useSync } from "../lib/use-sync.ts";
 import { AccountMenu } from "./account-menu.tsx";
-import { type Butter, Hero, TryChips } from "./landing-hero.tsx";
+import { Hero, heroCopy, TryChips } from "./landing-hero.tsx";
 import { type Arriving, LibraryPlaceholder, LibraryView } from "./library-view.tsx";
 import { OwnerPill } from "./owner-pill.tsx";
 
-export const loadSession = async (): Promise<Session> => {
-  const client = api();
-  const [viewer, config] = await Promise.all([client.viewer().catch(() => null), client.config()]);
-  return { viewer, config };
-};
-
-export const loadPage = async (request: PageRequest, { viewer, config }: Session): Promise<PageData> => {
+// A navigation in the browser starts from the session the server loaded. The page reads the rest once it mounts.
+export const pageFor = (request: PageRequest, { viewer, config }: Session): PageData => {
   const { owner, own, query } = pageOwner(viewer, config, request);
   return { viewer, owner, own, config, query, first: null, sync: null, refusal: null };
 };
@@ -77,7 +73,7 @@ function Notice({
   return (
     <Tile className="relative flex min-h-[240px] flex-col justify-center gap-6 px-tile-lg py-10 sm:px-12">
       <div className="relative z-10 flex max-w-[640px] flex-col gap-2">
-        <h2 className="font-display text-3xl font-semibold tracking-tight sm:text-display sm:leading-[56px]">
+        <h2 className="font-display text-3xl font-semibold tracking-tight text-balance sm:text-display sm:leading-[56px]">
           {heading}
         </h2>
         {detail && <p className="font-sans text-lg text-secondary-foreground">{detail}</p>}
@@ -122,42 +118,6 @@ function Waiting({ view, searching, arriving }: { view: View; searching: boolean
     <LibraryPlaceholder view={view} arriving={arriving} />
   );
 }
-
-type Refusal = Exclude<SyncWatch["kind"], "watching">;
-
-// What the page says when the import of someone's stars is refused. Only a login GitHub doesn't know is a dead end.
-const refused = (refusal: Refusal, owner: string) => {
-  switch (refusal) {
-    case "missing":
-      return {
-        status: { icon: "failed", label: "no such github user" },
-        heading: `github has no one called @${owner}`,
-        detail: "check the spelling, or pick someone else from the pill above",
-        retry: false,
-      } as const;
-    case "busy":
-      return {
-        status: { icon: "done", label: "the import line is full", detail: "for now" },
-        heading: "github's line for new imports is full",
-        detail: `stargrep can read @${owner}'s stars once there's room. try again in a while.`,
-        retry: true,
-      } as const;
-    case "limited":
-      return {
-        status: { icon: "done", label: "taking a breather" },
-        heading: "lots of new accounts from your network",
-        detail: "give it a few minutes, then try again. accounts stargrep already knows still work.",
-        retry: true,
-      } as const;
-    case "unavailable":
-      return {
-        status: { icon: "failed", label: "couldn't reach github" },
-        heading: "stargrep couldn't reach github just now",
-        detail: `@${owner}'s stars can import once it answers. try again in a moment.`,
-        retry: true,
-      } as const;
-  }
-};
 
 const idlePlaceholder = "the rust tui library I starred last year";
 
@@ -231,12 +191,15 @@ interface StarsProps {
 // loads once the page is hydrated.
 export function Stars({ data, onPose }: StarsProps) {
   const hydrated = useHydrated();
-  const library = hydrated ? getLibrary(data.owner, data.own) : undefined;
+  const empty = nothingSynced(data.first?.sync ?? data.sync);
+  const library = hydrated ? getLibrary(data.owner, data.own, empty) : undefined;
   const recoveries = useRecoveries(library);
-  return <OwnerStars key={recoveries} data={data} library={library} onPose={onPose} />;
+  return <OwnerStars key={recoveries} data={data} library={library} empty={empty} onPose={onPose} />;
 }
 
-function OwnerStars({ data, library, onPose }: StarsProps & { library: Library | undefined }) {
+// A login with nothing synced has an empty library, so the server already paints its state: ready to import, in line,
+// or the first stars on their way.
+function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Library | undefined; empty: boolean }) {
   const { owner, first } = data;
   const collection = library?.collection;
   const reloadRef = useRef(library?.reload);
@@ -293,40 +256,25 @@ function OwnerStars({ data, library, onPose }: StarsProps & { library: Library |
   });
   const frozen = first !== null && !isReady && normalize(query) === normalize(first.query) ? first.view : undefined;
   const state = frozen ?? live;
-  const ready = isReady || frozen !== undefined;
-  const refusal = watch.kind === "watching" ? undefined : refused(watch.kind, owner);
+  const ready = isReady || frozen !== undefined || (empty && entries.length === 0);
+  const trouble: Trouble | undefined =
+    watch.kind !== "watching" ? watch.kind : isLoadingError ? libraryTrouble(library?.failure()) : undefined;
+  const troubled = trouble === undefined ? undefined : troubleCopy(trouble, owner, data.own);
   const surprised = useSurprise(query, !semantic.pending && semantic.results.length > 0);
-  const pose = refusal !== undefined ? "unsure" : surprised && state.pose === "idle" ? "surprised" : state.pose;
+  const pose = troubled?.pose ?? (surprised && state.pose === "idle" ? "surprised" : state.pose);
   useEffect(() => onPose(pose), [onPose, pose]);
 
   const visitor = data.viewer === null;
-  const showcase = first !== null && normalize(query) === normalize(first.query);
-  const reveal = useReveal(query, showcase && frozen !== undefined);
-  const importing = !data.own && stage.name === "importing" ? stage : undefined;
-  const butter: Butter =
-    importing === undefined
-      ? { kind: "join" }
-      : { kind: "claim", progress: importing.total === null ? 0 : importing.done / Math.max(1, importing.total) };
-  const subtitle =
-    refusal !== undefined
-      ? "try any username."
-      : importing?.line != null
-        ? `@${owner} is new here and waits in line for github. their import ${timeLeft ?? "starts soon"}, and search covers their stars as they land.`
-        : importing !== undefined
-          ? `@${owner} is new here. their stars are on the way from github, and search already covers the ones that landed.`
-          : owner.toLowerCase() === data.config.demoLogin.toLowerCase()
-            ? `live results from @${owner}, our demo account. try any username.`
-            : `@${owner}'s stars, searched in plain words. try any username.`;
+  const reveal = useReveal(query, frozen !== undefined);
+  const hero = heroCopy({ stage, troubled: trouble !== undefined, owner, demoLogin: data.config.demoLogin });
   const butterPose = reveal.phase === "typing" ? "thinking" : reveal.phase === "settled" ? "happy" : "idle";
-  const limited = isLoadingError && wireCode(library?.failure()) === "TOO_MANY_REQUESTS";
-  const loadingStatus = <StatusLine icon="busy" label={`loading ${data.own ? "your stars" : `@${owner}'s stars`}`} />;
 
   const retryLibrary = () => {
     setRetrying(true);
     library?.reload().finally(() => setRetrying(false));
   };
+  const tryAgain = troubled?.retry === "sync" ? retry : troubled?.retry === "library" ? retryLibrary : undefined;
   const search = (next: string) => {
-    reveal.skip();
     setQuery(next);
     navigate({ to: ".", search: (previous) => ({ ...previous, q: next === "" ? undefined : next }), replace: true });
   };
@@ -371,14 +319,8 @@ function OwnerStars({ data, library, onPose }: StarsProps & { library: Library |
 
   return (
     <>
-      {visitor && <Hero subtitle={subtitle} butter={butter} pose={butterPose} />}
-      <div
-        data-reveal-tile
-        className="contents"
-        onKeyDownCapture={reveal.skip}
-        onPointerDownCapture={reveal.skip}
-        onFocusCapture={reveal.skip}
-      >
+      {visitor && <Hero {...hero} pose={butterPose} />}
+      <div data-reveal-tile className="contents">
         <SearchTile
           query={reveal.typed ?? query}
           onQueryChange={search}
@@ -388,16 +330,10 @@ function OwnerStars({ data, library, onPose }: StarsProps & { library: Library |
           owner={data.own ? undefined : <OwnerPill owner={owner} viewer={data.viewer} config={data.config} />}
           progress={ready ? state.progress : undefined}
           status={
-            refusal !== undefined ? (
-              <StatusLine
-                icon={refusal.status.icon}
-                label={refusal.status.label}
-                detail={"detail" in refusal.status ? refusal.status.detail : undefined}
-              />
-            ) : isLoadingError ? (
-              <StatusLine icon="failed" label={limited ? "taking a breather" : "couldn't load"} />
+            troubled !== undefined ? (
+              <StatusLine {...troubled.status} />
             ) : !ready ? (
-              loadingStatus
+              <StatusLine icon="busy" label={`loading ${data.own ? "your stars" : `@${owner}'s stars`}`} />
             ) : (
               <StatusLine
                 icon={state.status.icon}
@@ -432,36 +368,17 @@ function OwnerStars({ data, library, onPose }: StarsProps & { library: Library |
         />
       )}
       <div data-reveal-results className="flex flex-col gap-gap max-sm:pb-44">
-        {refusal !== undefined ? (
+        {troubled !== undefined ? (
           <Notice
-            heading={refusal.heading}
-            detail={refusal.detail}
-            pose="unsure"
+            heading={troubled.heading}
+            detail={troubled.detail}
+            pose={troubled.pose}
             action={
-              refusal.retry && (
-                <Button variant="ghost" size="lg" onClick={retry}>
+              tryAgain && (
+                <Button variant="primary" size="lg" disabled={retrying} onClick={tryAgain}>
                   Try again
                 </Button>
               )
-            }
-          />
-        ) : isLoadingError ? (
-          <Notice
-            {...(limited
-              ? {
-                  heading: "lots of requests from your network",
-                  detail: "give it a minute, then try again.",
-                  pose: "unsure" as const,
-                }
-              : {
-                  heading: "stargrep couldn't load these stars",
-                  detail: "the library didn't arrive",
-                  pose: "scared" as const,
-                })}
-            action={
-              <Button variant="primary" size="lg" disabled={retrying} onClick={retryLibrary}>
-                Try again
-              </Button>
             }
           />
         ) : !ready ? (

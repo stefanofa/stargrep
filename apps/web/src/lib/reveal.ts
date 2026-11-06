@@ -29,6 +29,8 @@ const finish = () => {
   playing = [];
 };
 
+const interactions = ["keydown", "pointerdown", "focusin"] as const;
+
 // Returns what the search tile shows while the query types itself, or undefined when the reveal is not playing.
 export function useReveal(query: string, eligible: boolean) {
   const [typed, setTyped] = useState<string>();
@@ -36,8 +38,10 @@ export function useReveal(query: string, eligible: boolean) {
 
   useLayoutEffect(() => {
     if (root().dataset.reveal !== "pending") return;
-    // A tab opened in the background throttles timers to about one a second, so the query would crawl in.
-    if (!eligible || document.visibilityState !== "visible") {
+    // A tab opened in the background throttles timers to about one a second, so the query would crawl in. A visitor
+    // already in a field is typing, and the reveal would type over them.
+    const typing = document.activeElement instanceof HTMLInputElement;
+    if (!eligible || typing || document.visibilityState !== "visible") {
       delete root().dataset.reveal;
       return;
     }
@@ -71,21 +75,24 @@ export function useReveal(query: string, eligible: boolean) {
     };
   }, [phase, query]);
 
-  const skip = () => {
-    if (phase === "done") return;
-    finish();
-    setTyped(undefined);
-    setPhase("done");
-  };
-
+  // Any key, click or focus on the page jumps to the end, and so does leaving the tab.
   useEffect(() => {
     if (phase === "done") return;
+    const skip = () => {
+      finish();
+      setTyped(undefined);
+      setPhase("done");
+    };
     const hidden = () => {
       if (document.visibilityState === "hidden") skip();
     };
+    for (const name of interactions) document.addEventListener(name, skip, { capture: true });
     document.addEventListener("visibilitychange", hidden);
-    return () => document.removeEventListener("visibilitychange", hidden);
-  });
+    return () => {
+      for (const name of interactions) document.removeEventListener(name, skip, { capture: true });
+      document.removeEventListener("visibilitychange", hidden);
+    };
+  }, [phase]);
 
-  return { typed, phase, skip };
+  return { typed, phase };
 }

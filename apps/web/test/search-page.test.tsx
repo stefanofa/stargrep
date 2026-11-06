@@ -168,16 +168,22 @@ beforeEach(() => {
     calls: { library: 0, syncStatus: 0 },
   };
   library = real.makeLibrary(() =>
-    api()
-      .library()
-      .then(({ repos }) => repos),
+    real.onePage(
+      api()
+        .library()
+        .then(({ repos }) => repos),
+    ),
   );
 });
 
 afterEach(cleanup);
 
 const open = async (path: string, label: string | RegExp = "Search your stars", settle = true) => {
-  const root = createRootRoute({ component: Outlet });
+  // The root route loads the session, as the Worker does for the first page.
+  const root = createRootRoute({
+    component: Outlet,
+    loader: async () => ({ viewer: server.signedIn ? server.viewer : null, config: await api().config() }),
+  });
   const search = HomeRoute.update({
     id: "/",
     path: "/",
@@ -547,7 +553,7 @@ describe("the search page in each state", () => {
     server.status = status({ login: "slowdown", state: "unknown", syncedAt: null, requestedAt: null });
     await open("/slowdown", "Search @slowdown's stars");
     await waitFor(() =>
-      expect(page().getByRole("heading", { name: "lots of new accounts from your network" })).toBeTruthy(),
+      expect(page().getByRole("heading", { name: "lots of requests from your network" })).toBeTruthy(),
     );
     expect(strip()).toContain("taking a breather");
   });
@@ -563,6 +569,33 @@ describe("the search page in each state", () => {
     const chips = page().getByRole("list", { name: "Example searches" });
     await user.click(within(chips).getByRole("button", { name: "terminal recorder" }));
     expect((page().getByRole("searchbox") as HTMLInputElement).value).toBe("terminal recorder");
+  });
+
+  test("the hero keeps its boxes when an import finishes in front of a visitor", async () => {
+    server.signedIn = false;
+    server.status = status({
+      login: "octosync",
+      state: "queued",
+      syncedAt: null,
+      starredTotal: 10,
+      enrichment: arriving,
+    });
+    await open("/octosync", "Search @octosync's stars");
+    const hero = () => {
+      const tile = page()
+        .getByRole("heading", { level: 2, name: /is this you|your stars, in a minute/ })
+        .closest("[data-slot=tile]") as HTMLElement;
+      const subtitle = page().getByRole("heading", { level: 1 }).nextElementSibling as HTMLElement;
+      return { tile: tile.className, pip: tile.firstElementChild?.className, subtitle: subtitle.className };
+    };
+    await waitFor(() => expect(page().getByRole("heading", { name: "is this you? skip the wait" })).toBeTruthy());
+    const importing = hero();
+    server.status = status({ login: "octosync", starredTotal: 6 });
+    await waitFor(() => expect(page().getByRole("heading", { name: "your stars, in a minute" })).toBeTruthy(), {
+      timeout: 6000,
+    });
+    expect(hero()).toEqual(importing);
+    expect(importing.subtitle).toContain("h-[2lh]");
   });
 
   test("someone else's stars say whose they are", async () => {
@@ -581,7 +614,7 @@ describe("the search page in each state", () => {
   });
 
   test("a network that read too many stars is told to wait a minute", async () => {
-    library = real.makeLibrary(() => Promise.reject(new ORPCError("TOO_MANY_REQUESTS")));
+    library = real.makeLibrary(() => real.onePage(Promise.reject(new ORPCError("TOO_MANY_REQUESTS"))));
     await open("/", "Search your stars", false);
     await waitFor(() =>
       expect(page().getByRole("heading", { name: "lots of requests from your network" })).toBeTruthy(),

@@ -12,10 +12,10 @@ import {
 } from "../lib/page-data.ts";
 import { matchesEvery, pageView } from "../lib/page-view.ts";
 import { now } from "../lib/present.ts";
-import { refusalOf } from "../lib/refusals.ts";
 import type { Client, Viewer } from "../lib/rpc.ts";
 import { validateParams } from "../lib/search-params.ts";
 import { allStars } from "../lib/stars-pages.ts";
+import { rememberedRefusal } from "../lib/trouble.ts";
 import { serveApi } from "./app.ts";
 
 const forwarded = ["cookie", "cf-connecting-ip", "user-agent"];
@@ -72,16 +72,17 @@ const firstAnswer = async (client: Client, login: string, query: string, sort: A
   return { query, at, sync, hits, view } satisfies FirstAnswer;
 };
 
-// The page asks for a sync of someone new as soon as it opens, so the server asks first and paints the answer: an
-// import under way, a place in line, or a refusal. The API checks the login and admits the sync as it would for the
-// browser, from the visitor's own address.
-const syncOf = async (client: Client, owner: string, own: boolean): Promise<Pick<PageData, "sync" | "refusal">> => {
-  const status = await client.syncStatus({ login: owner }).catch(() => null);
-  if (own || status === null || status.state !== "unknown") return { sync: status, refusal: null };
-  return client.triggerSync({ login: owner }).then(
-    (sync) => ({ sync, refusal: null }),
-    (error: unknown) => ({ sync: status, refusal: refusalOf(error) }),
-  );
+// The server only reads the sync, since crawlers and link previews render pages too, so it paints an import under way, a
+// place in line, or a login ready to import. The browser asks for the import. A refusal this browser saw for a login
+// still unknown paints again, so a reload doesn't ask GitHub again.
+const syncOf = async (
+  client: Client,
+  owner: string,
+  cookies: string | null,
+): Promise<Pick<PageData, "sync" | "refusal">> => {
+  const sync = await client.syncStatus({ login: owner }).catch(() => null);
+  const refusal = sync === null || sync.state === "unknown" ? rememberedRefusal(cookies, owner) : undefined;
+  return { sync, refusal: refusal ?? null };
 };
 
 export const loadSession = async (): Promise<Session> => {
@@ -98,6 +99,7 @@ export const loadPage = async ({ login }: PageRequest, { viewer, config }: Sessi
   const { owner, own, query, showcase } = pageOwner(viewer, config, { login, q });
   const first =
     showcase && query === config.demoQuery ? await firstAnswer(client, owner, query, sort).catch(() => null) : null;
-  const { sync, refusal } = first === null ? await syncOf(client, owner, own) : { sync: first.sync, refusal: null };
+  const { sync, refusal } =
+    first === null ? await syncOf(client, owner, request.headers.get("cookie")) : { sync: first.sync, refusal: null };
   return { viewer, owner, own, config, query, first, sync, refusal };
 };

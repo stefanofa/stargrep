@@ -193,9 +193,9 @@ export function SearchTile({
   );
 }
 
-export type StatusIcon = "busy" | "synced" | "found" | "done" | "failed";
+export type StatusIcon = "busy" | "synced" | "found" | "done" | "paused" | "failed";
 
-const statusIcons: ReadonlyArray<StatusIcon> = ["busy", "synced", "found", "done", "failed"];
+const statusIcons: ReadonlyArray<StatusIcon> = ["busy", "synced", "found", "done", "paused", "failed"];
 
 function Glyph({ icon, shown }: { icon: StatusIcon; shown: boolean }) {
   const common = { viewBox: "0 0 16 16", fill: "none", className: "size-4" } as const;
@@ -237,6 +237,19 @@ function Glyph({ icon, shown }: { icon: StatusIcon; shown: boolean }) {
           <circle cx="8" cy="8" r="6" stroke="var(--color-muted-foreground)" strokeWidth="1.5" />
           <path
             d="m5.5 8.2 1.7 1.7 3.3-3.4"
+            stroke="var(--color-muted-foreground)"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      );
+    case "paused":
+      return (
+        <svg aria-hidden {...common}>
+          <circle cx="8" cy="8" r="6" stroke="var(--color-muted-foreground)" strokeWidth="1.5" />
+          <path
+            d="M8 5v3.2l2 1.3"
             stroke="var(--color-muted-foreground)"
             strokeWidth="1.5"
             strokeLinecap="round"
@@ -324,8 +337,10 @@ export function StatusLine({
               )}
             </span>
           </span>
+          {/* A new label starts a new status sentence, so its detail is new text rather than old text pushed aside. */}
           {detail && (
             <span
+              key={label}
               className={cn(
                 "text-sm text-muted-foreground max-sm:line-clamp-1 sm:text-base",
                 Boolean(action) && "max-sm:hidden",

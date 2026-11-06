@@ -2,6 +2,7 @@ import { expect, mock, test } from "bun:test";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { renderToString } from "react-dom/server";
 import { themeColor } from "../scripts/theme.ts";
+import type { Session } from "../src/lib/page-data.ts";
 
 // Bun loads a CSS import as an object, where Vite gives the root route a URL string.
 mock.module("../src/styles.css?url", () => ({ default: "/styles.css" }));
@@ -9,7 +10,10 @@ mock.module("../src/styles.css?url", () => ({ default: "/styles.css" }));
 const loads = await import("../src/lib/load-page.ts");
 mock.module("../src/lib/load-page.ts", () => ({
   ...loads,
-  loadSession: async () => ({ viewer: null, demo: { login: "demo", query: "", examples: [], featured: [] } }),
+  loadSession: async (): Promise<Session> => ({
+    viewer: null,
+    config: { demoLogin: "demo", demoQuery: "", examples: [], featured: [] } as unknown as Session["config"],
+  }),
 }));
 const { routeTree } = await import("../src/routeTree.gen.ts");
 

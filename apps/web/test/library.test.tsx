@@ -2,7 +2,7 @@ import "./register.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { useLiveQuery } from "@tanstack/react-db";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
-import { type Library, makeLibrary, useRecoveries } from "../src/lib/library-collection.ts";
+import { type Library, makeLibrary, onePage, useRecoveries } from "../src/lib/library-collection.ts";
 import type { LibraryRepo } from "../src/lib/rpc.ts";
 
 afterEach(cleanup);
@@ -38,7 +38,7 @@ const server = (starred: Array<LibraryRepo>, failures = 0) => {
     load: () => {
       const failed = reads++ < failures;
       const answer = [...starred];
-      return Bun.sleep(10).then(() => (failed ? Promise.reject(new Error("503")) : answer));
+      return onePage(Bun.sleep(10).then(() => (failed ? Promise.reject(new Error("503")) : answer)));
     },
   };
 };

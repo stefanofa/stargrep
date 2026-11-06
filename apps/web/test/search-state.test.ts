@@ -57,9 +57,17 @@ const query = { terms: ["record", "terminal", "sessions", "gifs"] };
 
 describe("the stage", () => {
   test("a first sync imports, and an unknown star count leaves the total open", () => {
-    expect(importing).toEqual({ name: "importing", done: 1204, total: 1776, read: 0, line: null });
+    expect(importing).toEqual({ name: "importing", done: 1204, total: 1776, read: 0, line: null, starting: false });
     const unknown = stageOf({ sync: sync({ state: "queued", syncedAt: null }), entries: entries(40), starred: null });
     expect(unknown).toMatchObject({ name: "importing", total: null });
+  });
+
+  test("a login nobody asked to import yet is ready to import, with the importing layout", () => {
+    const fresh = stageOf({ sync: sync({ state: "unknown", syncedAt: null }), entries: [], starred: null });
+    expect(fresh).toMatchObject({ name: "importing", starting: true, done: 0 });
+    expect(view(fresh, {}, undefined)).toMatchObject({
+      status: { icon: "paused", label: "ready to import your stars" },
+    });
   });
 
   test("reading lasts until every star is read or failed", () => {

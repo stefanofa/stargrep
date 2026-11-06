@@ -1,7 +1,7 @@
 import type { Sort } from "@stargrep/ui";
-import type { Refusal } from "./refusals.ts";
 import type { PublicConfig, SearchResult, SyncStatus, Viewer } from "./rpc.ts";
 import type { SearchView } from "./search-state.ts";
+import type { Refusal } from "./trouble.ts";
 
 // What the server already knows when it renders a stars page, so the page paints its first answer with no request.
 export interface FirstAnswer {
@@ -24,7 +24,8 @@ export interface PageData extends Session {
   readonly own: boolean;
   readonly query: string;
   readonly first: FirstAnswer | null;
-  // What the server learned about the owner's sync, so the first paint already shows an import or a refusal.
+  // What the server learned about the owner's sync, so the first paint already shows an import, or a refusal this
+  // browser remembers.
   readonly sync: SyncStatus | null;
   readonly refusal: Refusal | null;
 }
@@ -41,10 +42,12 @@ export interface Asked extends PageRequest {
 
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
-// A visitor lands on the demo account with its example query. A signed-in viewer lands on their own stars.
+// A visitor lands on the demo account with its example query. A signed-in viewer lands on their own stars. The demo
+// account keeps its own spelling whatever case the address uses.
 export const pageOwner = (viewer: Viewer | null, config: PublicConfig, { login, q }: Asked) => {
-  const owner = login ?? viewer?.login ?? config.demoLogin;
-  const own = viewer !== null && same(viewer.login, owner);
-  const showcase = !own && same(owner, config.demoLogin);
+  const asked = login ?? viewer?.login ?? config.demoLogin;
+  const own = viewer !== null && same(viewer.login, asked);
+  const showcase = !own && same(asked, config.demoLogin);
+  const owner = showcase ? config.demoLogin : asked;
   return { owner, own, query: q ?? (showcase ? config.demoQuery : ""), showcase };
 };

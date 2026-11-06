@@ -1,5 +1,6 @@
 import { loadEngine } from "./engine.ts";
 import type { PageData, PageRequest, Session } from "./page-data.ts";
+import { revealScript } from "./reveal-script.ts";
 
 export interface ServerLoads {
   readonly session: () => Promise<Session>;
@@ -18,16 +19,25 @@ const onServer = () => {
   return server;
 };
 
-export const loadSession = async (): Promise<Session> =>
-  import.meta.env.SSR ? onServer().session() : (await loadEngine()).loadSession();
+// The root route loads the session once, on the server, and never reloads it. Signing in or out reloads the whole page.
+export const loadSession = async (): Promise<Session> => {
+  if (!import.meta.env.SSR) throw new Error("the session loads with the first page, on the server");
+  return onServer().session();
+};
 
-// The server preloads the engine with the page, so it renders in one pass. A navigation in the browser happens after
-// the engine has loaded, so it reads the page through the engine's client.
-export const loadPage = async (request: PageRequest, known: Session | undefined): Promise<PageData> => {
-  const session = known ?? (await loadSession());
+// The server preloads the engine with the page, so it renders in one pass. A navigation in the browser loads the engine
+// too, and the page starts from what the browser already knows.
+export const loadPage = async (request: PageRequest, session: Session | undefined): Promise<PageData> => {
+  if (session === undefined) throw new Error("the root route loads the session before any page");
   if (import.meta.env.SSR) {
     const [page] = await Promise.all([onServer().page(request, session), loadEngine()]);
     return page;
   }
-  return (await loadEngine()).loadPage(request, session);
+  return (await loadEngine()).pageFor(request, session);
 };
+
+// The reveal types the demo query once per visit, on a page the server painted with its first answer. Its script runs in
+// the head before the first paint, so it renders on that page alone.
+export const revealHead = ({ loaderData }: { loaderData?: PageData | undefined }) => ({
+  scripts: loaderData?.first == null ? [] : [{ children: revealScript }],
+});

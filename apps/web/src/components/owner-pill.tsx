@@ -1,9 +1,9 @@
 import { Popover } from "@base-ui/react/popover";
 import { Avatar } from "@stargrep/ui";
 import { useNavigate } from "@tanstack/react-router";
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import type { PublicConfig, Viewer } from "../lib/rpc.ts";
-import { githubLogin } from "../lib/search-params.ts";
+import { githubLogin, reservedLogin } from "../lib/search-params.ts";
 
 const avatarOf = (login: string) => `https://github.com/${login}.png?size=64`;
 
@@ -23,11 +23,20 @@ function Chevron() {
 
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
+// Switching owner remounts the page with a new pill, so the new pill takes focus where the old one had it.
+let switched = false;
+
 export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Viewer | null; config: PublicConfig }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
   const field = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!switched) return;
+    switched = false;
+    trigger.current?.focus();
+  }, []);
   const login = typed.trim().replace(/^@/, "");
   const valid = githubLogin.test(login);
   const people = [...(viewer === null ? [] : [viewer.login]), ...config.featured].filter(
@@ -37,8 +46,11 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
   const go = (next: string) => {
     setOpen(false);
     setTyped("");
+    if (same(next, owner)) return;
+    switched = true;
     const home = viewer === null ? same(next, config.demoLogin) : same(next, viewer.login);
     if (home) navigate({ to: "/" });
+    else if (reservedLogin(next)) navigate({ to: "/@{$login}", params: { login: next } });
     else navigate({ to: "/$login", params: { login: next } });
   };
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -49,6 +61,7 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger
+        ref={trigger}
         aria-label={`Whose stars: @${owner}. Change`}
         className="relative flex h-9 max-w-[150px] sm:max-w-[45%] shrink-0 items-center gap-1.5 rounded-full bg-accent-soft pr-2.5 pl-1 font-sans text-meta font-semibold text-foreground transition-[background-color,scale] duration-120 select-none after:absolute after:inset-x-0 after:-inset-y-1 hover:bg-accent/30 motion-safe:active:scale-[0.96] sm:h-11 sm:gap-2 sm:pr-3 sm:pl-1.5 sm:text-base sm:after:hidden"
       >
@@ -62,7 +75,10 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Positioner sideOffset={8} align="start" className="z-50 outline-none">
-          <Popover.Popup className="flex w-72 flex-col gap-1 rounded-md border-[1.5px] border-border bg-card p-1.5 font-sans text-meta font-medium text-foreground transition-opacity duration-120 outline-none data-ending-style:opacity-0 data-starting-style:opacity-0">
+          <Popover.Popup
+            aria-label="Whose stars to search"
+            className="flex w-72 flex-col gap-1 rounded-md border-[1.5px] border-border bg-card p-1.5 font-sans text-meta font-medium text-foreground transition-opacity duration-120 outline-none data-ending-style:opacity-0 data-starting-style:opacity-0"
+          >
             <form onSubmit={submit} className="flex flex-col gap-1.5 p-1.5">
               <label htmlFor={field} className="text-sm text-muted-foreground">
                 search anyone's stars
@@ -84,7 +100,7 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
                 <button
                   type="submit"
                   disabled={!valid}
-                  className="h-8 rounded-full bg-accent px-3 font-semibold text-ink transition-[opacity,scale] duration-120 disabled:opacity-40 motion-safe:active:scale-[0.96]"
+                  className="relative h-8 rounded-full bg-accent px-3 font-semibold text-ink transition-[opacity,scale] duration-120 after:absolute after:-inset-1 disabled:opacity-40 motion-safe:active:scale-[0.96]"
                 >
                   go
                 </button>
@@ -97,7 +113,7 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
                     type="button"
                     onClick={() => go(person)}
                     aria-current={same(person, owner) || undefined}
-                    className="flex h-11 w-full items-center gap-2.5 rounded-[12.5px] px-2 text-left hover:bg-accent-soft aria-[current]:bg-accent-soft"
+                    className="flex h-11 w-full items-center gap-2.5 rounded-item px-2 text-left hover:bg-accent-soft aria-[current]:bg-accent-soft"
                   >
                     <Avatar
                       person={{ login: person, avatarUrl: avatarOf(person) }}

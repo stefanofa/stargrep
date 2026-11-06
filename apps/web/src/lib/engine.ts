@@ -1,4 +1,4 @@
-import { type ComponentType, lazy } from "react";
+import { type ComponentType, createElement, lazy, useState } from "react";
 
 type Engine = typeof import("../components/stars.tsx");
 
@@ -13,20 +13,17 @@ export const loadEngine = () => {
   return loading;
 };
 
-type Part<P> = { readonly default: ComponentType<P> };
-
-// React's lazy reads a thenable that resolves while it subscribes as already settled, so once the loader has loaded the
-// engine, the server renders the whole page in one pass and the client renders it with no suspense. A Promise resolves
-// a tick later, which would suspend.
-// biome-ignore lint/suspicious/noThenProperty: React's lazy needs a thenable that calls back synchronously.
-const settled = <P>(part: Part<P>) => ({ then: (resolve: (value: Part<P>) => void) => resolve(part) });
-
-const part = <P>(pick: (engine: Engine) => ComponentType<P>) =>
-  lazy(() =>
-    loaded === undefined
-      ? loadEngine().then((engine) => ({ default: pick(engine) }))
-      : (settled({ default: pick(loaded) }) as unknown as Promise<Part<P>>),
-  );
+// The server and a navigation in the browser render after the page loader has loaded the engine, so they render the
+// engine's component itself and nothing suspends. Hydration starts before the engine chunk arrives, so it renders the
+// lazy component, which suspends, and React keeps the server's HTML until the chunk lands. Each mount picks once, so a
+// part never changes type under its state.
+const part = <P extends object>(pick: (engine: Engine) => ComponentType<P>) => {
+  const Lazy = lazy(() => loadEngine().then((engine) => ({ default: pick(engine) })));
+  return function Part(props: P) {
+    const [Component] = useState<ComponentType<P>>(() => (loaded === undefined ? Lazy : pick(loaded)));
+    return createElement(Component, props);
+  };
+};
 
 export const Stars = part((engine) => engine.Stars);
 
