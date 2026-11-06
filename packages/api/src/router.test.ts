@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createRouterClient, ORPCError } from "@orpc/server";
+import { AiSpendLimited } from "@stargrep/ai/errors";
 import { QueryPlan, Search } from "@stargrep/core/search";
 import { SyncQueue, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
@@ -7,7 +8,7 @@ import { UserId } from "@stargrep/db/auth-schema";
 import type { EmbeddingModelId } from "@stargrep/db/embedding";
 import { DbQueryFailed, RepoNotFound } from "@stargrep/db/errors";
 import * as TestDatabase from "@stargrep/db/test-database";
-import type { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
+import type { GitHubAccountId, Login, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
 import * as Context from "effect/Context";
@@ -19,9 +20,12 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
+import * as AnswerCache from "./answer-cache.ts";
+import { errorStatus, type WireCode } from "./errors.ts";
 import { IconHost } from "./icon-host.ts";
 import type { Transport } from "./middleware/instrumentation.ts";
 import { type ApiContext, type ApiServices, ApiServicesUnavailable, router } from "./router.ts";
+import { SearchLimiter, SearchLimiterUnavailable, SearchRateLimited } from "./search-limiter.ts";
 import { SyncLimiter, SyncLimiterUnavailable, SyncRateLimited } from "./sync-limiter.ts";
 import { NotSignedIn, type Viewer, type ViewerError, Viewers, ViewerUnavailable } from "./viewers.ts";
 
@@ -65,6 +69,7 @@ const unchecked: Db.Repo = {
 interface Fakes {
   readonly search?: (request: Search.SearchRequest) => Effect.Effect<Search.SearchOutcome, Search.SearchError>;
   readonly limiter?: Effect.Effect<void, SyncRateLimited | SyncLimiterUnavailable>;
+  readonly searchLimiter?: Effect.Effect<void, SearchRateLimited | SearchLimiterUnavailable>;
   readonly requests?: SyncRequests.SyncRequests["Service"];
   readonly sent?: Array<Login>;
   readonly viewer?: Effect.Effect<Viewer, ViewerError>;
@@ -141,6 +146,7 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
     ),
     Context.add(SyncRequests.SyncRequests, requests),
     Context.add(SyncLimiter, SyncLimiter.of({ acquire: fakes.limiter ?? Effect.void })),
+    Context.add(SearchLimiter, SearchLimiter.of({ acquire: fakes.searchLimiter ?? Effect.void })),
     Context.add(Viewers, Viewers.of({ current: fakes.viewer ?? Effect.fail(new NotSignedIn()) })),
     Context.add(IconHost, IconHost.of({ origin: "https://stargrep.test" })),
   );
@@ -163,6 +169,7 @@ const contextFor = (
   publicConfig,
   procedureTime: Ref.makeUnsafe(Option.none()),
   services: servicesEffect,
+  answerCache: AnswerCache.disabled,
 });
 
 const client = (fakes: Fakes = {}, transport: Transport = "rpc") => {
@@ -512,3 +519,241 @@ test("validates input without starting the services, and maps a failed start to 
   expect(error.toJSON()).toMatchObject({ code: "SERVICE_UNAVAILABLE", data: traceData });
   expect(starts).toBe(1);
 });
+
+const demoSearch = (planSource: Search.SearchOutcome["planSource"] = "model") => {
+  const searched: Array<Search.SearchRequest> = [];
+  let builds = 0;
+  const fakes: Fakes = {
+    search: (request) =>
+      Effect.sync(() => {
+        searched.push(request);
+        const outcome = searchOutcome(request);
+        return {
+          ...outcome,
+          planSource,
+          results: outcome.results.map((result) => ({
+            ...result,
+            metrics: [{ metric: "stars" as const, value: searched.length }],
+          })),
+        };
+      }),
+  };
+  const built = Effect.sync(() => {
+    builds++;
+    return services(fakes);
+  });
+  const memory = AnswerCache.memory(built);
+  const call = (
+    input: { readonly login: string; readonly q: string; readonly scope?: "stars" | "network" },
+    servicesEffect: ApiContext["services"] = built,
+  ) =>
+    Effect.gen(function* () {
+      const resHeaders = new Headers();
+      const context: ApiContext = {
+        ...contextFor("rpc", servicesEffect),
+        "effect/context": yield* Effect.context<never>(),
+        answerCache: memory.cache,
+        resHeaders,
+      };
+      const answer = yield* Effect.promise(() => createRouterClient(router, { context }).search(input));
+      return { cache: resHeaders.get("x-answer-cache"), stars: answer.results[0]?.metrics[0]?.value, answer };
+    });
+  return { searched, builds: () => builds, memory, call };
+};
+
+const noServices = Effect.die("a cached answer needs no services");
+
+describe("the demo answer cache", () => {
+  it.effect("computes a demo search once, then serves it with no services, whatever the login's case and spacing", () =>
+    Effect.gen(function* () {
+      const demo = demoSearch();
+      expect(yield* demo.call({ login: "ada", q: "terminal dashboards" })).toMatchObject({ cache: "miss", stars: 1 });
+      expect(yield* demo.call({ login: "ADA", q: "  Terminal   dashboards " }, noServices)).toMatchObject({
+        cache: "hit",
+        stars: 1,
+      });
+      expect([demo.searched.length, demo.builds()]).toEqual([1, 1]);
+      expect([...demo.memory.entries.keys()]).toEqual(["search/ada/stars/20/terminal dashboards"]);
+    }),
+  );
+
+  it.effect("serves a stale answer past 5 minutes while a refresh stores a new one, and misses past a day", () =>
+    Effect.gen(function* () {
+      const demo = demoSearch();
+      const query = { login: "ada", q: "terminal dashboards" };
+      yield* demo.call(query);
+      yield* TestClock.adjust("4 minutes");
+      expect(yield* demo.call(query, noServices)).toMatchObject({ cache: "hit", stars: 1 });
+      yield* TestClock.adjust("2 minutes");
+      expect(yield* demo.call(query, noServices)).toMatchObject({ cache: "stale", stars: 1 });
+      expect(demo.memory.refreshes).toHaveLength(1);
+      expect(yield* demo.call(query, noServices)).toMatchObject({ cache: "hit", stars: 2 });
+      yield* TestClock.adjust("1 day");
+      expect(yield* demo.call(query, noServices)).toMatchObject({ cache: "stale", stars: 2 });
+      yield* TestClock.adjust(Duration.sum(Duration.days(1), Duration.minutes(6)));
+      expect(yield* demo.call(query)).toMatchObject({ cache: "miss", stars: 4 });
+      expect(demo.builds()).toBe(4);
+    }),
+  );
+
+  it.effect("never stores an answer the planner could not plan", () =>
+    Effect.gen(function* () {
+      const demo = demoSearch("fallback");
+      const query = { login: "ada", q: "terminal dashboards" };
+      expect((yield* demo.call(query)).cache).toBe("miss");
+      expect((yield* demo.call(query)).cache).toBe("miss");
+      expect([demo.searched.length, demo.memory.entries.size]).toEqual([2, 0]);
+    }),
+  );
+
+  it.effect("never caches another login's search or another scope", () =>
+    Effect.gen(function* () {
+      const demo = demoSearch();
+      for (const query of [
+        { login: "grace", q: "terminal dashboards" },
+        { login: "ada", q: "terminal dashboards", scope: "network" as const },
+      ]) {
+        expect((yield* demo.call(query)).cache).toBeNull();
+        expect((yield* demo.call(query)).cache).toBeNull();
+      }
+      expect([demo.searched.length, demo.memory.entries.size]).toEqual([4, 0]);
+    }),
+  );
+
+  it.effect("takes from the network's search limit only when a search runs, never for a cached demo answer", () =>
+    Effect.gen(function* () {
+      let acquired = 0;
+      let refuse = false;
+      const limiter = Effect.suspend(() => {
+        acquired++;
+        return refuse ? Effect.fail(new SearchRateLimited()) : Effect.void;
+      });
+      const demo = demoSearch();
+      const planned = (request: Search.SearchRequest) =>
+        Effect.succeed({ ...searchOutcome(request), planSource: "model" as const });
+      const limited = Effect.succeed(services({ search: planned, searchLimiter: limiter }));
+      yield* demo.call({ login: "ada", q: "terminal dashboards" }, limited);
+      refuse = true;
+      expect((yield* demo.call({ login: "ada", q: "terminal dashboards" }, limited)).cache).toBe("hit");
+      expect(acquired).toBe(1);
+      const error = yield* Effect.promise(() =>
+        failure(client({ searchLimiter: limiter }).api.search({ login: "ada", q: "other words" })),
+      );
+      expect([error.code, acquired]).toEqual(["TOO_MANY_REQUESTS", 2]);
+    }),
+  );
+});
+
+describe("search limits", () => {
+  test("map a limiter outage to service unavailable and a refused planner to too many requests", async () => {
+    const down = client({ searchLimiter: Effect.fail(new SearchLimiterUnavailable({ cause: "down" })) });
+    expect((await failure(down.api.search({ login: "grace", q: "x" }))).code).toBe("SERVICE_UNAVAILABLE");
+    const spent = client({ search: () => Effect.fail(new AiSpendLimited({ operation: "embed", limit: "caller" })) });
+    const error = await failure(spent.api.search({ login: "grace", q: "x" }));
+    expect([error.code, errorStatus[error.code as WireCode]]).toEqual(["TOO_MANY_REQUESTS", 429]);
+  });
+});
+
+describe("config headers", () => {
+  test("lets browsers keep the public settings for 5 minutes", async () => {
+    const resHeaders = new Headers();
+    const context = { ...contextFor("rest", Effect.die("the config needs no services")), resHeaders };
+    await createRouterClient(router, { context }).config();
+    expect(resHeaders.get("cache-control")).toBe("public, max-age=300");
+  });
+});
+
+const starAt = (repoId: number, iso: string) => ({
+  repoId: repoId as RepoId,
+  starredAt: DateTime.makeUnsafe(iso),
+  observedAt: DateTime.makeUnsafe(iso),
+  source: "api" as const,
+});
+
+const starsApi = Effect.gen(function* () {
+  const real = yield* Effect.context<Db.Db>();
+  const memory = AnswerCache.memory(Effect.succeed(Context.merge(services({}), real)));
+  return (input: { readonly login: string; readonly limit?: number; readonly cursor?: string }) =>
+    Effect.gen(function* () {
+      const resHeaders = new Headers();
+      const context: ApiContext = {
+        ...contextFor("rest", Effect.succeed(Context.merge(services({}), real))),
+        "effect/context": yield* Effect.context<never>(),
+        answerCache: memory.cache,
+        resHeaders,
+      };
+      const page = yield* Effect.promise(() =>
+        createRouterClient(router, { context })
+          .stars(input)
+          .catch((error: unknown) => error),
+      );
+      return { page, cache: resHeaders.get("x-answer-cache"), cacheControl: resHeaders.get("cache-control") };
+    });
+});
+
+it.layer(TestDatabase.layerMemory({ embeddingModel: "test/model" as EmbeddingModelId }), { timeout: 30_000 })(
+  "public stars",
+  (it) => {
+    it.effect("pages a login's stars newest first through a cursor, and caches each page for 10 seconds", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const { id, type, login, name, avatarUrl, followers, publicRepos } = ada.account;
+        yield* db.accounts.upsert({ id, type, login, name, avatarUrl, followers, publicRepos });
+        yield* db.repos.upsertRefs(
+          [501, 502, 503, 504].map((repoId) => ({
+            id: repoId as RepoId,
+            nodeId: `R_${repoId}` as RepoNodeId,
+            owner: "owner" as Login,
+            name: `repo-${repoId}` as RepoName,
+          })),
+        );
+        yield* db.stars.upsert({
+          accountId: id,
+          stars: [
+            starAt(501, "2026-01-01T00:00:00Z"),
+            starAt(502, "2026-02-01T00:00:00Z"),
+            starAt(503, "2026-03-01T00:00:00Z"),
+          ],
+        });
+        const stars = yield* starsApi;
+
+        const first = yield* stars({ login: "ADA", limit: 2 });
+        expect(first).toMatchObject({ cache: "miss", cacheControl: "public, max-age=10" });
+        expect(first.page).toMatchObject({
+          login: "ada",
+          repos: [
+            { id: 503, starredAt: "2026-03-01T00:00:00.000Z", read: false },
+            { id: 502, starredAt: "2026-02-01T00:00:00.000Z" },
+          ],
+          nextCursor: `${Date.parse("2026-02-01T00:00:00Z")}-502`,
+        });
+        const cursor = (first.page as { readonly nextCursor: string }).nextCursor;
+        expect((yield* stars({ login: "ada", limit: 2, cursor })).page).toMatchObject({
+          repos: [{ id: 501 }],
+          nextCursor: null,
+        });
+
+        yield* db.stars.upsert({ accountId: id, stars: [starAt(504, "2026-04-01T00:00:00Z")] });
+        yield* TestClock.adjust("9 seconds");
+        const cached = yield* stars({ login: "ada", limit: 2 });
+        expect([cached.cache, cached.page]).toEqual(["hit", first.page]);
+        yield* TestClock.adjust("2 seconds");
+        const next = yield* stars({ login: "ada", limit: 2 });
+        expect(next.cache).toBe("miss");
+        expect(
+          (next.page as { readonly repos: ReadonlyArray<{ readonly id: number }> }).repos.map((repo) => repo.id),
+        ).toEqual([504, 503]);
+      }),
+    );
+
+    it.effect("says when Stargrep has not synced the login, and refuses a cursor it never issued", () =>
+      Effect.gen(function* () {
+        const stars = yield* starsApi;
+        const unsynced = yield* stars({ login: "nobody-synced" });
+        expect(unsynced.page).toMatchObject({ code: "ACCOUNT_NOT_SYNCED", data: traceData });
+        expect(unsynced.cacheControl).toBeNull();
+        expect((yield* stars({ login: "ada", cursor: "1700000000000-0" })).page).toMatchObject({ code: "BAD_REQUEST" });
+      }),
+    );
+  },
+);
