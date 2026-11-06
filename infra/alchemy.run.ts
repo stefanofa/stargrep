@@ -5,6 +5,7 @@ import * as Neon from "@alchemy.run/neon";
 import { Website } from "@stargrep/web/website";
 import Worker from "@stargrep/worker";
 import DebugWorker, { DebugToken } from "@stargrep/worker/debug";
+import { ZoneRateLimit } from "@stargrep/worker/domain";
 import * as Alchemy from "alchemy";
 import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
@@ -18,8 +19,12 @@ export default Alchemy.Stack(
     const { stage } = yield* Alchemy.Stack;
     const worker = yield* Worker;
     const web = yield* Website;
-    // In prod a zone route serves the web Worker on the main Worker's hostname, so it has no URL of its own.
-    if (stage === "prod") return { url: worker.url, webUrl: worker.url };
+    // In prod a zone route serves the web Worker on the main Worker's hostname, so it has no URL of its own. Previews
+    // have no zone, so only prod declares the zone's rate limit.
+    if (stage === "prod") {
+      yield* ZoneRateLimit;
+      return { url: worker.url, webUrl: worker.url };
+    }
 
     const debug = yield* DebugWorker;
     const github = yield* GitHub.GitHubEnv;
