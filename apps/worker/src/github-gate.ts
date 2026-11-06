@@ -1,5 +1,6 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as FallbackGate from "@stargrep/github/fallback-gate";
+import type { BudgetShare } from "@stargrep/github/schemas";
 import * as TokenBudget from "@stargrep/github/token-budget";
 import * as TokenGate from "@stargrep/github/token-gate";
 import { budgetShare } from "@stargrep/runtime/budget-share";
@@ -22,45 +23,44 @@ const requiredToken = Effect.flatMap(
   }),
 );
 
+// Both objects send one request at a time within a share of their token's windows, and keep the windows in storage, so
+// a restart keeps them.
+const persistedGate = Effect.fn("GitHubGate.persisted")(function* (
+  state: Cloudflare.DurableObjectState["Service"],
+  share: BudgetShare,
+) {
+  const windows = TokenBudget.decodeWindows(yield* state.storage.get(windowsKey));
+  const gate = yield* TokenGate.makeMemory({ share, windows: Option.getOrUndefined(windows) }).pipe(
+    Effect.provide(FetchHttpClient.layer),
+  );
+  const persist = Effect.flatMap(gate.budget, (budget) => state.storage.put(windowsKey, budget.windows));
+  return (token: Redacted.Redacted<string>) => {
+    const serve = TokenGate.serve(TokenGate.TokenGate.of({ execute: gate.execute(token) }));
+    return (request: TokenGate.RemoteRequest) => serve(request).pipe(Effect.tap(() => persist));
+  };
+});
+
 export class GitHubGate extends Cloudflare.DurableObject<GitHubGate>()(
   "GitHubGate",
   Effect.gen(function* () {
     const state = yield* Cloudflare.DurableObjectState;
     return Effect.gen(function* () {
-      const windows = TokenBudget.decodeWindows(yield* state.storage.get(windowsKey));
-      const gate = yield* TokenGate.makeMemory({
-        share: yield* Effect.orDie(budgetShare),
-        windows: Option.getOrUndefined(windows),
-      }).pipe(Effect.provide(FetchHttpClient.layer));
-      const serve = TokenGate.serve(TokenGate.TokenGate.of({ execute: gate.execute(yield* requiredToken) }));
-      return {
-        execute: (request: TokenGate.RemoteRequest) =>
-          serve(request).pipe(
-            Effect.tap(() => Effect.flatMap(gate.budget, (budget) => state.storage.put(windowsKey, budget.windows))),
-          ),
-      };
+      const serveWith = yield* persistedGate(state, yield* Effect.orDie(budgetShare));
+      return { execute: serveWith(yield* requiredToken) };
     });
   }),
 ) {}
 
 // One object per signed-in user, named by their user ID, because GitHub counts all of a user's tokens against one
-// budget. It sends that user's requests one at a time within their share and keeps their rate-limit windows. The token
-// comes with each call and is never stored.
+// budget. The token comes with each call and is never stored.
 export class UserGitHubGate extends Cloudflare.DurableObject<UserGitHubGate>()(
   "UserGitHubGate",
   Effect.gen(function* () {
     const state = yield* Cloudflare.DurableObjectState;
     return Effect.gen(function* () {
-      const windows = TokenBudget.decodeWindows(yield* state.storage.get(windowsKey));
-      const gate = yield* TokenGate.makeMemory({
-        share: FallbackGate.userShare,
-        windows: Option.getOrUndefined(windows),
-      }).pipe(Effect.provide(FetchHttpClient.layer));
+      const serveWith = yield* persistedGate(state, FallbackGate.userShare);
       return {
-        execute: (request: TokenGate.RemoteRequest, token: string) =>
-          TokenGate.serve(TokenGate.TokenGate.of({ execute: gate.execute(Redacted.make(token)) }))(request).pipe(
-            Effect.tap(() => Effect.flatMap(gate.budget, (budget) => state.storage.put(windowsKey, budget.windows))),
-          ),
+        execute: (request: TokenGate.RemoteRequest, token: string) => serveWith(Redacted.make(token))(request),
       };
     });
   }),

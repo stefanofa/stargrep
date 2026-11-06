@@ -1,3 +1,4 @@
+import type { AuthFailed } from "@stargrep/auth/auth";
 import { GitHubTokens } from "@stargrep/auth/tokens";
 import type { UserId } from "@stargrep/db/auth-schema";
 import { GitHubTokenMissing, type Operation } from "@stargrep/github/errors";
@@ -8,15 +9,17 @@ import * as Effect from "effect/Effect";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Semaphore from "effect/Semaphore";
 import type { UserGitHubGate } from "./github-gate.ts";
 import { inRuntime } from "./layers.ts";
 
 export class UserGates extends Context.Service<
   UserGates,
   {
-    // The gate for one job a signed-in user started: their token while it works and their share lasts, then the server's.
+    // The gate for one job: the server's for work no signed-in user started, else the user's token while it works and
+    // their share lasts, then the server's.
     readonly gate: (
-      userId: UserId,
+      paidBy: UserId | undefined,
       server: TokenGate.TokenGate["Service"],
     ) => Effect.Effect<TokenGate.TokenGate["Service"]>;
   }
@@ -26,22 +29,42 @@ export class UserGates extends Context.Service<
 export const layerServerOnly = Layer.succeed(
   UserGates,
   UserGates.of({
-    gate: Effect.fn("UserGates.gate")((_userId: UserId, server: TokenGate.TokenGate["Service"]) =>
+    gate: Effect.fn("UserGates.gate")((_paidBy: UserId | undefined, server: TokenGate.TokenGate["Service"]) =>
       Effect.succeed(server),
     ),
   }),
 );
 
-// A job reads the user's token once, at its first GitHub request, and never puts it in a message or in storage.
+// A user's token is read once per invocation, at their first job's first GitHub request, so jobs of one user that run at
+// once share one read and never refresh the same token twice. It never goes in a message or in storage.
 export const layer = (gates: Effect.Success<typeof UserGitHubGate>) =>
   Layer.effect(
     UserGates,
     Effect.gen(function* () {
       const tokens = yield* GitHubTokens;
       const run = yield* inRuntime;
+      const reads = new Map<UserId, Effect.Effect<Redacted.Redacted<string>, AuthFailed>>();
+      const lock = yield* Semaphore.make(1);
+      const tokenOf = (userId: UserId) =>
+        Effect.flatten(
+          lock.withPermit(
+            Effect.gen(function* () {
+              const known = reads.get(userId);
+              if (known !== undefined) return known;
+              const read = yield* Effect.cached(tokens.read(userId));
+              reads.set(userId, read);
+              return read;
+            }),
+          ),
+        );
       return UserGates.of({
-        gate: Effect.fn("UserGates.gate")(function* (userId: UserId, server: TokenGate.TokenGate["Service"]) {
-          const token = yield* Effect.cached(tokens.read(userId));
+        gate: Effect.fn("UserGates.gate")(function* (
+          paidBy: UserId | undefined,
+          server: TokenGate.TokenGate["Service"],
+        ) {
+          if (paidBy === undefined) return server;
+          const userId = paidBy;
+          const token = tokenOf(userId);
           const user = TokenGate.TokenGate.of({
             execute: Effect.fn("UserGitHubGate.execute")(function* (
               operation: Operation,

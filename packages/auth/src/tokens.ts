@@ -10,7 +10,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
-import { AuthFailed, providerId, readGitHubToken, tokenReadTimeout } from "./auth.ts";
+import { AuthFailed, githubProvider, providerId, readGitHubToken, tokenReadTimeout } from "./auth.ts";
 import type { TokenConfig } from "./config.ts";
 
 // Reads a signed-in user's GitHub token where no request carries their session, such as a queue consumer running work
@@ -29,13 +29,10 @@ export const make = (database: BetterAuthOptions["database"], config: TokenConfi
     secret: Redacted.value(config.secret),
     database,
     socialProviders: {
-      [providerId]: {
-        clientId: config.clientId,
-        ...Option.match(config.clientSecret, {
-          onNone: () => ({}),
-          onSome: (secret) => ({ clientSecret: Redacted.value(secret) }),
-        }),
-      },
+      [providerId]: githubProvider(
+        config.clientId,
+        Option.getOrUndefined(Option.map(config.clientSecret, Redacted.value)),
+      ),
     },
     account: { encryptOAuthTokens: true },
     telemetry: { enabled: false },

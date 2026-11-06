@@ -2,10 +2,12 @@ import type * as Cloudflare from "@alchemy.run/cloudflare";
 import type { FetchIcon } from "@stargrep/core/icons";
 import type { EnrichRepo } from "@stargrep/core/repos";
 import type { StarSync } from "@stargrep/core/stars";
+import * as TokenGate from "@stargrep/github/token-gate";
 import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -205,6 +207,10 @@ export const pipeline = <S extends Schema.Decoder<unknown>, R, D = never>(option
   onDeadLetter: options.onDeadLetter ?? (() => Effect.void),
   resend: options.resend ?? (() => Option.none()),
 });
+
+// Fresh, because a nested provide reuses the layers the runtime already built, such as GitHub on the server's gate.
+export const onGate = <A, E, R>(layer: Layer.Layer<A, E, R>, gate: TokenGate.TokenGate["Service"]) =>
+  Layer.fresh(layer.pipe(Layer.provide(Layer.succeed(TokenGate.TokenGate, gate))));
 
 export const processBatch = Effect.fn("Consumer.processBatch")(function* <A, R, D>(
   pipeline: Pipeline<A, R, D>,

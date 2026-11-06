@@ -4,7 +4,7 @@ import type { RepoId } from "@stargrep/github/schemas";
 import * as TokenGate from "@stargrep/github/token-gate";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
+import type * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import { UserGates } from "../user-gate.ts";
 import * as Settle from "./settle.ts";
@@ -49,9 +49,7 @@ export const pipeline = <R>(enrichers: Layer.Layer<EnrichRepo.EnrichRepo, never,
       yield* Effect.forEach(
         groups.values(),
         Effect.fnUntraced(function* ({ userId, positions, repoIds }) {
-          const gate = userId === undefined ? server : yield* users.gate(userId, server);
-          // Fresh, because a nested provide reuses the layers the runtime already built, such as GitHub on the server.
-          const enricher = Layer.fresh(enrichers.pipe(Layer.provide(Layer.succeed(TokenGate.TokenGate, gate))));
+          const enricher = Settle.onGate(enrichers, yield* users.gate(userId, server));
           const enriched = yield* EnrichRepo.EnrichRepo.use((service) => service.enrichRepos(repoIds)).pipe(
             Effect.provide(enricher),
             Effect.result,

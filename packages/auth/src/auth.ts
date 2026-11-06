@@ -3,6 +3,7 @@ import { UserId } from "@stargrep/db/auth-schema";
 import { acquirePool } from "@stargrep/db/node-postgres";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { refreshAccessToken } from "better-auth/oauth2";
 import { oAuthProxy } from "better-auth/plugins/oauth-proxy";
 import { drizzle } from "drizzle-orm/node-postgres";
 import * as Clock from "effect/Clock";
@@ -22,6 +23,21 @@ export const providerId = "github";
 // The proxy secret sits in the preview environment, which every branch's workflow can read. So prod forwards a
 // preview's sign-in, which carries the user's GitHub token, only to a preview Worker of this account.
 export const previewHost = /^stargrep-web-pr-\d+-[a-z0-9]+\.rewebdotso\.workers\.dev$/;
+
+const tokenEndpoint = "https://github.com/login/oauth/access_token";
+
+// GitHub refuses a used or revoked refresh token with a 200 that names an error, and Better Auth would then store the
+// refresh token it read over the one a concurrent refresh just wrote. A refresh with no access token fails before Better
+// Auth writes anything, so the newest refresh token stays.
+export const githubProvider = (clientId: string, clientSecret?: string) => ({
+  clientId,
+  ...(clientSecret === undefined ? {} : { clientSecret }),
+  refreshAccessToken: async (refreshToken: string) => {
+    const tokens = await refreshAccessToken({ refreshToken, options: { clientId, clientSecret }, tokenEndpoint });
+    if (!tokens.accessToken) throw new Error("GitHub refused the refresh token");
+    return tokens;
+  },
+});
 
 export const redirectAllowed = (location: string, origin: string) => {
   const target = URL.parse(location, origin);
@@ -114,7 +130,7 @@ export const signInOptions = ({ config, origin }: Pick<Options, "config" | "orig
   const signIn = config.github;
   if (signIn._tag === "proxied") {
     return {
-      provider: { clientId: signIn.clientId },
+      provider: githubProvider(signIn.clientId),
       plugins: [
         oAuthProxy({
           productionURL: signIn.productionOrigin,
@@ -127,7 +143,7 @@ export const signInOptions = ({ config, origin }: Pick<Options, "config" | "orig
   // Prod only forwards previews' sign-ins, which the plugin's hooks do. Without its endpoints, prod has no route that
   // turns a profile encrypted with the proxy secret into a session.
   return {
-    provider: { clientId: signIn.clientId, clientSecret: Redacted.value(signIn.clientSecret) },
+    provider: githubProvider(signIn.clientId, Redacted.value(signIn.clientSecret)),
     plugins: Option.match(signIn.proxySecret, {
       onNone: () => [],
       onSome: (secret) => [

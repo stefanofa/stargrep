@@ -2,7 +2,7 @@ import { StarSync, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import * as TokenGate from "@stargrep/github/token-gate";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
+import type * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -61,10 +61,7 @@ export const pipeline = <R>(
             const sent = yield* Ref.make(0);
             const { body } = delivery;
             const server = TokenGate.counting(gate, sent);
-            const job = body.userId === undefined ? server : yield* users.gate(body.userId, server);
-            // Fresh, because a nested provide reuses the layers the runtime already built, such as GitHub on the gate
-            // that counts nothing.
-            const counted = Layer.fresh(syncs.pipe(Layer.provide(Layer.succeed(TokenGate.TokenGate, job))));
+            const counted = Settle.onGate(syncs, yield* users.gate(body.userId, server));
             const synced = yield* StarSync.StarSync.use((starSync) =>
               "accountId" in body ? starSync.sync(body) : starSync.syncLogin(body),
             ).pipe(Effect.provide(counted), Effect.result);
