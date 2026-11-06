@@ -44,7 +44,8 @@ export const Account = Schema.Struct({
   type: Schema.Literals(["user", "org"]),
   name: Schema.NullOr(Schema.String),
   avatarUrl: Schema.NullOr(Schema.String),
-  followers: Schema.Int,
+  // GraphQL gives an org no follower count.
+  followers: Schema.NullOr(Schema.Int),
   publicRepos: Schema.Int,
 });
 export type Account = typeof Account.Type;

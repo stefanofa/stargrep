@@ -70,6 +70,39 @@ export const starCountReply = (totalCount: number): Reply => ({
   headers: rateLimitHeaders(4000, 3600, "graphql"),
 });
 
+// Recorded from GitHub's GraphQL API on 2026-11-06 with the query in owner.ts.
+export const ownerBodies = {
+  user: {
+    data: {
+      repositoryOwner: {
+        __typename: "User",
+        databaseId: 583231,
+        login: "octocat",
+        name: "The Octocat",
+        avatarUrl: "https://avatars.githubusercontent.com/u/583231?u=a59fef2a493e2b67dd13754231daf220c82ba84d&v=4",
+        followers: { totalCount: 24947 },
+        repositories: { totalCount: 8 },
+        starredRepositories: { totalCount: 3 },
+      },
+    },
+  },
+  org: {
+    data: {
+      repositoryOwner: {
+        __typename: "Organization",
+        databaseId: 9919,
+        login: "github",
+        name: "GitHub",
+        avatarUrl: "https://avatars.githubusercontent.com/u/9919?v=4",
+        repositories: { totalCount: 572 },
+      },
+    },
+  },
+  missing: { data: { repositoryOwner: null } },
+};
+
+export const ownerReply = (body: unknown): Reply => ({ body, headers: rateLimitHeaders(4000, 3600, "graphql") });
+
 const streamed = (kind: "broken" | "hang", onRead: () => void) =>
   new ReadableStream<Uint8Array>(
     {
