@@ -2,6 +2,7 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
 import { apiKeyName } from "@stargrep/ai/gateway";
 import { demoLoginName } from "@stargrep/api/public-config";
 import { bindings, githubSignIn, names, optionalSecret, required } from "@stargrep/auth/config";
+import { budgetShareName, stageBudgetShare } from "@stargrep/runtime/budget-share";
 import { aiGatewayKey } from "@stargrep/runtime/config";
 import MainWorker from "@stargrep/worker";
 import { Database, DatabaseMigrations } from "@stargrep/worker/database";
@@ -66,6 +67,7 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
         SYNC_STARS: SyncStars,
         WORKER: MainWorker,
         CALLER_KEY: yield* CallerKey,
+        [budgetShareName]: String(yield* stageBudgetShare(stage)),
         ICONS: yield* Icons,
         SYNC_PER_CALLER: Cloudflare.RateLimit("SYNC_PER_CALLER", {
           namespaceId: namespaceId(stage, "sync-per-caller"),

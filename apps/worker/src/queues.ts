@@ -1,7 +1,7 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import { type FetchIcon, IconQueue } from "@stargrep/core/icons";
 import type { EnrichRepo } from "@stargrep/core/repos";
-import type { StarSync } from "@stargrep/core/stars";
+import type { StarSync, SyncRequests } from "@stargrep/core/stars";
 import type * as Db from "@stargrep/db";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
@@ -49,13 +49,14 @@ const consume = Effect.fn("Queues.consume")(function* <A, R, D, E>(
 
 export const consumeAll = <E>(
   runtime: Layer.Layer<StarSync.StarSync | EnrichRepo.EnrichRepo | FetchIcon.FetchIcon | Db.Db, E, RuntimeContext>,
+  line: SyncRequests.Rate,
 ) =>
   Effect.all([
     consume(
       queueNames.syncStars,
       { queue: SyncStars, deadLetters: SyncStarsDeadLetters },
       { batchSize: 5, maxWaitTime: "1 second", ...retries },
-      SyncStarsConsumer.pipeline,
+      SyncStarsConsumer.pipeline(line),
       runtime,
     ),
     consume(

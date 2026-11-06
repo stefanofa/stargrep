@@ -19,27 +19,32 @@ const markFailed = Effect.fn("SyncStarsConsumer.markFailed")(function* (
 });
 
 // The sync already ran, so a bill that fails is logged and the message still settles. A retry would read GitHub again.
-const bill = (body: StarSync.SyncRequest | StarSync.LoginSyncRequest, report: StarSync.SyncReport) =>
-  SyncRequests.billSync("accountId" in body ? undefined : body.reserved, report.requests).pipe(
+const bill = (
+  line: SyncRequests.Rate,
+  body: StarSync.SyncRequest | StarSync.LoginSyncRequest,
+  report: StarSync.SyncReport,
+) =>
+  SyncRequests.billSync(line, "accountId" in body ? undefined : body.reserved, report.requests).pipe(
     Effect.catchTags({
       DbQueryFailed: (error) => Effect.logWarning("Could not bill a sync to the line", { reason: error.reason }),
       DbRowInvalid: (error) => Effect.logWarning("Could not bill a sync to the line", { column: error.column }),
     }),
   );
 
-export const pipeline = Settle.pipeline({
-  schema: Schema.Union([StarSync.SyncRequest, StarSync.LoginSyncRequest]),
-  run: Effect.fn("SyncStarsConsumer.run")(function* (bodies) {
-    const starSync = yield* StarSync.StarSync;
-    return yield* Effect.forEach(bodies, (request) =>
-      ("accountId" in request ? starSync.sync(request) : starSync.syncLogin(request)).pipe(
-        Effect.tap((report) => bill(request, report)),
-        Effect.as(Settle.Settlement.Done()),
-        Effect.result,
-      ),
-    );
-  }),
-  describe: (body) =>
-    "accountId" in body ? { accountId: body.accountId, mode: body.mode } : { login: body.login, mode: body.mode },
-  onDeadLetter: markFailed,
-});
+export const pipeline = (line: SyncRequests.Rate) =>
+  Settle.pipeline({
+    schema: Schema.Union([StarSync.SyncRequest, StarSync.LoginSyncRequest]),
+    run: Effect.fn("SyncStarsConsumer.run")(function* (bodies) {
+      const starSync = yield* StarSync.StarSync;
+      return yield* Effect.forEach(bodies, (request) =>
+        ("accountId" in request ? starSync.sync(request) : starSync.syncLogin(request)).pipe(
+          Effect.tap((report) => bill(line, request, report)),
+          Effect.as(Settle.Settlement.Done()),
+          Effect.result,
+        ),
+      );
+    }),
+    describe: (body) =>
+      "accountId" in body ? { accountId: body.accountId, mode: body.mode } : { login: body.login, mode: body.mode },
+    onDeadLetter: markFailed,
+  });

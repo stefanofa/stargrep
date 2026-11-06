@@ -1,6 +1,6 @@
 import * as Db from "@stargrep/db";
 import type { DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
-import type { Login } from "@stargrep/github/schemas";
+import type { BudgetShare, Login } from "@stargrep/github/schemas";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -101,8 +101,14 @@ export interface Rate {
   readonly maxWait: Duration.Duration;
 }
 
-// Signed-out syncs together take turns in the line all.
-export const line: Rate = { unitsPerHour: 2_000, burstUnits: 200, maxWait: Duration.hours(2) };
+// GitHub allows the token 5,000 REST requests an hour, and the gate lets Stargrep spend its budget share of them.
+// Signed-out syncs together take turns in the line all, which pays out 80% of that share and leaves the rest to
+// enrichment.
+export const allRate = (share: BudgetShare): Rate => ({
+  unitsPerHour: 0.8 * share * 5_000,
+  burstUnits: 200,
+  maxWait: Duration.hours(2),
+});
 
 // Each network pays a line of its own for every lookup it asks for and for the first read of a login that never synced,
 // so one network can neither look logins up without end nor fill the line all.
@@ -119,8 +125,6 @@ const reservation = (key: Db.LineKey, rate: Rate, at: DateTime.Utc, count: numbe
   maxWait: rate.maxWait,
   force,
 });
-
-const tolerance = unitsOf(line, line.burstUnits);
 
 // A missing login or an org costs its lookup and nothing more.
 export const lookupCost = 1;
@@ -141,16 +145,20 @@ const pagesOf = (read: StarRead) =>
 // stops, because stars removed, starred again, or swapped at an unchanged total all move it, so this is an estimate.
 export const costOf = (read: StarRead): number => 1 + (read._tag === "every" ? 2 : 0) + pagesOf(read);
 
-const reserve = (db: Db.Db["Service"], at: DateTime.Utc, units: number, force: boolean) =>
+const reserve = (db: Db.Db["Service"], line: Rate, at: DateTime.Utc, units: number, force: boolean) =>
   db.rateLines.reserve(reservation("all", line, at, units, force));
 
 // A sync that has run pays the line, forced, for the GitHub requests it made past what admission reserved for it, so
 // the next signed-out start moves later by the difference. A message that reserved nothing pays for every request.
-export const billSync = Effect.fn("SyncRequests.billSync")(function* (reserved: number | undefined, requests: number) {
+export const billSync = Effect.fn("SyncRequests.billSync")(function* (
+  line: Rate,
+  reserved: number | undefined,
+  requests: number,
+) {
   const owed = Math.max(0, requests - (reserved ?? 0));
   yield* Effect.annotateCurrentSpan({ "sync.requests": requests, "sync.owed": owed });
   if (owed === 0) return;
-  yield* reserve(yield* Db.Db, yield* DateTime.now, owed, true);
+  yield* reserve(yield* Db.Db, line, yield* DateTime.now, owed, true);
 });
 
 type Decision =
@@ -287,7 +295,9 @@ const statusOf = (
 
 const syncedAtOf = (status: SyncStatus) => (status.state === "unknown" ? null : status.syncedAt);
 
-const make = Effect.gen(function* () {
+const make = Effect.fnUntraced(function* (share: BudgetShare) {
+  const line = allRate(share);
+  const tolerance = unitsOf(line, line.burstUnits);
   const db = yield* Db.Db;
   const queue = yield* SyncQueue.SyncQueue;
   const owners = yield* OwnerLookup.OwnerLookup;
@@ -376,7 +386,7 @@ const make = Effect.gen(function* () {
       () => 0,
     );
     const cost = costOf(yield* starRead(login, syncedAt === null || fullReadDue, starredTotal));
-    yield* reserve(db, now, cost, true);
+    yield* reserve(db, line, now, cost, true);
     return yield* start(login, now, { mode, reserved: cost, startsAt: now, cost }, { ...lookedOf(account), syncedAt });
   });
 
@@ -405,7 +415,7 @@ const make = Effect.gen(function* () {
     const found = yield* Effect.result(owners.lookup(login));
     if (Result.isFailure(found)) return { _tag: "LookupFailed", error: found.failure };
     // GitHub answered, so the lookup spent a request whatever comes of the sync.
-    yield* reserve(db, now, lookupCost, true);
+    yield* reserve(db, line, now, lookupCost, true);
     const claim = (outcome: "claimed" | "missing") =>
       db.syncRequests.claim({ login, at: now, cooldown: anyoneCooldown, overtakesWaiting: false, outcome });
 
@@ -437,7 +447,7 @@ const make = Effect.gen(function* () {
       yield* db.syncRequests.settle(login, now, "released");
       return { _tag: "CallerLimit" };
     }
-    const startsAt = yield* reserve(db, now, work, false);
+    const startsAt = yield* reserve(db, line, now, work, false);
     if (Option.isNone(startsAt)) {
       yield* db.syncRequests.settle(login, now, "released");
       if (networkWork > 0) yield* db.rateLines.adjust(network, now, unitsOf(networkRate, -networkWork));
@@ -459,4 +469,4 @@ const make = Effect.gen(function* () {
   return SyncRequests.of({ request, status });
 });
 
-export const layer = Layer.effect(SyncRequests, make);
+export const layer = (share: BudgetShare) => Layer.effect(SyncRequests, make(share));

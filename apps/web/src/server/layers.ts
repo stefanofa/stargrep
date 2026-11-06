@@ -4,6 +4,7 @@ import { IconHost } from "@stargrep/api/icon-host";
 import type { AuthConfig } from "@stargrep/auth/config";
 import { ModelAllowance, QueryPlanner, Search } from "@stargrep/core/search";
 import { SyncRequests } from "@stargrep/core/stars";
+import type { BudgetShare } from "@stargrep/github/schemas";
 import * as DbRuntime from "@stargrep/runtime/db";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -24,8 +25,8 @@ const adopted = Ref.makeUnsafe(false);
 
 const connectionString = (env: WebEnv) => Redacted.make(env.DATABASE.connectionString);
 
-const layerStorage = (env: WebEnv, aiKey: Option.Option<Redacted.Redacted<string>>) =>
-  Layer.mergeAll(SyncRequests.layer, FetchHttpClient.layer).pipe(
+const layerStorage = (env: WebEnv, aiKey: Option.Option<Redacted.Redacted<string>>, budgetShare: BudgetShare) =>
+  Layer.mergeAll(SyncRequests.layer(budgetShare), FetchHttpClient.layer).pipe(
     Layer.provideMerge(Layer.merge(layerSyncQueue(env.SYNC_STARS), layerOwnerLookup(env.WORKER))),
     Layer.provideMerge(
       DbRuntime.layerDb({ connectionString: connectionString(env), adopted, maxConnections: maxDatabaseConnections }),
@@ -36,6 +37,7 @@ const layerStorage = (env: WebEnv, aiKey: Option.Option<Redacted.Redacted<string
 export const layerRequest = (
   env: WebEnv,
   aiKey: Option.Option<Redacted.Redacted<string>>,
+  budgetShare: BudgetShare,
   auth: Option.Option<AuthConfig>,
   request: Request,
 ) =>
@@ -49,12 +51,16 @@ export const layerRequest = (
     Layer.provideMerge(layerSearchCache(env.SEARCH_CACHE)),
     Layer.provideMerge(Layer.unwrap(Caller.use(({ key }) => Effect.succeed(ModelAllowance.layerMetered(key))))),
     Layer.provideMerge(layerCaller(env.CALLER_KEY, request)),
-    Layer.provideMerge(layerStorage(env, aiKey)),
+    Layer.provideMerge(layerStorage(env, aiKey, budgetShare)),
   );
 
 export const layerAuthRequest = (
   env: WebEnv,
   aiKey: Option.Option<Redacted.Redacted<string>>,
+  budgetShare: BudgetShare,
   auth: AuthConfig,
   request: Request,
-) => layerAuth(auth, new URL(request.url).origin, connectionString(env)).pipe(Layer.provide(layerStorage(env, aiKey)));
+) =>
+  layerAuth(auth, new URL(request.url).origin, connectionString(env)).pipe(
+    Layer.provide(layerStorage(env, aiKey, budgetShare)),
+  );

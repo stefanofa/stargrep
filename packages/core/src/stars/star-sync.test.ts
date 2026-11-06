@@ -3,7 +3,7 @@ import * as Db from "@stargrep/db";
 import type { EmbeddingModelId } from "@stargrep/db/embedding";
 import * as TestDatabase from "@stargrep/db/test-database";
 import * as Fake from "@stargrep/github/github.fixture";
-import type { GitHubAccountId, Login } from "@stargrep/github/schemas";
+import { BudgetShare, type GitHubAccountId, type Login } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -565,7 +565,9 @@ it.layer(layerOn(TestDatabase.layerNodePostgres({ embeddingModel })), { timeout:
 const owners = OwnerLookup.layerMemory();
 const syncs = SyncQueue.layerMemory();
 
-const admission = SyncRequests.layer.pipe(
+const share = BudgetShare.make(0.5);
+
+const admission = SyncRequests.layer(share).pipe(
   Layer.provideMerge(layerOn(TestDatabase.layerMemory({ embeddingModel }))),
   Layer.provideMerge(owners.layer),
   Layer.provideMerge(syncs.layer),
@@ -609,7 +611,7 @@ const admitAndRun = (by: SyncRequests.Requester) =>
     const message = syncs.sent[queued];
     if (message === undefined) throw new Error("the request queued no sync");
     const report = yield* StarSync.StarSync.use((service) => service.syncLogin(message));
-    yield* SyncRequests.billSync(message.reserved, report.requests);
+    yield* SyncRequests.billSync(SyncRequests.allRate(share), message.reserved, report.requests);
     return {
       message,
       served: owners.lookups.length - lookups + github.sent.length,
@@ -759,7 +761,7 @@ it.layer(admission, { timeout: 30_000 })("SyncRequests with StarSync", (it) => {
       const next = yield* SyncRequests.SyncRequests.use((service) =>
         service.request("grace" as Login, { _tag: "anyone", caller: Db.CallerKey.make("caller-b") }),
       );
-      const burst = SyncRequests.line.burstUnits;
+      const burst = SyncRequests.allRate(share).burstUnits;
       expect(next).toMatchObject({
         state: "waiting",
         startsAt: DateTime.makeUnsafe(at + (300 + run.served + SyncRequests.lookupCost - burst) * 1_800),

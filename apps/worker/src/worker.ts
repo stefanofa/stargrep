@@ -1,5 +1,7 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
+import { SyncRequests } from "@stargrep/core/stars";
 import * as GitHub from "@stargrep/github/github";
+import { budgetShare, budgetShareName, stageBudgetShare } from "@stargrep/runtime/budget-share";
 import * as Tracing from "@stargrep/telemetry/cloudflare";
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
@@ -8,7 +10,6 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
-import { budgetShareName, stageBudgetShare } from "./budget-share.ts";
 import * as Crons from "./crons.ts";
 import { Database, DatabaseMigrations } from "./database.ts";
 import { prodWorkerHosting } from "./domain.ts";
@@ -54,7 +55,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
       ai: yield* Effect.orDie(Layers.aiModels),
       adopted: yield* Ref.make(false),
     });
-    yield* Queues.consumeAll(runtime);
+    yield* Queues.consumeAll(runtime, SyncRequests.allRate(yield* Effect.orDie(budgetShare)));
     yield* Crons.scheduleAll(runtime);
     return {
       fetch: Effect.gen(function* () {

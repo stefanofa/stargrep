@@ -2,6 +2,8 @@ import { env, waitUntil } from "cloudflare:workers";
 import type { PublicConfig } from "@stargrep/api/contract";
 import { publicConfig } from "@stargrep/api/public-config";
 import { type AuthConfig, authConfig } from "@stargrep/auth/config";
+import type { BudgetShare } from "@stargrep/github/schemas";
+import { budgetShare } from "@stargrep/runtime/budget-share";
 import { aiGatewayKey } from "@stargrep/runtime/config";
 import * as Tracing from "@stargrep/telemetry/cloudflare";
 import start from "@tanstack/react-start/server-entry";
@@ -21,12 +23,13 @@ const bindings = env as DeclaredEnv;
 // TanStack Start's dev server loads this module outside a request, where env is still empty, so config is read on first use.
 let config: {
   readonly aiKey: Option.Option<Redacted.Redacted<string>>;
+  readonly budgetShare: BudgetShare;
   readonly auth: Option.Option<AuthConfig>;
   readonly site: PublicConfig;
 };
 const readConfig = () => {
   config ??= Effect.runSync(
-    Effect.all({ aiKey: aiGatewayKey, auth: authConfig, site: publicConfig }).pipe(
+    Effect.all({ aiKey: aiGatewayKey, budgetShare, auth: authConfig, site: publicConfig }).pipe(
       Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(bindings)),
     ),
   );
@@ -34,13 +37,13 @@ const readConfig = () => {
 };
 
 const serveAuth = makeAuthServer((request) => {
-  const { aiKey, auth } = readConfig();
-  return Option.map(auth, (signIn) => layerAuthRequest(bindings, aiKey, signIn, request));
+  const { aiKey, budgetShare, auth } = readConfig();
+  return Option.map(auth, (signIn) => layerAuthRequest(bindings, aiKey, budgetShare, signIn, request));
 }, Tracing.tracer);
 
 const layerForRequest = (request: Request) => {
-  const { aiKey, auth } = readConfig();
-  return layerRequest(bindings, aiKey, auth, request);
+  const { aiKey, budgetShare, auth } = readConfig();
+  return layerRequest(bindings, aiKey, budgetShare, auth, request);
 };
 
 const serve = makeServer({

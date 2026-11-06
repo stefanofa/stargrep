@@ -12,7 +12,7 @@ import {
 import * as Summarize from "@stargrep/ai/summarize";
 import { FetchIcon, IconQueue, IconStore } from "@stargrep/core/icons";
 import { BlobStore, EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
-import { StarSync } from "@stargrep/core/stars";
+import { StarSync, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import { EmbeddingModelId, EmbeddingModelMismatch } from "@stargrep/db/embedding";
 import { AccountNotFound, DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
@@ -27,8 +27,9 @@ import {
 } from "@stargrep/github/errors";
 import * as GitHub from "@stargrep/github/github";
 import * as GitHubFake from "@stargrep/github/github.fixture";
-import { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
+import { BudgetShare, GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
 import * as TokenGate from "@stargrep/github/token-gate";
+import * as Share from "@stargrep/runtime/budget-share";
 import { aiGatewayKey } from "@stargrep/runtime/config";
 import { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Cause from "effect/Cause";
@@ -46,7 +47,6 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { assert, describe, expect, it } from "vitest";
-import * as BudgetShare from "../src/budget-share.ts";
 import * as EnrichRepoConsumer from "../src/consumers/enrich-repo.ts";
 import * as FetchIconConsumer from "../src/consumers/fetch-icon.ts";
 import * as Settle from "../src/consumers/settle.ts";
@@ -57,6 +57,7 @@ import * as Secrets from "../src/secrets.ts";
 
 const report = { listed: 1, added: 1, unchanged: 0, unstarred: 0, enqueued: 1, shifted: false, requests: 2 };
 const repoId = Schema.decodeSync(RepoId);
+const allLine = SyncRequests.allRate(BudgetShare.make(0.5));
 const inMillis = (millis: number) => Effect.map(Clock.currentTimeMillis, (now) => now + millis);
 
 const recordingQueues = (fail = false) => {
@@ -109,7 +110,7 @@ const syncing =
   (layer: Layer.Layer<StarSync.StarSync>, line = recordingLine(), logs: Array<unknown> = []) =>
   (queues: Settle.Queues, batch: MessageBatch) =>
     run(
-      Settle.processBatch(SyncStarsConsumer.pipeline, queues, batch.messages).pipe(
+      Settle.processBatch(SyncStarsConsumer.pipeline(allLine), queues, batch.messages).pipe(
         Effect.provide(
           Layer.mergeAll(layer, line.layer, Logger.layer([Logger.make(({ message }) => logs.push(message))])),
         ),
@@ -235,7 +236,9 @@ describe("sync-stars consumer", () => {
     const ctx = createExecutionContext();
     await Effect.runPromise(
       Effect.gen(function* () {
-        const fiber = yield* Effect.forkChild(Settle.processBatch(SyncStarsConsumer.pipeline, queues, batch.messages));
+        const fiber = yield* Effect.forkChild(
+          Settle.processBatch(SyncStarsConsumer.pipeline(allLine), queues, batch.messages),
+        );
         yield* TestClock.adjust("3 minutes");
         yield* Fiber.join(fiber);
       }).pipe(Effect.provide(Layer.mergeAll(layer, unusedDb, TestClock.layer()))),
@@ -267,7 +270,7 @@ describe("sync-stars consumer", () => {
     }
     const ctx = createExecutionContext();
     await Effect.runPromise(
-      Settle.processBatch(SyncStarsConsumer.pipeline, queues, batch.messages).pipe(
+      Settle.processBatch(SyncStarsConsumer.pipeline(allLine), queues, batch.messages).pipe(
         Effect.provide(
           Layer.mergeAll(layer, unusedDb, Logger.layer([Logger.make(({ message }) => logs.push(message))])),
         ),
@@ -295,7 +298,7 @@ describe("sync-stars consumer", () => {
     }
     const ctx = createExecutionContext();
     await Effect.runPromise(
-      Settle.processBatch(SyncStarsConsumer.pipeline, queues, batch.messages).pipe(
+      Settle.processBatch(SyncStarsConsumer.pipeline(allLine), queues, batch.messages).pipe(
         Effect.provide(
           Layer.mergeAll(
             Layer.mock(StarSync.StarSync, {}),
@@ -743,7 +746,7 @@ describe("stage secrets", () => {
   });
 
   const share = (stage: string, env: Record<string, string>) =>
-    Effect.runPromiseExit(BudgetShare.stageBudgetShare(stage).pipe(withEnv(env)));
+    Effect.runPromiseExit(Share.stageBudgetShare(stage).pipe(withEnv(env)));
 
   it("reads the GitHub budget share as a number in (0, 1] and defaults it to 0.5", async () => {
     const outcomes = await Promise.all(
@@ -803,7 +806,7 @@ describe("dead letters", () => {
     Effect.runPromise(
       Settle.handleDeadLetters(
         "sync-stars",
-        SyncStarsConsumer.pipeline,
+        SyncStarsConsumer.pipeline(allLine),
       )(Stream.fromIterable(batchOf("sync-stars-dead-letters", bodies).messages)).pipe(
         Effect.provide(Layer.merge(layer, Logger.layer([Logger.make(({ message }) => logs.push(message))]))),
       ),

@@ -7,6 +7,7 @@ import type { contract } from "@stargrep/api/contract";
 import type { ApiServices } from "@stargrep/api/services";
 import { SearchCache } from "@stargrep/core/search";
 import { DbQueryFailed } from "@stargrep/db/errors";
+import { BudgetShare, Login } from "@stargrep/github/schemas";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -19,6 +20,8 @@ import { layerSearchCache } from "../src/server/adapters.ts";
 import { layerRequest } from "../src/server/layers.ts";
 import { requested, waitingStart } from "./entry.ts";
 import { testServer } from "./serve.ts";
+
+const share = BudgetShare.make(0.5);
 
 // biome-ignore lint/suspicious/noExplicitAny: response bodies are read as untyped JSON in these tests.
 type Json = any;
@@ -188,7 +191,7 @@ describe("when the server fails outside the API", () => {
 });
 
 describe("when the database is unreachable", () => {
-  const send = sendTo(testServer((request) => layerRequest(env, Option.none(), Option.none(), request)));
+  const send = sendTo(testServer((request) => layerRequest(env, Option.none(), share, Option.none(), request)));
 
   it("answers a body that is not JSON with 400 and the request's trace ID on every transport", async () => {
     const malformed: RequestInit = {

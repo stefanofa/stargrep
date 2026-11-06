@@ -3,7 +3,7 @@ import type { EmbeddingModelId } from "@stargrep/db/embedding";
 import type { DbQueryFailed } from "@stargrep/db/errors";
 import * as TestDatabase from "@stargrep/db/test-database";
 import type { Owner } from "@stargrep/github/owner";
-import type { GitHubAccountId, Login } from "@stargrep/github/schemas";
+import { BudgetShare, type GitHubAccountId, type Login } from "@stargrep/github/schemas";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -63,11 +63,20 @@ export interface Fakes {
   readonly owners: Map<string, Owner>;
 }
 
+export const share = BudgetShare.make(0.5);
+
+interface Options {
+  readonly hooks?: Hooks;
+  readonly sender?: Layer.Layer<SyncQueue.SyncQueue>;
+  readonly share?: BudgetShare;
+}
+
 const layerOf = (
   github: ReturnType<typeof OwnerLookup.layerMemory>,
   sender: Layer.Layer<SyncQueue.SyncQueue>,
-  hooks: Hooks,
+  options: Options,
 ) => {
+  const hooks: Hooks = options.hooks ?? {};
   const { duringLookup = () => Effect.void, claiming = (claim) => claim } = hooks;
   const lookups = Layer.effect(
     OwnerLookup.OwnerLookup,
@@ -91,7 +100,11 @@ const layerOf = (
       }),
     ),
   );
-  return SyncRequests.layer.pipe(Layer.provide(claims), Layer.provide(lookups), Layer.provide(sender));
+  return SyncRequests.layer(options.share ?? share).pipe(
+    Layer.provide(claims),
+    Layer.provide(lookups),
+    Layer.provide(sender),
+  );
 };
 
 const defaultLogins = ["octocat", "swarm", "hubot", "grace", "linus", "ada", "alan"];
@@ -100,7 +113,7 @@ const defaultLogins = ["octocat", "swarm", "hubot", "grace", "linus", "ada", "al
 // knows the default logins, each with 42 stars.
 export const admitting = Effect.fn("admitting")(function* <A, E>(
   body: (fakes: Fakes) => Effect.Effect<A, E, SyncRequests.SyncRequests | Db.Db | TestDatabase.TestDatabase>,
-  options: { readonly hooks?: Hooks; readonly sender?: Layer.Layer<SyncQueue.SyncQueue> } = {},
+  options: Options = {},
 ) {
   const queue = SyncQueue.layerMemory();
   const github = OwnerLookup.layerMemory();
@@ -110,7 +123,7 @@ export const admitting = Effect.fn("admitting")(function* <A, E>(
   yield* (yield* TestDatabase.TestDatabase).query("truncate github_accounts, sync_requests, rate_lines cascade");
   yield* TestClock.setTime(start);
   const fakes: Fakes = { sent: queue.sent, delays: queue.delays, lookups: github.lookups, owners: github.owners };
-  return yield* body(fakes).pipe(Effect.provide(layerOf(github, options.sender ?? queue.layer, options.hooks ?? {})));
+  return yield* body(fakes).pipe(Effect.provide(layerOf(github, options.sender ?? queue.layer, options)));
 });
 
 export const brokenQueue = Layer.succeed(

@@ -7,7 +7,14 @@ import { UserId } from "@stargrep/db/auth-schema";
 import type { EmbeddingModelId } from "@stargrep/db/embedding";
 import { DbQueryFailed, RepoNotFound } from "@stargrep/db/errors";
 import * as TestDatabase from "@stargrep/db/test-database";
-import type { GitHubAccountId, Login, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
+import {
+  BudgetShare,
+  type GitHubAccountId,
+  type Login,
+  type RepoId,
+  type RepoName,
+  type RepoNodeId,
+} from "@stargrep/github/schemas";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
 import * as Context from "effect/Context";
@@ -495,7 +502,7 @@ const syncedAccount = Effect.gen(function* () {
 });
 
 const signedInWith = (sender: Layer.Layer<SyncQueue.SyncQueue>) =>
-  SyncRequests.layer.pipe(
+  SyncRequests.layer(BudgetShare.make(0.5)).pipe(
     Layer.provideMerge(OwnerLookup.layerMemory().layer),
     Layer.provideMerge(TestDatabase.layerMemory({ embeddingModel: "test/model" as EmbeddingModelId })),
     Layer.provideMerge(sender),

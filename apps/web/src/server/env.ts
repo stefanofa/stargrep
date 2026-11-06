@@ -12,6 +12,7 @@ export interface WebEnv {
   readonly WORKER: Fetcher & OwnerWorker;
   readonly ICONS: R2Bucket;
   readonly CALLER_KEY: string;
+  readonly GITHUB_BUDGET_SHARE: string;
   readonly AI_GATEWAY_API_KEY?: string;
 }
 

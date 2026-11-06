@@ -20,7 +20,7 @@ export default defineConfig({
           SEARCH_PER_CALLER: { namespace_id: "3", simple: { limit: 120, period: 60 } },
           STARS_PER_CALLER: { namespace_id: "7", simple: { limit: 60, period: 60 } },
         },
-        bindings: { CALLER_KEY: "test-caller-key" },
+        bindings: { CALLER_KEY: "test-caller-key", GITHUB_BUDGET_SHARE: "0.5" },
         serviceBindings: { WORKER: "main-worker" },
         workers: [
           {

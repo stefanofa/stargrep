@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
 import * as Db from "@stargrep/db";
 import * as TestDatabase from "@stargrep/db/test-database";
-import type { Login } from "@stargrep/github/schemas";
+import { BudgetShare, type Login } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -47,6 +47,22 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests line", (it) => {
         expect(Option.map(stored, (found) => found.starredCount)).toEqual(Option.some(2_431));
       }),
     ),
+  );
+
+  it.effect("pays the line out at 80% of the budget share of 5,000 requests an hour", () =>
+    Effect.gen(function* () {
+      expect(SyncRequests.allRate(BudgetShare.make(0.5)).unitsPerHour).toBe(2_000);
+      expect(SyncRequests.allRate(BudgetShare.make(0.25)).unitsPerHour).toBe(1_000);
+      yield* admitting(
+        ({ owners }) =>
+          Effect.gen(function* () {
+            owners.set("big-library", user("big-library", 7_001, 2_431));
+            yield* request("big-library");
+            expect(yield* lineUnits()).toBe(2 * 29);
+          }),
+        { share: BudgetShare.make(0.25) },
+      );
+    }),
   );
 
   it.effect("makes a sync past the burst wait in line, sends it delayed, and reads it queued once it starts", () =>
