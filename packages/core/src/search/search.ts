@@ -79,6 +79,11 @@ export interface SearchOutcome {
   readonly results: ReadonlyArray<SearchResult>;
 }
 
+interface Found {
+  readonly planned: QueryPlanner.Planned;
+  readonly results: ReadonlyArray<SearchResult>;
+}
+
 export class Search extends Context.Service<
   Search,
   {
@@ -148,11 +153,6 @@ export const make = Effect.gen(function* () {
     if (Option.isNone(account)) return yield* new AccountNotSynced({ login: scope.login });
     return { kind: "stars", accountId: account.value.id } satisfies Db.SearchScope;
   });
-
-  interface Found {
-    readonly planned: QueryPlanner.Planned;
-    readonly results: ReadonlyArray<SearchResult>;
-  }
 
   // A query embedding the allowance refuses runs the words as typed on full text alone, reported as a fallback.
   const find = Effect.fn("Search.find")(function* (

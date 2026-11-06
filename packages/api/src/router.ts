@@ -223,7 +223,6 @@ const withProgress = <E, R>(login: Login, status: Effect.Effect<SyncRequests.Syn
   );
 
 const implementer = implement(contract).$context<ApiContext>();
-// Router-level middleware such as instrumentation runs before input validation, so a validation error gets a trace ID.
 const os = implementer.use(instrumentation);
 
 export const router = implementer.router({
