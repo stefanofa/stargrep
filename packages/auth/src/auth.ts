@@ -65,8 +65,8 @@ interface TokenSource {
 }
 
 // Better Auth decrypts the stored token, refreshes it when it is within five seconds of expiry, and stores the new one
-// encrypted. GitHub refuses a revoked or expired refresh token with a 200 that names an error, and Better Auth then
-// answers with the expired token, so an answer that is still expired is a failure here.
+// encrypted. Better Auth fails a refresh only on an error status. GitHub can name the error in a 200 body instead, and
+// Better Auth then answers with the expired token, so an answer that is still expired is a failure here.
 export const readGitHubToken = (auth: TokenSource, userId: UserId) =>
   Effect.tryPromise({
     try: async () => {

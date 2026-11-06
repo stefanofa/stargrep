@@ -1,4 +1,4 @@
-import { githubSignIn, names, optionalSecret, required } from "@stargrep/auth/config";
+import { names, optionalSecret, required, tokenClientBindings } from "@stargrep/auth/config";
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -13,14 +13,9 @@ export const betterAuthSecret = Effect.fn("betterAuthSecret")(function* (stage: 
   return Option.isSome(secret) ? secret.value : yield* BetterAuthSecret;
 });
 
-// The main Worker reads a signed-in user's token for the work they started. A stage that signs in through prod's proxy
-// has no client secret, so its tokens cannot refresh there.
+// The main Worker reads a signed-in user's token for the work they started.
 export const tokenBindings = Effect.fn("tokenBindings")(function* (stage: string) {
-  const signIn = yield* githubSignIn;
-  if (Option.isNone(signIn)) return {};
-  return {
-    [names.clientId]: signIn.value.clientId,
-    ...(signIn.value._tag === "direct" ? { [names.clientSecret]: signIn.value.clientSecret } : {}),
-    [names.secret]: yield* betterAuthSecret(stage),
-  };
+  const client = yield* tokenClientBindings;
+  if (!(names.clientId in client)) return {};
+  return { ...client, [names.secret]: yield* betterAuthSecret(stage) };
 });
