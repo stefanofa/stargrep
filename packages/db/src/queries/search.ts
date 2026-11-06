@@ -126,7 +126,8 @@ export interface SearchScope {
 export interface HybridSearch {
   readonly scope: SearchScope;
   readonly text: string;
-  readonly embedding: Embedding;
+  // Null searches full text alone.
+  readonly embedding: Embedding | null;
   readonly maxDistance: number;
   readonly limit: number;
   readonly name: string | null;
@@ -184,7 +185,7 @@ const prefixQuery = (text: string) => {
     : words.map((word, index) => (index === words.length - 1 ? `${word}:*` : word)).join(" & ");
 };
 
-const ranked = (search: HybridSearch, vector: EmbeddingVector, model: EmbeddingModelId) => {
+const ranked = (search: HybridSearch, vector: EmbeddingVector | null, model: EmbeddingModelId) => {
   const aliases = new Map(search.metrics.map((metric, index) => [metric.id, sql.raw(`m${index}`)]));
   const alias = (metricId: string) => {
     const found = aliases.get(metricId);
@@ -219,8 +220,12 @@ const ranked = (search: HybridSearch, vector: EmbeddingVector, model: EmbeddingM
     select
       ${repos.id} as id ${carry("metric")},
       case when ${repos.search} @@ query then ts_rank_cd(${repos.search}, query) end as text_score,
-      case when ${repos.embeddingModel} = ${model}
-        then ${repos.embedding} <=> ${`[${vector.join(",")}]`}::halfvec end as distance,
+      ${
+        vector === null
+          ? sql`null::float8`
+          : sql`case when ${repos.embeddingModel} = ${model}
+        then ${repos.embedding} <=> ${`[${vector.join(",")}]`}::halfvec end`
+      } as distance,
       ${name} as name_match
     from ${stars}
     join ${repos} on ${repos.id} = ${stars.repoId}
@@ -286,38 +291,36 @@ export const make = Effect.fn("Db.search.make")(function* (configuredModel: Embe
   const { run } = yield* Postgres.Postgres;
 
   return {
-    hybrid: (search) =>
-      requireModel(configuredModel, search.embedding).pipe(
-        Effect.flatMap((vector) =>
-          run("search.hybrid", (db) => {
-            const hits = db
-              .$with("ranked", {
-                id: sql<number>`id`.mapWith(Number).as("id"),
-                nameMatch: sql<boolean>`name_match`.as("name_match"),
-                textRank: sql<number | null>`text_rank`.mapWith(Number).as("text_rank"),
-                vectorRank: sql<number | null>`vector_rank`.mapWith(Number).as("vector_rank"),
-                score: sql<number>`relevance`.mapWith(Number).as("relevance"),
-                metrics: sql<ReadonlyArray<number | null>>`metrics`.as("metrics"),
-                position: sql<number>`position`.mapWith(Number).as("position"),
-              })
-              .as(ranked(search, vector, configuredModel));
-            return db
-              .with(hits)
-              .select({
-                repo: repoColumns,
-                nameMatch: hits.nameMatch,
-                textRank: hits.textRank,
-                vectorRank: hits.vectorRank,
-                score: hits.score,
-                metrics: hits.metrics,
-              })
-              .from(hits)
-              .innerJoin(repos, eq(repos.id, hits.id))
-              .orderBy(hits.position);
-          }),
-        ),
-        Effect.flatMap(decodeHits("search.hybrid")),
-      ),
+    hybrid: Effect.fnUntraced(function* (search: HybridSearch) {
+      const vector = search.embedding === null ? null : yield* requireModel(configuredModel, search.embedding);
+      const rows = yield* run("search.hybrid", (db) => {
+        const hits = db
+          .$with("ranked", {
+            id: sql<number>`id`.mapWith(Number).as("id"),
+            nameMatch: sql<boolean>`name_match`.as("name_match"),
+            textRank: sql<number | null>`text_rank`.mapWith(Number).as("text_rank"),
+            vectorRank: sql<number | null>`vector_rank`.mapWith(Number).as("vector_rank"),
+            score: sql<number>`relevance`.mapWith(Number).as("relevance"),
+            metrics: sql<ReadonlyArray<number | null>>`metrics`.as("metrics"),
+            position: sql<number>`position`.mapWith(Number).as("position"),
+          })
+          .as(ranked(search, vector, configuredModel));
+        return db
+          .with(hits)
+          .select({
+            repo: repoColumns,
+            nameMatch: hits.nameMatch,
+            textRank: hits.textRank,
+            vectorRank: hits.vectorRank,
+            score: hits.score,
+            metrics: hits.metrics,
+          })
+          .from(hits)
+          .innerJoin(repos, eq(repos.id, hits.id))
+          .orderBy(hits.position);
+      });
+      return yield* decodeHits("search.hybrid")(rows);
+    }),
     matchesAsPrefix: ({ scope, text }) => {
       const query = prefixQuery(text);
       if (query === null) return Effect.succeed(false);

@@ -1,7 +1,4 @@
-import { env, exports } from "cloudflare:workers";
-import * as Fake from "@stargrep/ai/fake";
-import { toAiSchema } from "@stargrep/ai/schema-bridge";
-import * as TextGeneration from "@stargrep/ai/text-generation";
+import { exports } from "cloudflare:workers";
 import { Caller } from "@stargrep/api/caller";
 import { IconHost } from "@stargrep/api/icon-host";
 import { defaultPublicConfig } from "@stargrep/api/public-config";
@@ -13,10 +10,8 @@ import { SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 import { answerUrl, makeAnswerCache } from "../src/server/answer-cache.ts";
-import { layerPlannerAllowance } from "../src/server/search-limits.ts";
 import { repo } from "./entry.ts";
 import { testServer } from "./serve.ts";
 
@@ -157,42 +152,5 @@ describe("the search limit", () => {
     const refused: Json = await (await search("192.0.2.121")).json();
     expect([statuses[120], refused.code]).toEqual([429, "TOO_MANY_REQUESTS"]);
     expect((await search("192.0.2.122")).status).toBe(200);
-  });
-});
-
-describe("the planner allowance", () => {
-  const Answer = toAiSchema(Schema.Struct({ answer: Schema.Finite }));
-  const oneCall = (env as typeof env & { readonly PLANNER_ONE_CALL: RateLimit }).PLANNER_ONE_CALL;
-
-  const planner = (perCaller: RateLimit, caller: string) => {
-    const calls = { made: 0 };
-    const layer = layerPlannerAllowance({ perCaller, overall: env.PLANNER_OVERALL }, caller).pipe(
-      Layer.provide(
-        Fake.layerTextGeneration(() => {
-          calls.made++;
-          return { answer: 1 };
-        }),
-      ),
-    );
-    const generate = TextGeneration.TextGeneration.use((generation) =>
-      generation.generate({ schema: Answer, system: "s", prompt: "p" }),
-    ).pipe(Effect.result, Effect.provide(layer));
-    return { calls, generate: () => Effect.runPromise(generate) };
-  };
-
-  it("refuses a caller's planner call past its limit without calling the model, and lets another caller through", async () => {
-    const first = planner(oneCall, "192.0.2.60");
-    expect((await first.generate())._tag).toBe("Success");
-    const refused = await first.generate();
-    expect(refused._tag === "Failure" && refused.failure).toMatchObject({ _tag: "AiSpendLimited", limit: "caller" });
-    expect(first.calls.made).toBe(1);
-    expect((await planner(oneCall, "192.0.2.61").generate())._tag).toBe("Success");
-  });
-
-  it("lets the call through when the limiter fails", async () => {
-    const down = { limit: () => Promise.reject(new Error("limiter down")) } as unknown as RateLimit;
-    const outage = planner(down, "192.0.2.62");
-    expect((await outage.generate())._tag).toBe("Success");
-    expect(outage.calls.made).toBe(1);
   });
 });

@@ -11,6 +11,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import * as ModelAllowance from "./model-allowance.ts";
 import * as PlannerPrompt from "./planner-prompt.ts";
 import * as QueryPlan from "./query-plan.ts";
 import * as QueryPlanner from "./query-planner.ts";
@@ -28,6 +29,7 @@ const dotfiles = exampleOutput("only CLIs for managing dotfiles, still maintaine
 const planner = (
   respond: (prompt: string) => unknown,
   cache: Layer.Layer<SearchCache.SearchCache> = SearchCache.layerMemory,
+  allowance: Layer.Layer<ModelAllowance.ModelAllowance> = ModelAllowance.layerUnmetered,
 ) => {
   const prompts: Array<string> = [];
   const layer = QueryPlanner.layer.pipe(
@@ -38,6 +40,7 @@ const planner = (
       }, "fake/planner"),
     ),
     Layer.provide(cache),
+    Layer.provide(allowance),
   );
   return { prompts, layer };
 };
@@ -162,7 +165,11 @@ it.effect("searches the query as typed when the planner stalls past its timeout,
       run: () => Effect.never,
     }),
   );
-  const layer = QueryPlanner.layer.pipe(Layer.provide(stalled), Layer.provide(SearchCache.layerMemory));
+  const layer = QueryPlanner.layer.pipe(
+    Layer.provide(stalled),
+    Layer.provide(SearchCache.layerMemory),
+    Layer.provide(ModelAllowance.layerUnmetered),
+  );
   const collected = collectSpans();
   return Effect.gen(function* () {
     const query = "go library for parsing yaml";
@@ -180,6 +187,36 @@ it.effect("searches the query as typed when the planner stalls past its timeout,
       ]),
     );
     expect(collected.text()).not.toContain("yaml");
+  }).pipe(Effect.provide(layer), Effect.withTracer(collected.tracer));
+});
+
+it.effect("searches the query as typed when the allowance refuses a plan, and asks it only on a cache miss", () => {
+  const asked: Array<ModelAllowance.ModelCall> = [];
+  let refuse = false;
+  const allowance = Layer.succeed(
+    ModelAllowance.ModelAllowance,
+    ModelAllowance.ModelAllowance.of({
+      take: (call) =>
+        Effect.suspend(() => {
+          asked.push(call);
+          return refuse ? Effect.fail(new ModelAllowance.ModelCallRefused({ call, reason: "network" })) : Effect.void;
+        }),
+    }),
+  );
+  const { prompts, layer } = planner(() => encode(goYaml), SearchCache.layerMemory, allowance);
+  const collected = collectSpans();
+  return Effect.gen(function* () {
+    expect((yield* plan("go library for parsing yaml")).source).toBe("model");
+    refuse = true;
+    expect((yield* plan("go library for parsing yaml")).source).toBe("cache");
+    expect(yield* plan("rust library for terminal dashboards")).toEqual({
+      plan: QueryPlan.asTyped("rust library for terminal dashboards", "sentence"),
+      source: "fallback",
+      failure: "ModelCallRefused",
+    });
+    expect([asked, prompts.length]).toEqual([["plan", "plan"], 1]);
+    const plans = collected.spans.filter((span) => span.name === "QueryPlanner.plan");
+    expect(plans.at(-1)?.attributes.get("search.plan.failure")).toBe("ModelCallRefused");
   }).pipe(Effect.provide(layer), Effect.withTracer(collected.tracer));
 });
 

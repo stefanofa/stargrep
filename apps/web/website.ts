@@ -83,14 +83,6 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
           namespaceId: namespaceId(stage, "stars-per-caller"),
           simple: { limit: 60, period: 60 },
         }),
-        PLANNER_PER_CALLER: Cloudflare.RateLimit("PLANNER_PER_CALLER", {
-          namespaceId: namespaceId(stage, "planner-per-caller"),
-          simple: { limit: 20, period: 60 },
-        }),
-        PLANNER_OVERALL: Cloudflare.RateLimit("PLANNER_OVERALL", {
-          namespaceId: namespaceId(stage, "planner-overall"),
-          simple: { limit: 300, period: 60 },
-        }),
         ...Option.match(key, { onNone: () => ({}), onSome: (value) => ({ [apiKeyName]: value }) }),
         ...Option.match(demoLogin, { onNone: () => ({}), onSome: (value) => ({ [demoLoginName]: value }) }),
         ...(yield* signInBindings),

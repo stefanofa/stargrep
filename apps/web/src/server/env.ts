@@ -9,8 +9,6 @@ export interface WebEnv {
   readonly SYNC_OVERALL: RateLimit;
   readonly SEARCH_PER_CALLER: RateLimit;
   readonly STARS_PER_CALLER: RateLimit;
-  readonly PLANNER_PER_CALLER: RateLimit;
-  readonly PLANNER_OVERALL: RateLimit;
   readonly WORKER: Fetcher & OwnerWorker;
   readonly ICONS: R2Bucket;
   readonly CALLER_KEY: string;

@@ -11,7 +11,8 @@ import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { type MetricId, registry } from "./metric-registry.ts";
-import type * as QueryPlan from "./query-plan.ts";
+import * as ModelAllowance from "./model-allowance.ts";
+import * as QueryPlan from "./query-plan.ts";
 import * as QueryPlanner from "./query-planner.ts";
 import * as SearchCache from "./search-cache.ts";
 import * as Vocabulary from "./vocabulary.ts";
@@ -112,6 +113,7 @@ export const make = Effect.gen(function* () {
   const embeddings = yield* Embeddings.Embeddings;
   const cache = yield* SearchCache.SearchCache;
   const planner = yield* QueryPlanner.QueryPlanner;
+  const allowance = yield* ModelAllowance.ModelAllowance;
   const vectors = SearchCache.entry({
     namespace: `embedding/${embeddings.model.id}`,
     schema: Float32Vector,
@@ -122,6 +124,7 @@ export const make = Effect.gen(function* () {
     function* (text: string) {
       const cached = yield* cache.lookup(vectors, text);
       if (Option.isSome(cached)) return yield* decodeEmbedding({ model: embeddings.model.id, vector: cached.value });
+      yield* allowance.take("embed");
       const [fresh] = yield* embeddings.embed([text]);
       const embedding = yield* decodeEmbedding({ model: embeddings.model.id, vector: fresh?.vector ?? [] });
       yield* cache.store(vectors, text, embedding.vector);
@@ -146,46 +149,70 @@ export const make = Effect.gen(function* () {
     return { kind: "stars", accountId: account.value.id } satisfies Db.SearchScope;
   });
 
-  const find = Effect.fn("Search.find")(function* (scope: Db.SearchScope, plan: QueryPlan.QueryPlan, limit: number) {
-    const metrics = planMetrics(plan);
+  interface Found {
+    readonly planned: QueryPlanner.Planned;
+    readonly results: ReadonlyArray<SearchResult>;
+  }
+
+  // A query embedding the allowance refuses runs the words as typed on full text alone, reported as a fallback.
+  const find = Effect.fn("Search.find")(function* (
+    scope: Db.SearchScope,
+    planned: QueryPlanner.Planned,
+    limit: number,
+  ) {
+    const embedding = yield* embedQuery(planned.plan.semanticText).pipe(
+      Effect.asSome,
+      Effect.catchTags({ ModelCallRefused: () => Effect.succeedNone }),
+    );
+    const ran: QueryPlanner.Planned = Option.isSome(embedding)
+      ? planned
+      : {
+          plan: QueryPlan.asTyped(planned.plan.textQuery, QueryPlan.queryKind(planned.plan.textQuery)),
+          source: "fallback",
+          failure: "ModelCallRefused",
+        };
+    const metrics = planMetrics(ran.plan);
     const hits = yield* db.search.hybrid({
       scope,
-      text: plan.textQuery,
-      embedding: yield* embedQuery(plan.semanticText),
+      text: ran.plan.textQuery,
+      embedding: Option.getOrNull(embedding),
       maxDistance: embeddings.model.maxMatchDistance,
       limit,
-      name: plan.exactName,
+      name: ran.plan.exactName,
       metrics: metrics.map((id) => registry[id]),
-      filters: { ...plan.filters, languages: Vocabulary.matchNames(plan.filters.languages) },
-      rankBy: plan.ranking._tag === "metric" ? plan.ranking : null,
+      filters: { ...ran.plan.filters, languages: Vocabulary.matchNames(ran.plan.filters.languages) },
+      rankBy: ran.plan.ranking._tag === "metric" ? ran.plan.ranking : null,
     });
-    return hits.map(
-      (hit): SearchResult => ({
-        repo: hit.repo,
-        nameMatch: hit.nameMatch,
-        textRank: hit.textRank,
-        vectorRank: hit.vectorRank,
-        metrics: metrics.map((metric, index) => ({ metric, value: hit.metrics[index] ?? null })),
-      }),
-    );
+    return {
+      planned: ran,
+      results: hits.map(
+        (hit): SearchResult => ({
+          repo: hit.repo,
+          nameMatch: hit.nameMatch,
+          textRank: hit.textRank,
+          vectorRank: hit.vectorRank,
+          metrics: metrics.map((metric, index) => ({ metric, value: hit.metrics[index] ?? null })),
+        }),
+      ),
+    } satisfies Found;
   });
 
-  const outcome = (planned: QueryPlanner.Planned, results: ReadonlyArray<SearchResult>) =>
+  const outcome = ({ planned, results }: Found) =>
     Metric.update(Metric.withAttributes(plansMade, QueryPlanner.planAttributes(planned)), 1).pipe(
       Effect.as<SearchOutcome>({ plan: planned.plan, planSource: planned.source, results }),
     );
 
   const search = Effect.fn("Search.search")(function* (request: SearchRequest) {
     const scope = yield* dbScope(request.scope);
-    const typed = yield* planner.plan(request.query);
-    const results = yield* find(scope, typed.plan, request.limit);
-    if (results.length > 0 || typed.source !== "keyword") return yield* outcome(typed, results);
+    const typed = yield* find(scope, yield* planner.plan(request.query), request.limit);
+    if (typed.results.length > 0 || typed.planned.source !== "keyword") return yield* outcome(typed);
     // Typed words that match nothing are often a misspelled name, which the planner can read past. Words that still
     // match as a prefix are most likely a word the user is still typing, so they skip the planner.
-    if (yield* db.search.matchesAsPrefix({ scope, text: typed.plan.textQuery })) return yield* outcome(typed, results);
+    const text = typed.planned.plan.textQuery;
+    if (yield* db.search.matchesAsPrefix({ scope, text })) return yield* outcome(typed);
     const read = yield* planner.planWithModel(request.query);
-    if (read.source === "fallback") return yield* outcome(read, results);
-    return yield* outcome(read, yield* find(scope, read.plan, request.limit));
+    if (read.source === "fallback") return yield* outcome({ planned: read, results: typed.results });
+    return yield* outcome(yield* find(scope, read, request.limit));
   });
 
   return Search.of({ search });

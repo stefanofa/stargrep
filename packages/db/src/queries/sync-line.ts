@@ -15,7 +15,8 @@ export const CallerKey = Schema.String.pipe(Schema.brand("CallerKey"));
 export type CallerKey = typeof CallerKey.Type;
 
 // Every signed-out sync takes a turn in the line all. A login that never synced also takes one in its caller's line.
-export type LineKey = "all" | `caller/${CallerKey}`;
+// Planner and query embedding calls take one in model/all and one in their caller's model line.
+export type LineKey = "all" | `caller/${CallerKey}` | "model/all" | `model/${CallerKey}`;
 
 export const callerLine = (caller: CallerKey): LineKey => `caller/${caller}`;
 

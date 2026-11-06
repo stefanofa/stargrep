@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { createRouterClient, ORPCError } from "@orpc/server";
-import { AiSpendLimited } from "@stargrep/ai/errors";
 import { QueryPlan, Search } from "@stargrep/core/search";
 import { OwnerLookup, SyncQueue, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
@@ -718,12 +717,6 @@ describe("rate limits", () => {
       const error = await failure(call);
       expect([error.code, errorStatus[error.code as WireCode]]).toEqual(["SERVICE_UNAVAILABLE", 503]);
     }
-  });
-
-  test("map a refused model call to too many requests", async () => {
-    const spent = client({ search: () => Effect.fail(new AiSpendLimited({ operation: "embed", limit: "caller" })) });
-    const error = await failure(spent.api.search({ login: "grace", q: "x" }));
-    expect([error.code, errorStatus[error.code as WireCode]]).toEqual(["TOO_MANY_REQUESTS", 429]);
   });
 });
 

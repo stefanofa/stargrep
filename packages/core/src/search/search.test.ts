@@ -1,7 +1,5 @@
 import { expect } from "bun:test";
-import * as Allowance from "@stargrep/ai/allowance";
 import * as Embeddings from "@stargrep/ai/embeddings";
-import { AiSpendLimited } from "@stargrep/ai/errors";
 import * as Fake from "@stargrep/ai/fake";
 import * as Db from "@stargrep/db";
 import { Embedding, EmbeddingModelId } from "@stargrep/db/embedding";
@@ -16,6 +14,7 @@ import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { registry } from "./metric-registry.ts";
+import * as ModelAllowance from "./model-allowance.ts";
 import * as QueryPlan from "./query-plan.ts";
 import * as QueryPlanner from "./query-planner.ts";
 import * as Search from "./search.ts";
@@ -26,7 +25,6 @@ const decodeEmbedding = Schema.decodeUnknownEffect(Embedding);
 
 const calls = { prompts: [] as Array<string>, embedded: [] as Array<string> };
 let respond: (prompt: string) => unknown = () => ({});
-let plannerAllowance: Effect.Effect<void, AiSpendLimited> = Effect.void;
 
 const layerEmbeddings = Layer.effect(
   Embeddings.Embeddings,
@@ -43,17 +41,14 @@ const layerSearch = <E>(db: Layer.Layer<Db.Db | Db.Transactions | TestDatabase.T
     Layer.provideMerge(
       QueryPlanner.layer.pipe(
         Layer.provide(
-          Allowance.layer(Effect.suspend(() => plannerAllowance)).pipe(
-            Layer.provide(
-              Fake.layerTextGeneration((prompt) => {
-                calls.prompts.push(prompt);
-                return respond(prompt);
-              }, "fake/planner"),
-            ),
-          ),
+          Fake.layerTextGeneration((prompt) => {
+            calls.prompts.push(prompt);
+            return respond(prompt);
+          }, "fake/planner"),
         ),
       ),
     ),
+    Layer.provideMerge(ModelAllowance.layerUnmetered),
     Layer.provideMerge(SearchCache.layerMemory),
     Layer.provideMerge(layerEmbeddings),
     Layer.provideMerge(db),
@@ -195,6 +190,7 @@ const searchCases = (test: {
     | Db.Db
     | TestDatabase.TestDatabase
     | Embeddings.Embeddings
+    | ModelAllowance.ModelAllowance
   >;
 }) => {
   const search = (request: Search.SearchRequest) =>
@@ -316,20 +312,6 @@ const searchCases = (test: {
       const outcome = yield* service.search({ scope, query: "qwpoeiruty", limit: 10 });
       expect([outcome.planSource, outcome.results, searched]).toEqual(["fallback", [], ["qwpoeiruty"]]);
       expect(calls.prompts).toHaveLength(1);
-    }),
-  );
-
-  test.effect("searches the words as typed when the allowance refuses the planner, and still finds repos", () =>
-    Effect.gen(function* () {
-      const scope = yield* seed(921, orms(9070));
-      respond = () => ormPlan({}, { _tag: "relevance" }, "rust orm for sql databases");
-      plannerAllowance = Effect.fail(new AiSpendLimited({ operation: "generate", limit: "overall" }));
-      const outcome = yield* Search.Search.use((search) =>
-        search.search({ scope, query: "a rust orm for sql databases", limit: 10 }),
-      ).pipe(Effect.ensuring(Effect.sync(() => (plannerAllowance = Effect.void))));
-      expect(outcome.planSource).toBe("fallback");
-      expect(outcome.results.map((result) => `${result.repo.name}`)).toContain("diesel");
-      expect(calls.prompts).toEqual([]);
     }),
   );
 

@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
+import * as ModelAllowance from "./model-allowance.ts";
 import * as PlannerPrompt from "./planner-prompt.ts";
 import * as QueryPlan from "./query-plan.ts";
 import * as SearchCache from "./search-cache.ts";
@@ -16,7 +17,11 @@ export type PlanSource = typeof PlanSource.Type;
 
 export type Planned =
   | { readonly plan: QueryPlan.QueryPlan; readonly source: Exclude<PlanSource, "fallback"> }
-  | { readonly plan: QueryPlan.QueryPlan; readonly source: "fallback"; readonly failure: AiError["_tag"] };
+  | {
+      readonly plan: QueryPlan.QueryPlan;
+      readonly source: "fallback";
+      readonly failure: AiError["_tag"] | ModelAllowance.ModelCallRefused["_tag"];
+    };
 
 export class QueryPlanner extends Context.Service<
   QueryPlanner,
@@ -40,6 +45,7 @@ const hasDates = ({ filters }: QueryPlan.PlannerOutput) =>
 const make = Effect.gen(function* () {
   const textGeneration = yield* TextGeneration.TextGeneration;
   const cache = yield* SearchCache.SearchCache;
+  const allowance = yield* ModelAllowance.ModelAllowance;
   const plans = SearchCache.entry({
     namespace: `plan/${textGeneration.model}/${PlannerPrompt.version}`,
     schema: CachedPlan,
@@ -58,21 +64,22 @@ const make = Effect.gen(function* () {
       return { plan: QueryPlan.fromPlannerOutput(query, cached.value.output), source: "cache" } satisfies Planned;
     }
 
-    return yield* textGeneration
-      .generate({
-        schema: PlannerPrompt.schema,
-        system: PlannerPrompt.system,
-        prompt: PlannerPrompt.prompt({ today, query }),
-      })
-      .pipe(
-        Effect.tap((output) => cache.store(plans, key, { plannedOn: today, output })),
-        Effect.map((output): Planned => ({ plan: QueryPlan.fromPlannerOutput(query, output), source: "model" })),
-        Effect.catch((error) =>
-          Effect.logWarning("Query planner failed, searching the query as typed", { error: error._tag }).pipe(
-            Effect.as<Planned>({ plan: QueryPlan.asTyped(query, kind), source: "fallback", failure: error._tag }),
-          ),
+    return yield* allowance.take("plan").pipe(
+      Effect.andThen(
+        textGeneration.generate({
+          schema: PlannerPrompt.schema,
+          system: PlannerPrompt.system,
+          prompt: PlannerPrompt.prompt({ today, query }),
+        }),
+      ),
+      Effect.tap((output) => cache.store(plans, key, { plannedOn: today, output })),
+      Effect.map((output): Planned => ({ plan: QueryPlan.fromPlannerOutput(query, output), source: "model" })),
+      Effect.catch((error) =>
+        Effect.logWarning("Query planner failed, searching the query as typed", { error: error._tag }).pipe(
+          Effect.as<Planned>({ plan: QueryPlan.asTyped(query, kind), source: "fallback", failure: error._tag }),
         ),
-      );
+      ),
+    );
   });
 
   const plan = Effect.fn("QueryPlanner.plan")(function* (typed: string) {

@@ -12,6 +12,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
+import * as ModelAllowance from "../src/search/model-allowance.ts";
 import * as QueryPlanner from "../src/search/query-planner.ts";
 import * as Search from "../src/search/search.ts";
 import * as SearchCache from "../src/search/search-cache.ts";
@@ -45,6 +46,7 @@ const layerSearch = Search.layer.pipe(
   ),
   Layer.provideMerge(Gateway.layerEmbeddings(Models.embeddingModel).pipe(Layer.provide(Gateway.layerProviderConfig))),
   Layer.provideMerge(layerDb(Models.embeddingModel.id)),
+  Layer.provideMerge(ModelAllowance.layerUnmetered),
 );
 
 const search = Command.make(

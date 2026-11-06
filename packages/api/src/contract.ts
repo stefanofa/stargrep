@@ -78,7 +78,7 @@ export const SearchResult = Schema.Struct({
 export const SearchOutput = Schema.Struct({
   planSource: QueryPlanner.PlanSource.annotate({
     description:
-      "How the query was read. keyword searched the words as typed, cache and model used a query plan, and fallback searched the words as typed because the planner failed.",
+      "How the query was read. keyword searched the words as typed, cache and model used a query plan, and fallback searched the words as typed because the planner failed or the network's model allowance ran out.",
   }),
   results: Schema.Array(SearchResult),
 });

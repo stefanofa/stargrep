@@ -1,20 +1,21 @@
 import * as Gateway from "@stargrep/ai/gateway";
+import { Caller } from "@stargrep/api/caller";
 import { IconHost } from "@stargrep/api/icon-host";
 import type { AuthConfig } from "@stargrep/auth/config";
-import { QueryPlanner, Search } from "@stargrep/core/search";
+import { ModelAllowance, QueryPlanner, Search } from "@stargrep/core/search";
 import { SyncRequests } from "@stargrep/core/stars";
 import * as DbRuntime from "@stargrep/runtime/db";
+import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import type * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import { layerSearchCache, layerSyncQueue } from "./adapters.ts";
-import { callerAddress, layerCaller } from "./caller.ts";
+import { layerCaller } from "./caller.ts";
 import type { WebEnv } from "./env.ts";
 import { layerOwnerLookup } from "./owner-lookup.ts";
 import { layerRateLimiter } from "./rate-limiter.ts";
-import { layerPlannerAllowance } from "./search-limits.ts";
 import { layerAuth, layerViewers } from "./viewers.ts";
 
 const maxDatabaseConnections = 2;
@@ -44,15 +45,10 @@ export const layerRequest = (
     layerViewers(auth, request, connectionString(env)),
     Layer.succeed(IconHost, IconHost.of({ origin: new URL(request.url).origin })),
   ).pipe(
-    Layer.provideMerge(layerCaller(env.CALLER_KEY, request)),
     Layer.provideMerge(QueryPlanner.layer),
     Layer.provideMerge(layerSearchCache(env.SEARCH_CACHE)),
-    Layer.provideMerge(
-      layerPlannerAllowance(
-        { perCaller: env.PLANNER_PER_CALLER, overall: env.PLANNER_OVERALL },
-        callerAddress(request),
-      ),
-    ),
+    Layer.provideMerge(Layer.unwrap(Caller.use(({ key }) => Effect.succeed(ModelAllowance.layerMetered(key))))),
+    Layer.provideMerge(layerCaller(env.CALLER_KEY, request)),
     Layer.provideMerge(layerStorage(env, aiKey)),
   );
 

@@ -285,6 +285,22 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
     }),
   );
 
+  test.effect("searches full text alone without an embedding, so no repo ranks by meaning", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const owner = accountId(812);
+      const [same, worded] = [repoId(9101), repoId(9102)];
+      yield* seed(owner, [
+        { id: same, weights: { 0: 1 } },
+        { id: worded, summary: "terminal dashboard", weights: { 1: 1 } },
+      ]);
+      const hits = yield* db.search.hybrid(
+        hybrid({ scope: stars(owner), text: "terminal dashboard", embedding: null, limit: 10 }),
+      );
+      expect(hits.map((hit) => [hit.repo.id, hit.textRank, hit.vectorRank])).toEqual([[worded, 1, null]]);
+    }),
+  );
+
   test.effect("returns nothing for words no star has when every star is past the max distance", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;

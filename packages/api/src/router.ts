@@ -55,7 +55,6 @@ const wireCodes = {
   RepoNotFound: "REPO_NOT_FOUND",
   SearchScopeUnavailable: "SCOPE_UNAVAILABLE",
   RateLimited: "TOO_MANY_REQUESTS",
-  AiSpendLimited: "TOO_MANY_REQUESTS",
   NewAccountLimited: "TOO_MANY_REQUESTS",
   SyncBusy: "SYNC_BUSY",
   AiKeyMissing: "SERVICE_UNAVAILABLE",
