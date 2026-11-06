@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { decodeBmp, icoEntries } from "./ico.ts";
 import { animated, declaredSize, type RasterFormat, sniff } from "./image-format.ts";
-import { aspectOf, fit, plateOf, type Rgba, visible } from "./pixels.ts";
+import { aspectOf, blank, fit, plateOf, type Rgba, visible } from "./pixels.ts";
 
 export type { RasterFormat } from "./image-format.ts";
 export type { Rgba } from "./pixels.ts";
@@ -22,6 +22,7 @@ class IconRejected extends Schema.TaggedError<IconRejected, { readonly brand: un
     "unsupported",
     "animated",
     "unsafe-svg",
+    "svg-text",
     "undecodable",
     "too-small",
     "oversized",
@@ -41,8 +42,9 @@ export const Normalized = Data.taggedEnum<Normalized>();
 const svgRenderSide = 512;
 const minRasterSide = 16;
 const maxDecodeSide = 2048;
-const minCoverage = 0.02;
-const maxAspect = { vector: 1.5, raster: 1.25 };
+const maxVectorAspect = 1.5;
+// A homepage links a square icon, so a 4:5 social card there (1.25) is not one. Real ones on prod reach 1.21.
+const maxRasterAspect: Record<IconSource, number> = { "repo-file": 1.25, "readme-image": 1.25, homepage: 1.22 };
 const maxRasterSide: Record<IconSource, number> = {
   "repo-file": maxDecodeSide,
   "readme-image": 1024,
@@ -50,6 +52,9 @@ const maxRasterSide: Record<IconSource, number> = {
 };
 
 const unsafeSvg = /<script|<foreignObject|<!ENTITY|(?:xlink:)?href\s*=\s*["']\s*(?:https?:|\/\/)/i;
+
+// The renderer has no fonts, so it would drop the text and keep only the shapes around it.
+const svgText = /<(?:[\w-]+:)?(?:text|tspan|textPath)\b/i;
 
 const reject = (reason: Rejection) => Effect.fail(new IconRejected({ reason }));
 
@@ -77,6 +82,7 @@ export const make = (codecs: Codecs) => {
   const renderSvg = (bytes: Uint8Array) => {
     const svg = new TextDecoder().decode(bytes);
     if (unsafeSvg.test(svg)) return reject("unsafe-svg");
+    if (svgText.test(svg)) return reject("svg-text");
     return Effect.tryPromise({
       try: () => codecs.renderSvg(svg, svgRenderSide),
       catch: () => new IconRejected({ reason: "undecodable" }),
@@ -100,12 +106,12 @@ export const make = (codecs: Codecs) => {
     function* (bytes: Uint8Array, source: IconSource) {
       const { decoded, vector } = yield* decode(bytes, source);
       const { coverage, box } = visible(decoded);
-      if (box === null || coverage < minCoverage) return yield* reject("blank");
       // A favicon often draws a wide glyph on a square canvas, and a logo often pads a square mark inside a wide one.
       // A banner is wide both ways, so either shape being square enough is enough.
-      const limit = vector ? maxAspect.vector : maxAspect.raster;
+      const limit = vector ? maxVectorAspect : maxRasterAspect[source];
       if (aspectOf(decoded) > limit && aspectOf(box) > limit) return yield* reject("not-square");
       const icon = fit(decoded, box, maxIconSize);
+      if (blank(coverage, icon)) return yield* reject("blank");
       const webp = yield* Effect.tryPromise(() => codecs.encodeWebp(icon)).pipe(Effect.orDie);
       return Normalized.Accepted({ webp, plate: plateOf(icon), size: icon.width });
     },

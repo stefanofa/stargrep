@@ -39,6 +39,16 @@ describe("GET /icons/<key>", () => {
     expect(new Uint8Array(await second.arrayBuffer())).toEqual(webp);
   });
 
+  it("serves a stored icon under every key version", async () => {
+    for (const version of ["v1", "v2"]) {
+      const versioned = `${version}/sha256/${"d".repeat(64)}.webp`;
+      await env.ICONS.put(versioned, webp, { httpMetadata: { contentType: "image/webp" } });
+      const served = await get(`/icons/${versioned}`);
+      expect([versioned, served.status, served.headers.get("content-type")]).toEqual([versioned, 200, "image/webp"]);
+    }
+    await settled();
+  });
+
   it("answers a well-formed key with no object 404, cacheable for a short time", async () => {
     const missing = await get(`/icons/v1/sha256/${"b".repeat(64)}.webp`);
     expect(missing.status).toBe(404);
@@ -49,7 +59,7 @@ describe("GET /icons/<key>", () => {
     await env.ICONS.put("readmes/secret", "private");
     for (const path of [
       "/icons/readmes/secret",
-      `/icons/v2/git/${"a".repeat(40)}.webp`,
+      `/icons/v/git/${"a".repeat(40)}.webp`,
       "/icons/",
       "/icons/v1/git/",
       `/icons/v1/git/${"a".repeat(40)}.png`,

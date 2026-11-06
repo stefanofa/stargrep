@@ -10,21 +10,30 @@ const attributes = (tag: string) =>
     ]),
   );
 
+// `any` says the icon scales, which only an SVG does, so on a raster it says nothing about the size.
 const largestSize = (sizes: string) =>
-  Math.max(
-    0,
-    ...sizes
-      .toLowerCase()
-      .split(/\s+/)
-      .map((size) => (size === "any" ? Number.MAX_SAFE_INTEGER : Number(size.split("x")[0]) || 0)),
-  );
+  Math.max(0, ...sizes.split(/\s+/).map((size) => Number(size.toLowerCase().split("x")[0]) || 0));
+
+// The UI draws an icon under 64 px small on a plain tile, so a raster that small ranks below an SVG.
+const fullTileSide = 64;
+const appleTouchSide = 180;
+
+const rank = { appleTouch: 0, largeRaster: 1, svg: 2, smallRaster: 3 } as const;
 
 interface Link {
   readonly url: string;
-  readonly kind: number;
+  readonly rank: number;
   readonly size: number;
   readonly order: number;
 }
+
+// An apple-touch icon without `sizes` is Apple's default 180 px for its rank, but sorts by the size it declares, so
+// it comes after the apple-touch icons that declare one.
+const rankOf = (svg: boolean, appleTouch: boolean, size: number) => {
+  if (svg) return rank.svg;
+  if ((size || (appleTouch ? appleTouchSide : 0)) < fullTileSide) return rank.smallRaster;
+  return appleTouch ? rank.appleTouch : rank.largeRaster;
+};
 
 export const iconUrls = (html: string, page: string): ReadonlyArray<string> => {
   const head = html.split(/<\/head>/i)[0] ?? html;
@@ -36,10 +45,11 @@ export const iconUrls = (html: string, page: string): ReadonlyArray<string> => {
     const url = URL.parse(tag.get("href") ?? "", page);
     if (url === null || !/^https?:$/.test(url.protocol)) return [];
     const svg = (tag.get("type") ?? "").includes("svg") || url.pathname.toLowerCase().endsWith(".svg");
-    return [{ url: url.href, kind: svg ? 0 : appleTouch ? 1 : 2, size: largestSize(tag.get("sizes") ?? ""), order }];
+    const size = largestSize(tag.get("sizes") ?? "");
+    return [{ url: url.href, rank: rankOf(svg, appleTouch, size), size, order }];
   });
   const ranked = links
-    .toSorted((a, b) => a.kind - b.kind || b.size - a.size || a.order - b.order)
+    .toSorted((a, b) => a.rank - b.rank || b.size - a.size || a.order - b.order)
     .map((link) => link.url);
   return [...new Set([...ranked, new URL("/favicon.ico", page).href])].slice(0, maxIcons);
 };

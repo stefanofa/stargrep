@@ -173,7 +173,7 @@ it.layer(layer, { timeout: 30_000 })("fetchIcon", (it) => {
       expect(asked).toEqual([raw(1, "logo.png"), raw(1, "docs/logo-white.svg")]);
       const { icon, iconCheckedAt } = yield* stored(idOf(1));
       expect(icon).toMatchObject({ source: "readme-image", plate: "dark", size: 64 });
-      expect(icon?.key).toMatch(/^v1\/sha256\/[0-9a-f]{64}\.webp$/);
+      expect(icon?.key).toMatch(/^v2\/sha256\/[0-9a-f]{64}\.webp$/);
       expect(iconCheckedAt).not.toBeNull();
       expect(store.objects.get(icon?.key ?? "")?.stored).toEqual({ plate: "dark", size: 64 });
     }),
@@ -209,11 +209,31 @@ it.layer(layer, { timeout: 30_000 })("fetchIcon", (it) => {
       expect(asked).toEqual([]);
       expect(normalized).toEqual([]);
       expect((yield* stored(idOf(2))).icon).toEqual({
-        key: `v1/git/${"b".repeat(40)}.webp`,
+        key: `v2/git/${"b".repeat(40)}.webp`,
         source: "repo-file",
         plate: "light",
         size: 32,
       });
+    }),
+  );
+
+  it.effect("normalizes an icon stored under an older key version again, so stricter rules can drop it", () =>
+    Effect.gen(function* () {
+      yield* seed([15]);
+      const svg = "<svg>banner the renderer drew without its text</svg>";
+      const oldKey = `v1/sha256/${new Bun.CryptoHasher("sha256").update(svg).digest("hex")}.webp`;
+      yield* (yield* IconStore.IconStore).put(oldKey, encode("webp"), { plate: "none", size: 128 });
+      yield* (yield* Db.Db).repos.saveIcon({
+        id: idOf(15),
+        icon: { key: oldKey, source: "homepage", plate: "none", size: 128 },
+      });
+      replies.set("https://kit.dev/", got(`<link rel="icon" href="/favicon.svg">`, "https://kit.dev/"));
+      replies.set("https://kit.dev/favicon.svg", got(svg));
+      const outcome = yield* fetchIcon(request(15, { homepage: "https://kit.dev" }));
+
+      expect(outcome._tag).toBe("NoIcon");
+      expect(normalized).toEqual([svg]);
+      expect((yield* stored(idOf(15))).icon).toBeNull();
     }),
   );
 
@@ -403,6 +423,23 @@ it.layer(layer, { timeout: 30_000 })("backfill", (it) => {
         ).toEqual([{ embedded: true }]);
         expect(yield* db.repos.pendingEnrichment([summarized])).toEqual([]);
       }),
+  );
+
+  it.effect("sends a checked repo whose icon key has an older version, and skips one on the current version", () =>
+    Effect.gen(function* () {
+      yield* seed([2003, 2004]);
+      const db = yield* Db.Db;
+      const icon = { source: "repo-file", plate: "none", size: 64 } as const;
+      yield* db.repos.saveIcon({ id: idOf(2003), icon: { ...icon, key: `v1/git/${"a".repeat(40)}.webp` } });
+      yield* db.repos.saveIcon({ id: idOf(2004), icon: { ...icon, key: Keys.gitKey(oid("a")) } });
+
+      const backfill = (yield* FetchIcon.FetchIcon).backfill;
+      expect(yield* backfill(2002)).toEqual({ queued: 1, next: null });
+      expect(queue.sent).toEqual([request(2003, { homepage: "https://kit.dev" })]);
+
+      yield* db.repos.saveIcon({ id: idOf(2003), icon: { ...icon, key: Keys.gitKey(oid("b")) } });
+      expect(yield* backfill(2002)).toEqual({ queued: 0, next: null });
+    }),
   );
 
   it.effect("pages by repo ID and chains the next page until a short page ends it", () =>
