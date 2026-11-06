@@ -8,6 +8,7 @@ import * as Db from "@stargrep/db";
 import { Login, RepoId } from "@stargrep/github/schemas";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import { errors } from "./errors.ts";
 
 export const GitHubLogin = Login.check(Schema.isPattern(/^[a-z\d][a-z\d-]{0,38}$/i)).annotate({
@@ -156,9 +157,23 @@ export const Library = Schema.Struct({ repos: Schema.Array(LibraryRepo) });
 
 export const maxStarsPage = 1000;
 
-const StarsCursor = Schema.String.check(Schema.isPattern(/^\d{1,15}-\d{1,15}$/)).annotate({
+const StarsCursorText = Schema.String.check(Schema.isPattern(/^\d{1,15}-\d{1,15}$/)).annotate({
   description: "Where a page of stars continues, from nextCursor.",
 });
+
+// The time and repo ID of the last star a page answered, written as "<millis>-<repoId>".
+export const StarsCursor = StarsCursorText.pipe(
+  Schema.decodeTo(
+    Schema.Struct({ starredAt: Schema.DateTimeUtcFromMillis, repoId: RepoId }),
+    SchemaTransformation.transform({
+      decode: (cursor) => {
+        const [starredAt = Number.NaN, repoId = Number.NaN] = cursor.split("-").map(Number);
+        return { starredAt, repoId };
+      },
+      encode: ({ starredAt, repoId }) => `${starredAt}-${repoId}`,
+    }),
+  ),
+);
 
 export const StarsInput = Schema.Struct({
   login: GitHubLogin,
@@ -171,7 +186,7 @@ export const StarsInput = Schema.Struct({
 export const PublicStars = Schema.Struct({
   login: Schema.String,
   repos: Schema.Array(LibraryRepo).annotate({ description: "The login's stars, newest first." }),
-  nextCursor: Schema.NullOr(StarsCursor).annotate({
+  nextCursor: Schema.NullOr(StarsCursorText).annotate({
     description: "Pass as cursor to read the next page, or null when this page is the last.",
   }),
 });

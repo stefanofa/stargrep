@@ -1,11 +1,11 @@
 import "@orpc/effect/extensions/effect";
 import type { WithEffectContext } from "@orpc/effect";
-import { implement, ORPCError } from "@orpc/server";
+import { implement } from "@orpc/server";
 import { MetricRegistry, QueryPlan, Search } from "@stargrep/core/search";
 import { SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import type { DbQueryFailed, DbRowInvalid, RepoNotFound } from "@stargrep/db/errors";
-import { type Login, RepoId } from "@stargrep/github/schemas";
+import type { Login } from "@stargrep/github/schemas";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -15,12 +15,13 @@ import { type AnswerContext, type AnswerPolicy, cachedAnswer } from "./answer-ca
 import { Caller } from "./caller.ts";
 import {
   contract,
+  maxStarsPage,
   type PublicConfig,
   PublicStars,
   type RepoInput,
   type SearchInput,
   SearchOutput,
-  type StarsInput,
+  StarsCursor,
   type SyncInput,
 } from "./contract.ts";
 import { errorStatus, type WireCode, wireError } from "./errors.ts";
@@ -174,31 +175,34 @@ const starsAnswers: AnswerPolicy<typeof PublicStars.Type> = {
   keep: () => true,
 };
 
-const StarsCursor = Schema.Struct({ starredAt: Schema.DateTimeUtcFromMillis, repoId: RepoId });
+const encodeCursor = Schema.encodeSync(StarsCursor);
 
-const starsCursor = (position: Db.StarsPosition) => `${DateTime.toEpochMillis(position.starredAt)}-${position.repoId}`;
+// Stars are read and cached in pages of 100 or 1,000, so a client cannot miss the cache by asking for another limit.
+const pageSizeFor = (limit: number) => (limit <= 100 ? 100 : maxStarsPage);
 
-const starsPosition = (cursor: string | undefined) => {
-  if (cursor === undefined) return Option.none<Db.StarsPosition>();
-  const [starredAt, repoId] = cursor.split("-").map(Number);
-  return Schema.decodeUnknownOption(StarsCursor)({ starredAt, repoId });
-};
-
-const starsAnswer = Effect.fnUntraced(function* (
-  input: typeof StarsInput.Type,
-  after: Option.Option<Db.StarsPosition>,
-) {
+const starsPage = Effect.fnUntraced(function* (login: Login, size: number, after: Option.Option<Db.StarsPosition>) {
   const db = yield* Db.Db;
-  const account = yield* db.accounts.byLogin(input.login);
-  if (Option.isNone(account)) return yield* new Search.AccountNotSynced({ login: input.login });
-  const page = yield* db.stars.page(account.value.id, { limit: input.limit, after });
+  const account = yield* db.accounts.byLogin(login);
+  if (Option.isNone(account)) return yield* new Search.AccountNotSynced({ login });
+  const page = yield* db.stars.page(account.value.id, { limit: size, after });
   const icons = yield* IconHost;
   return {
     login: account.value.login,
     repos: page.entries.map((entry) => libraryRepo(entry, icons)),
-    nextCursor: Option.getOrNull(Option.map(page.next, starsCursor)),
+    nextCursor: Option.getOrNull(Option.map(page.next, encodeCursor)),
   };
 });
+
+// Answers the first limit repos of a page, and continues after the last one answered.
+const firstOf = (page: typeof PublicStars.Type, limit: number): typeof PublicStars.Type => {
+  const last = page.repos[limit - 1];
+  if (page.repos.length <= limit || last === undefined) return page;
+  return {
+    ...page,
+    repos: page.repos.slice(0, limit),
+    nextCursor: encodeCursor({ starredAt: DateTime.makeUnsafe(last.starredAt), repoId: last.id }),
+  };
+};
 
 const syncStatus =
   (login: Login) =>
@@ -280,19 +284,12 @@ export const router = implementer.router({
   ),
 
   stars: os.stars.effect(function* ({ input, context }) {
-    const after = starsPosition(input.cursor);
-    if (input.cursor !== undefined && Option.isNone(after)) {
-      return yield* Effect.fail(
-        new ORPCError("BAD_REQUEST", {
-          message: "This cursor does not continue a page of stars.",
-          data: { traceId: context.traceId },
-        }),
-      );
-    }
-    const key = `stars/${input.login.toLowerCase()}/${input.limit}/${input.cursor ?? ""}`;
-    const answer = yield* cached(context, starsAnswers, key, starsAnswer(input, after), admit("stars"));
+    const size = pageSizeFor(input.limit);
+    const after = Option.fromUndefinedOr(input.cursor);
+    const key = `stars/${input.login.toLowerCase()}/${size}/${Option.match(after, { onNone: () => "", onSome: encodeCursor })}`;
+    const page = yield* cached(context, starsAnswers, key, starsPage(input.login, size, after), admit("stars"));
     context.resHeaders?.set("cache-control", "public, max-age=10");
-    return answer;
+    return firstOf(page, input.limit);
   }),
 
   config: os.config.handler(({ context }) => {

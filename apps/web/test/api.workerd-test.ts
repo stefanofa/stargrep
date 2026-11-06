@@ -411,6 +411,21 @@ describe("getRepo and the spec", () => {
     expect(text).not.toMatch(/Infinity|NaN/);
     expect(JSON.parse(text).security).toEqual([]);
   });
+
+  it("documents the stars cursor as the string a page's nextCursor gives, in and out", async () => {
+    const document: Json = await (await call("/openapi.json")).json();
+    const stars = document.paths["/stars/{login}"].get;
+    const cursor = stars.parameters.find((parameter: Json) => parameter.name === "cursor");
+    expect([cursor.required ?? false, cursor.schema.type]).toEqual([false, "string"]);
+    const page = stars.responses["200"].content["application/json"].schema;
+    expect(page.properties.nextCursor.anyOf.map((option: Json) => option.type)).toEqual(["string", "null"]);
+  });
+
+  it("answers a cursor it never issued with 400 and the issue, over REST", async () => {
+    const refused = await rest("/stars/ada?cursor=1700000000000-0");
+    expect([refused.status, refused.body.code, refused.body.data.traceId]).toEqual([400, "BAD_REQUEST", traceId]);
+    expect(refused.body.data.issues[0].path).toEqual(["cursor", "repoId"]);
+  });
 });
 
 describe("search cache on KV", () => {

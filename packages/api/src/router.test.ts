@@ -739,11 +739,17 @@ const starAt = (repoId: number, iso: string) => ({
 const starsApi = Effect.gen(function* () {
   const real = yield* Effect.context<Db.Db>();
   const memory = AnswerCache.memory();
-  return (input: { readonly login: string; readonly limit?: number; readonly cursor?: string }) =>
+  const limits: Array<RateLimitKind> = [];
+  let builds = 0;
+  const built = Effect.sync(() => {
+    builds++;
+    return Context.merge(services({ limiter: (kind) => Effect.sync(() => limits.push(kind)) }), real);
+  });
+  const stars = (input: { readonly login: string; readonly limit?: number; readonly cursor?: string }) =>
     Effect.gen(function* () {
       const resHeaders = new Headers();
       const context: ApiContext = {
-        ...contextFor("rest", Effect.succeed(Context.merge(services({}), real))),
+        ...contextFor("rest", built),
         "effect/context": yield* Effect.context<never>(),
         answerCache: memory.cache,
         resHeaders,
@@ -755,70 +761,123 @@ const starsApi = Effect.gen(function* () {
       );
       return { page, cache: resHeaders.get("x-answer-cache"), cacheControl: resHeaders.get("cache-control") };
     });
+  return { stars, limits, memory, builds: () => builds };
 });
+
+type StarsPage = { readonly repos: ReadonlyArray<{ readonly id: number }>; readonly nextCursor: string | null };
+
+const ids = (page: unknown) => (page as StarsPage).repos.map((repo) => repo.id);
+
+// Replaces every star the test database holds, one a day from New Year 2026, so each test starts from its own stars.
+const seedStars = (repoIds: ReadonlyArray<number>) =>
+  Effect.gen(function* () {
+    yield* (yield* TestDatabase.TestDatabase).query("delete from stars");
+    const db = yield* Db.Db;
+    const { id, type, login, name, avatarUrl, followers, publicRepos } = ada.account;
+    yield* db.accounts.upsert({ id, type, login, name, avatarUrl, followers, publicRepos });
+    yield* db.repos.upsertRefs(
+      repoIds.map((repoId) => ({
+        id: repoId as RepoId,
+        nodeId: `R_${repoId}` as RepoNodeId,
+        owner: "owner" as Login,
+        name: `repo-${repoId}` as RepoName,
+      })),
+    );
+    yield* db.stars.upsert({
+      accountId: id,
+      stars: repoIds.map((repoId, index) =>
+        starAt(
+          repoId,
+          DateTime.formatIso(DateTime.makeUnsafe(Date.parse("2026-01-01T00:00:00Z") + index * 86_400_000)),
+        ),
+      ),
+    });
+  });
 
 it.layer(TestDatabase.layerMemory({ embeddingModel: "test/model" as EmbeddingModelId }), { timeout: 30_000 })(
   "public stars",
   (it) => {
     it.effect("pages a login's stars newest first through a cursor, and caches each page for 10 seconds", () =>
       Effect.gen(function* () {
-        const db = yield* Db.Db;
-        const { id, type, login, name, avatarUrl, followers, publicRepos } = ada.account;
-        yield* db.accounts.upsert({ id, type, login, name, avatarUrl, followers, publicRepos });
-        yield* db.repos.upsertRefs(
-          [501, 502, 503, 504].map((repoId) => ({
-            id: repoId as RepoId,
-            nodeId: `R_${repoId}` as RepoNodeId,
-            owner: "owner" as Login,
-            name: `repo-${repoId}` as RepoName,
-          })),
-        );
-        yield* db.stars.upsert({
-          accountId: id,
-          stars: [
-            starAt(501, "2026-01-01T00:00:00Z"),
-            starAt(502, "2026-02-01T00:00:00Z"),
-            starAt(503, "2026-03-01T00:00:00Z"),
-          ],
-        });
-        const stars = yield* starsApi;
+        yield* seedStars([501, 502, 503]);
+        const { stars } = yield* starsApi;
 
         const first = yield* stars({ login: "ADA", limit: 2 });
         expect(first).toMatchObject({ cache: "miss", cacheControl: "public, max-age=10" });
         expect(first.page).toMatchObject({
           login: "ada",
           repos: [
-            { id: 503, starredAt: "2026-03-01T00:00:00.000Z", read: false },
-            { id: 502, starredAt: "2026-02-01T00:00:00.000Z" },
+            { id: 503, starredAt: "2026-01-03T00:00:00.000Z", read: false },
+            { id: 502, starredAt: "2026-01-02T00:00:00.000Z" },
           ],
-          nextCursor: `${Date.parse("2026-02-01T00:00:00Z")}-502`,
+          nextCursor: `${Date.parse("2026-01-02T00:00:00Z")}-502`,
         });
-        const cursor = (first.page as { readonly nextCursor: string }).nextCursor;
+        const cursor = (first.page as StarsPage).nextCursor ?? "";
         expect((yield* stars({ login: "ada", limit: 2, cursor })).page).toMatchObject({
           repos: [{ id: 501 }],
           nextCursor: null,
         });
 
-        yield* db.stars.upsert({ accountId: id, stars: [starAt(504, "2026-04-01T00:00:00Z")] });
+        yield* seedStars([501, 502, 503, 504]);
         yield* TestClock.adjust("9 seconds");
         const cached = yield* stars({ login: "ada", limit: 2 });
         expect([cached.cache, cached.page]).toEqual(["hit", first.page]);
         yield* TestClock.adjust("2 seconds");
         const next = yield* stars({ login: "ada", limit: 2 });
-        expect(next.cache).toBe("miss");
-        expect(
-          (next.page as { readonly repos: ReadonlyArray<{ readonly id: number }> }).repos.map((repo) => repo.id),
-        ).toEqual([504, 503]);
+        expect([next.cache, ids(next.page)]).toEqual(["miss", [504, 503]]);
       }),
     );
 
-    it.effect("says when Stargrep has not synced the login, and refuses a cursor it never issued", () =>
+    it.effect("reads 100 stars for any limit up to 100 and 1,000 above it, so other limits hit the same page", () =>
       Effect.gen(function* () {
-        const stars = yield* starsApi;
+        yield* seedStars([601, 602, 603, 604, 605]);
+        const { stars, memory } = yield* starsApi;
+        const two = yield* stars({ login: "ada", limit: 2 });
+        const three = yield* stars({ login: "ada", limit: 3 });
+        const all = yield* stars({ login: "ada", limit: 100 });
+        expect([two.cache, three.cache, all.cache]).toEqual(["miss", "hit", "hit"]);
+        expect([ids(three.page), (three.page as StarsPage).nextCursor]).toEqual([
+          [605, 604, 603],
+          `${Date.parse("2026-01-03T00:00:00Z")}-603`,
+        ]);
+        expect([ids(all.page), (all.page as StarsPage).nextCursor]).toEqual([[605, 604, 603, 602, 601], null]);
+
+        expect((yield* stars({ login: "ada", limit: 101 })).cache).toBe("miss");
+        expect((yield* stars({ login: "ada" })).cache).toBe("hit");
+        expect([...memory.entries.keys()]).toEqual(["stars/ada/100/", "stars/ada/1000/"]);
+      }),
+    );
+
+    it.effect("takes from the network's stars limit on a miss only", () =>
+      Effect.gen(function* () {
+        yield* seedStars([701, 702]);
+        const { stars, limits } = yield* starsApi;
+        yield* stars({ login: "ada", limit: 1 });
+        yield* stars({ login: "ada", limit: 2 });
+        expect(limits).toEqual(["stars"]);
+      }),
+    );
+
+    it.effect("says when Stargrep has not synced the login", () =>
+      Effect.gen(function* () {
+        const { stars } = yield* starsApi;
         const unsynced = yield* stars({ login: "nobody-synced" });
         expect(unsynced.page).toMatchObject({ code: "ACCOUNT_NOT_SYNCED", data: traceData });
         expect(unsynced.cacheControl).toBeNull();
-        expect((yield* stars({ login: "ada", cursor: "1700000000000-0" })).page).toMatchObject({ code: "BAD_REQUEST" });
+      }),
+    );
+
+    it.effect("rejects a cursor it never issued at validation, with the issues and a trace ID, before any work", () =>
+      Effect.gen(function* () {
+        const { stars, limits, builds } = yield* starsApi;
+        for (const cursor of ["1700000000000-0", "1700000000000", "soon-42"]) {
+          const refused = (yield* stars({ login: "ada", cursor })).page as ORPCError<string, unknown>;
+          expect([refused.code, refused.data]).toEqual([
+            "BAD_REQUEST",
+            { issues: [expect.objectContaining({ path: expect.arrayContaining(["cursor"]) })], ...traceData },
+          ]);
+        }
+        expect([limits, builds()]).toEqual([[], 0]);
       }),
     );
   },
