@@ -25,8 +25,9 @@ import { Caller } from "./caller.ts";
 import { errorStatus, type WireCode } from "./errors.ts";
 import { IconHost } from "./icon-host.ts";
 import type { Transport } from "./middleware/instrumentation.ts";
-import { type ApiContext, type ApiServices, ApiServicesUnavailable, router } from "./router.ts";
+import { type ApiContext, router } from "./router.ts";
 import { SearchLimiter, SearchLimiterUnavailable, SearchRateLimited } from "./search-limiter.ts";
+import { type ApiServices, ApiServicesUnavailable, withServices } from "./services.ts";
 import { SyncLimiter, SyncLimiterUnavailable, SyncRateLimited } from "./sync-limiter.ts";
 import { NotSignedIn, type Viewer, type ViewerError, Viewers, ViewerUnavailable } from "./viewers.ts";
 
@@ -168,6 +169,15 @@ const publicConfig = {
   featured: ["ada"],
 };
 
+// Runs a background refresh before it returns, with services of its own, so a TestClock test sees what it stored.
+const runNow =
+  (servicesEffect: ApiContext["services"], started?: Array<"refresh">): ApiContext["background"] =>
+  (run) =>
+    Effect.sync(() => started?.push("refresh")).pipe(
+      Effect.andThen(withServices(servicesEffect, run)),
+      Effect.catch((error) => Effect.logWarning("Refresh could not start", { error: error._tag })),
+    );
+
 const contextFor = (
   transport: Transport,
   servicesEffect: ApiContext["services"],
@@ -179,6 +189,7 @@ const contextFor = (
   procedureTime: Ref.makeUnsafe(Option.none()),
   services: servicesEffect,
   answerCache: AnswerCache.disabled,
+  background: runNow(servicesEffect),
 });
 
 const client = (fakes: Fakes = {}, transport: Transport = "rpc") => {
@@ -602,7 +613,7 @@ const demoSearch = (planSource: Search.SearchOutcome["planSource"] = "model") =>
     builds++;
     return services(fakes);
   });
-  const memory = AnswerCache.memory(built);
+  const memory = AnswerCache.memory();
   const call = (
     input: { readonly login: string; readonly q: string; readonly scope?: "stars" | "network" },
     servicesEffect: ApiContext["services"] = built,
@@ -634,25 +645,6 @@ describe("the demo answer cache", () => {
       });
       expect([demo.searched.length, demo.builds()]).toEqual([1, 1]);
       expect([...demo.memory.entries.keys()]).toEqual(["search/ada/stars/20/terminal dashboards"]);
-    }),
-  );
-
-  it.effect("serves a stale answer past 5 minutes while a refresh stores a new one, and misses past a day", () =>
-    Effect.gen(function* () {
-      const demo = demoSearch();
-      const query = { login: "ada", q: "terminal dashboards" };
-      yield* demo.call(query);
-      yield* TestClock.adjust("4 minutes");
-      expect(yield* demo.call(query, noServices)).toMatchObject({ cache: "hit", stars: 1 });
-      yield* TestClock.adjust("2 minutes");
-      expect(yield* demo.call(query, noServices)).toMatchObject({ cache: "stale", stars: 1 });
-      expect(demo.memory.refreshes).toHaveLength(1);
-      expect(yield* demo.call(query, noServices)).toMatchObject({ cache: "hit", stars: 2 });
-      yield* TestClock.adjust("1 day");
-      expect(yield* demo.call(query, noServices)).toMatchObject({ cache: "stale", stars: 2 });
-      yield* TestClock.adjust(Duration.sum(Duration.days(1), Duration.minutes(6)));
-      expect(yield* demo.call(query)).toMatchObject({ cache: "miss", stars: 4 });
-      expect(demo.builds()).toBe(4);
     }),
   );
 
@@ -732,7 +724,7 @@ const starAt = (repoId: number, iso: string) => ({
 
 const starsApi = Effect.gen(function* () {
   const real = yield* Effect.context<Db.Db>();
-  const memory = AnswerCache.memory(Effect.succeed(Context.merge(services({}), real)));
+  const memory = AnswerCache.memory();
   return (input: { readonly login: string; readonly limit?: number; readonly cursor?: string }) =>
     Effect.gen(function* () {
       const resHeaders = new Headers();

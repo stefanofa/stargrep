@@ -5,8 +5,8 @@ import * as TextGeneration from "@stargrep/ai/text-generation";
 import { Caller } from "@stargrep/api/caller";
 import { IconHost } from "@stargrep/api/icon-host";
 import { defaultPublicConfig } from "@stargrep/api/public-config";
-import type { ApiServices } from "@stargrep/api/router";
 import { SearchLimiter } from "@stargrep/api/search-limiter";
+import type { ApiServices } from "@stargrep/api/services";
 import { SyncLimiter } from "@stargrep/api/sync-limiter";
 import { NotSignedIn, Viewers } from "@stargrep/api/viewers";
 import { QueryPlan, Search } from "@stargrep/core/search";
@@ -18,8 +18,8 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 import { answerUrl, makeAnswerCache } from "../src/server/answer-cache.ts";
 import { layerPlannerAllowance } from "../src/server/search-limits.ts";
-import { makeServer } from "../src/server/serve.ts";
 import { repo } from "./entry.ts";
+import { testServer } from "./serve.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: response bodies are read as untyped JSON in these tests.
 type Json = any;
@@ -82,12 +82,11 @@ describe("the demo answer cache on the Cache API", () => {
     );
 
   const cache = () => caches.open("answers-test");
-  const serve = makeServer(
-    layerFor,
-    Layer.empty,
-    () => ({ ...defaultPublicConfig, demoLogin: "ada" }),
-    makeAnswerCache({ cache, waitUntil: (promise) => pending.push(promise), layerFor, tracer: Layer.empty }),
-  );
+  const serve = testServer(layerFor, {
+    publicConfig: () => ({ ...defaultPublicConfig, demoLogin: "ada" }),
+    answerCache: makeAnswerCache(cache),
+    waitUntil: (promise) => pending.push(promise),
+  });
 
   const ask = async (input: object) => {
     const response = await serve(new Request("http://web/api/search", post(input)));

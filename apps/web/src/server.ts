@@ -43,17 +43,13 @@ const layerForRequest = (request: Request) => {
   return layerRequest(bindings, aiKey, auth, request);
 };
 
-const serve = makeServer(
-  layerForRequest,
-  Tracing.tracer,
-  () => readConfig().site,
-  makeAnswerCache({
-    cache: () => Promise.resolve(workerCache()),
-    waitUntil,
-    layerFor: layerForRequest,
-    tracer: Tracing.tracer,
-  }),
-);
+const serve = makeServer({
+  layerFor: layerForRequest,
+  tracer: Tracing.tracer,
+  publicConfig: () => readConfig().site,
+  answerCache: makeAnswerCache(() => Promise.resolve(workerCache())),
+  waitUntil,
+});
 
 export default {
   fetch: (request: Request, _env: unknown, context: ExecutionContext) =>

@@ -16,7 +16,7 @@ import { callerAddress, layerCaller } from "../src/server/caller.ts";
 import { withHealth } from "../src/server/health.ts";
 import { layerOwnerLookup } from "../src/server/owner-lookup.ts";
 import { layerSearchLimiter } from "../src/server/search-limits.ts";
-import { makeServer } from "../src/server/serve.ts";
+import { testServer } from "./serve.ts";
 
 export const repo: Db.Repo = {
   id: 42 as RepoId,
@@ -147,24 +147,22 @@ const db = {
   syncRequests,
 } as unknown as Db.Db["Service"];
 
-const serve = makeServer(
-  (request) =>
-    Layer.mergeAll(
-      Layer.succeed(Search.Search, search),
-      Layer.succeed(Viewers, Viewers.of({ current: Effect.fail(new NotSignedIn()) })),
-      Layer.succeed(IconHost, IconHost.of({ origin: new URL(request.url).origin })),
-      SyncRequests.layer,
-      layerSyncLimiter(
-        { perCaller: env.SYNC_PER_CALLER, overall: env.SYNC_OVERALL },
-        request.headers.get("cf-connecting-ip") ?? "unknown",
-      ),
-      layerSearchLimiter(env.SEARCH_PER_CALLER, callerAddress(request)),
-      layerCaller(env.CALLER_KEY, request),
-    ).pipe(
-      Layer.provideMerge(Layer.succeed(Db.Db, db)),
-      Layer.provide(Layer.merge(layerSyncQueue(syncQueue), layerOwnerLookup(env.WORKER))),
+const serve = testServer((request) =>
+  Layer.mergeAll(
+    Layer.succeed(Search.Search, search),
+    Layer.succeed(Viewers, Viewers.of({ current: Effect.fail(new NotSignedIn()) })),
+    Layer.succeed(IconHost, IconHost.of({ origin: new URL(request.url).origin })),
+    SyncRequests.layer,
+    layerSyncLimiter(
+      { perCaller: env.SYNC_PER_CALLER, overall: env.SYNC_OVERALL },
+      request.headers.get("cf-connecting-ip") ?? "unknown",
     ),
-  Layer.empty,
+    layerSearchLimiter(env.SEARCH_PER_CALLER, callerAddress(request)),
+    layerCaller(env.CALLER_KEY, request),
+  ).pipe(
+    Layer.provideMerge(Layer.succeed(Db.Db, db)),
+    Layer.provide(Layer.merge(layerSyncQueue(syncQueue), layerOwnerLookup(env.WORKER))),
+  ),
 );
 
 export default {

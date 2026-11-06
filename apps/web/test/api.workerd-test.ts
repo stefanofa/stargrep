@@ -4,7 +4,7 @@ import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { ContractRouterClient } from "@orpc/contract";
 import type { contract } from "@stargrep/api/contract";
-import type { ApiServices } from "@stargrep/api/router";
+import type { ApiServices } from "@stargrep/api/services";
 import { SearchCache } from "@stargrep/core/search";
 import { DbQueryFailed } from "@stargrep/db/errors";
 import { Login } from "@stargrep/github/schemas";
@@ -18,8 +18,8 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 import { layerSearchCache } from "../src/server/adapters.ts";
 import { layerRequest } from "../src/server/layers.ts";
-import { makeServer } from "../src/server/serve.ts";
 import { line, queued, syncRequests } from "./entry.ts";
+import { testServer } from "./serve.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: response bodies are read as untyped JSON in these tests.
 type Json = any;
@@ -152,7 +152,7 @@ describe("when the services cannot start", () => {
   const failing: Layer.Layer<ApiServices, DbQueryFailed> = Layer.unwrap(
     Effect.fail(new DbQueryFailed({ operation: "settings.adopt", reason: "transport", sqlState: null })),
   );
-  const send = sendTo(makeServer(() => failing, Layer.empty));
+  const send = sendTo(testServer(() => failing));
 
   it("still validates input and lists tools, and fails a search with service unavailable", async () => {
     expect((await send("/api/search", post({ login: "ada", q: "" }))).status).toBe(400);
@@ -165,9 +165,9 @@ describe("when the services cannot start", () => {
 
 describe("when the server fails outside the API", () => {
   const send = sendTo(
-    makeServer(() => {
+    testServer(() => {
       throw new Error("request layer defect");
-    }, Layer.empty),
+    }),
   );
 
   it("answers 500 in each transport's error shape with the request's trace ID", async () => {
@@ -189,7 +189,7 @@ describe("when the server fails outside the API", () => {
 });
 
 describe("when the database is unreachable", () => {
-  const send = sendTo(makeServer((request) => layerRequest(env, Option.none(), Option.none(), request), Layer.empty));
+  const send = sendTo(testServer((request) => layerRequest(env, Option.none(), Option.none(), request)));
 
   it("answers a body that is not JSON with 400 and the request's trace ID on every transport", async () => {
     const malformed: RequestInit = {

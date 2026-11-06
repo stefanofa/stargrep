@@ -1,20 +1,17 @@
 import "@orpc/effect/extensions/effect";
-import { middlewareGen, type WithEffectContext } from "@orpc/effect";
+import type { WithEffectContext } from "@orpc/effect";
 import { implement, ORPCError } from "@orpc/server";
 import { MetricRegistry, QueryPlan, Search } from "@stargrep/core/search";
 import { SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import type { DbQueryFailed, DbRowInvalid, RepoNotFound } from "@stargrep/db/errors";
 import { type Login, RepoId } from "@stargrep/github/schemas";
-import * as Clock from "effect/Clock";
-import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type { AnswerCache } from "./answer-cache.ts";
+import { type AnswerContext, type AnswerPolicy, cachedAnswer } from "./answer-cache.ts";
 import { Caller } from "./caller.ts";
 import {
   contract,
@@ -30,38 +27,15 @@ import { errorStatus, type WireCode, wireError } from "./errors.ts";
 import { IconHost, iconUrl } from "./icon-host.ts";
 import { instrumentation, type ProcedureTime, type Transport } from "./middleware/instrumentation.ts";
 import { SearchLimiter, type SearchLimiterUnavailable, type SearchRateLimited } from "./search-limiter.ts";
+import type { ApiServices, ApiServicesUnavailable } from "./services.ts";
+import * as Services from "./services.ts";
 import { SyncLimiter, type SyncLimiterUnavailable, type SyncRateLimited } from "./sync-limiter.ts";
 import { requestOwnerSync, type ViewerError, Viewers } from "./viewers.ts";
 
-export type ApiServices =
-  | Db.Db
-  | Search.Search
-  | SyncRequests.SyncRequests
-  | SyncLimiter
-  | SearchLimiter
-  | Viewers
-  | IconHost
-  | Caller;
-
-export class ApiServicesUnavailable extends Schema.TaggedError<
-  ApiServicesUnavailable,
-  { readonly brand: unique symbol }
->()("ApiServicesUnavailable", {
-  failure: Schema.String,
-}) {
-  override get message(): string {
-    return `The API services failed to start with ${this.failure}`;
-  }
-}
-
-export interface ApiContext extends WithEffectContext<never> {
+export interface ApiContext extends WithEffectContext<never>, AnswerContext {
   readonly transport: Transport;
   readonly publicConfig: PublicConfig;
   readonly procedureTime: ProcedureTime;
-  readonly services: Effect.Effect<Context.Context<ApiServices>, ApiServicesUnavailable>;
-  readonly answerCache: AnswerCache;
-  // oRPC's ResponseHeadersHandlerPlugin sets this on the HTTP transports.
-  readonly resHeaders?: Headers | undefined;
 }
 
 type ApiFailure =
@@ -115,96 +89,24 @@ const toWire = (traceId: string) => (error: ApiFailure) => {
       );
 };
 
-const handle = <I, O>(run: (input: I) => Effect.Effect<O, ApiFailure, ApiServices>) =>
-  function* ({ input, context }: { readonly input: I; readonly context: { readonly traceId: string } }) {
-    return yield* run(input).pipe(Effect.catch(toWire(context.traceId)));
-  };
-
-const provideServices = middlewareGen<ApiContext & { readonly traceId: string }, WithEffectContext<ApiServices>>(
-  function* ({ context, next }) {
-    const services = yield* context.services.pipe(Effect.catch(toWire(context.traceId)));
-    // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC types every downstream failure as unknown.
-    return yield* next({ context: { "effect/context": Context.merge(context["effect/context"], services) } });
-  },
-);
-
 type HandlerContext = ApiContext & { readonly traceId: string };
 
-// Builds the request's services only when called, so an answer served from the cache builds none.
+// Builds the request's services only when a procedure runs, after oRPC has validated its input.
 const withServices = <A>(context: HandlerContext, run: Effect.Effect<A, ApiFailure, ApiServices>) =>
-  context.services.pipe(
-    Effect.flatMap((services) => Effect.provideContext(run, services)),
-    Effect.catch(toWire(context.traceId)),
-  );
+  Services.withServices(context.services, run).pipe(Effect.catch(toWire(context.traceId)));
 
-type AnswerOutcome = "hit" | "stale" | "miss";
+const handle = <I, O>(run: (input: I) => Effect.Effect<O, ApiFailure, ApiServices>) =>
+  function* ({ input, context }: { readonly input: I; readonly context: HandlerContext }) {
+    return yield* withServices(context, run(input));
+  };
 
-const answersServed = Metric.counter("stargrep_answer_cache", {
-  description: "Answers of cached procedures, by procedure and whether the cache served them fresh, stale, or not.",
-});
-
-interface AnswerPolicy<A> {
-  readonly procedure: "search" | "stars";
-  readonly json: Schema.Codec<A, string>;
-  // How long a stored answer is served as is.
-  readonly fresh: Duration.Duration;
-  // How long after that it is still served while a refresh runs.
-  readonly stale: Duration.Duration;
-  readonly keep: (answer: A) => boolean;
-}
-
-const served = (context: HandlerContext, procedure: AnswerPolicy<unknown>["procedure"], outcome: AnswerOutcome) =>
-  Effect.andThen(
-    Effect.sync(() => context.resHeaders?.set("x-answer-cache", outcome)),
-    Metric.update(Metric.withAttributes(answersServed, { procedure, outcome }), 1),
-  );
-
-const cachedAnswer = Effect.fnUntraced(function* <A>(
+const cached = <A>(
   context: HandlerContext,
   policy: AnswerPolicy<A>,
   key: string,
   compute: Effect.Effect<A, ApiFailure, ApiServices>,
-  admit: Effect.Effect<void, ApiFailure, ApiServices> = Effect.void,
-) {
-  const cache = context.answerCache;
-  const keepFor = Duration.sum(policy.fresh, policy.stale);
-  const store = (answer: A) =>
-    policy.keep(answer)
-      ? Schema.encodeEffect(policy.json)(answer).pipe(
-          Effect.flatMap((body) => cache.set(key, body, keepFor)),
-          Effect.catchTag("SchemaError", () =>
-            Effect.logWarning("Answer does not encode", { procedure: policy.procedure }),
-          ),
-        )
-      : Effect.void;
-
-  const stored = yield* cache.get(key);
-  if (Option.isSome(stored)) {
-    const answer = yield* Effect.option(Schema.decodeEffect(policy.json)(stored.value.body));
-    const age = Duration.millis(Math.max(0, (yield* Clock.currentTimeMillis) - stored.value.storedAt));
-    if (Option.isSome(answer) && Duration.isLessThan(age, keepFor)) {
-      if (Duration.isLessThan(age, policy.fresh)) {
-        yield* served(context, policy.procedure, "hit");
-        return answer.value;
-      }
-      yield* cache.refresh(
-        key,
-        compute.pipe(
-          Effect.flatMap(store),
-          Effect.catch((error) =>
-            Effect.logWarning("Answer refresh failed", { procedure: policy.procedure, error: error._tag }),
-          ),
-        ),
-      );
-      yield* served(context, policy.procedure, "stale");
-      return answer.value;
-    }
-  }
-  const answer = yield* withServices(context, Effect.andThen(admit, compute));
-  yield* store(answer);
-  yield* served(context, policy.procedure, "miss");
-  return answer;
-});
+  admit: Effect.Effect<void, ApiFailure, ApiServices>,
+) => cachedAnswer(context, policy, key, compute, admit).pipe(Effect.catch(toWire(context.traceId)));
 
 const iso = (time: DateTime.Utc | null) => (time === null ? null : DateTime.formatIso(time));
 
@@ -324,18 +226,17 @@ const withProgress = <E, R>(login: Login, status: Effect.Effect<SyncRequests.Syn
 
 const implementer = implement(contract).$context<ApiContext>();
 // Router-level middleware such as instrumentation runs before input validation, so a validation error gets a trace ID.
-// Procedure-level middleware such as provideServices runs after it, so a bad request never builds the services.
 const os = implementer.use(instrumentation);
 
 export const router = implementer.router({
   search: os.search.effect(function* ({ input, context }) {
     return yield* Option.match(demoSearchKey(input, context.publicConfig), {
       onNone: () => withServices(context, Effect.andThen(admitSearch, searchAnswer(input))),
-      onSome: (key) => cachedAnswer(context, searchAnswers, key, searchAnswer(input), admitSearch),
+      onSome: (key) => cached(context, searchAnswers, key, searchAnswer(input), admitSearch),
     });
   }),
 
-  triggerSync: os.triggerSync.use(provideServices).effect(
+  triggerSync: os.triggerSync.effect(
     handle((input: typeof SyncInput.Type) =>
       Effect.gen(function* () {
         yield* (yield* SyncLimiter).acquire;
@@ -348,7 +249,7 @@ export const router = implementer.router({
     ),
   ),
 
-  syncStatus: os.syncStatus.use(provideServices).effect(
+  syncStatus: os.syncStatus.effect(
     handle((input: typeof SyncInput.Type) =>
       withProgress(
         input.login,
@@ -358,7 +259,7 @@ export const router = implementer.router({
   ),
 
   // The page reads syncStatus only after viewer answers, so a sync claimed here is already queued when it looks.
-  viewer: os.viewer.use(provideServices).effect(
+  viewer: os.viewer.effect(
     handle(() =>
       Effect.gen(function* () {
         const { account } = yield* (yield* Viewers).current;
@@ -373,7 +274,7 @@ export const router = implementer.router({
     ),
   ),
 
-  library: os.library.use(provideServices).effect(
+  library: os.library.effect(
     handle(() =>
       Effect.gen(function* () {
         const { account } = yield* (yield* Viewers).current;
@@ -395,7 +296,7 @@ export const router = implementer.router({
       );
     }
     const key = `stars/${input.login.toLowerCase()}/${input.limit}/${input.cursor ?? ""}`;
-    const answer = yield* cachedAnswer(context, starsAnswers, key, starsAnswer(input, after));
+    const answer = yield* cached(context, starsAnswers, key, starsAnswer(input, after), Effect.void);
     context.resHeaders?.set("cache-control", "public, max-age=10");
     return answer;
   }),
@@ -405,7 +306,7 @@ export const router = implementer.router({
     return context.publicConfig;
   }),
 
-  getRepo: os.getRepo.use(provideServices).effect(
+  getRepo: os.getRepo.effect(
     handle((input: typeof RepoInput.Type) =>
       Effect.all([Db.Db.use((db) => db.repos.require(input.id)), IconHost]).pipe(
         Effect.map(([repo, icons]) => ({

@@ -12,6 +12,7 @@
     "./public-config": "./src/public-config.ts",
     "./router": "./src/router.ts",
     "./search-limiter": "./src/search-limiter.ts",
+    "./services": "./src/services.ts",
     "./sync-limiter": "./src/sync-limiter.ts",
     "./viewers": "./src/viewers.ts"
   },

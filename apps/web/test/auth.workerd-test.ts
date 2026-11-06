@@ -9,8 +9,9 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import { describe, expect, it } from "vitest";
 import { layerAuthRequest, layerRequest } from "../src/server/layers.ts";
-import { makeAuthServer, makeServer } from "../src/server/serve.ts";
+import { makeAuthServer } from "../src/server/serve.ts";
 import { ada, type TokenExchange } from "./fake-github.ts";
+import { testServer } from "./serve.ts";
 
 interface AuthTestEnv {
   readonly AUTH_LOCAL_DATABASE: Hyperdrive;
@@ -31,7 +32,7 @@ const stage = (origin: string, database: Hyperdrive, github: GitHubSignIn) => {
     (request) => Option.some(layerAuthRequest(stageEnv, Option.none(), config, request)),
     Layer.empty,
   );
-  const api = makeServer((request) => layerRequest(stageEnv, Option.none(), Option.some(config), request), Layer.empty);
+  const api = testServer((request) => layerRequest(stageEnv, Option.none(), Option.some(config), request));
   const cookies = new Map<string, string>();
   const send = async (path: string, init: RequestInit = {}) => {
     const headers = new Headers(init.headers);
