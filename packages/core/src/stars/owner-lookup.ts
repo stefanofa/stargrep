@@ -5,12 +5,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type { SyncBusy } from "./sync-requests.ts";
 
 export class OwnerLookupFailed extends Schema.TaggedError<OwnerLookupFailed, { readonly brand: unique symbol }>()(
   "OwnerLookupFailed",
   {
-    reason: Schema.Literals(["github", "transport", "timeout", "reply-invalid"]),
+    reason: Schema.Literals(["budget", "github", "transport", "timeout", "reply-invalid"]),
   },
 ) {
   override get message(): string {
@@ -21,8 +20,8 @@ export class OwnerLookupFailed extends Schema.TaggedError<OwnerLookupFailed, { r
 export class OwnerLookup extends Context.Service<
   OwnerLookup,
   {
-    // None when GitHub has no user or org with the login. A spent GitHub budget fails SyncBusy.
-    readonly lookup: (login: Login) => Effect.Effect<Option.Option<Owner>, OwnerLookupFailed | SyncBusy>;
+    // None when GitHub has no user or org with the login.
+    readonly lookup: (login: Login) => Effect.Effect<Option.Option<Owner>, OwnerLookupFailed>;
   }
 >()("@stargrep/core/stars/owner-lookup/OwnerLookup") {}
 

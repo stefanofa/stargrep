@@ -1,4 +1,4 @@
-import { OwnerLookup, SyncRequests } from "@stargrep/core/stars";
+import { OwnerLookup } from "@stargrep/core/stars";
 import { OwnerReply } from "@stargrep/github/owner";
 import type { Login } from "@stargrep/github/schemas";
 import * as Effect from "effect/Effect";
@@ -33,9 +33,7 @@ export const layerOwnerLookup = (worker: OwnerWorker) =>
           case "Missing":
             return Option.none();
           case "Unavailable":
-            return yield* reply.reason === "budget"
-              ? Effect.fail(new SyncRequests.SyncBusy({ reason: "github-budget" }))
-              : Effect.fail(failed("github"));
+            return yield* failed(reply.reason);
         }
       }),
     }),

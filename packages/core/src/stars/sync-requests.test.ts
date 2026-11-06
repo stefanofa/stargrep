@@ -32,7 +32,7 @@ const github = OwnerLookup.layerMemory();
 
 // Runs before each lookup reaches the memory layer, so a test can fail a lookup or fill the line meanwhile.
 const duringLookup: {
-  run: (db: Db.Db["Service"]) => Effect.Effect<void, OwnerLookup.OwnerLookupFailed | SyncRequests.SyncBusy>;
+  run: (db: Db.Db["Service"]) => Effect.Effect<void, OwnerLookup.OwnerLookupFailed>;
 } = {
   run: () => Effect.void,
 };
@@ -767,7 +767,7 @@ it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (i
       expect(yield* Effect.flip(request("octocat"))).toMatchObject({ _tag: "OwnerLookupFailed", reason: "timeout" });
       expect(yield* row("octocat")).toEqual(Option.none());
 
-      duringLookup.run = () => Effect.fail(new SyncRequests.SyncBusy({ reason: "github-budget" }));
+      duringLookup.run = () => Effect.fail(new OwnerLookup.OwnerLookupFailed({ reason: "budget" }));
       expect(yield* Effect.flip(request("octocat"))).toMatchObject({ _tag: "SyncBusy", reason: "github-budget" });
       expect(yield* row("octocat")).toEqual(Option.none());
       expect(yield* lineUnits).toBe(0);

@@ -32,8 +32,8 @@ describe("owner lookup over the main Worker's RPC method", () => {
     expect(await lookup("ghost-login")).toMatchObject({ found: { _tag: "None" } });
   });
 
-  it("fails a spent budget as a busy sync and a GitHub failure as a failed lookup", async () => {
-    expect(await lookup("budget-spent")).toMatchObject({ failed: { _tag: "SyncBusy", reason: "github-budget" } });
+  it("fails a spent budget and a GitHub failure as a failed lookup with its reason", async () => {
+    expect(await lookup("budget-spent")).toMatchObject({ failed: { _tag: "OwnerLookupFailed", reason: "budget" } });
     expect(await lookup("github-down")).toMatchObject({ failed: { _tag: "OwnerLookupFailed", reason: "github" } });
   });
 

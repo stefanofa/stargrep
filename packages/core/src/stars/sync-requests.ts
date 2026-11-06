@@ -399,16 +399,18 @@ const make = Effect.gen(function* () {
       return yield* start(login, now, { mode, reserved: cost, startsAt: now }, { ...lookedOf(account), syncedAt });
     }
 
-    const found = yield* owners
-      .lookup(login)
-      .pipe(
-        Effect.tapError((error) =>
-          Effect.all([
-            db.syncRequests.settle(login, now, "released").pipe(Effect.ignore),
-            decide(error._tag === "SyncBusy" ? "github-budget" : "lookup-failed"),
-          ]),
-        ),
-      );
+    const found = yield* owners.lookup(login).pipe(
+      Effect.tapError((error) =>
+        Effect.all([
+          db.syncRequests.settle(login, now, "released").pipe(Effect.ignore),
+          decide(error.reason === "budget" ? "github-budget" : "lookup-failed"),
+        ]),
+      ),
+      Effect.catchIf(
+        (error) => error.reason === "budget",
+        () => Effect.fail(new SyncBusy({ reason: "github-budget" })),
+      ),
+    );
     if (Option.isNone(found)) {
       yield* db.syncRequests.settle(login, now, "missing");
       yield* payLookup(now);
