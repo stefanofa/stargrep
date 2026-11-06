@@ -48,6 +48,8 @@ export type {
   Star,
   StarEvent,
   StarredRepo,
+  StarsPage,
+  StarsPosition,
   StarsSnapshot,
   StarsUpsert,
 } from "./queries/stars.ts";
