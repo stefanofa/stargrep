@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { effect } from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Scheduler from "effect/Scheduler";
 import * as TestClock from "effect/testing/TestClock";
 import { AppKeyInvalid } from "./app-jwt.ts";
 import * as AppToken from "./app-token.ts";
@@ -153,6 +155,39 @@ describe("AppToken.makeInstallationTokens", () => {
       expect(mintsOf(fake)).toBe(2);
       expect(Redacted.value(yield* tokens.current("account"))).toBe("ghs_minted_1");
     });
+  });
+
+  effect("frees the mint permit when a request is interrupted at any step while it starts a refresh", () => {
+    const signed = { count: 0 };
+    // Every refresh after the first mint fails at its signature, so it ends at once and the held token stays in its last
+    // five minutes, and each request starts a refresh.
+    const sign = Effect.suspend(() => (signed.count++ === 0 ? signer : Effect.fail(new AppKeyInvalid())));
+    const fake = github();
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(now);
+      const tokens = yield* tokensOver(fake, sign);
+      yield* tokens.current("account");
+      yield* TestClock.adjust("56 minutes");
+      // The request yields once it has run `steps` operations, and the interrupt lands there, so the sweep covers every
+      // step until a request finishes first. A budget of one yields before any operation, so the sweep starts at two. A
+      // permit nobody holds frees the waiter within a few turns.
+      const sweep = { steps: 1, stuck: false, finished: false };
+      while (!sweep.stuck && !sweep.finished) {
+        sweep.steps++;
+        const request = yield* Effect.forkChild(
+          tokens.current("account").pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, sweep.steps)),
+          { startImmediately: true },
+        );
+        sweep.finished = request.pollUnsafe() !== undefined;
+        yield* Fiber.interrupt(request);
+        const free = yield* Effect.forkChild(tokens.refreshed, { startImmediately: true });
+        for (let turn = 0; turn < 100 && free.pollUnsafe() === undefined; turn++) yield* Effect.yieldNow;
+        sweep.stuck = free.pollUnsafe() === undefined;
+        yield* Fiber.interrupt(free);
+      }
+      expect(sweep).toMatchObject({ stuck: false, finished: true });
+      expect(sweep.steps).toBeGreaterThan(10);
+    }).pipe(Effect.provide(Logger.layer([])));
   });
 
   effect("sends no refresh while GitHub's retry-after runs, and keeps serving the held token", () => {

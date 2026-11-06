@@ -177,19 +177,18 @@ export const makeInstallationTokens = Effect.fn("AppToken.makeInstallationTokens
     ),
   );
 
-  const refreshInBackground = Effect.gen(function* () {
-    if (!(yield* mintPermit.takeIfAvailable(1))) return;
-    yield* Effect.forkIn(
-      mint.pipe(
-        Effect.catch((failure) =>
-          Effect.logWarning("Kept the held installation token after a failed refresh", { failure: failure._tag }),
-        ),
-        Effect.ensuring(mintPermit.release(1)),
-        Effect.asVoid,
+  // The refresh takes the permit inside its own fiber, in the same uninterruptible step that arranges its release, so an
+  // interrupt at any point leaves the permit free. It starts at once, so it holds the permit before the request goes on,
+  // and it ends without minting while another mint holds the permit.
+  const refreshInBackground = Effect.forkIn(
+    mintPermit.withPermitsIfAvailable(1)(
+      Effect.catch(mint, (failure) =>
+        Effect.logWarning("Kept the held installation token after a failed refresh", { failure: failure._tag }),
       ),
-      scope,
-    );
-  });
+    ),
+    scope,
+    { startImmediately: true },
+  );
 
   const gateError = (
     operation: Operation,
