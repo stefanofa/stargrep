@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env, waitUntil } from "cloudflare:workers";
 import type { PublicConfig } from "@stargrep/api/contract";
 import { publicConfig } from "@stargrep/api/public-config";
 import { type AuthConfig, authConfig } from "@stargrep/auth/config";
@@ -9,6 +9,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
+import { makeAnswerCache } from "./server/answer-cache.ts";
 import type { DeclaredEnv } from "./server/env.ts";
 import { withHealth } from "./server/health.ts";
 import { serveIcon, workerCache } from "./server/icons.ts";
@@ -37,13 +38,21 @@ const serveAuth = makeAuthServer((request) => {
   return Option.map(auth, (signIn) => layerAuthRequest(bindings, aiKey, signIn, request));
 }, Tracing.tracer);
 
+const layerForRequest = (request: Request) => {
+  const { aiKey, auth } = readConfig();
+  return layerRequest(bindings, aiKey, auth, request);
+};
+
 const serve = makeServer(
-  (request) => {
-    const { aiKey, auth } = readConfig();
-    return layerRequest(bindings, aiKey, auth, request);
-  },
+  layerForRequest,
   Tracing.tracer,
   () => readConfig().site,
+  makeAnswerCache({
+    cache: () => Promise.resolve(workerCache()),
+    waitUntil,
+    layerFor: layerForRequest,
+    tracer: Tracing.tracer,
+  }),
 );
 
 export default {

@@ -164,6 +164,7 @@
       },
       "devDependencies": {
         "@effect/tsgo": "catalog:",
+        "@stargrep/ai": "workspace:*",
         "@stargrep/config": "workspace:*",
         "@stargrep/telemetry": "workspace:*",
         "@stargrep/testing": "workspace:*",

@@ -11,7 +11,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { layerSyncLimiter } from "../src/server/adapters.ts";
+import { callerAddress } from "../src/server/caller.ts";
 import { withHealth } from "../src/server/health.ts";
+import { layerSearchLimiter } from "../src/server/search-limits.ts";
 import { makeServer } from "../src/server/serve.ts";
 
 export const repo: Db.Repo = {
@@ -40,6 +42,8 @@ export const repo: Db.Repo = {
 };
 
 const ada = { id: 7 as GitHubAccountId, login: "ada" as Login, starsSyncedAt: null };
+
+const starredAt = DateTime.makeUnsafe("2026-03-01T00:00:00Z");
 
 export const queue = SyncQueue.layerMemory();
 
@@ -86,6 +90,7 @@ const db = {
     require: (id: RepoId) => (id === repo.id ? Effect.succeed(repo) : Effect.fail(new RepoNotFound({ repoId: id }))),
   },
   stars: {
+    page: () => Effect.succeed({ entries: [{ repo, starredAt, stars: 18_000, read: true }], next: Option.none() }),
     enrichment: (login: Login) =>
       Effect.succeed(login === ada.login ? { total: 1, read: 1, failed: 0 } : { total: 0, read: 0, failed: 0 }),
   },
@@ -103,6 +108,7 @@ const serve = makeServer(
         { perCaller: env.SYNC_PER_CALLER, overall: env.SYNC_OVERALL },
         request.headers.get("cf-connecting-ip") ?? "unknown",
       ),
+      layerSearchLimiter(env.SEARCH_PER_CALLER, callerAddress(request)),
     ).pipe(Layer.provideMerge(Layer.succeed(Db.Db, db)), Layer.provide(queue.layer)),
   Layer.empty,
 );

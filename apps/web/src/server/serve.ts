@@ -6,7 +6,9 @@ import { OpenAPIGenerator } from "@orpc/openapi";
 import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { COMMON_ERROR_STATUS_MAP, ORPCError, RPCSerializer } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
+import { ResponseHeadersHandlerPlugin } from "@orpc/server/plugins";
 import type { StandardHandlerInterceptor } from "@orpc/server/standard";
+import * as AnswerCache from "@stargrep/api/answer-cache";
 import { type PublicConfig, signedIn } from "@stargrep/api/contract";
 import { errorStatus, wireError, withTraceId } from "@stargrep/api/errors";
 import type { Transport } from "@stargrep/api/middleware/instrumentation";
@@ -49,8 +51,16 @@ const converters = [new EffectSchemaToJsonSchemaConverter({ cache: true })];
 const plugins = [new SmartCoercionHandlerPlugin({ converters })];
 const errorStatusMap = { ...COMMON_ERROR_STATUS_MAP, ...errorStatus };
 const interceptors = [traceErrors];
-const rpc = new RPCHandler<WebContext>(router, { errorStatusMap, interceptors });
-const rest = new OpenAPIHandler<WebContext>(router, { plugins, errorStatusMap, interceptors });
+const rpc = new RPCHandler<WebContext>(router, {
+  plugins: [new ResponseHeadersHandlerPlugin()],
+  errorStatusMap,
+  interceptors,
+});
+const rest = new OpenAPIHandler<WebContext>(router, {
+  plugins: [...plugins, new ResponseHeadersHandlerPlugin()],
+  errorStatusMap,
+  interceptors,
+});
 const anyoneCanCall = (_: unknown, path: ReadonlyArray<string>) => !signedIn.has(path.join("."));
 const registrar = new McpRegistrar(router, { converters, plugins, filter: anyoneCanCall });
 
@@ -179,6 +189,7 @@ export const requestContext = Effect.fn("Web.requestContext")(function* (
   layer: Layer.Layer<ApiServices, { readonly _tag: string }>,
   requestTraceId: string,
   publicConfig: PublicConfig,
+  answerCache: AnswerCache.AnswerCache,
 ) {
   const scope = yield* Scope.Scope;
   const services = yield* Effect.cached(
@@ -193,6 +204,7 @@ export const requestContext = Effect.fn("Web.requestContext")(function* (
     publicConfig,
     procedureTime: yield* Ref.make(Option.none<Duration.Duration>()),
     services,
+    answerCache,
     requestTraceId,
   } satisfies WebContext;
 });
@@ -215,11 +227,25 @@ const withTiming = (
   return timed;
 };
 
-const respond = (route: Route, request: Request, layerFor: RequestLayer, publicConfig: PublicConfig) =>
+export type AnswerCacheFor = (request: Request) => AnswerCache.AnswerCache;
+
+const respond = (
+  route: Route,
+  request: Request,
+  layerFor: RequestLayer,
+  publicConfig: PublicConfig,
+  answerCacheFor: AnswerCacheFor,
+) =>
   Effect.useSpan(`Web.${route.transport}`, { kind: "server" }, (span) =>
     Effect.gen(function* () {
       const started = yield* Clock.currentTimeMillis;
-      const context = yield* requestContext(route.transport, layerFor(request), span.traceId, publicConfig);
+      const context = yield* requestContext(
+        route.transport,
+        layerFor(request),
+        span.traceId,
+        publicConfig,
+        answerCacheFor(request),
+      );
       const response =
         (yield* Effect.promise(() => route.answer(request, context))) ?? route.fail(noRoute(span.traceId));
       const total = (yield* Clock.currentTimeMillis) - started;
@@ -285,10 +311,17 @@ export const makeAuthServer =
 
 // The public settings are read on the first request, because TanStack Start's dev server loads the entry before env is set.
 export const makeServer =
-  (layerFor: RequestLayer, tracer: Layer.Layer<never>, publicConfig: () => PublicConfig = () => defaultPublicConfig) =>
+  (
+    layerFor: RequestLayer,
+    tracer: Layer.Layer<never>,
+    publicConfig: () => PublicConfig = () => defaultPublicConfig,
+    answerCacheFor: AnswerCacheFor = () => AnswerCache.disabled,
+  ) =>
   (request: Request): Promise<Response> | undefined => {
     const pathname = new URL(request.url).pathname;
     const route = routes.find((candidate) => candidate.matches(pathname));
     if (route === undefined) return undefined;
-    return Effect.runPromise(respond(route, request, layerFor, publicConfig()).pipe(Effect.provide(tracer)));
+    return Effect.runPromise(
+      respond(route, request, layerFor, publicConfig(), answerCacheFor).pipe(Effect.provide(tracer)),
+    );
   };
