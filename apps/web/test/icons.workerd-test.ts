@@ -49,7 +49,7 @@ describe("GET /icons/<key>", () => {
     await env.ICONS.put("readmes/secret", "private");
     for (const path of [
       "/icons/readmes/secret",
-      `/icons/v2/git/${"a".repeat(40)}.webp`,
+      `/icons/v/git/${"a".repeat(40)}.webp`,
       "/icons/",
       "/icons/v1/git/",
       `/icons/v1/git/${"a".repeat(40)}.png`,

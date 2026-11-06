@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { decodeBmp, icoEntries } from "./ico.ts";
 import { animated, declaredSize, type RasterFormat, sniff } from "./image-format.ts";
-import { aspectOf, fit, plateOf, type Rgba, visible } from "./pixels.ts";
+import { aspectOf, fit, flatness, plateOf, type Rgba, visible } from "./pixels.ts";
 
 export type { RasterFormat } from "./image-format.ts";
 export type { Rgba } from "./pixels.ts";
@@ -22,6 +22,7 @@ class IconRejected extends Schema.TaggedError<IconRejected, { readonly brand: un
     "unsupported",
     "animated",
     "unsafe-svg",
+    "svg-text",
     "undecodable",
     "too-small",
     "oversized",
@@ -42,6 +43,8 @@ const svgRenderSide = 512;
 const minRasterSide = 16;
 const maxDecodeSide = 2048;
 const minCoverage = 0.02;
+// One colour over most of the square, such as a favicon's background left behind when its glyph did not render.
+const flat = { minFill: 0.9, maxSpread: 8 };
 const maxAspect = { vector: 1.5, raster: 1.25 };
 const maxRasterSide: Record<IconSource, number> = {
   "repo-file": maxDecodeSide,
@@ -50,6 +53,9 @@ const maxRasterSide: Record<IconSource, number> = {
 };
 
 const unsafeSvg = /<script|<foreignObject|<!ENTITY|(?:xlink:)?href\s*=\s*["']\s*(?:https?:|\/\/)/i;
+
+// The renderer has no fonts, so it would drop the text and keep only the shapes around it.
+const svgText = /<(?:[\w-]+:)?(?:text|tspan|textPath)\b/i;
 
 const reject = (reason: Rejection) => Effect.fail(new IconRejected({ reason }));
 
@@ -77,6 +83,7 @@ export const make = (codecs: Codecs) => {
   const renderSvg = (bytes: Uint8Array) => {
     const svg = new TextDecoder().decode(bytes);
     if (unsafeSvg.test(svg)) return reject("unsafe-svg");
+    if (svgText.test(svg)) return reject("svg-text");
     return Effect.tryPromise({
       try: () => codecs.renderSvg(svg, svgRenderSide),
       catch: () => new IconRejected({ reason: "undecodable" }),
@@ -106,6 +113,8 @@ export const make = (codecs: Codecs) => {
       const limit = vector ? maxAspect.vector : maxAspect.raster;
       if (aspectOf(decoded) > limit && aspectOf(box) > limit) return yield* reject("not-square");
       const icon = fit(decoded, box, maxIconSize);
+      const { fill, spread } = flatness(icon);
+      if (fill >= flat.minFill && spread < flat.maxSpread) return yield* reject("blank");
       const webp = yield* Effect.tryPromise(() => codecs.encodeWebp(icon)).pipe(Effect.orDie);
       return Normalized.Accepted({ webp, plate: plateOf(icon), size: icon.width });
     },

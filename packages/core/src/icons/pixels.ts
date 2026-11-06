@@ -71,6 +71,27 @@ export const fit = (image: Rgba, box: Box, maxSide: number): Rgba => {
   return { width: size, height: size, data };
 };
 
+// How much of the square is covered, and how far the covered colours stray from their mean, weighted by alpha.
+export const flatness = (image: Rgba) => {
+  let [weight, r, g, b] = [0, 0, 0, 0];
+  for (let at = 0; at < image.data.length; at += 4) {
+    const alpha = (image.data[at + 3] ?? 0) / 255;
+    weight += alpha;
+    r += alpha * (image.data[at] ?? 0);
+    g += alpha * (image.data[at + 1] ?? 0);
+    b += alpha * (image.data[at + 2] ?? 0);
+  }
+  if (weight === 0) return { fill: 0, spread: 0 };
+  const [mr, mg, mb] = [r / weight, g / weight, b / weight];
+  let variance = 0;
+  for (let at = 0; at < image.data.length; at += 4) {
+    const alpha = (image.data[at + 3] ?? 0) / 255;
+    const [dr, dg, db] = [(image.data[at] ?? 0) - mr, (image.data[at + 1] ?? 0) - mg, (image.data[at + 2] ?? 0) - mb];
+    variance += alpha * (dr * dr + dg * dg + db * db);
+  }
+  return { fill: weight / (image.width * image.height), spread: Math.sqrt(variance / weight) };
+};
+
 export const aspectOf = (shape: { readonly width: number; readonly height: number }) =>
   Math.max(shape.width, shape.height) / Math.min(shape.width, shape.height);
 
