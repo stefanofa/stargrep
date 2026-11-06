@@ -24,7 +24,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { AccountMenu } from "../components/account-menu.tsx";
 import { LibraryPlaceholder, LibraryView } from "../components/library-view.tsx";
 import { Page } from "../components/page.tsx";
@@ -248,18 +248,28 @@ function useTimeLeft(stage: Stage) {
   return seconds < 90 ? `about ${seconds} seconds left` : `about ${Math.round(seconds / 60)} minutes left`;
 }
 
-function useSurprise(landed: number) {
+const quiet = 600;
+
+function useSurprise(query: string, landed: boolean) {
+  const typedAt = useRef(0);
   const [surprised, setSurprised] = useState(false);
   useEffect(() => {
-    if (landed === 0) return;
-    setSurprised(true);
+    typedAt.current = now();
+  }, [query]);
+  useEffect(() => {
+    if (!landed) return;
+    const wait = Math.max(0, quiet - (now() - typedAt.current));
     const fiber = Effect.runFork(
-      Effect.sleep(Duration.millis(1200)).pipe(Effect.andThen(Effect.sync(() => setSurprised(false)))),
+      Effect.sleep(Duration.millis(wait)).pipe(
+        Effect.andThen(Effect.sync(() => setSurprised(true))),
+        Effect.andThen(Effect.sleep(Duration.millis(1200))),
+        Effect.ensuring(Effect.sync(() => setSurprised(false))),
+      ),
     );
     return () => {
       Effect.runFork(Fiber.interrupt(fiber));
     };
-  }, [landed]);
+  }, [query, landed]);
   return surprised;
 }
 
@@ -307,7 +317,7 @@ function Stars({ viewer, onPose }: { viewer: Viewer; onPose: (pose: PipPose) => 
     synced: sync?.syncedAt ? syncedAgo(sync.syncedAt, at) : undefined,
     timeLeft,
   });
-  const surprised = useSurprise(semantic.results.length);
+  const surprised = useSurprise(query, !semantic.pending && semantic.results.length > 0);
   const pose = surprised && state.pose === "idle" ? "surprised" : state.pose;
   useEffect(() => onPose(pose), [onPose, pose]);
 

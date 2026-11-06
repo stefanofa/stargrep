@@ -23,7 +23,7 @@ export function Avatar({ person, index = 0, className }: { person: Person; index
         <AvatarPrimitive.Image
           src={person.avatarUrl}
           alt=""
-          className="size-full rounded-full object-cover outline-1 -outline-offset-1 outline-[color:light-dark(oklch(0_0_0/0.1),oklch(1_0_0/0.1))]"
+          className="size-full rounded-full object-cover outline-1 -outline-offset-1 outline-image-edge"
         />
       )}
       <AvatarPrimitive.Fallback className="flex size-full items-center justify-center font-sans text-label leading-3 font-semibold text-ink">

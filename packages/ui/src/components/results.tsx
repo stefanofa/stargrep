@@ -79,7 +79,7 @@ function UnreadChip({ className }: { className?: string }) {
   return (
     <span
       className={cn(
-        "inline-flex h-6 w-fit shrink-0 items-center gap-1.5 rounded-full bg-muted pr-2.5 pl-2 font-sans text-[12px] leading-4 font-semibold whitespace-nowrap text-secondary-foreground",
+        "inline-flex h-6 w-fit shrink-0 items-center gap-1.5 rounded-full bg-muted pr-2.5 pl-2 font-sans text-sm font-semibold whitespace-nowrap text-secondary-foreground",
         className,
       )}
     >
@@ -126,7 +126,7 @@ export function ResultItem({
               "min-w-0 font-display text-name font-semibold tracking-snug break-words",
               dim && "text-muted-foreground",
               hero && heroText.name,
-              "list:text-[22px] list:leading-[28px]",
+              "list:text-title",
             )}
           >
             <a

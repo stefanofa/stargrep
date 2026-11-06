@@ -16,8 +16,7 @@ export function AccountMenu({ login, avatarUrl }: { login: string; avatarUrl: st
               onClick={() => {
                 signOut().catch(() => {});
               }}
-              // 14px keeps the item concentric with the popup, rounded-md (20px) minus p-1.5 (6px).
-              className="flex h-9 items-center rounded-[14px] px-3 outline-none data-highlighted:bg-muted"
+              className="flex h-9 items-center rounded-item px-3 outline-none data-highlighted:bg-muted"
             >
               Sign out
             </Menu.Item>

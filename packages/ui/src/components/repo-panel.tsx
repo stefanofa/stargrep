@@ -16,7 +16,7 @@ export type RepoDetail = {
   readonly name: string;
   readonly language?: string;
   readonly description: string;
-  readonly summary: string;
+  readonly summary?: string;
   readonly stars: number | null;
   readonly starred?: string;
   readonly activity: Activity;
@@ -125,10 +125,12 @@ export function RepoPanel({
                 </dl>
               </div>
 
-              <section className="flex flex-col gap-2">
-                <h3 className={heading}>in short</h3>
-                <p className="font-sans text-base text-secondary-foreground">{repo.summary}</p>
-              </section>
+              {repo.summary !== undefined && (
+                <section className="flex flex-col gap-2">
+                  <h3 className={heading}>in short</h3>
+                  <p className="font-sans text-base text-secondary-foreground">{repo.summary}</p>
+                </section>
+              )}
 
               {repo.network.length > 0 && (
                 <section className="flex items-center gap-3">

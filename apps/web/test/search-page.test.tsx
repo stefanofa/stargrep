@@ -361,6 +361,28 @@ describe("the search page in each state", () => {
     expect(played.of(/./)).toBe(0);
   });
 
+  test("the header mark stays calm while you type and is surprised once, after the results settle", async () => {
+    const user = userEvent.setup();
+    server.search = () => [hit(server.repos[4] as Repo)];
+    await open("/search");
+    await waitFor(() => expect(strip()).toContain("6 stars"));
+    const poses: Array<string | null | undefined> = [mark()];
+    const watch = new MutationObserver(() => poses.push(mark()));
+    watch.observe(document.body, { subtree: true, attributeFilter: ["data-pose"] });
+    try {
+      await user.type(page().getByRole("searchbox"), "term");
+      const typed = performance.now();
+      await waitFor(() => expect(mark()).toBe("surprised"), { timeout: 2000 });
+      expect(performance.now() - typed).toBeGreaterThanOrEqual(550);
+      await waitFor(() => expect(mark()).not.toBe("surprised"), { timeout: 2000 });
+      await settle(800);
+    } finally {
+      watch.disconnect();
+    }
+    const flinches = poses.filter((pose, index) => pose === "surprised" && poses[index - 1] !== "surprised");
+    expect(flinches.length).toBe(1);
+  }, 10_000);
+
   test("results once everything is read: one list, a plain count, no rail", async () => {
     server.search = () => [hit(server.repos[4] as Repo)];
     await open("/search?q=terminal");

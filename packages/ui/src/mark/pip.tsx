@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { cn } from "../lib/cn.ts";
 import { pip } from "./pip.gen.ts";
 import { smallMark, starPoints, starStroke } from "./star.ts";
@@ -9,9 +9,24 @@ export const pipPoses = Object.keys(pip.poses) as ReadonlyArray<PipPose>;
 
 const vars = (values: Record<string, string | number>) => values as CSSProperties;
 
+// motion.css is unlayered and its shorthand on .mo-root resets the play state, so pausing the root takes !important.
+const paused = "[animation-play-state:paused]! [&_*]:[animation-play-state:paused]";
+
+// A small mark only lives under the pointer, and a large one rests while it is offscreen.
 export function Pip({ pose = "idle", size = 40, className }: { pose?: PipPose; size?: number; className?: string }) {
+  const small = size <= smallMark;
+  const mark = useRef<SVGSVGElement>(null);
+  const [onscreen, setOnscreen] = useState(true);
+  useEffect(() => {
+    const node = mark.current;
+    if (small || node === null) return;
+    const watch = new IntersectionObserver(([entry]) => setOnscreen(entry?.isIntersecting ?? true));
+    watch.observe(node);
+    return () => watch.disconnect();
+  }, [small]);
   return (
     <svg
+      ref={mark}
       viewBox="0 0 100 100"
       width={size}
       height={size}
@@ -22,7 +37,15 @@ export function Pip({ pose = "idle", size = 40, className }: { pose?: PipPose; s
       className={cn("shrink-0 overflow-visible", className)}
     >
       <g
-        className={cn("mo-root mo-always", pose !== "idle" && "mo-expr", pose === "sad" && "mo-slow")}
+        className={cn(
+          "mo-root",
+          small
+            ? "[&:not(:hover)]:[animation-play-state:paused]! [&:not(:hover)_*]:[animation-play-state:paused]"
+            : "mo-always",
+          !onscreen && paused,
+          pose !== "idle" && "mo-expr",
+          pose === "sad" && "mo-slow",
+        )}
         style={vars({
           ...pip.motion,
           ...pip.poses[pose],
@@ -49,7 +72,7 @@ export function Pip({ pose = "idle", size = 40, className }: { pose?: PipPose; s
               />
             </g>
             <g className="mo-eyes">
-              {(size <= smallMark ? pip.eyes.small : pip.eyes.large).map((eye) => (
+              {(small ? pip.eyes.small : pip.eyes.large).map((eye) => (
                 <g
                   key={eye.wrap}
                   className="mo-eye"

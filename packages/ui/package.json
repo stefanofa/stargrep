@@ -8,7 +8,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./theme.css": "./src/theme.css",
-    "./fonts/*": "./src/fonts/*"
+    "./fonts/*": "./src/fonts/*",
+    "./mark/*": "./src/mark/*"
   },
   "scripts": {
     "typecheck": "effect-tsgo tsc -p .",

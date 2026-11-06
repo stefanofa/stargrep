@@ -26,7 +26,7 @@ export function SortMenu({
     <Menu.Root>
       <Menu.Trigger
         aria-label={`Sort by ${current?.label ?? ""}`}
-        className="flex h-10 shrink-0 items-center gap-2 rounded-full bg-muted px-3 font-sans text-meta font-medium text-foreground transition-colors duration-120 select-none hover:bg-border sm:w-[184px] sm:pr-3.5 sm:pl-4"
+        className="flex h-10 shrink-0 items-center gap-2 rounded-full bg-muted px-3 font-sans text-meta font-medium text-foreground transition-[color,background-color] duration-120 select-none hover:bg-border sm:w-[184px] sm:pr-3.5 sm:pl-4"
       >
         <SortIcon className="size-4 text-secondary-foreground" />
         <span className="flex-1 text-left max-sm:sr-only">{current?.label}</span>
@@ -48,7 +48,7 @@ export function SortMenu({
                     key={sort.value}
                     value={sort.value}
                     closeOnClick
-                    className="flex h-9 cursor-default items-center justify-between gap-3 rounded-sm px-3 select-none data-highlighted:bg-accent-soft"
+                    className="flex h-9 cursor-default items-center justify-between gap-3 rounded-item px-3 select-none data-highlighted:bg-accent-soft"
                   >
                     {sort.label}
                     <Menu.RadioItemIndicator>

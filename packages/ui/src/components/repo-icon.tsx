@@ -11,6 +11,7 @@ export type RepoVisual = { readonly letters: string } & (
 
 const plates: Record<Plate, string> = {
   none: "bg-card",
+  // A logo drawn for light pages needs pure white behind it in both themes, so this plate skips --color-plate.
   light: "bg-[#ffffff]",
   dark: "bg-ink",
 };
@@ -53,7 +54,12 @@ export function RepoIcon({ visual }: { visual: RepoVisual }) {
     <span
       aria-hidden
       data-slot="repo-icon"
-      className={cn(slot, slotSize, "border-[1.5px] border-border", small === undefined ? plates[plate] : "bg-muted")}
+      className={cn(
+        slot,
+        slotSize,
+        "outline-1 -outline-offset-1 outline-image-edge",
+        small === undefined ? plates[plate] : "bg-muted",
+      )}
     >
       <img
         src={visual.url}
