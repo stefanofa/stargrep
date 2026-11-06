@@ -296,6 +296,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           at: at(time),
           cooldown: syncCooldown,
           lifetime: syncLifetime,
+          overtakesWaiting: false,
         });
       const first = at("2026-11-04T12:00:00Z");
       const claims = yield* Effect.all(
@@ -332,6 +333,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           at: at(time),
           cooldown: syncCooldown,
           lifetime: syncLifetime,
+          overtakesWaiting: false,
         });
       expect(yield* claim("2026-11-04T13:00:00Z")).toBe(true);
       expect(yield* claim("2026-11-04T13:11:00Z")).toBe(true);
@@ -359,6 +361,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           at: at("2026-11-04T15:00:00Z"),
           cooldown: syncCooldown,
           lifetime: syncLifetime,
+          overtakesWaiting: false,
         });
       yield* claim("ghost");
       yield* claim("released");
@@ -382,6 +385,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           at: at(time),
           cooldown: syncCooldown,
           lifetime: syncLifetime,
+          overtakesWaiting: false,
         });
       expect(yield* claim("2026-11-04T16:00:00Z")).toBe(true);
       yield* db.syncRequests.schedule(login("Waiter"), at("2026-11-04T16:00:00Z"), at("2026-11-04T16:30:00Z"));
@@ -395,13 +399,50 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     }),
   );
 
+  test.effect("lets a claim that overtakes win over a request still waiting in line, and over nothing else", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const claim = (time: string, overtakesWaiting: boolean) =>
+        db.syncRequests.claim({
+          login: login("overtaken"),
+          at: at(time),
+          cooldown: syncCooldown,
+          lifetime: syncLifetime,
+          overtakesWaiting,
+        });
+      expect(yield* claim("2026-11-04T19:00:00Z", false)).toBe(true);
+      expect(yield* claim("2026-11-04T19:01:00Z", true)).toBe(false);
+      yield* db.syncRequests.schedule(login("overtaken"), at("2026-11-04T19:00:00Z"), at("2026-11-04T19:30:00Z"));
+      expect(yield* claim("2026-11-04T19:05:00Z", false)).toBe(false);
+      expect(yield* claim("2026-11-04T19:05:00Z", true)).toBe(true);
+      expect(yield* db.syncRequests.get(login("overtaken"))).toEqual(
+        Option.some({
+          login: "overtaken",
+          requestedAt: at("2026-11-04T19:05:00Z"),
+          outcome: "pending",
+          startsAt: null,
+        }),
+      );
+      expect(yield* claim("2026-11-04T19:06:00Z", true)).toBe(false);
+
+      yield* db.syncRequests.schedule(login("overtaken"), at("2026-11-04T19:05:00Z"), at("2026-11-04T19:10:00Z"));
+      expect(yield* claim("2026-11-04T19:12:00Z", true)).toBe(false);
+    }),
+  );
+
   test.effect("counts the pending requests that wait in line and start before a given one", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
       const now = "2026-11-04T18:00:00Z";
       const waiting = (name: string, startsAt: string) =>
         db.syncRequests
-          .claim({ login: login(name), at: at(now), cooldown: syncCooldown, lifetime: syncLifetime })
+          .claim({
+            login: login(name),
+            at: at(now),
+            cooldown: syncCooldown,
+            lifetime: syncLifetime,
+            overtakesWaiting: false,
+          })
           .pipe(Effect.andThen(db.syncRequests.schedule(login(name), at(now), at(startsAt))));
       yield* waiting("line-a", "2026-11-04T18:05:00Z");
       yield* waiting("line-b", "2026-11-04T18:10:00Z");
@@ -424,6 +465,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           at: at(time),
           cooldown: syncCooldown,
           lifetime: syncLifetime,
+          overtakesWaiting: false,
         });
       yield* claim("expired", "2026-11-01T08:00:00Z");
       yield* claim("recent", "2026-11-05T07:00:00Z");

@@ -24,6 +24,8 @@ export interface SyncClaim {
   // Counted from when the held request starts, so a request waiting in line keeps its login until it has run.
   readonly cooldown: Duration.Duration;
   readonly lifetime: Duration.Duration;
+  // Also wins over a request still waiting in line, for a requester who never waits.
+  readonly overtakesWaiting: boolean;
 }
 
 export type Settlement = "failed" | "missing" | "released";
@@ -53,6 +55,9 @@ const before = (time: Date, duration: Duration.Duration) =>
 
 const pruneBatch = 100;
 
+const cooledDown = (time: Date, cooldown: Duration.Duration) =>
+  sql`coalesce(${syncRequests.startsAt}, ${syncRequests.requestedAt}) <= ${before(time, cooldown)}`;
+
 export const make = Effect.gen(function* () {
   const { run } = yield* Postgres.Postgres;
 
@@ -67,7 +72,13 @@ export const make = Effect.gen(function* () {
           .from(syncRequests)
           .where(eq(syncRequests.login, keyOf(login))),
       ).pipe(Effect.flatMap(decodeRequests("syncRequests.get")), Effect.map(Arr.head)),
-    claim: Effect.fn("Db.syncRequests.claim")(function* ({ login, at, cooldown, lifetime }: SyncClaim) {
+    claim: Effect.fn("Db.syncRequests.claim")(function* ({
+      login,
+      at,
+      cooldown,
+      lifetime,
+      overtakesWaiting,
+    }: SyncClaim) {
       const requestedAt = yield* encodeTime(at);
       yield* run("syncRequests.prune", (db) =>
         db.delete(syncRequests).where(
@@ -89,7 +100,9 @@ export const make = Effect.gen(function* () {
           .onConflictDoUpdate({
             target: syncRequests.login,
             set: { requestedAt, outcome: "pending", startsAt: null },
-            setWhere: sql`coalesce(${syncRequests.startsAt}, ${syncRequests.requestedAt}) <= ${before(requestedAt, cooldown)}`,
+            setWhere: overtakesWaiting
+              ? sql`${cooledDown(requestedAt, cooldown)} or ${syncRequests.startsAt} > ${requestedAt}::timestamptz`
+              : cooledDown(requestedAt, cooldown),
           })
           .returning({ login: syncRequests.login }),
       );

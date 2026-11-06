@@ -314,6 +314,46 @@ it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (i
       }),
   );
 
+  it.effect("queues the owner's sync now over anyone's request still waiting in line", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      yield* fill(4_000);
+      expect(yield* request("octocat")).toMatchObject({ state: "waiting", startsAt: at(start + 3_800 * unitMillis) });
+      yield* TestClock.adjust("15 minutes");
+      const opened = { state: "queued", requestedAt: at(start + 15 * minute), syncedAt: null, ...octocat } as const;
+      expect(yield* request("octocat", owner)).toEqual(opened);
+      expect(queue.delays).toEqual([units(3_800), Duration.zero]);
+      expect(queue.sent[1]).toEqual({
+        login: "octocat" as Login,
+        mode: "incremental",
+        requestedAt: at(start + 15 * minute),
+      });
+      expect(yield* status("octocat")).toEqual(opened);
+
+      yield* TestClock.adjust("1 minute");
+      expect(yield* request("octocat", owner)).toEqual(opened);
+      expect(queue.sent).toHaveLength(2);
+    }),
+  );
+
+  it.effect("makes the owner wait for anyone's request that is queued and no longer waiting", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      yield* fill(300);
+      expect(yield* request("octocat")).toMatchObject({ state: "waiting", startsAt: at(start + 100 * unitMillis) });
+      yield* TestClock.adjust(units(100));
+      yield* TestClock.adjust("9 minutes");
+      expect(yield* request("octocat", owner)).toMatchObject({ state: "queued", requestedAt: at(start) });
+      expect(queue.sent).toHaveLength(1);
+      yield* TestClock.adjust("1 minute");
+      expect(yield* request("octocat", owner)).toMatchObject({
+        state: "queued",
+        requestedAt: at(start + 100 * unitMillis + 10 * minute),
+      });
+      expect(queue.sent).toHaveLength(2);
+    }),
+  );
+
   it.effect("keeps the 10-minute wait for anyone after the owner's request", () =>
     Effect.gen(function* () {
       yield* reset;

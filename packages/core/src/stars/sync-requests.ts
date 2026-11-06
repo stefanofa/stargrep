@@ -143,13 +143,15 @@ const decide = (decision: Decision, cost = 0, wait = Duration.zero) =>
 interface Policy {
   readonly cooldown: Duration.Duration;
   readonly fullSyncEvery: Option.Option<Duration.Duration>;
+  // Takes the login over from a request still waiting in line, whose sync then runs once more later.
+  readonly overtakesWaiting: boolean;
 }
 
 // Anyone can ask for any login, so their cooldown is long. The owner asks on every library open, and a weekly full
-// read is the only sync that finds the stars they removed.
+// read is the only sync that finds the stars they removed. Owners pay into the line but never wait in it.
 const policies: Record<Requester["_tag"], Policy> = {
-  anyone: { cooldown: Duration.minutes(10), fullSyncEvery: Option.none() },
-  owner: { cooldown: Duration.minutes(1), fullSyncEvery: Option.some(Duration.days(7)) },
+  anyone: { cooldown: Duration.minutes(10), fullSyncEvery: Option.none(), overtakesWaiting: false },
+  owner: { cooldown: Duration.minutes(1), fullSyncEvery: Option.some(Duration.days(7)), overtakesWaiting: true },
 };
 
 // A queued sync may still be reading pages. An account's first sync has no stop line, so a second request would read
@@ -283,9 +285,12 @@ const make = Effect.gen(function* () {
     }
     const busy = current.state === "queued" || current.state === "waiting";
     const cooldown = busy ? Duration.max(queuedWait, policy.cooldown) : policy.cooldown;
-    const held = Option.filter(stored, (row) =>
-      DateTime.isGreaterThan(DateTime.addDuration(row.startsAt ?? row.requestedAt, cooldown), now),
-    );
+    const held =
+      policy.overtakesWaiting && current.state === "waiting"
+        ? Option.none()
+        : Option.filter(stored, (row) =>
+            DateTime.isGreaterThan(DateTime.addDuration(row.startsAt ?? row.requestedAt, cooldown), now),
+          );
     if (by._tag === "anyone" && Option.exists(held, (row) => row.outcome === "missing")) {
       yield* decide("not-found");
       return yield* new LoginNotFound({ login });
@@ -305,7 +310,8 @@ const make = Effect.gen(function* () {
       }
     }
 
-    if (!(yield* db.syncRequests.claim({ login, at: now, cooldown, lifetime: requestLifetime }))) {
+    const claim = { login, at: now, cooldown, lifetime: requestLifetime, overtakesWaiting: policy.overtakesWaiting };
+    if (!(yield* db.syncRequests.claim(claim))) {
       yield* decide("deduped");
       return (yield* read(login, now)).status;
     }
