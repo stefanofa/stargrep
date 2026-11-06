@@ -2,19 +2,16 @@ import { env } from "cloudflare:workers";
 import { IconHost } from "@stargrep/api/icon-host";
 import { NotSignedIn, Viewers } from "@stargrep/api/viewers";
 import { QueryPlan, Search } from "@stargrep/core/search";
-import { SyncRequests } from "@stargrep/core/stars";
+import { OwnerLookup, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import { DbQueryFailed, RepoNotFound } from "@stargrep/db/errors";
 import type { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
 import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { layerSyncQueue } from "../src/server/adapters.ts";
 import { layerCaller } from "../src/server/caller.ts";
 import { withHealth } from "../src/server/health.ts";
-import { layerOwnerLookup } from "../src/server/owner-lookup.ts";
 import { layerRateLimiter } from "../src/server/rate-limiter.ts";
 import { testServer } from "./serve.ts";
 
@@ -47,18 +44,51 @@ const ada = { id: 7 as GitHubAccountId, login: "ada" as Login, type: "user", sta
 
 const starredAt = DateTime.makeUnsafe("2026-03-01T00:00:00Z");
 
-// Every message the sync queue was sent, as the real adapter sends it.
-export const queued: Array<{ readonly body: { readonly login: string }; readonly delaySeconds: number | undefined }> =
-  [];
+// Every sync request that reached admission, with who asked for it.
+export const requested: Array<{ readonly login: Login; readonly by: SyncRequests.Requester }> = [];
 
-const syncQueue = {
-  send: async (body: { readonly login: string }, options?: QueueSendOptions) => {
-    queued.push({ body, delaySeconds: options?.delaySeconds });
-  },
-} as unknown as Queue<unknown>;
+export const waitingStart = DateTime.makeUnsafe("2026-11-06T09:01:30.500Z");
 
-// How long the next reservation waits in line, and whether the line refuses signed-out syncs.
-export const line = { wait: Duration.zero, full: false };
+const looked = { starredTotal: null, accountType: null };
+
+// Answers as admission would for the logins these tests use, because they test the router and the adapters around it.
+// Admission itself runs against real SQL in core.
+const admission = Layer.mock(SyncRequests.SyncRequests, {
+  request: Effect.fn("SyncRequests.request")(function* (login: Login, by: SyncRequests.Requester) {
+    requested.push({ login, by });
+    const requestedAt = yield* DateTime.now;
+    switch (login.toLowerCase()) {
+      case "ghost-login":
+        return yield* new SyncRequests.LoginNotFound({ login });
+      case "budget-spent":
+        return yield* new SyncRequests.SyncBusy({ reason: "github-budget" });
+      case "line-full":
+        return yield* new SyncRequests.SyncBusy({ reason: "line-full" });
+      case "github-down":
+        return yield* new OwnerLookup.OwnerLookupFailed({ reason: "github" });
+      case "an-org":
+        return { state: "done", syncedAt: requestedAt, starredTotal: 0, accountType: "org" } as const;
+      case "patient":
+        return {
+          state: "waiting",
+          requestedAt,
+          startsAt: waitingStart,
+          ahead: 2,
+          syncedAt: null,
+          starredTotal: 42,
+          accountType: "user",
+        } as const;
+      default:
+        return { state: "queued", requestedAt, syncedAt: null, ...looked } as const;
+    }
+  }),
+  status: (login) =>
+    Effect.succeed(
+      login === ada.login
+        ? { state: "done", syncedAt: starredAt, starredTotal: 1, accountType: "user" }
+        : { state: "unknown", ...looked },
+    ),
+});
 
 const search = Search.Search.of({
   search: Effect.fn("Search.search")(function* (request: Search.SearchRequest) {
@@ -75,66 +105,9 @@ const search = Search.Search.of({
   }),
 });
 
-const requests = new Map<string, Db.SyncRequest>();
-
-const held = (login: Login, requestedAt: DateTime.Utc) =>
-  Option.filter(Option.fromUndefinedOr(requests.get(login.toLowerCase())), (current) =>
-    DateTime.Equivalence(current.requestedAt, requestedAt),
-  );
-
-export const syncRequests: Db.Db["Service"]["syncRequests"] = {
-  get: (login) => Effect.sync(() => Option.fromUndefinedOr(requests.get(login.toLowerCase()))),
-  claim: ({ login, at, cooldown }) =>
-    Effect.sync(() => {
-      const current = requests.get(login.toLowerCase());
-      const claimed =
-        current === undefined ||
-        DateTime.isLessThanOrEqualTo(DateTime.addDuration(current.startsAt ?? current.requestedAt, cooldown), at);
-      if (claimed) {
-        const key = login.toLowerCase();
-        requests.set(key, { login: key, requestedAt: at, outcome: "pending", startsAt: null });
-      }
-      return claimed;
-    }),
-  ahead: (startsAt, at) =>
-    Effect.sync(
-      () =>
-        [...requests.values()].filter(
-          (request) =>
-            request.outcome === "pending" &&
-            request.startsAt !== null &&
-            DateTime.isGreaterThan(request.startsAt, at) &&
-            DateTime.isLessThan(request.startsAt, startsAt),
-        ).length,
-    ),
-  schedule: (login, requestedAt, startsAt) =>
-    Effect.sync(() =>
-      Option.map(held(login, requestedAt), (current) => requests.set(current.login, { ...current, startsAt })),
-    ),
-  settle: (login, requestedAt, outcome) =>
-    Effect.sync(() =>
-      Option.map(held(login, requestedAt), (current) =>
-        outcome === "released" ? requests.delete(current.login) : requests.set(current.login, { ...current, outcome }),
-      ),
-    ),
-};
-
 const db = {
   accounts: {
     byLogin: (login: Login) => Effect.succeed(login === ada.login ? Option.some(ada) : Option.none()),
-    upsert: () => Effect.void,
-    recordStarSync: () => Effect.void,
-  },
-  syncLine: {
-    wait: () => Effect.sync(() => (line.full ? Duration.hours(3) : line.wait)),
-    reserve: ({ line: key, at, force }: Db.Reservation) =>
-      Effect.sync(() =>
-        key !== "all"
-          ? Option.some(at)
-          : line.full && !force
-            ? Option.none()
-            : Option.some(DateTime.addDuration(at, line.wait)),
-      ),
   },
   repos: {
     require: (id: RepoId) => (id === repo.id ? Effect.succeed(repo) : Effect.fail(new RepoNotFound({ repoId: id }))),
@@ -144,7 +117,6 @@ const db = {
     enrichment: (login: Login) =>
       Effect.succeed(login === ada.login ? { total: 1, read: 1, failed: 0 } : { total: 0, read: 0, failed: 0 }),
   },
-  syncRequests,
 } as unknown as Db.Db["Service"];
 
 const serve = testServer((request) =>
@@ -152,13 +124,10 @@ const serve = testServer((request) =>
     Layer.succeed(Search.Search, search),
     Layer.succeed(Viewers, Viewers.of({ current: Effect.fail(new NotSignedIn()) })),
     Layer.succeed(IconHost, IconHost.of({ origin: new URL(request.url).origin })),
-    SyncRequests.layer,
+    admission,
     layerRateLimiter(env),
-  ).pipe(
-    Layer.provideMerge(layerCaller(env.CALLER_KEY, request)),
-    Layer.provideMerge(Layer.succeed(Db.Db, db)),
-    Layer.provide(Layer.merge(layerSyncQueue(syncQueue), layerOwnerLookup(env.WORKER))),
-  ),
+    Layer.succeed(Db.Db, db),
+  ).pipe(Layer.provideMerge(layerCaller(env.CALLER_KEY, request))),
 );
 
 export default {

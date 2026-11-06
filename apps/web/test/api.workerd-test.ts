@@ -7,7 +7,6 @@ import type { contract } from "@stargrep/api/contract";
 import type { ApiServices } from "@stargrep/api/services";
 import { SearchCache } from "@stargrep/core/search";
 import { DbQueryFailed } from "@stargrep/db/errors";
-import { Login } from "@stargrep/github/schemas";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -18,7 +17,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 import { layerSearchCache } from "../src/server/adapters.ts";
 import { layerRequest } from "../src/server/layers.ts";
-import { line, queued, syncRequests } from "./entry.ts";
+import { requested, waitingStart } from "./entry.ts";
 import { testServer } from "./serve.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: response bodies are read as untyped JSON in these tests.
@@ -258,104 +257,64 @@ describe("mcp", () => {
 });
 
 describe("sync", () => {
-  it("queues a login once and rate limits one caller without blocking another", async () => {
-    const from = (ip: string) => ({ method: "POST", headers: { "cf-connecting-ip": ip } });
+  const from = (ip: string) => ({ method: "POST", headers: { "cf-connecting-ip": ip } });
+
+  it("asks admission for anyone's sync under the network's key, and limits one network without blocking another", async () => {
     const first = await rest("/sync/octocat", from("192.0.2.1"));
-    expect(first.status).toBe(202);
-    expect(first.body).toMatchObject({ login: "octocat", state: "queued", syncedAt: null });
-    expect((await rest("/sync/octocat", from("192.0.2.1"))).body.state).toBe("queued");
-    expect(queued).toEqual([
-      {
-        body: { login: "octocat", mode: "incremental", requestedAt: Date.parse(first.body.requestedAt), reserved: 4 },
-        delaySeconds: 0,
-      },
+    expect([first.status, first.body]).toEqual([
+      202,
+      expect.objectContaining({ login: "octocat", state: "queued", syncedAt: null, waiting: null }),
     ]);
-
     const statuses = [];
-    for (let attempt = 0; attempt < 4; attempt++)
+    for (let attempt = 0; attempt < 5; attempt++)
       statuses.push((await rest("/sync/octocat", from("192.0.2.1"))).status);
-    expect(statuses).toEqual([202, 202, 202, 429]);
+    expect(statuses).toEqual([202, 202, 202, 202, 429]);
     expect((await rest("/sync/octocat", from("192.0.2.2"))).status).toBe(202);
-    expect((await rest("/sync/octocat")).body).toMatchObject({ state: "queued" });
+
+    const callers = requested.filter((request) => request.login === "octocat").map((request) => request.by);
+    expect(callers).toHaveLength(6);
+    expect(callers.every((by) => by._tag === "anyone" && /^[0-9a-f]{32}$/.test(by.caller))).toBe(true);
+    expect(new Set(callers.map((by) => (by._tag === "anyone" ? by.caller : "")))).toHaveProperty("size", 2);
   });
 
-  it("queues one job when the same login is triggered many times at once", async () => {
-    const replies = await Promise.all(
-      ["192.0.2.20", "192.0.2.21", "192.0.2.22"].map((ip) =>
-        rest("/sync/Swarm-Race", { method: "POST", headers: { "cf-connecting-ip": ip } }),
-      ),
-    );
-    expect(replies.map((reply) => [reply.status, reply.body.state])).toEqual([
-      [202, "queued"],
-      [202, "queued"],
-      [202, "queued"],
-    ]);
-    expect(new Set(replies.map((reply) => reply.body.requestedAt)).size).toBe(1);
-    expect(queued.filter((sent) => sent.body.login.toLowerCase() === "swarm-race")).toHaveLength(1);
+  it("answers what admission refuses with each refusal's status and a trace ID", async () => {
+    const cases = [
+      ["ghost-login", 404, "LOGIN_NOT_FOUND"],
+      ["budget-spent", 503, "SYNC_BUSY"],
+      ["line-full", 503, "SYNC_BUSY"],
+      ["github-down", 503, "SERVICE_UNAVAILABLE"],
+    ] as const;
+    for (const [login, status, code] of cases) {
+      const refused = await rest(`/sync/${login}`, from("192.0.2.30"));
+      expect([refused.status, refused.body.code, refused.body.data.traceId]).toEqual([status, code, traceId]);
+    }
   });
 
-  it("reports a dead-lettered sync as failed, and ignores the dead letter of an older request", async () => {
-    const queued = await rest("/sync/Hubot", { method: "POST", headers: { "cf-connecting-ip": "192.0.2.9" } });
-    expect(queued.status).toBe(202);
-    const requestedAt = DateTime.toUtc(DateTime.makeUnsafe(queued.body.requestedAt));
-    await Effect.runPromise(
-      syncRequests.settle(Login.make("hubot"), DateTime.subtract(requestedAt, { minutes: 11 }), "failed"),
-    );
-    expect((await rest("/sync/hubot")).body.state).toBe("queued");
-    await Effect.runPromise(syncRequests.settle(Login.make("hubot"), requestedAt, "failed"));
-    expect((await rest("/sync/hubot")).body).toMatchObject({ login: "hubot", state: "failed", syncedAt: null });
+  it("reports a sync waiting in line with its place and start, and an org done with a starred total of 0", async () => {
+    expect((await rest("/sync/Patient", from("192.0.2.33"))).body).toMatchObject({
+      login: "Patient",
+      state: "waiting",
+      waiting: { ahead: 2, startsAt: DateTime.formatIso(waitingStart) },
+      starredTotal: 42,
+      accountType: "user",
+    });
+    expect((await rest("/sync/an-org", from("192.0.2.33"))).body).toMatchObject({
+      state: "done",
+      starredTotal: 0,
+      accountType: "org",
+      waiting: null,
+    });
   });
 
   it("reports how many of a login's stars are read, and zeros for a login Stargrep does not know", async () => {
-    expect((await rest("/sync/ada")).body.enrichment).toEqual({ total: 1, read: 1, failed: 0 });
-    expect((await rest("/sync/nobody-known")).body.enrichment).toEqual({ total: 0, read: 0, failed: 0 });
-  });
-
-  it("answers a login GitHub does not have with 404 and queues nothing", async () => {
-    const missing = await rest("/sync/ghost-login", { method: "POST", headers: { "cf-connecting-ip": "192.0.2.30" } });
-    expect([missing.status, missing.body.code, missing.body.data.traceId]).toEqual([404, "LOGIN_NOT_FOUND", traceId]);
-    expect((await rest("/sync/ghost-login")).body.state).toBe("unknown");
-    expect(queued.filter((sent) => sent.body.login === "ghost-login")).toEqual([]);
-  });
-
-  it("answers 503 SYNC_BUSY when GitHub's budget is spent or the line is full, and 503 on a failed lookup", async () => {
-    const from = { method: "POST", headers: { "cf-connecting-ip": "192.0.2.31" } };
-    expect((await rest("/sync/budget-spent", from)).body.code).toBe("SYNC_BUSY");
-    expect((await rest("/sync/github-down", from)).body.code).toBe("SERVICE_UNAVAILABLE");
-    line.full = true;
-    try {
-      const busy = await rest("/sync/line-full", from);
-      expect([busy.status, busy.body.code]).toEqual([503, "SYNC_BUSY"]);
-    } finally {
-      line.full = false;
-    }
-  });
-
-  it("answers an org done at once with a starred total of 0", async () => {
-    const reply = await rest("/sync/an-org", { method: "POST", headers: { "cf-connecting-ip": "192.0.2.32" } });
-    expect(reply.body).toMatchObject({ state: "done", starredTotal: 0, accountType: "org", waiting: null });
-    expect(queued.filter((sent) => sent.body.login === "an-org")).toEqual([]);
-  });
-
-  it("puts a sync past the line's burst in line and sends it with the queue's delay", async () => {
-    line.wait = Duration.millis(90_500);
-    try {
-      const reply = await rest("/sync/Patient", { method: "POST", headers: { "cf-connecting-ip": "192.0.2.33" } });
-      const requestedAt = Date.parse(reply.body.requestedAt);
-      expect(reply.body).toMatchObject({
-        login: "Patient",
-        state: "waiting",
-        waiting: { ahead: 0, startsAt: DateTime.formatIso(DateTime.makeUnsafe(requestedAt + 90_500)) },
-        starredTotal: 42,
-        accountType: "user",
-      });
-      expect(queued.filter((sent) => sent.body.login === "Patient")).toEqual([
-        { body: { login: "Patient", mode: "incremental", requestedAt, reserved: 4 }, delaySeconds: 91 },
-      ]);
-      expect((await rest("/sync/patient")).body).toMatchObject({ state: "waiting", waiting: { ahead: 0 } });
-    } finally {
-      line.wait = Duration.zero;
-    }
+    expect((await rest("/sync/ada")).body).toMatchObject({
+      state: "done",
+      enrichment: { total: 1, read: 1, failed: 0 },
+    });
+    expect((await rest("/sync/nobody-known")).body).toMatchObject({
+      state: "unknown",
+      enrichment: { total: 0, read: 0, failed: 0 },
+    });
   });
 
   it("rejects a login GitHub would not issue", async () => {

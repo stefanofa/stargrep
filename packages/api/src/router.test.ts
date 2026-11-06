@@ -21,6 +21,7 @@ import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 import * as AnswerCache from "./answer-cache.ts";
 import { Caller } from "./caller.ts";
+import { GitHubLogin, type PublicConfig } from "./contract.ts";
 import { errorStatus, type WireCode } from "./errors.ts";
 import { IconHost } from "./icon-host.ts";
 import type { Transport } from "./middleware/instrumentation.ts";
@@ -158,11 +159,11 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
   );
 };
 
-const publicConfig = {
-  demoLogin: "ada",
+const publicConfig: PublicConfig = {
+  demoLogin: GitHubLogin.make("ada"),
   demoQuery: "terminal dashboards",
   examples: ["postgres for ai agents"],
-  featured: ["ada"],
+  featured: [GitHubLogin.make("ada")],
 };
 
 // Runs a background refresh before it returns, with services of its own, so a TestClock test sees what it stored.

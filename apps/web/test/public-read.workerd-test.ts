@@ -1,5 +1,6 @@
 import { exports } from "cloudflare:workers";
 import { Caller } from "@stargrep/api/caller";
+import { GitHubLogin } from "@stargrep/api/contract";
 import { IconHost } from "@stargrep/api/icon-host";
 import { defaultPublicConfig } from "@stargrep/api/public-config";
 import { RateLimiter } from "@stargrep/api/rate-limiter";
@@ -76,7 +77,7 @@ describe("the demo answer cache on the Cache API", () => {
 
   const cache = () => caches.open("answers-test");
   const serve = testServer(layerFor, {
-    publicConfig: () => ({ ...defaultPublicConfig, demoLogin: "ada" }),
+    publicConfig: () => ({ ...defaultPublicConfig, demoLogin: GitHubLogin.make("ada") }),
     answerCache: makeAnswerCache(cache),
     waitUntil: (promise) => pending.push(promise),
   });

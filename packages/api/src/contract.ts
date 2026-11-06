@@ -114,7 +114,7 @@ export const SyncStatus = Schema.Struct({
       ahead: Schema.Int.annotate({ description: "How many syncs waiting in line start before this one." }),
       startsAt: Timestamp.annotate({ description: "When this sync is due to start. An estimate that can move later." }),
     }),
-  ).annotate({ description: "Where the sync stands in line. Null unless state is waiting." }),
+  ).annotate({ description: "Where the sync stands in line. Set exactly when state is waiting, and null otherwise." }),
   starredTotal: Schema.NullOr(Schema.Int).annotate({
     description:
       "How many repos the login has starred on GitHub, as of Stargrep's latest look. Null until Stargrep has looked. 0 for an org.",
@@ -192,10 +192,12 @@ export const PublicStars = Schema.Struct({
 });
 
 export const PublicConfig = Schema.Struct({
-  demoLogin: Schema.String.annotate({ description: "The account whose stars / searches before anyone picks one." }),
-  demoQuery: Schema.String.annotate({ description: "The query / answers before anyone types." }),
+  demoLogin: GitHubLogin.annotate({
+    description: "The account whose stars the home page searches before anyone picks one.",
+  }),
+  demoQuery: Schema.String.annotate({ description: "The query the home page answers before anyone types one." }),
   examples: Schema.Array(Schema.String).annotate({ description: "More queries that suit the demo account's stars." }),
-  featured: Schema.Array(Schema.String).annotate({
+  featured: Schema.Array(GitHubLogin).annotate({
     description: "Accounts to offer when someone picks whose stars to search.",
   }),
 });
