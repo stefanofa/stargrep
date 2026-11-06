@@ -31,11 +31,7 @@ export const LoginSyncRequest = Schema.Struct({
 });
 export type LoginSyncRequest = typeof LoginSyncRequest.Type;
 
-// requests counts the GitHub requests the run made: a login sync's account read, each star page, and each GraphQL
-// count.
-export interface SyncReport extends DiffPage.SyncReport {
-  readonly requests: number;
-}
+export type SyncReport = DiffPage.SyncReport;
 
 export type StarSyncError =
   | GitHubError
@@ -121,15 +117,13 @@ const make = Effect.gen(function* () {
           })
         : noChanges;
     if (!shifted) yield* db.accounts.recordStarSync({ accountId: account.id, etag: null, at });
-    const counts = account.type === "org" ? 0 : [countBefore, countAfter].filter(Option.isSome).length;
-    return { ...DiffPage.report(stored, pages, snapshot, shifted), requests: pages.length + counts };
+    return DiffPage.report(stored, pages, snapshot, shifted);
   });
 
   const syncLogin = Effect.fn("StarSync.syncLogin")(function* (request: LoginSyncRequest) {
     const account = yield* github.account(request.login);
     yield* db.accounts.upsert(account);
-    const report = yield* sync({ accountId: account.id, mode: request.mode });
-    return { ...report, requests: report.requests + 1 };
+    return yield* sync({ accountId: account.id, mode: request.mode });
   });
 
   return StarSync.of({ sync, syncLogin });

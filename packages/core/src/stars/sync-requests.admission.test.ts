@@ -428,6 +428,20 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests with a failing queue", (it) 
     ),
   );
 
+  it.effect("gives the line back what it reserved for a sync the queue refused, and keeps the lookup", () =>
+    admitting(
+      () =>
+        Effect.gen(function* () {
+          yield* fill(300);
+          yield* Effect.flip(request("octocat"));
+          expect(yield* lineUnits()).toBe(300 + 1);
+          yield* Effect.flip(request("hubot", owner));
+          expect(yield* lineUnits()).toBe(300 + 1);
+        }),
+      { sender: brokenQueue },
+    ),
+  );
+
   it.effect("settles a waiting request failed without a start, so it never holds the login past its cooldown", () =>
     admitting(
       () =>

@@ -180,7 +180,6 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
         unstarred: 0,
         enqueued: 250,
         shifted: false,
-        requests: 5,
       });
       expect(yield* activeRepos(id)).toEqual(list.map((star) => star.repo).toSorted(byNumber));
       expect(sentRepos().toSorted(byNumber)).toEqual(list.map((star) => star.repo).toSorted(byNumber));
@@ -225,7 +224,6 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
         unstarred: 0,
         enqueued: 0,
         shifted: false,
-        requests: 1,
       });
       expect(yield* rows(id)).toEqual(before);
       expect(github.sent.length - requests).toBe(1);
@@ -250,7 +248,6 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
         unstarred: 0,
         enqueued: 2,
         shifted: false,
-        requests: 1,
       });
       expect(github.sent.length - requests).toBe(1);
       expect(yield* activeRepos(id)).toContain(900);
@@ -278,7 +275,6 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
         unstarred: 1,
         enqueued: 149,
         shifted: false,
-        requests: 4,
       });
       const row = (yield* rows(id)).find((candidate) => candidate.repo === gone.repo);
       expect(row?.unstarredAt).toBe(syncTime + 2 * 60 * minute);
@@ -307,7 +303,6 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
         unstarred: 0,
         enqueued: 1,
         shifted: false,
-        requests: 1,
       });
       const row = (yield* rows(id)).find((candidate) => candidate.repo === gone.repo);
       expect(row).toEqual({ repo: gone.repo, starredAt: restarredAt, unstarredAt: null });
@@ -520,7 +515,7 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
       const starSync = yield* StarSync.StarSync;
 
       expect(yield* starSync.syncLogin({ login: "ada" as Login, mode: "incremental" })).toEqual(
-        report({ listed: 120, added: 120, requests: 5 }),
+        report({ listed: 120, added: 120 }),
       );
       expect(yield* activeRepos(7 as GitHubAccountId)).toHaveLength(120);
       expect(github.sent.map((sent) => sent.url.pathname)).toEqual([
@@ -599,8 +594,8 @@ const lineUnits = Effect.flatMap(DateTime.now, (now) =>
   Db.Db.use((db) => db.rateLines.wait("all", now, Duration.zero)),
 ).pipe(Effect.map((wait) => Duration.toMillis(wait) / 1_800));
 
-// Admits ada's sync, then runs and bills the message it queued as the sync-stars consumer does. served counts the
-// lookups and the GitHub requests the run made, and paid what the line took for them.
+// Admits ada's sync, then runs the message it queued and reconciles the line as the sync-stars consumer does on a first
+// delivery. served counts the lookups and the GitHub requests the run made, and paid what the line took for them.
 const admitAndRun = (by: SyncRequests.Requester) =>
   Effect.gen(function* () {
     const before = yield* lineUnits;
@@ -610,8 +605,8 @@ const admitAndRun = (by: SyncRequests.Requester) =>
     yield* SyncRequests.SyncRequests.use((service) => service.request(ada.login, by));
     const message = syncs.sent[queued];
     if (message === undefined) throw new Error("the request queued no sync");
-    const report = yield* StarSync.StarSync.use((service) => service.syncLogin(message));
-    yield* SyncRequests.billSync(SyncRequests.allRate(share), message.reserved, report.requests);
+    yield* StarSync.StarSync.use((service) => service.syncLogin(message));
+    yield* SyncRequests.reconcileSync(SyncRequests.allRate(share), message.reserved ?? 0, github.sent.length);
     return {
       message,
       served: owners.lookups.length - lookups + github.sent.length,
@@ -619,8 +614,7 @@ const admitAndRun = (by: SyncRequests.Requester) =>
     };
   });
 
-const paidInFull = (run: { readonly served: number; readonly paid: number }) =>
-  expect(run.paid).toBeGreaterThanOrEqual(run.served);
+const paidInFull = (run: { readonly served: number; readonly paid: number }) => expect(run.paid).toBe(run.served);
 
 const now = Effect.map(DateTime.now, DateTime.toEpochMillis);
 

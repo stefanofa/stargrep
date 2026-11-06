@@ -40,6 +40,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Headers from "effect/http/Headers";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
@@ -55,7 +57,7 @@ import * as EnrichSweep from "../src/jobs/enrich-sweep.ts";
 import * as Layers from "../src/layers.ts";
 import * as Secrets from "../src/secrets.ts";
 
-const report = { listed: 1, added: 1, unchanged: 0, unstarred: 0, enqueued: 1, shifted: false, requests: 2 };
+const report = { listed: 1, added: 1, unchanged: 0, unstarred: 0, enqueued: 1, shifted: false };
 const repoId = Schema.decodeSync(RepoId);
 const allLine = SyncRequests.allRate(BudgetShare.make(0.5));
 const inMillis = (millis: number) => Effect.map(Clock.currentTimeMillis, (now) => now + millis);
@@ -73,10 +75,10 @@ const recordingQueues = (fail = false) => {
   return { later, deadLetters, queues };
 };
 
-const batchOf = (queue: string, bodies: ReadonlyArray<unknown>) =>
+const batchOf = (queue: string, bodies: ReadonlyArray<unknown>, attempts = 1) =>
   createMessageBatch(
     queue,
-    bodies.map((body, index) => ({ id: `m${index}`, timestamp: 0, attempts: 1, body })),
+    bodies.map((body, index) => ({ id: `m${index}`, timestamp: 0, attempts, body })),
   );
 
 const run = async <E>(effect: Effect.Effect<void, E>, batch: MessageBatch) => {
@@ -85,34 +87,63 @@ const run = async <E>(effect: Effect.Effect<void, E>, batch: MessageBatch) => {
   return getQueueResult(batch, ctx);
 };
 
-// Records each turn a sync reserves in the line, in units of 1.8 seconds.
+// Records each move of the line, in units of 1.8 seconds.
 const recordingLine = (fail = false) => {
-  const reserved: Array<{ readonly line: string; readonly units: number; readonly force: boolean }> = [];
+  const adjusted: Array<{ readonly line: string; readonly units: number }> = [];
   const layer = Layer.succeed(
     Db.Db,
     Db.Db.of({
       rateLines: {
-        reserve: (reservation: Db.Reservation) =>
+        adjust: (line: Db.LineKey, _: DateTime.Utc, by: Duration.Duration) =>
           fail
-            ? Effect.fail(new DbQueryFailed({ operation: "rateLines.reserve", reason: "transport", sqlState: null }))
-            : Effect.sync(() => {
-                const { line, cost, force } = reservation;
-                reserved.push({ line, units: Duration.toMillis(cost) / 1_800, force });
-                return Option.some(reservation.at);
-              }),
+            ? Effect.fail(new DbQueryFailed({ operation: "rateLines.adjust", reason: "transport", sqlState: null }))
+            : Effect.sync(() => void adjusted.push({ line, units: Duration.toMillis(by) / 1_800 })),
       },
     } as unknown as Db.Db["Service"]),
   );
-  return { reserved, layer };
+  return { adjusted, layer };
 };
 
+const reply: TokenGate.Reply = {
+  status: 200,
+  headers: Headers.fromInput({}),
+  body: Option.some("{}"),
+  rateLimit: { resource: Option.none(), limit: Option.none(), remaining: Option.none(), resetAt: Option.none() },
+};
+
+const answering = Layer.succeed(
+  TokenGate.TokenGate,
+  TokenGate.TokenGate.of({ execute: Effect.fn("TokenGate.execute")(() => Effect.succeed(reply)) }),
+);
+
+// A sync that sends count requests through the token gate, then ends as outcome does.
+const sending = (
+  count: number,
+  outcome: Effect.Effect<StarSync.SyncReport, StarSync.StarSyncError> = Effect.succeed(report),
+) =>
+  Layer.effect(
+    StarSync.StarSync,
+    Effect.map(TokenGate.TokenGate, (gate) => {
+      const run = Effect.forEach(
+        Array.from({ length: count }),
+        () => gate.execute("account", HttpClientRequest.get("https://api.github.com/users/octocat")),
+        { discard: true },
+      ).pipe(Effect.orDie, Effect.andThen(outcome));
+      return StarSync.StarSync.of({ sync: () => run, syncLogin: () => run });
+    }),
+  );
+
 const syncing =
-  (layer: Layer.Layer<StarSync.StarSync>, line = recordingLine(), logs: Array<unknown> = []) =>
+  (
+    syncs: Layer.Layer<StarSync.StarSync, never, TokenGate.TokenGate>,
+    line = recordingLine(),
+    logs: Array<unknown> = [],
+  ) =>
   (queues: Settle.Queues, batch: MessageBatch) =>
     run(
-      Settle.processBatch(SyncStarsConsumer.pipeline(allLine), queues, batch.messages).pipe(
+      Settle.processBatch(SyncStarsConsumer.pipeline(allLine, syncs), queues, batch.messages).pipe(
         Effect.provide(
-          Layer.mergeAll(layer, line.layer, Logger.layer([Logger.make(({ message }) => logs.push(message))])),
+          Layer.mergeAll(answering, line.layer, Logger.layer([Logger.make(({ message }) => logs.push(message))])),
         ),
       ),
       batch,
@@ -158,32 +189,64 @@ describe("sync-stars consumer", () => {
     expect(deadLetters).toEqual([]);
   });
 
-  it("bills the line for the GitHub requests a sync made past what its message reserved", async () => {
+  it("reconciles a first delivery with what it reserved, from the requests the token gate counted", async () => {
     const { queues } = recordingQueues();
     const line = recordingLine();
     const batch = batchOf("sync-stars", [
       { login: "octocat", mode: "incremental", reserved: 2 },
       { login: "hubot", mode: "incremental", reserved: 9 },
       { login: "debugged", mode: "full" },
+      { accountId: 7, mode: "full" },
     ]);
-    const layer = Layer.mock(StarSync.StarSync, { syncLogin: () => Effect.succeed({ ...report, requests: 7 }) });
-    const result = await syncing(layer, line)(queues, batch);
-    expect(line.reserved).toEqual([
-      { line: "all", units: 5, force: true },
-      { line: "all", units: 7, force: true },
+    const result = await syncing(sending(7), line)(queues, batch);
+    expect(line.adjusted).toEqual([
+      { line: "all", units: 5 },
+      { line: "all", units: -2 },
+      { line: "all", units: 7 },
+      { line: "all", units: 7 },
     ]);
-    expect(result.explicitAcks.toSorted()).toEqual(["m0", "m1", "m2"]);
+    expect(result.explicitAcks.toSorted()).toEqual(["m0", "m1", "m2", "m3"]);
   });
 
-  it("acks a sync whose bill fails to write, and logs it, so GitHub is not read again", async () => {
+  it("gives back what a failed first delivery did not use, and bills what it sent", async () => {
+    const { queues } = recordingQueues();
+    const line = recordingLine();
+    const batch = batchOf("sync-stars", [{ login: "octocat", mode: "incremental", reserved: 9 }]);
+    const dropped = Effect.fail(new DbQueryFailed({ operation: "stars.upsert", reason: "transport", sqlState: null }));
+    const result = await syncing(sending(3, dropped), line)(queues, batch);
+    expect(line.adjusted).toEqual([{ line: "all", units: -6 }]);
+    expect(result.retryMessages).toEqual([{ msgId: "m0" }]);
+  });
+
+  it("bills every request a later delivery sends, because the first one settled the reservation", async () => {
+    const { queues } = recordingQueues();
+    const line = recordingLine();
+    const batch = batchOf("sync-stars", [{ login: "octocat", mode: "incremental", reserved: 9 }], 2);
+    await syncing(sending(3), line)(queues, batch);
+    expect(line.adjusted).toEqual([{ line: "all", units: 3 }]);
+  });
+
+  it("acks a sync whose reconciliation fails to write, and logs it, so GitHub is not read again", async () => {
     const { queues } = recordingQueues();
     const logs: Array<unknown> = [];
     const batch = batchOf("sync-stars", [{ login: "octocat", mode: "incremental", reserved: 2 }]);
-    const layer = Layer.mock(StarSync.StarSync, { syncLogin: () => Effect.succeed({ ...report, requests: 7 }) });
-    const result = await syncing(layer, recordingLine(true), logs)(queues, batch);
+    const result = await syncing(sending(7), recordingLine(true), logs)(queues, batch);
     expect(result.explicitAcks).toEqual(["m0"]);
     expect(result.retryMessages).toEqual([]);
-    expect(logs).toContainEqual(["Could not bill a sync to the line", { reason: "transport" }]);
+    expect(logs).toContainEqual(["Could not reconcile a sync with the line", { reason: "transport" }]);
+  });
+
+  it("sends a deferred sync again without its reservation, which its first delivery already settled", async () => {
+    const { queues, later } = recordingQueues();
+    const requestedAt = Date.parse("2026-11-04T12:00:00Z");
+    const batch = batchOf("sync-stars", [{ login: "octocat", mode: "incremental", requestedAt, reserved: 9 }]);
+    const exhausted = Effect.flatMap(inMillis(600_000), (resetAt) =>
+      Effect.fail(new TokenBudgetExhausted({ resource: "core", resetAt })),
+    );
+    const line = recordingLine();
+    await syncing(sending(2, exhausted), line)(queues, batch);
+    expect(line.adjusted).toEqual([{ line: "all", units: -7 }]);
+    expect(later.map((sent) => sent.body)).toEqual([{ login: "octocat", mode: "incremental", requestedAt }]);
   });
 
   it("sends a sync that ran out of GitHub budget again after the reset, without spending a retry", async () => {
@@ -209,12 +272,18 @@ describe("sync-stars consumer", () => {
   it("dead-letters a sync on a stage with no GitHub token on its first attempt", async () => {
     const { queues, deadLetters } = recordingQueues();
     const batch = batchOf("sync-stars", [{ login: "octocat", mode: "full" }]);
-    const layer = StarSync.layer.pipe(
-      Layer.provide(GitHub.layer.pipe(Layer.provide(TokenGate.layerMissing))),
+    const syncs = StarSync.layer.pipe(
+      Layer.provide(GitHub.layer),
       Layer.provide(unusedDb),
       Layer.provide(EnrichQueue.layerMemory().layer),
     );
-    const result = await syncing(layer)(queues, batch);
+    const ctx = createExecutionContext();
+    await Effect.runPromise(
+      Settle.processBatch(SyncStarsConsumer.pipeline(allLine, syncs), queues, batch.messages).pipe(
+        Effect.provide(Layer.merge(TokenGate.layerMissing, unusedDb)),
+      ),
+    );
+    const result = await getQueueResult(batch, ctx);
     expect(deadLetters).toEqual([{ login: "octocat", mode: "full" }]);
     expect(result.explicitAcks).toEqual(["m0"]);
     expect(result.retryMessages).toEqual([]);
@@ -228,25 +297,27 @@ describe("sync-stars consumer", () => {
       body: { message: "You have exceeded a secondary rate limit. Please wait a few minutes before you try again." },
       headers: GitHubFake.rateLimitHeaders(4900, 3600),
     }));
-    const layer = StarSync.layer.pipe(
-      Layer.provide(github.layer),
+    const syncs = StarSync.layer.pipe(
+      Layer.provide(GitHub.layer),
       Layer.provide(unusedDb),
       Layer.provide(EnrichQueue.layerMemory().layer),
     );
+    const line = recordingLine();
     const ctx = createExecutionContext();
     await Effect.runPromise(
       Effect.gen(function* () {
         const fiber = yield* Effect.forkChild(
-          Settle.processBatch(SyncStarsConsumer.pipeline(allLine), queues, batch.messages),
+          Settle.processBatch(SyncStarsConsumer.pipeline(allLine, syncs), queues, batch.messages),
         );
         yield* TestClock.adjust("3 minutes");
         yield* Fiber.join(fiber);
-      }).pipe(Effect.provide(Layer.mergeAll(layer, unusedDb, TestClock.layer()))),
+      }).pipe(Effect.provide(Layer.mergeAll(github.layer, line.layer, TestClock.layer()))),
     );
     const result = await getQueueResult(batch, ctx);
     expect(deadLetters).toEqual([]);
     expect(later).toEqual([{ body: { login: "octocat", mode: "full" }, delaySeconds: 65 }]);
     expect(github.sent).toHaveLength(4);
+    expect(line.adjusted).toEqual([{ line: "all", units: 4 }]);
     expect(result.explicitAcks).toEqual(["m0"]);
   });
 
@@ -270,9 +341,9 @@ describe("sync-stars consumer", () => {
     }
     const ctx = createExecutionContext();
     await Effect.runPromise(
-      Settle.processBatch(SyncStarsConsumer.pipeline(allLine), queues, batch.messages).pipe(
+      Settle.processBatch(SyncStarsConsumer.pipeline(allLine, layer), queues, batch.messages).pipe(
         Effect.provide(
-          Layer.mergeAll(layer, unusedDb, Logger.layer([Logger.make(({ message }) => logs.push(message))])),
+          Layer.mergeAll(answering, unusedDb, Logger.layer([Logger.make(({ message }) => logs.push(message))])),
         ),
       ),
     );
@@ -298,13 +369,13 @@ describe("sync-stars consumer", () => {
     }
     const ctx = createExecutionContext();
     await Effect.runPromise(
-      Settle.processBatch(SyncStarsConsumer.pipeline(allLine), queues, batch.messages).pipe(
+      Settle.processBatch(
+        SyncStarsConsumer.pipeline(allLine, Layer.mock(StarSync.StarSync, {})),
+        queues,
+        batch.messages,
+      ).pipe(
         Effect.provide(
-          Layer.mergeAll(
-            Layer.mock(StarSync.StarSync, {}),
-            unusedDb,
-            Logger.layer([Logger.make(({ message }) => logs.push(message))]),
-          ),
+          Layer.mergeAll(answering, unusedDb, Logger.layer([Logger.make(({ message }) => logs.push(message))])),
         ),
       ),
     );
@@ -806,7 +877,7 @@ describe("dead letters", () => {
     Effect.runPromise(
       Settle.handleDeadLetters(
         "sync-stars",
-        SyncStarsConsumer.pipeline(allLine),
+        SyncStarsConsumer.pipeline(allLine, Layer.mock(StarSync.StarSync, {})),
       )(Stream.fromIterable(batchOf("sync-stars-dead-letters", bodies).messages)).pipe(
         Effect.provide(Layer.merge(layer, Logger.layer([Logger.make(({ message }) => logs.push(message))]))),
       ),

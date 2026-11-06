@@ -112,7 +112,7 @@ export const allRate = (share: BudgetShare): Rate => ({
 
 // Each network pays a line of its own for every lookup it asks for and for the first read of a login that never synced,
 // so one network can neither look logins up without end nor fill the line all.
-export const networkRate: Rate = { unitsPerHour: 150, burstUnits: 150, maxWait: Duration.zero };
+const networkRate: Rate = { unitsPerHour: 150, burstUnits: 150, maxWait: Duration.zero };
 
 const unitsOf = (rate: Rate, count: number) =>
   Duration.millis((count * Duration.toMillis(Duration.hours(1))) / rate.unitsPerHour);
@@ -148,17 +148,18 @@ export const costOf = (read: StarRead): number => 1 + (read._tag === "every" ? 2
 const reserve = (db: Db.Db["Service"], line: Rate, at: DateTime.Utc, units: number, force: boolean) =>
   db.rateLines.reserve(reservation("all", line, at, units, force));
 
-// A sync that has run pays the line, forced, for the GitHub requests it made past what admission reserved for it, so
-// the next signed-out start moves later by the difference. A message that reserved nothing pays for every request.
-export const billSync = Effect.fn("SyncRequests.billSync")(function* (
+// After each delivery of a sync, whether it succeeded or failed, the line settles with the GitHub requests the token gate
+// counted. reserved is what admission put in the line for this delivery. The delivery bills what it counted past that,
+// or gives back what it did not use, and the line never moves earlier than now.
+export const reconcileSync = Effect.fn("SyncRequests.reconcileSync")(function* (
   line: Rate,
-  reserved: number | undefined,
-  requests: number,
+  reserved: number,
+  counted: number,
 ) {
-  const owed = Math.max(0, requests - (reserved ?? 0));
-  yield* Effect.annotateCurrentSpan({ "sync.requests": requests, "sync.owed": owed });
+  const owed = counted - reserved;
+  yield* Effect.annotateCurrentSpan({ "sync.requests": counted, "sync.reserved": reserved, "sync.owed": owed });
   if (owed === 0) return;
-  yield* reserve(yield* Db.Db, line, yield* DateTime.now, owed, true);
+  yield* (yield* Db.Db).rateLines.adjust("all", yield* DateTime.now, unitsOf(line, owed));
 });
 
 type Decision =
@@ -346,9 +347,17 @@ const make = Effect.fnUntraced(function* (share: BudgetShare) {
   ) {
     const { mode, reserved, startsAt, cost } = sync;
     const wait = DateTime.isGreaterThan(startsAt, at) ? DateTime.distance(at, startsAt) : Duration.zero;
+    // A refused message runs no sync, so the units reserved for it go back to the line.
     yield* queue
       .send({ login, mode, requestedAt: at, reserved }, wait)
-      .pipe(Effect.tapError(() => db.syncRequests.settle(login, at, "failed").pipe(Effect.ignore)));
+      .pipe(
+        Effect.tapError(() =>
+          Effect.all([
+            db.syncRequests.settle(login, at, "failed"),
+            db.rateLines.adjust("all", at, unitsOf(line, -reserved)),
+          ]).pipe(Effect.ignore),
+        ),
+      );
     yield* db.syncRequests.schedule(login, at, startsAt);
     if (Duration.isZero(wait)) {
       return { _tag: "Started", cost, status: { state: "queued", requestedAt: at, ...fields } } satisfies Admission;

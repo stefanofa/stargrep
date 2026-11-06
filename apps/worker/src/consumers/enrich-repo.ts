@@ -19,10 +19,10 @@ const settlementOf = EnrichRepo.Enrichment.$match({
 
 export const pipeline = Settle.pipeline({
   schema: EnrichQueue.EnrichRepo,
-  run: Effect.fn("EnrichRepoConsumer.run")(function* (bodies) {
+  run: Effect.fn("EnrichRepoConsumer.run")(function* (deliveries) {
     const enricher = yield* EnrichRepo.EnrichRepo;
-    const enriched = yield* Effect.result(enricher.enrichRepos(bodies.map((body) => body.repoId)));
-    if (Result.isFailure(enriched)) return bodies.map(() => Result.fail(enriched.failure));
+    const enriched = yield* Effect.result(enricher.enrichRepos(deliveries.map(({ body }) => body.repoId)));
+    if (Result.isFailure(enriched)) return deliveries.map(() => Result.fail(enriched.failure));
     return enriched.success.map(settlementOf);
   }),
   describe: (body) => ({ repoId: body.repoId }),

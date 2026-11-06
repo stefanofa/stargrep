@@ -18,11 +18,11 @@ const handle = (
 
 export const pipeline = Settle.pipeline({
   schema: IconQueue.IconMessage,
-  run: Effect.fn("FetchIconConsumer.run")(function* (messages) {
+  run: Effect.fn("FetchIconConsumer.run")(function* (deliveries) {
     const icons = yield* FetchIcon.FetchIcon;
     return yield* Effect.forEach(
-      messages,
-      (message) => handle(icons, message).pipe(Effect.as(Settle.Settlement.Done()), Effect.result),
+      deliveries,
+      ({ body }) => handle(icons, body).pipe(Effect.as(Settle.Settlement.Done()), Effect.result),
       { concurrency },
     );
   }),
