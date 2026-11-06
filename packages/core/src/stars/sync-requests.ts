@@ -69,7 +69,7 @@ export class NewAccountLimited extends Schema.TaggedError<NewAccountLimited, { r
   {},
 ) {
   override get message(): string {
-    return "This caller started as many new logins as it may for now";
+    return "This network has spent its share of GitHub requests for now";
   }
 }
 
@@ -93,16 +93,34 @@ export class SyncRequests extends Context.Service<
   }
 >()("@stargrep/core/stars/sync-requests/SyncRequests") {}
 
-// A unit is one GitHub request. Signed-out syncs together spend at most unitsPerHour of the token's share, up to
-// burstUnits at once after a quiet spell. A sync that would wait in line longer than maxWait is refused.
-export const line = { unitsPerHour: 2_000, burstUnits: 200, maxWait: Duration.hours(2) } as const;
+// A rate line counts GitHub requests, a unit each. It pays out unitsPerHour, a reservation passes while the line owes
+// at most burstUnits, and one that would start later than maxWait from now is refused.
+export interface Rate {
+  readonly unitsPerHour: number;
+  readonly burstUnits: number;
+  readonly maxWait: Duration.Duration;
+}
 
-const unit = Duration.millis(Duration.toMillis(Duration.hours(1)) / line.unitsPerHour);
-const tolerance = Duration.times(unit, line.burstUnits);
+// Signed-out syncs together take turns in the line all.
+export const line: Rate = { unitsPerHour: 2_000, burstUnits: 200, maxWait: Duration.hours(2) };
 
-// Each caller may start 4 logins that never synced at once, then one more every 15 minutes. A login GitHub does not
-// have counts too.
-export const callerLimit = { burst: 4, every: Duration.minutes(15) } as const;
+// Each network pays a line of its own for every lookup it asks for and for the first read of a login that never synced,
+// so one network can neither look logins up without end nor fill the line all.
+export const networkRate: Rate = { unitsPerHour: 150, burstUnits: 150, maxWait: Duration.zero };
+
+const unitsOf = (rate: Rate, count: number) =>
+  Duration.millis((count * Duration.toMillis(Duration.hours(1))) / rate.unitsPerHour);
+
+const reservation = (key: Db.LineKey, rate: Rate, at: DateTime.Utc, count: number, force: boolean) => ({
+  line: key,
+  at,
+  cost: unitsOf(rate, count),
+  tolerance: unitsOf(rate, rate.burstUnits),
+  maxWait: rate.maxWait,
+  force,
+});
+
+const tolerance = unitsOf(line, line.burstUnits);
 
 // A missing login or an org costs its lookup and nothing more.
 export const lookupCost = 1;
@@ -124,14 +142,7 @@ const pagesOf = (read: StarRead) =>
 export const costOf = (read: StarRead): number => 1 + (read._tag === "every" ? 2 : 0) + pagesOf(read);
 
 const reserve = (db: Db.Db["Service"], at: DateTime.Utc, units: number, force: boolean) =>
-  db.rateLines.reserve({
-    line: "all",
-    at,
-    cost: Duration.times(unit, units),
-    tolerance,
-    maxWait: line.maxWait,
-    force,
-  });
+  db.rateLines.reserve(reservation("all", line, at, units, force));
 
 // A sync that has run pays the line, forced, for the GitHub requests it made past what admission reserved for it, so
 // the next signed-out start moves later by the difference. A message that reserved nothing pays for every request.
@@ -299,16 +310,6 @@ const make = Effect.gen(function* () {
     return (yield* read(login, yield* DateTime.now)).status;
   });
 
-  const reserveNewLogin = (caller: Db.CallerKey, at: DateTime.Utc) =>
-    db.rateLines.reserve({
-      line: Db.callerLine(caller),
-      at,
-      cost: callerLimit.every,
-      tolerance: Duration.times(callerLimit.every, callerLimit.burst - 1),
-      maxWait: Duration.zero,
-      force: false,
-    });
-
   const starRead = (login: Login, readsEveryPage: boolean, starredTotal: number) =>
     readsEveryPage
       ? Effect.succeed<StarRead>({ _tag: "every", starredTotal })
@@ -397,8 +398,9 @@ const make = Effect.gen(function* () {
 
     const wait = yield* db.rateLines.wait("all", now, tolerance);
     if (Duration.isGreaterThan(wait, line.maxWait)) return { _tag: "LineFull", cost: 0, wait };
-    const syncedAt = syncedAtOf(current);
-    if (syncedAt === null && Option.isNone(yield* reserveNewLogin(caller, now))) return { _tag: "CallerLimit" };
+    const network = Db.callerLine(caller);
+    const charge = (units: number) => db.rateLines.reserve(reservation(network, networkRate, now, units, false));
+    if (Option.isNone(yield* charge(lookupCost))) return { _tag: "CallerLimit" };
 
     const found = yield* Effect.result(owners.lookup(login));
     if (Result.isFailure(found)) return { _tag: "LookupFailed", error: found.failure };
@@ -426,10 +428,19 @@ const make = Effect.gen(function* () {
       return { _tag: "Org", status: { state: "done", syncedAt: now, ...looked } };
     }
 
+    const syncedAt = syncedAtOf(current);
     const work = costOf(yield* starRead(login, syncedAt === null, owner.starredTotal));
+    // A first read goes on its network's line too, refused once the network owes its burst, so a network starts one
+    // huge import and not several at once.
+    const networkWork = syncedAt === null ? work : 0;
+    if (networkWork > 0 && Option.isNone(yield* charge(networkWork))) {
+      yield* db.syncRequests.settle(login, now, "released");
+      return { _tag: "CallerLimit" };
+    }
     const startsAt = yield* reserve(db, now, work, false);
     if (Option.isNone(startsAt)) {
       yield* db.syncRequests.settle(login, now, "released");
+      if (networkWork > 0) yield* db.rateLines.adjust(network, now, unitsOf(networkRate, -networkWork));
       return { _tag: "LineFull", cost: lookupCost, wait: line.maxWait };
     }
     return yield* start(

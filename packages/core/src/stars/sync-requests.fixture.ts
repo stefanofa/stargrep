@@ -185,6 +185,18 @@ export const lineUnits = (line: Db.LineKey = "all") =>
     ),
   );
 
+// A network's line pays out 150 units an hour.
+const networkUnitMillis = 24_000;
+const networkLine = (caller: string) => Db.callerLine(Db.CallerKey.make(caller));
+
+export const networkUnits = (caller = "caller-a") =>
+  Effect.map(lineUnits(networkLine(caller)), (count) => (count * unitMillis) / networkUnitMillis);
+
+export const fillNetwork = (count: number, caller = "caller-a") =>
+  Effect.flatMap(DateTime.now, (now) =>
+    Db.Db.use((db) => db.rateLines.adjust(networkLine(caller), now, Duration.millis(count * networkUnitMillis))),
+  );
+
 export const reserveUnits = (db: Db.Db["Service"], count: number) =>
   Effect.flatMap(DateTime.now, (now) => db.rateLines.adjust("all", now, units(count))).pipe(Effect.orDie);
 

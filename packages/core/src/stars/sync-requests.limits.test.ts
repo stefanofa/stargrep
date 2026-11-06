@@ -13,13 +13,15 @@ import {
   at,
   embeddingModel,
   fill,
-  finished,
+  fillNetwork,
   fullSynced,
   lineUnits,
   markFailed,
   memory,
   minute,
+  networkUnits,
   octocat,
+  org,
   owner,
   request,
   reserveUnits,
@@ -210,89 +212,115 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests line", (it) => {
 });
 
 it.layer(memory, { timeout: 30_000 })("SyncRequests network limit", (it) => {
-  it.effect("starts 4 new logins for one caller, missing logins included, then one every 15 minutes", () =>
-    admitting(({ lookups }) =>
+  it.effect("charges a network a unit for each lookup, and a new login's first read on top", () =>
+    admitting(({ owners }) =>
       Effect.gen(function* () {
         yield* synced("octocat", start - 60 * minute);
-        for (const login of ["hubot", "grace", "linus"]) yield* request(login);
-        yield* request("missing-one").pipe(Effect.ignore);
-        expect((yield* Effect.flip(request("ada")))._tag).toBe("NewAccountLimited");
-        expect(lookups).not.toContain("ada" as Login);
-        expect(yield* row("ada")).toEqual(Option.none());
-        expect(yield* request("octocat")).toMatchObject({ state: "queued" });
-        expect(yield* request("ada", anyone("caller-b"))).toMatchObject({ state: "queued" });
-
-        yield* TestClock.adjust("14 minutes");
-        expect((yield* Effect.flip(request("alan")))._tag).toBe("NewAccountLimited");
-        yield* TestClock.adjust("1 minute");
-        expect(yield* request("alan")).toMatchObject({ state: "queued" });
-        expect((yield* Effect.flip(request("swarm")))._tag).toBe("NewAccountLimited");
+        owners.set("github", org("github", 9919));
+        yield* request("octocat");
+        expect(yield* networkUnits()).toBe(1);
+        yield* request("no-such-login").pipe(Effect.ignore);
+        yield* request("github");
+        expect(yield* networkUnits()).toBe(3);
+        yield* request("hubot");
+        expect(yield* networkUnits()).toBe(3 + 1 + 4);
+        expect(yield* networkUnits("caller-b")).toBe(0);
       }),
     ),
   );
 
-  it.effect("keeps counting a caller's new logins after they sync and the caller asks for them again", () =>
-    admitting(({ lookups }) =>
-      Effect.gen(function* () {
-        const first = ["swarm", "hubot", "grace", "linus"];
-        for (const login of first) yield* request(login);
-        yield* TestClock.adjust("1 minute");
-        for (const login of first) yield* finished(login);
-        yield* TestClock.adjust("10 minutes");
-        for (const login of first) expect(yield* request(login)).toMatchObject({ state: "queued" });
-        expect((yield* Effect.flip(request("ada")))._tag).toBe("NewAccountLimited");
-        expect((yield* Effect.flip(request("alan")))._tag).toBe("NewAccountLimited");
-        expect(lookups).toHaveLength(8);
-      }),
+  it.effect(
+    "puts a network in debt for a 100,000-star login, and refuses its next login while another network's starts",
+    () =>
+      admitting(({ lookups, owners }) =>
+        Effect.gen(function* () {
+          owners.set("huge", user("huge", 7_002, 100_000));
+          expect(yield* request("huge")).toMatchObject({ state: "queued", starredTotal: 100_000 });
+          expect(yield* networkUnits()).toBe(1 + 1_003);
+          expect((yield* Effect.flip(request("hubot")))._tag).toBe("NewAccountLimited");
+          expect(lookups).not.toContain("hubot" as Login);
+          expect(yield* request("hubot", anyone("caller-b"))).toMatchObject({ state: "waiting" });
+
+          yield* TestClock.adjust("5 hours");
+          expect((yield* Effect.flip(request("grace")))._tag).toBe("NewAccountLimited");
+          yield* TestClock.adjust("1 hour");
+          expect(yield* request("grace")).toMatchObject({ state: "queued" });
+        }),
+      ),
+  );
+
+  it.effect(
+    "refuses a network that owes its burst before any lookup or claim, so another network queues the login",
+    () =>
+      admitting(({ sent, lookups }) =>
+        Effect.gen(function* () {
+          yield* fillNetwork(151);
+          expect((yield* Effect.flip(request("swarm")))._tag).toBe("NewAccountLimited");
+          expect(lookups).toEqual([]);
+          expect(yield* row("swarm")).toEqual(Option.none());
+          expect(yield* request("swarm", anyone("caller-b"))).toMatchObject({ state: "queued" });
+          expect(sent.filter((each) => each.login === "swarm")).toHaveLength(1);
+        }),
+      ),
+  );
+
+  it.effect(
+    "refuses a new login's first read once its lookup brings the network to its burst, and releases the claim",
+    () =>
+      admitting(({ sent, lookups }) =>
+        Effect.gen(function* () {
+          yield* fillNetwork(150);
+          expect((yield* Effect.flip(request("hubot")))._tag).toBe("NewAccountLimited");
+          expect(lookups).toEqual(["hubot" as Login]);
+          expect(yield* row("hubot")).toEqual(Option.none());
+          expect(yield* networkUnits()).toBe(151);
+          expect(yield* lineUnits()).toBe(1);
+          expect(sent).toEqual([]);
+        }),
+      ),
+  );
+
+  it.effect("gives a new login's first read back to its network when the line refuses it", () =>
+    admitting(
+      () =>
+        Effect.gen(function* () {
+          expect(yield* Effect.flip(request("hubot"))).toMatchObject({ _tag: "SyncBusy", reason: "line-full" });
+          expect(yield* networkUnits()).toBe(1);
+        }),
+      { hooks: { duringLookup: (db) => reserveUnits(db, 4_500) } },
     ),
   );
 
-  it.effect("keeps counting a caller's new logins after another caller claims them again", () =>
-    admitting(() =>
+  it.effect("keeps a network's debt after another network claims its new login again", () =>
+    admitting(({ owners }) =>
       Effect.gen(function* () {
-        const first = ["hubot", "grace", "linus", "ada"];
-        for (const login of first) {
-          yield* request(login);
-          yield* markFailed(login, start);
-        }
+        owners.set("huge", user("huge", 7_002, 100_000));
+        yield* request("huge");
+        yield* markFailed("huge", start);
         yield* TestClock.adjust("11 minutes");
-        for (const login of first) {
-          expect(yield* request(login, anyone("caller-b"))).toMatchObject({ state: "queued" });
-        }
-        expect((yield* Effect.flip(request("alan")))._tag).toBe("NewAccountLimited");
-      }),
-    ),
-  );
-
-  it.effect("refuses an over-limit network before it claims, so another network's trigger queues the login", () =>
-    admitting(({ sent }) =>
-      Effect.gen(function* () {
-        for (const login of ["hubot", "grace", "linus", "ada"]) yield* request(login);
-        expect((yield* Effect.flip(request("swarm")))._tag).toBe("NewAccountLimited");
-        expect(yield* row("swarm")).toEqual(Option.none());
-        expect(yield* request("swarm", anyone("caller-b"))).toMatchObject({ state: "queued" });
-        expect(sent.filter((each) => each.login === "swarm")).toHaveLength(1);
+        expect(yield* request("huge", anyone("caller-b"))).toMatchObject({ state: "waiting" });
+        expect((yield* Effect.flip(request("hubot")))._tag).toBe("NewAccountLimited");
       }),
     ),
   );
 });
 
 const concurrentCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatabase> }) => {
-  test.effect("starts only 4 of 6 new logins one caller asks for at once", () =>
-    admitting(({ sent, lookups }) =>
+  test.effect("starts one of several huge new logins one network asks for at once", () =>
+    admitting(({ sent, lookups, owners }) =>
       Effect.gen(function* () {
-        const results = yield* Effect.forEach(
-          ["swarm", "hubot", "grace", "linus", "ada", "alan"],
-          (login) => Effect.result(request(login)),
-          { concurrency: "unbounded" },
-        );
+        const logins = ["swarm", "hubot", "grace", "linus", "ada", "alan"];
+        for (const [index, login] of logins.entries()) owners.set(login, user(login, 8_000 + index, 20_000));
+        const results = yield* Effect.forEach(logins, (login) => Effect.result(request(login)), {
+          concurrency: "unbounded",
+        });
         const outcomes = results.map((result) =>
           result._tag === "Success" ? result.success.state : result.failure._tag,
         );
-        expect(outcomes.filter((outcome) => outcome === "queued")).toHaveLength(4);
-        expect(outcomes.filter((outcome) => outcome === "NewAccountLimited")).toHaveLength(2);
-        expect(lookups).toHaveLength(4);
-        expect(sent).toHaveLength(4);
+        expect(outcomes.filter((outcome) => outcome === "queued")).toHaveLength(1);
+        expect(outcomes.filter((outcome) => outcome === "NewAccountLimited")).toHaveLength(5);
+        expect(sent).toHaveLength(1);
+        expect(yield* networkUnits()).toBe(lookups.length + 203);
       }),
     ),
   );
