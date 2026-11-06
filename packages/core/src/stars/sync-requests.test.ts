@@ -1,12 +1,14 @@
 import { expect } from "bun:test";
 import * as Db from "@stargrep/db";
 import type { EmbeddingModelId } from "@stargrep/db/embedding";
+import type { DbQueryFailed } from "@stargrep/db/errors";
 import * as TestDatabase from "@stargrep/db/test-database";
 import type { Owner } from "@stargrep/github/owner";
 import type { GitHubAccountId, Login } from "@stargrep/github/schemas";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -42,12 +44,36 @@ const lookups = Layer.effect(
   }),
 ).pipe(Layer.provide(github.layer));
 
+// Runs each claim, so a test can line the claims up and hold the ones that lose.
+const claiming: { run: (claim: Effect.Effect<boolean, DbQueryFailed>) => Effect.Effect<boolean, DbQueryFailed> } = {
+  run: (claim) => claim,
+};
+
+const claims = Layer.effect(
+  Db.Db,
+  Effect.map(Db.Db, (db) =>
+    Db.Db.of({
+      ...db,
+      syncRequests: {
+        ...db.syncRequests,
+        claim: (claim) => Effect.suspend(() => claiming.run(db.syncRequests.claim(claim))),
+      },
+    }),
+  ),
+);
+
 const memory = TestDatabase.layerMemory({ embeddingModel });
 
 const layerWith = <E>(
   sender: Layer.Layer<SyncQueue.SyncQueue>,
   database: Layer.Layer<Db.Db | Db.Transactions | TestDatabase.TestDatabase, E>,
-) => SyncRequests.layer.pipe(Layer.provideMerge(lookups), Layer.provideMerge(database), Layer.provideMerge(sender));
+) =>
+  SyncRequests.layer.pipe(
+    Layer.provide(claims),
+    Layer.provideMerge(lookups),
+    Layer.provideMerge(database),
+    Layer.provideMerge(sender),
+  );
 
 const at = (millis: number) => DateTime.makeUnsafe(millis);
 const units = (count: number) => Duration.millis(count * unitMillis);
@@ -79,6 +105,7 @@ const reset = Effect.gen(function* () {
   github.lookups.length = 0;
   github.owners.clear();
   duringLookup.run = () => Effect.void;
+  claiming.run = (claim) => claim;
   for (const [index, login] of ["octocat", "swarm", "hubot", "grace", "linus", "ada", "alan"].entries()) {
     github.owners.set(login, user(login, login === "octocat" ? 583231 : 9000 + index, 42));
   }
@@ -552,6 +579,7 @@ it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (i
       expect(queue.sent).toEqual([]);
 
       duringLookup.run = () => Effect.void;
+      claiming.run = (claim) => claim;
       yield* TestClock.adjust(units(4_501));
       expect(yield* request("octocat")).toMatchObject({ state: "queued" });
     }),
@@ -663,6 +691,7 @@ it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (i
       expect(yield* lineUnits).toBe(0);
 
       duringLookup.run = () => Effect.void;
+      claiming.run = (claim) => claim;
       expect(yield* request("octocat")).toMatchObject({ state: "queued" });
     }),
   );
@@ -704,6 +733,38 @@ const concurrentCases = (test: {
       expect(outcomes.filter((outcome) => outcome === "NewAccountLimited")).toHaveLength(2);
       expect(github.lookups).toHaveLength(4);
       expect(queue.sent).toHaveLength(4);
+    }),
+  );
+
+  test.effect("answers every trigger for a login GitHub does not have not found, after one lookup", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      const arrived = yield* Deferred.make<void>();
+      const settled = yield* Deferred.make<void>();
+      let claimed = 0;
+      claiming.run = (claim) =>
+        Effect.gen(function* () {
+          claimed += 1;
+          if (claimed === 3) yield* Deferred.succeed(arrived, undefined);
+          yield* Deferred.await(arrived);
+          const won = yield* claim;
+          if (!won) yield* Deferred.await(settled);
+          return won;
+        });
+      const results = yield* Effect.forEach(
+        ["caller-0", "caller-1", "caller-2"],
+        (caller) =>
+          Effect.result(request("missing-login", anyone(caller))).pipe(
+            Effect.ensuring(Deferred.succeed(settled, undefined)),
+          ),
+        { concurrency: "unbounded" },
+      );
+      const outcomes = results.map((result) =>
+        result._tag === "Success" ? result.success.state : result.failure._tag,
+      );
+      expect(outcomes).toEqual(["LoginNotFound", "LoginNotFound", "LoginNotFound"]);
+      expect(github.lookups).toEqual(["missing-login" as Login]);
+      expect(queue.sent).toEqual([]);
     }),
   );
 };

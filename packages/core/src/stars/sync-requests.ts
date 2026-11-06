@@ -305,10 +305,10 @@ const make = Effect.gen(function* () {
         : Option.filter(stored, (row) =>
             DateTime.isGreaterThan(DateTime.addDuration(row.startsAt ?? row.requestedAt, cooldown), now),
           );
-    if (by._tag === "anyone" && Option.exists(held, (row) => row.outcome === "missing")) {
-      yield* decide("not-found");
-      return yield* new LoginNotFound({ login });
-    }
+    const missing = (row: Option.Option<Db.SyncRequest>) =>
+      by._tag === "anyone" && Option.exists(row, (found) => found.outcome === "missing");
+    const notFound = decide("not-found").pipe(Effect.andThen(Effect.fail(new LoginNotFound({ login }))));
+    if (missing(held)) return yield* notFound;
     if (Option.isSome(held)) {
       yield* decide("deduped");
       return current;
@@ -326,8 +326,10 @@ const make = Effect.gen(function* () {
 
     const claim = { login, at: now, cooldown, lifetime: requestLifetime, overtakesWaiting: policy.overtakesWaiting };
     if (!(yield* db.syncRequests.claim(claim))) {
+      const winner = yield* read(login, now);
+      if (missing(winner.stored)) return yield* notFound;
       yield* decide("deduped");
-      return (yield* read(login, now)).status;
+      return winner.status;
     }
     if (by._tag === "anyone" && neverSynced && Option.isNone(yield* reserveNewLogin(by.caller, now))) {
       yield* db.syncRequests.settle(login, now, "released");
