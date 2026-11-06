@@ -2,6 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import * as Fake from "@stargrep/ai/fake";
 import { toAiSchema } from "@stargrep/ai/schema-bridge";
 import * as TextGeneration from "@stargrep/ai/text-generation";
+import { Caller } from "@stargrep/api/caller";
 import { IconHost } from "@stargrep/api/icon-host";
 import { defaultPublicConfig } from "@stargrep/api/public-config";
 import type { ApiServices } from "@stargrep/api/router";
@@ -77,6 +78,7 @@ describe("the demo answer cache on the Cache API", () => {
       Layer.succeed(SearchLimiter, SearchLimiter.of({ acquire: Effect.void })),
       Layer.succeed(Viewers, Viewers.of({ current: Effect.fail(new NotSignedIn()) })),
       Layer.succeed(IconHost, IconHost.of({ origin: new URL(request.url).origin })),
+      Layer.succeed(Caller, Caller.of({ key: Db.CallerKey.make("caller-test") })),
     );
 
   const cache = () => caches.open("answers-test");

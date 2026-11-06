@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createRouterClient, ORPCError } from "@orpc/server";
 import { AiSpendLimited } from "@stargrep/ai/errors";
 import { QueryPlan, Search } from "@stargrep/core/search";
-import { SyncQueue, SyncRequests } from "@stargrep/core/stars";
+import { OwnerLookup, SyncQueue, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import { UserId } from "@stargrep/db/auth-schema";
 import type { EmbeddingModelId } from "@stargrep/db/embedding";
@@ -21,6 +21,7 @@ import * as Ref from "effect/Ref";
 import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 import * as AnswerCache from "./answer-cache.ts";
+import { Caller } from "./caller.ts";
 import { errorStatus, type WireCode } from "./errors.ts";
 import { IconHost } from "./icon-host.ts";
 import type { Transport } from "./middleware/instrumentation.ts";
@@ -71,7 +72,7 @@ interface Fakes {
   readonly limiter?: Effect.Effect<void, SyncRateLimited | SyncLimiterUnavailable>;
   readonly searchLimiter?: Effect.Effect<void, SearchRateLimited | SearchLimiterUnavailable>;
   readonly requests?: SyncRequests.SyncRequests["Service"];
-  readonly sent?: Array<Login>;
+  readonly sent?: Array<readonly [Login, SyncRequests.Requester]>;
   readonly viewer?: Effect.Effect<Viewer, ViewerError>;
 }
 
@@ -130,12 +131,19 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
   const requests =
     fakes.requests ??
     SyncRequests.SyncRequests.of({
-      request: (login) =>
+      request: (login, by) =>
         Effect.sync(() => {
-          fakes.sent?.push(login);
-          return { state: "queued", requestedAt: pushedAt, syncedAt: null };
+          fakes.sent?.push([login, by]);
+          return { state: "queued", requestedAt: pushedAt, syncedAt: null, starredTotal: null, accountType: null };
         }),
-      status: () => Effect.succeed({ state: "failed", requestedAt: pushedAt, syncedAt: null }),
+      status: () =>
+        Effect.succeed({
+          state: "failed",
+          requestedAt: pushedAt,
+          syncedAt: null,
+          starredTotal: null,
+          accountType: null,
+        }),
     });
   return Context.make(Db.Db, db).pipe(
     Context.add(
@@ -149,6 +157,7 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
     Context.add(SearchLimiter, SearchLimiter.of({ acquire: fakes.searchLimiter ?? Effect.void })),
     Context.add(Viewers, Viewers.of({ current: fakes.viewer ?? Effect.fail(new NotSignedIn()) })),
     Context.add(IconHost, IconHost.of({ origin: "https://stargrep.test" })),
+    Context.add(Caller, Caller.of({ key: Db.CallerKey.make("caller-test") })),
   );
 };
 
@@ -293,7 +302,7 @@ describe("search", () => {
 
 describe("sync", () => {
   test("queues a sync and reports a failed one", async () => {
-    const sent: Array<Login> = [];
+    const sent: Array<readonly [Login, SyncRequests.Requester]> = [];
     const { api } = client({ sent });
     expect(await api.triggerSync({ login: "octocat" })).toEqual({
       login: "octocat",
@@ -305,7 +314,7 @@ describe("sync", () => {
       accountType: null,
       enrichment: reading,
     });
-    expect(sent).toEqual(["octocat" as Login]);
+    expect(sent).toEqual([["octocat" as Login, { _tag: "anyone", caller: Db.CallerKey.make("caller-test") }]]);
     expect(await api.syncStatus({ login: "octocat" })).toEqual({
       login: "octocat",
       state: "failed",
@@ -319,7 +328,7 @@ describe("sync", () => {
   });
 
   test("refuses a caller over the rate limit without queueing, and treats a limiter outage as unavailable", async () => {
-    const sent: Array<Login> = [];
+    const sent: Array<readonly [Login, SyncRequests.Requester]> = [];
     const limited = client({ sent, limiter: Effect.fail(new SyncRateLimited({ limit: "caller" })) });
     expect((await failure(limited.api.triggerSync({ login: "octocat" }))).code).toBe("TOO_MANY_REQUESTS");
     const down = client({ sent, limiter: Effect.fail(new SyncLimiterUnavailable({ cause: "down" })) });
@@ -331,10 +340,60 @@ describe("sync", () => {
     const { api } = client({
       requests: SyncRequests.SyncRequests.of({
         request: () => Effect.fail(new SyncQueue.SyncQueueFailed({ cause: "down" })),
-        status: () => Effect.succeed({ state: "unknown" }),
+        status: () => Effect.succeed({ state: "unknown", starredTotal: null, accountType: null }),
       }),
     });
     expect((await failure(api.triggerSync({ login: "octocat" }))).code).toBe("SERVICE_UNAVAILABLE");
+  });
+
+  test("maps a missing login, a busy line, a caller over its new logins, and a failed lookup", async () => {
+    const failingWith = (error: SyncRequests.SyncRequestError) =>
+      client({
+        requests: SyncRequests.SyncRequests.of({
+          request: () => Effect.fail(error),
+          status: () => Effect.succeed({ state: "unknown", starredTotal: null, accountType: null }),
+        }),
+      }).api.triggerSync({ login: "octocat" });
+    const cases = [
+      [new SyncRequests.LoginNotFound({ login: "octocat" }), "LOGIN_NOT_FOUND"],
+      [new SyncRequests.SyncBusy({ reason: "line-full" }), "SYNC_BUSY"],
+      [new SyncRequests.SyncBusy({ reason: "github-budget" }), "SYNC_BUSY"],
+      [new SyncRequests.NewAccountLimited(), "TOO_MANY_REQUESTS"],
+      [new OwnerLookup.OwnerLookupFailed({ reason: "timeout" }), "SERVICE_UNAVAILABLE"],
+    ] as const;
+    for (const [error, code] of cases) {
+      const wire = await failure(failingWith(error));
+      expect([wire.code, wire.data]).toEqual([code, traceData]);
+    }
+  });
+
+  test("reports a sync waiting in line with its place and start, and the login's starred total and type", async () => {
+    const startsAt = DateTime.makeUnsafe("2026-10-01T08:12:00Z");
+    const { api } = client({
+      requests: SyncRequests.SyncRequests.of({
+        request: () => Effect.die("not called"),
+        status: () =>
+          Effect.succeed({
+            state: "waiting",
+            requestedAt: pushedAt,
+            startsAt,
+            ahead: 3,
+            syncedAt: null,
+            starredTotal: 2_431,
+            accountType: "user",
+          }),
+      }),
+    });
+    expect(await api.syncStatus({ login: "octocat" })).toEqual({
+      login: "octocat",
+      state: "waiting",
+      requestedAt: "2026-10-01T08:00:00.000Z",
+      syncedAt: null,
+      waiting: { ahead: 3, startsAt: "2026-10-01T08:12:00.000Z" },
+      starredTotal: 2_431,
+      accountType: "user",
+      enrichment: reading,
+    });
   });
 });
 
@@ -426,6 +485,7 @@ const syncedAccount = Effect.gen(function* () {
 
 const signedInWith = (sender: Layer.Layer<SyncQueue.SyncQueue>) =>
   SyncRequests.layer.pipe(
+    Layer.provideMerge(OwnerLookup.layerMemory().layer),
     Layer.provideMerge(TestDatabase.layerMemory({ embeddingModel: "test/model" as EmbeddingModelId })),
     Layer.provideMerge(sender),
   );

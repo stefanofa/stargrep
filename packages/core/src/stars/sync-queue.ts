@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -18,19 +19,24 @@ export class SyncQueueFailed extends Schema.TaggedError<SyncQueueFailed, { reado
 export class SyncQueue extends Context.Service<
   SyncQueue,
   {
-    readonly send: (request: LoginSyncRequest) => Effect.Effect<void, SyncQueueFailed>;
+    // The queue holds the message for `delay` before a consumer sees it.
+    readonly send: (request: LoginSyncRequest, delay: Duration.Duration) => Effect.Effect<void, SyncQueueFailed>;
   }
 >()("@stargrep/core/stars/sync-queue/SyncQueue") {}
 
 export const layerMemory = () => {
   const sent: Array<LoginSyncRequest> = [];
+  const delays: Array<Duration.Duration> = [];
   const layer = Layer.succeed(
     SyncQueue,
     SyncQueue.of({
-      send: Effect.fn("SyncQueue.send")(function* (request: LoginSyncRequest) {
-        yield* Effect.sync(() => sent.push(request));
+      send: Effect.fn("SyncQueue.send")(function* (request: LoginSyncRequest, delay: Duration.Duration) {
+        yield* Effect.sync(() => {
+          sent.push(request);
+          delays.push(delay);
+        });
       }),
     }),
   );
-  return { sent, layer };
+  return { sent, delays, layer };
 };

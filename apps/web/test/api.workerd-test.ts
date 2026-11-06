@@ -19,7 +19,7 @@ import { describe, expect, it } from "vitest";
 import { layerSearchCache } from "../src/server/adapters.ts";
 import { layerRequest } from "../src/server/layers.ts";
 import { makeServer } from "../src/server/serve.ts";
-import { queue, syncRequests } from "./entry.ts";
+import { line, queued, syncRequests } from "./entry.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: response bodies are read as untyped JSON in these tests.
 type Json = any;
@@ -264,11 +264,10 @@ describe("sync", () => {
     expect(first.status).toBe(202);
     expect(first.body).toMatchObject({ login: "octocat", state: "queued", syncedAt: null });
     expect((await rest("/sync/octocat", from("192.0.2.1"))).body.state).toBe("queued");
-    expect(queue.sent).toEqual([
+    expect(queued).toEqual([
       {
-        login: "octocat",
-        mode: "incremental",
-        requestedAt: DateTime.toUtc(DateTime.makeUnsafe(first.body.requestedAt)),
+        body: { login: "octocat", mode: "incremental", requestedAt: Date.parse(first.body.requestedAt) },
+        delaySeconds: 0,
       },
     ]);
 
@@ -292,7 +291,7 @@ describe("sync", () => {
       [202, "queued"],
     ]);
     expect(new Set(replies.map((reply) => reply.body.requestedAt)).size).toBe(1);
-    expect(queue.sent.filter((request) => request.login.toLowerCase() === "swarm-race")).toHaveLength(1);
+    expect(queued.filter((sent) => sent.body.login.toLowerCase() === "swarm-race")).toHaveLength(1);
   });
 
   it("reports a dead-lettered sync as failed, and ignores the dead letter of an older request", async () => {
@@ -310,6 +309,53 @@ describe("sync", () => {
   it("reports how many of a login's stars are read, and zeros for a login Stargrep does not know", async () => {
     expect((await rest("/sync/ada")).body.enrichment).toEqual({ total: 1, read: 1, failed: 0 });
     expect((await rest("/sync/nobody-known")).body.enrichment).toEqual({ total: 0, read: 0, failed: 0 });
+  });
+
+  it("answers a login GitHub does not have with 404 and queues nothing", async () => {
+    const missing = await rest("/sync/ghost-login", { method: "POST", headers: { "cf-connecting-ip": "192.0.2.30" } });
+    expect([missing.status, missing.body.code, missing.body.data.traceId]).toEqual([404, "LOGIN_NOT_FOUND", traceId]);
+    expect((await rest("/sync/ghost-login")).body.state).toBe("unknown");
+    expect(queued.filter((sent) => sent.body.login === "ghost-login")).toEqual([]);
+  });
+
+  it("answers 503 SYNC_BUSY when GitHub's budget is spent or the line is full, and 503 on a failed lookup", async () => {
+    const from = { method: "POST", headers: { "cf-connecting-ip": "192.0.2.31" } };
+    expect((await rest("/sync/budget-spent", from)).body.code).toBe("SYNC_BUSY");
+    expect((await rest("/sync/github-down", from)).body.code).toBe("SERVICE_UNAVAILABLE");
+    line.full = true;
+    try {
+      const busy = await rest("/sync/line-full", from);
+      expect([busy.status, busy.body.code]).toEqual([503, "SYNC_BUSY"]);
+    } finally {
+      line.full = false;
+    }
+  });
+
+  it("answers an org done at once with a starred total of 0", async () => {
+    const reply = await rest("/sync/an-org", { method: "POST", headers: { "cf-connecting-ip": "192.0.2.32" } });
+    expect(reply.body).toMatchObject({ state: "done", starredTotal: 0, accountType: "org", waiting: null });
+    expect(queued.filter((sent) => sent.body.login === "an-org")).toEqual([]);
+  });
+
+  it("puts a sync past the line's burst in line and sends it with the queue's delay", async () => {
+    line.wait = Duration.millis(90_500);
+    try {
+      const reply = await rest("/sync/Patient", { method: "POST", headers: { "cf-connecting-ip": "192.0.2.33" } });
+      const requestedAt = Date.parse(reply.body.requestedAt);
+      expect(reply.body).toMatchObject({
+        login: "Patient",
+        state: "waiting",
+        waiting: { ahead: 0, startsAt: DateTime.formatIso(DateTime.makeUnsafe(requestedAt + 90_500)) },
+        starredTotal: 42,
+        accountType: "user",
+      });
+      expect(queued.filter((sent) => sent.body.login === "Patient")).toEqual([
+        { body: { login: "Patient", mode: "incremental", requestedAt }, delaySeconds: 91 },
+      ]);
+      expect((await rest("/sync/patient")).body).toMatchObject({ state: "waiting", waiting: { ahead: 0 } });
+    } finally {
+      line.wait = Duration.zero;
+    }
   });
 
   it("rejects a login GitHub would not issue", async () => {

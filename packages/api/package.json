@@ -4,6 +4,7 @@
   "type": "module",
   "exports": {
     "./answer-cache": "./src/answer-cache.ts",
+    "./caller": "./src/caller.ts",
     "./contract": "./src/contract.ts",
     "./errors": "./src/errors.ts",
     "./icon-host": "./src/icon-host.ts",

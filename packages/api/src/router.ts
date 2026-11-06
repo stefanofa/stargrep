@@ -15,6 +15,7 @@ import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { AnswerCache } from "./answer-cache.ts";
+import { Caller } from "./caller.ts";
 import {
   contract,
   type PublicConfig,
@@ -39,7 +40,8 @@ export type ApiServices =
   | SyncLimiter
   | SearchLimiter
   | Viewers
-  | IconHost;
+  | IconHost
+  | Caller;
 
 export class ApiServicesUnavailable extends Schema.TaggedError<
   ApiServicesUnavailable,
@@ -78,17 +80,21 @@ type ApiFailure =
 const wireCodes = {
   NotSignedIn: "UNAUTHORIZED",
   AccountNotSynced: "ACCOUNT_NOT_SYNCED",
+  LoginNotFound: "LOGIN_NOT_FOUND",
   RepoNotFound: "REPO_NOT_FOUND",
   SearchScopeUnavailable: "SCOPE_UNAVAILABLE",
   SyncRateLimited: "TOO_MANY_REQUESTS",
   SearchRateLimited: "TOO_MANY_REQUESTS",
   AiSpendLimited: "TOO_MANY_REQUESTS",
+  NewAccountLimited: "TOO_MANY_REQUESTS",
+  SyncBusy: "SYNC_BUSY",
   AiKeyMissing: "SERVICE_UNAVAILABLE",
   AiRequestFailed: "SERVICE_UNAVAILABLE",
   AiTimeout: "SERVICE_UNAVAILABLE",
   AiUnavailable: "SERVICE_UNAVAILABLE",
   ApiServicesUnavailable: "SERVICE_UNAVAILABLE",
   DbQueryFailed: "SERVICE_UNAVAILABLE",
+  OwnerLookupFailed: "SERVICE_UNAVAILABLE",
   SyncLimiterUnavailable: "SERVICE_UNAVAILABLE",
   SearchLimiterUnavailable: "SERVICE_UNAVAILABLE",
   SyncQueueFailed: "SERVICE_UNAVAILABLE",
@@ -306,8 +312,8 @@ const syncStatus =
     requestedAt: status.state === "unknown" || status.state === "done" ? null : iso(status.requestedAt),
     syncedAt: status.state === "unknown" ? null : iso(status.syncedAt),
     waiting: status.state === "waiting" ? { ahead: status.ahead, startsAt: DateTime.formatIso(status.startsAt) } : null,
-    starredTotal: null,
-    accountType: null,
+    starredTotal: status.starredTotal,
+    accountType: status.accountType,
     enrichment,
   });
 
@@ -333,9 +339,10 @@ export const router = implementer.router({
     handle((input: typeof SyncInput.Type) =>
       Effect.gen(function* () {
         yield* (yield* SyncLimiter).acquire;
+        const { key } = yield* Caller;
         return yield* withProgress(
           input.login,
-          SyncRequests.SyncRequests.use((requests) => requests.request(input.login, "anyone")),
+          SyncRequests.SyncRequests.use((requests) => requests.request(input.login, { _tag: "anyone", caller: key })),
         );
       }),
     ),

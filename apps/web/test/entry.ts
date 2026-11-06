@@ -2,17 +2,19 @@ import { env } from "cloudflare:workers";
 import { IconHost } from "@stargrep/api/icon-host";
 import { NotSignedIn, Viewers } from "@stargrep/api/viewers";
 import { QueryPlan, Search } from "@stargrep/core/search";
-import { SyncQueue, SyncRequests } from "@stargrep/core/stars";
+import { SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import { DbQueryFailed, RepoNotFound } from "@stargrep/db/errors";
 import type { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { layerSyncLimiter } from "../src/server/adapters.ts";
-import { callerAddress } from "../src/server/caller.ts";
+import { layerSyncLimiter, layerSyncQueue } from "../src/server/adapters.ts";
+import { callerAddress, layerCaller } from "../src/server/caller.ts";
 import { withHealth } from "../src/server/health.ts";
+import { layerOwnerLookup } from "../src/server/owner-lookup.ts";
 import { layerSearchLimiter } from "../src/server/search-limits.ts";
 import { makeServer } from "../src/server/serve.ts";
 
@@ -41,11 +43,22 @@ export const repo: Db.Repo = {
   ownerAvatarUrl: "https://avatars.githubusercontent.com/u/1",
 };
 
-const ada = { id: 7 as GitHubAccountId, login: "ada" as Login, starsSyncedAt: null };
+const ada = { id: 7 as GitHubAccountId, login: "ada" as Login, type: "user", starredCount: 1, starsSyncedAt: null };
 
 const starredAt = DateTime.makeUnsafe("2026-03-01T00:00:00Z");
 
-export const queue = SyncQueue.layerMemory();
+// Every message the sync queue was sent, as the real adapter sends it.
+export const queued: Array<{ readonly body: { readonly login: string }; readonly delaySeconds: number | undefined }> =
+  [];
+
+const syncQueue = {
+  send: async (body: { readonly login: string }, options?: QueueSendOptions) => {
+    queued.push({ body, delaySeconds: options?.delaySeconds });
+  },
+} as unknown as Queue<unknown>;
+
+// How long the next reservation waits in line, and whether the line refuses signed-out syncs.
+export const line = { wait: Duration.zero, full: false };
 
 const search = Search.Search.of({
   search: Effect.fn("Search.search")(function* (request: Search.SearchRequest) {
@@ -114,7 +127,16 @@ export const syncRequests: Db.Db["Service"]["syncRequests"] = {
 };
 
 const db = {
-  accounts: { byLogin: (login: Login) => Effect.succeed(login === ada.login ? Option.some(ada) : Option.none()) },
+  accounts: {
+    byLogin: (login: Login) => Effect.succeed(login === ada.login ? Option.some(ada) : Option.none()),
+    upsert: () => Effect.void,
+    recordStarSync: () => Effect.void,
+  },
+  syncLine: {
+    wait: () => Effect.sync(() => (line.full ? Duration.hours(3) : line.wait)),
+    reserve: ({ at, force }: Db.Reservation) =>
+      Effect.sync(() => (line.full && !force ? Option.none() : Option.some(DateTime.addDuration(at, line.wait)))),
+  },
   repos: {
     require: (id: RepoId) => (id === repo.id ? Effect.succeed(repo) : Effect.fail(new RepoNotFound({ repoId: id }))),
   },
@@ -138,7 +160,11 @@ const serve = makeServer(
         request.headers.get("cf-connecting-ip") ?? "unknown",
       ),
       layerSearchLimiter(env.SEARCH_PER_CALLER, callerAddress(request)),
-    ).pipe(Layer.provideMerge(Layer.succeed(Db.Db, db)), Layer.provide(queue.layer)),
+      layerCaller(env.CALLER_KEY, request),
+    ).pipe(
+      Layer.provideMerge(Layer.succeed(Db.Db, db)),
+      Layer.provide(Layer.merge(layerSyncQueue(syncQueue), layerOwnerLookup(env.WORKER))),
+    ),
   Layer.empty,
 );
 

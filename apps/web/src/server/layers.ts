@@ -10,8 +10,9 @@ import type * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import { layerSearchCache, layerSyncLimiter, layerSyncQueue } from "./adapters.ts";
-import { callerAddress } from "./caller.ts";
+import { callerAddress, layerCaller } from "./caller.ts";
 import type { WebEnv } from "./env.ts";
+import { layerOwnerLookup } from "./owner-lookup.ts";
 import { layerPlannerAllowance, layerSearchLimiter } from "./search-limits.ts";
 import { layerAuth, layerViewers } from "./viewers.ts";
 
@@ -23,7 +24,7 @@ const connectionString = (env: WebEnv) => Redacted.make(env.DATABASE.connectionS
 
 const layerStorage = (env: WebEnv, aiKey: Option.Option<Redacted.Redacted<string>>) =>
   Layer.mergeAll(SyncRequests.layer, FetchHttpClient.layer).pipe(
-    Layer.provideMerge(layerSyncQueue(env.SYNC_STARS)),
+    Layer.provideMerge(Layer.merge(layerSyncQueue(env.SYNC_STARS), layerOwnerLookup(env.WORKER))),
     Layer.provideMerge(
       DbRuntime.layerDb({ connectionString: connectionString(env), adopted, maxConnections: maxDatabaseConnections }),
     ),
@@ -45,6 +46,7 @@ export const layerRequest = (
     layerSearchLimiter(env.SEARCH_PER_CALLER, callerAddress(request)),
     layerViewers(auth, request, connectionString(env)),
     Layer.succeed(IconHost, IconHost.of({ origin: new URL(request.url).origin })),
+    layerCaller(env.CALLER_KEY, request),
   ).pipe(
     Layer.provideMerge(QueryPlanner.layer),
     Layer.provideMerge(layerSearchCache(env.SEARCH_CACHE)),

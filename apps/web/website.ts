@@ -17,6 +17,8 @@ const SearchCache = Cloudflare.KV.Namespace("SearchCache");
 
 const BetterAuthSecret = Alchemy.makeRandom("BetterAuthSecret");
 
+const CallerKey = Alchemy.makeRandom("CallerKey");
+
 const signInBindings = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;
   const signIn = yield* githubSignIn;
@@ -63,6 +65,7 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
         SEARCH_CACHE: SearchCache,
         SYNC_STARS: SyncStars,
         WORKER: MainWorker,
+        CALLER_KEY: yield* CallerKey,
         ICONS: yield* Icons,
         SYNC_PER_CALLER: Cloudflare.RateLimit("SYNC_PER_CALLER", {
           namespaceId: namespaceId(stage, "sync-per-caller"),

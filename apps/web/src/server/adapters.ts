@@ -35,9 +35,9 @@ export const layerSyncQueue = (queue: Queue<unknown>) =>
   Layer.succeed(
     SyncQueue.SyncQueue,
     SyncQueue.SyncQueue.of({
-      send: Effect.fn("SyncQueue.send")(function* (request: StarSync.LoginSyncRequest) {
+      send: Effect.fn("SyncQueue.send")(function* (request: StarSync.LoginSyncRequest, delay: Duration.Duration) {
         yield* Effect.tryPromise({
-          try: () => queue.send(encodeSyncRequest(request)),
+          try: () => queue.send(encodeSyncRequest(request), { delaySeconds: Math.ceil(Duration.toSeconds(delay)) }),
           catch: (cause) => new SyncQueue.SyncQueueFailed({ cause }),
         });
       }),

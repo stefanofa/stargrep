@@ -11,7 +11,8 @@ declare namespace Cloudflare {
     readonly SEARCH_PER_CALLER: RateLimit;
     readonly PLANNER_PER_CALLER: RateLimit;
     readonly PLANNER_OVERALL: RateLimit;
-    readonly WORKER: Fetcher;
+    readonly WORKER: Fetcher & { readonly lookupOwner: (login: string) => Promise<unknown> };
+    readonly CALLER_KEY: string;
     readonly ICONS: R2Bucket;
   }
 }
