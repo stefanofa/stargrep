@@ -180,7 +180,9 @@ describe("GitHubTokens.bounded", () => {
       const stalled = Effect.acquireRelease(Effect.void, () =>
         Effect.andThen(
           Effect.never,
-          Effect.sync(() => void (closed.done = true)),
+          Effect.sync(() => {
+            closed.done = true;
+          }),
         ),
       ).pipe(Effect.andThen(Effect.never), Effect.scoped);
       const fiber = yield* Effect.forkChild(Effect.flip(Tokens.bounded(stalled)));
