@@ -61,9 +61,9 @@ export type {
   StarsSnapshot,
   StarsUpsert,
 } from "./queries/stars.ts";
-export type { Reservation } from "./queries/sync-line.ts";
+export type { LineKey, Reservation } from "./queries/sync-line.ts";
+export { CallerKey, callerLine } from "./queries/sync-line.ts";
 export type { Settlement, SyncClaim, SyncRequest } from "./queries/sync-requests.ts";
-export { CallerKey } from "./queries/sync-requests.ts";
 export type { UsageCall, UsageCounts, UsageDay } from "./queries/usage.ts";
 export { enrichFailureCap } from "./schema.ts";
 

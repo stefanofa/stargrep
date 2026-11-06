@@ -42,12 +42,12 @@ const lookups = Layer.effect(
   }),
 ).pipe(Layer.provide(github.layer));
 
-const layerWith = (sender: Layer.Layer<SyncQueue.SyncQueue>) =>
-  SyncRequests.layer.pipe(
-    Layer.provideMerge(lookups),
-    Layer.provideMerge(TestDatabase.layerMemory({ embeddingModel })),
-    Layer.provideMerge(sender),
-  );
+const memory = TestDatabase.layerMemory({ embeddingModel });
+
+const layerWith = <E>(
+  sender: Layer.Layer<SyncQueue.SyncQueue>,
+  database: Layer.Layer<Db.Db | Db.Transactions | TestDatabase.TestDatabase, E>,
+) => SyncRequests.layer.pipe(Layer.provideMerge(lookups), Layer.provideMerge(database), Layer.provideMerge(sender));
 
 const at = (millis: number) => DateTime.makeUnsafe(millis);
 const units = (count: number) => Duration.millis(count * unitMillis);
@@ -82,7 +82,7 @@ const reset = Effect.gen(function* () {
   for (const [index, login] of ["octocat", "swarm", "hubot", "grace", "linus", "ada", "alan"].entries()) {
     github.owners.set(login, user(login, login === "octocat" ? 583231 : 9000 + index, 42));
   }
-  yield* (yield* TestDatabase.TestDatabase).query("truncate github_accounts, sync_requests, sync_line cascade");
+  yield* (yield* TestDatabase.TestDatabase).query("truncate github_accounts, sync_requests, sync_lines cascade");
   yield* TestClock.setTime(start);
 });
 
@@ -102,6 +102,15 @@ const synced = (login: string, syncedAt: number) =>
     yield* db.accounts.recordStarSync({ accountId, etag: null, at: at(syncedAt) });
   });
 
+const finished = (login: string) =>
+  Effect.flatMap(DateTime.now, (now) =>
+    Db.Db.use((db) =>
+      Effect.flatMap(db.accounts.byLogin(login as Login), (account) =>
+        db.accounts.recordStarSync({ accountId: Option.getOrThrow(account).id, etag: null, at: now }),
+      ),
+    ),
+  );
+
 const markFailed = (login: string, requestedAt: number) =>
   Db.Db.use((db) => db.syncRequests.settle(login as Login, at(requestedAt), "failed"));
 
@@ -120,7 +129,7 @@ const row = (login: string) => Db.Db.use((db) => db.syncRequests.get(login as Lo
 
 // How many units the line holds past now.
 const lineUnits = Effect.flatMap(DateTime.now, (now) =>
-  Db.Db.use((db) => db.syncLine.wait(now, Duration.zero)).pipe(
+  Db.Db.use((db) => db.syncLine.wait("all", now, Duration.zero)).pipe(
     Effect.map((wait) => Duration.toMillis(wait) / unitMillis),
   ),
 );
@@ -128,6 +137,7 @@ const lineUnits = Effect.flatMap(DateTime.now, (now) =>
 const reserveUnits = (db: Db.Db["Service"], count: number) =>
   Effect.flatMap(DateTime.now, (now) =>
     db.syncLine.reserve({
+      line: "all",
       at: now,
       cost: units(count),
       tolerance: units(200),
@@ -141,7 +151,7 @@ const fill = (count: number) => Db.Db.use((db) => reserveUnits(db, count));
 const admitted = (decision: string) =>
   Effect.map(Metric.value(Metric.withAttributes(SyncRequests.admissions, { decision })), (state) => state.count);
 
-it.layer(layerWith(queue.layer), { timeout: 30_000 })("SyncRequests", (it) => {
+it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (it) => {
   it.effect("queues an unknown login once and reports it done after a later sync", () =>
     Effect.gen(function* () {
       yield* reset;
@@ -507,7 +517,7 @@ it.layer(layerWith(queue.layer), { timeout: 30_000 })("SyncRequests", (it) => {
     }),
   );
 
-  it.effect("limits one caller to 4 new logins an hour, missing logins included, and no other caller", () =>
+  it.effect("starts 4 new logins for one caller, missing logins included, then one every 15 minutes", () =>
     Effect.gen(function* () {
       yield* reset;
       yield* synced("octocat", start - 60 * minute);
@@ -515,13 +525,44 @@ it.layer(layerWith(queue.layer), { timeout: 30_000 })("SyncRequests", (it) => {
       yield* request("missing-one").pipe(Effect.ignore);
       expect((yield* Effect.flip(request("ada")))._tag).toBe("NewAccountLimited");
       expect(github.lookups).not.toContain("ada" as Login);
+      expect(yield* row("ada")).toEqual(Option.none());
       expect(yield* request("octocat")).toMatchObject({ state: "queued" });
       expect(yield* request("ada", anyone("caller-b"))).toMatchObject({ state: "queued" });
 
-      yield* TestClock.adjust("59 minutes");
+      yield* TestClock.adjust("14 minutes");
       expect((yield* Effect.flip(request("alan")))._tag).toBe("NewAccountLimited");
       yield* TestClock.adjust("1 minute");
       expect(yield* request("alan")).toMatchObject({ state: "queued" });
+      expect((yield* Effect.flip(request("swarm")))._tag).toBe("NewAccountLimited");
+    }),
+  );
+
+  it.effect("keeps counting a caller's new logins after they sync and the caller asks for them again", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      const first = ["swarm", "hubot", "grace", "linus"];
+      for (const login of first) yield* request(login);
+      yield* TestClock.adjust("1 minute");
+      for (const login of first) yield* finished(login);
+      yield* TestClock.adjust("10 minutes");
+      for (const login of first) expect(yield* request(login)).toMatchObject({ state: "queued" });
+      expect((yield* Effect.flip(request("ada")))._tag).toBe("NewAccountLimited");
+      expect((yield* Effect.flip(request("alan")))._tag).toBe("NewAccountLimited");
+      expect(github.lookups).toHaveLength(8);
+    }),
+  );
+
+  it.effect("keeps counting a caller's new logins after another caller claims them again", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      const first = ["hubot", "grace", "linus", "ada"];
+      for (const login of first) {
+        yield* request(login);
+        yield* markFailed(login, start);
+      }
+      yield* TestClock.adjust("11 minutes");
+      for (const login of first) expect(yield* request(login, anyone("caller-b"))).toMatchObject({ state: "queued" });
+      expect((yield* Effect.flip(request("alan")))._tag).toBe("NewAccountLimited");
     }),
   );
 
@@ -589,6 +630,34 @@ it.layer(layerWith(queue.layer), { timeout: 30_000 })("SyncRequests", (it) => {
   );
 });
 
+const concurrentCases = (test: {
+  readonly effect: it.Tester<SyncRequests.SyncRequests | Db.Db | TestDatabase.TestDatabase>;
+}) => {
+  test.effect("starts only 4 of 6 new logins one caller asks for at once", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      const results = yield* Effect.forEach(
+        ["swarm", "hubot", "grace", "linus", "ada", "alan"],
+        (login) => Effect.result(request(login)),
+        { concurrency: "unbounded" },
+      );
+      const outcomes = results.map((result) =>
+        result._tag === "Success" ? result.success.state : result.failure._tag,
+      );
+      expect(outcomes.filter((outcome) => outcome === "queued")).toHaveLength(4);
+      expect(outcomes.filter((outcome) => outcome === "NewAccountLimited")).toHaveLength(2);
+      expect(github.lookups).toHaveLength(4);
+      expect(queue.sent).toHaveLength(4);
+    }),
+  );
+};
+
+it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("PGlite SyncRequests at once", concurrentCases);
+it.layer(layerWith(queue.layer, TestDatabase.layerNodePostgres({ embeddingModel })), { timeout: 30_000 })(
+  "node-postgres SyncRequests at once",
+  concurrentCases,
+);
+
 it.effect("prices the GitHub requests a sync makes", () =>
   Effect.sync(() => {
     expect(SyncRequests.costOf({ lookedUp: true, readsEveryPage: false, starredTotal: 2_431 })).toBe(3);
@@ -604,7 +673,7 @@ const brokenQueue = Layer.succeed(
   SyncQueue.SyncQueue.of({ send: () => Effect.fail(new SyncQueue.SyncQueueFailed({ cause: "down" })) }),
 );
 
-it.layer(layerWith(brokenQueue), { timeout: 30_000 })("SyncRequests with a failing queue", (it) => {
+it.layer(layerWith(brokenQueue, memory), { timeout: 30_000 })("SyncRequests with a failing queue", (it) => {
   it.effect("reports the request failed instead of queued", () =>
     Effect.gen(function* () {
       yield* reset;
@@ -624,7 +693,6 @@ it.layer(layerWith(brokenQueue), { timeout: 30_000 })("SyncRequests with a faili
           requestedAt: at(start),
           outcome: "failed",
           startsAt: null,
-          caller: Db.CallerKey.make("caller-a"),
         }),
       );
       expect(yield* status("octocat")).toMatchObject({ state: "failed" });

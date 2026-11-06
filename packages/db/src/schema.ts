@@ -235,24 +235,16 @@ export const syncRequests = pgTable(
     outcome: syncRequestOutcome("outcome").notNull(),
     // When a request that waits in line starts. Null starts at requested_at.
     startsAt: time("starts_at"),
-    // A keyed hash of the network that asked, set only when anyone asks for a login that never synced.
-    caller: text("caller"),
   },
-  (table) => [
-    index("sync_requests_requested_at_idx").on(table.requestedAt),
-    index("sync_requests_caller_idx").on(table.caller, table.requestedAt).where(sql`${table.caller} is not null`),
-  ],
+  (table) => [index("sync_requests_requested_at_idx").on(table.requestedAt)],
 );
 
-// One row. Signed-out syncs reserve GitHub requests here, and the line is clear once the clock passes busy_until.
-export const syncLine = pgTable(
-  "sync_line",
-  {
-    singleton: boolean("singleton").primaryKey().default(true),
-    busyUntil: time("busy_until").notNull(),
-  },
-  () => [check("sync_line_one_row", sql`singleton`)],
-);
+// One row per line. Signed-out syncs reserve GitHub requests in one line, and each caller's new logins in a line of
+// its own. A line is clear once the clock passes busy_until, the same as a line with no row.
+export const syncLines = pgTable("sync_lines", {
+  key: text("key").primaryKey(),
+  busyUntil: time("busy_until").notNull(),
+});
 
 export const searchEvents = pgTable("search_events", {
   id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),

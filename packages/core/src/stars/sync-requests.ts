@@ -68,7 +68,7 @@ export class NewAccountLimited extends Schema.TaggedError<NewAccountLimited, { r
   {},
 ) {
   override get message(): string {
-    return "This caller asked for as many new logins as an hour allows";
+    return "This caller started as many new logins as it may for now";
   }
 }
 
@@ -99,8 +99,9 @@ export const line = { unitsPerHour: 2_000, burstUnits: 200, maxWait: Duration.ho
 const unit = Duration.millis(Duration.toMillis(Duration.hours(1)) / line.unitsPerHour);
 const tolerance = Duration.times(unit, line.burstUnits);
 
-// Every login a caller asks for that never synced counts, a login GitHub does not have included.
-export const callerLimit = { newAccounts: 4, per: Duration.hours(1) } as const;
+// Each caller may start 4 logins that never synced at once, then one more every 15 minutes. A login GitHub does not
+// have counts too.
+export const callerLimit = { burst: 4, every: Duration.minutes(15) } as const;
 
 // A missing login or an org costs its lookup and nothing more.
 export const lookupCost = 1;
@@ -231,7 +232,24 @@ const make = Effect.gen(function* () {
   });
 
   const reserve = (at: DateTime.Utc, units: number, force: boolean) =>
-    db.syncLine.reserve({ at, cost: Duration.times(unit, units), tolerance, maxWait: line.maxWait, force });
+    db.syncLine.reserve({
+      line: "all",
+      at,
+      cost: Duration.times(unit, units),
+      tolerance,
+      maxWait: line.maxWait,
+      force,
+    });
+
+  const reserveNewLogin = (caller: Db.CallerKey, at: DateTime.Utc) =>
+    db.syncLine.reserve({
+      line: Db.callerLine(caller),
+      at,
+      cost: callerLimit.every,
+      tolerance: Duration.times(callerLimit.every, callerLimit.burst - 1),
+      maxWait: Duration.zero,
+      force: false,
+    });
 
   // A lookup GitHub answered spent a request whatever comes of the sync, so it always pays into the line.
   const payLookup = (at: DateTime.Utc) => reserve(at, lookupCost, true);
@@ -280,22 +298,21 @@ const make = Effect.gen(function* () {
     const syncedAt = syncedAtOf(current);
     const neverSynced = syncedAt === null;
     if (by._tag === "anyone") {
-      const since = DateTime.subtractDuration(now, callerLimit.per);
-      if (neverSynced && (yield* db.syncRequests.callerClaims(by.caller, since)) >= callerLimit.newAccounts) {
-        yield* decide("caller-limit");
-        return yield* new NewAccountLimited();
-      }
-      const wait = yield* db.syncLine.wait(now, tolerance);
+      const wait = yield* db.syncLine.wait("all", now, tolerance);
       if (Duration.isGreaterThan(wait, line.maxWait)) {
         yield* decide("line-full", 0, wait);
         return yield* new SyncBusy({ reason: "line-full" });
       }
     }
 
-    const caller = by._tag === "anyone" && neverSynced ? by.caller : null;
-    if (!(yield* db.syncRequests.claim({ login, at: now, cooldown, lifetime: requestLifetime, caller }))) {
+    if (!(yield* db.syncRequests.claim({ login, at: now, cooldown, lifetime: requestLifetime }))) {
       yield* decide("deduped");
       return (yield* read(login, now)).status;
+    }
+    if (by._tag === "anyone" && neverSynced && Option.isNone(yield* reserveNewLogin(by.caller, now))) {
+      yield* db.syncRequests.settle(login, now, "released");
+      yield* decide("caller-limit");
+      return yield* new NewAccountLimited();
     }
     const mode = fullReadDue(policy, current, fullSyncedAt, now) ? "full" : "incremental";
 

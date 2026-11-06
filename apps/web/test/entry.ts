@@ -84,7 +84,7 @@ const held = (login: Login, requestedAt: DateTime.Utc) =>
 
 export const syncRequests: Db.Db["Service"]["syncRequests"] = {
   get: (login) => Effect.sync(() => Option.fromUndefinedOr(requests.get(login.toLowerCase()))),
-  claim: ({ login, at, cooldown, caller }) =>
+  claim: ({ login, at, cooldown }) =>
     Effect.sync(() => {
       const current = requests.get(login.toLowerCase());
       const claimed =
@@ -92,17 +92,10 @@ export const syncRequests: Db.Db["Service"]["syncRequests"] = {
         DateTime.isLessThanOrEqualTo(DateTime.addDuration(current.startsAt ?? current.requestedAt, cooldown), at);
       if (claimed) {
         const key = login.toLowerCase();
-        requests.set(key, { login: key, requestedAt: at, outcome: "pending", startsAt: null, caller });
+        requests.set(key, { login: key, requestedAt: at, outcome: "pending", startsAt: null });
       }
       return claimed;
     }),
-  callerClaims: (caller, since) =>
-    Effect.sync(
-      () =>
-        [...requests.values()].filter(
-          (request) => request.caller === caller && DateTime.isGreaterThan(request.requestedAt, since),
-        ).length,
-    ),
   ahead: (startsAt, at) =>
     Effect.sync(
       () =>
@@ -134,8 +127,14 @@ const db = {
   },
   syncLine: {
     wait: () => Effect.sync(() => (line.full ? Duration.hours(3) : line.wait)),
-    reserve: ({ at, force }: Db.Reservation) =>
-      Effect.sync(() => (line.full && !force ? Option.none() : Option.some(DateTime.addDuration(at, line.wait)))),
+    reserve: ({ line: key, at, force }: Db.Reservation) =>
+      Effect.sync(() =>
+        key !== "all"
+          ? Option.some(at)
+          : line.full && !force
+            ? Option.none()
+            : Option.some(DateTime.addDuration(at, line.wait)),
+      ),
   },
   repos: {
     require: (id: RepoId) => (id === repo.id ? Effect.succeed(repo) : Effect.fail(new RepoNotFound({ repoId: id }))),

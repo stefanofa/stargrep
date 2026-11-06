@@ -296,7 +296,6 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           at: at(time),
           cooldown: syncCooldown,
           lifetime: syncLifetime,
-          caller: null,
         });
       const first = at("2026-11-04T12:00:00Z");
       const claims = yield* Effect.all(
@@ -305,7 +304,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       );
       expect(claims.filter(Boolean)).toHaveLength(1);
       expect(yield* db.syncRequests.get(login("RACER"))).toEqual(
-        Option.some({ login: "racer", requestedAt: first, outcome: "pending", startsAt: null, caller: null }),
+        Option.some({ login: "racer", requestedAt: first, outcome: "pending", startsAt: null }),
       );
 
       expect(yield* claim("racer", "2026-11-04T12:09:59Z")).toBe(false);
@@ -317,7 +316,6 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           requestedAt: at("2026-11-04T12:10:00Z"),
           outcome: "failed",
           startsAt: null,
-          caller: null,
         }),
       );
       yield* db.syncRequests.settle(login("never-requested"), first, "failed");
@@ -334,7 +332,6 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           at: at(time),
           cooldown: syncCooldown,
           lifetime: syncLifetime,
-          caller: null,
         });
       expect(yield* claim("2026-11-04T13:00:00Z")).toBe(true);
       expect(yield* claim("2026-11-04T13:11:00Z")).toBe(true);
@@ -348,7 +345,6 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           requestedAt: at("2026-11-04T13:11:00Z"),
           outcome: "pending",
           startsAt: null,
-          caller: null,
         }),
       );
     }),
@@ -363,7 +359,6 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           at: at("2026-11-04T15:00:00Z"),
           cooldown: syncCooldown,
           lifetime: syncLifetime,
-          caller: null,
         });
       yield* claim("ghost");
       yield* claim("released");
@@ -387,7 +382,6 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           at: at(time),
           cooldown: syncCooldown,
           lifetime: syncLifetime,
-          caller: null,
         });
       expect(yield* claim("2026-11-04T16:00:00Z")).toBe(true);
       yield* db.syncRequests.schedule(login("Waiter"), at("2026-11-04T16:00:00Z"), at("2026-11-04T16:30:00Z"));
@@ -401,37 +395,13 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     }),
   );
 
-  test.effect("counts the logins one caller claimed in a window, and nobody else's", () =>
-    Effect.gen(function* () {
-      const db = yield* Db.Db;
-      const [mine, theirs] = [Db.CallerKey.make("caller-mine"), Db.CallerKey.make("caller-theirs")];
-      const claim = (name: string, time: string, caller: Db.CallerKey | null) =>
-        db.syncRequests.claim({
-          login: login(name),
-          at: at(time),
-          cooldown: syncCooldown,
-          lifetime: syncLifetime,
-          caller,
-        });
-      yield* claim("first-new", "2026-11-04T17:00:00Z", mine);
-      yield* claim("second-new", "2026-11-04T17:30:00Z", mine);
-      yield* claim("first-new", "2026-11-04T17:40:00Z", mine);
-      yield* claim("known", "2026-11-04T17:45:00Z", null);
-      yield* claim("their-new", "2026-11-04T17:50:00Z", theirs);
-      expect(yield* db.syncRequests.callerClaims(mine, at("2026-11-04T17:00:00Z"))).toBe(2);
-      expect(yield* db.syncRequests.callerClaims(mine, at("2026-11-04T17:35:00Z"))).toBe(1);
-      expect(yield* db.syncRequests.callerClaims(theirs, at("2026-11-04T17:00:00Z"))).toBe(1);
-      expect(yield* db.syncRequests.callerClaims(Db.CallerKey.make("caller-none"), at("2026-11-04T17:00:00Z"))).toBe(0);
-    }),
-  );
-
   test.effect("counts the pending requests that wait in line and start before a given one", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
       const now = "2026-11-04T18:00:00Z";
       const waiting = (name: string, startsAt: string) =>
         db.syncRequests
-          .claim({ login: login(name), at: at(now), cooldown: syncCooldown, lifetime: syncLifetime, caller: null })
+          .claim({ login: login(name), at: at(now), cooldown: syncCooldown, lifetime: syncLifetime })
           .pipe(Effect.andThen(db.syncRequests.schedule(login(name), at(now), at(startsAt))));
       yield* waiting("line-a", "2026-11-04T18:05:00Z");
       yield* waiting("line-b", "2026-11-04T18:10:00Z");
@@ -454,7 +424,6 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           at: at(time),
           cooldown: syncCooldown,
           lifetime: syncLifetime,
-          caller: null,
         });
       yield* claim("expired", "2026-11-01T08:00:00Z");
       yield* claim("recent", "2026-11-05T07:00:00Z");

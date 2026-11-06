@@ -12,13 +12,9 @@ import * as Postgres from "../postgres.ts";
 import { NullableTime, rowsDecoder, timeParam, writeEncoder } from "../rows.ts";
 import { syncRequests } from "../schema.ts";
 
-export const CallerKey = Schema.String.pipe(Schema.brand("CallerKey"));
-export type CallerKey = typeof CallerKey.Type;
-
 export const SyncRequest = createSelectSchema(syncRequests, {
   requestedAt: Schema.DateTimeUtcFromDate,
   startsAt: NullableTime,
-  caller: Schema.NullOr(CallerKey),
 });
 export type SyncRequest = typeof SyncRequest.Type;
 
@@ -28,7 +24,6 @@ export interface SyncClaim {
   // Counted from when the held request starts, so a request waiting in line keeps its login until it has run.
   readonly cooldown: Duration.Duration;
   readonly lifetime: Duration.Duration;
-  readonly caller: CallerKey | null;
 }
 
 export type Settlement = "failed" | "missing" | "released";
@@ -36,8 +31,6 @@ export type Settlement = "failed" | "missing" | "released";
 export interface Queries {
   readonly get: (login: Login) => Effect.Effect<Option.Option<SyncRequest>, DbQueryFailed | DbRowInvalid>;
   readonly claim: (claim: SyncClaim) => Effect.Effect<boolean, DbQueryFailed>;
-  // How many logins the caller claimed since the given time.
-  readonly callerClaims: (caller: CallerKey, since: DateTime.Utc) => Effect.Effect<number, DbQueryFailed>;
   // How many pending requests still wait in line at the given time and start before startsAt.
   readonly ahead: (startsAt: DateTime.Utc, at: DateTime.Utc) => Effect.Effect<number, DbQueryFailed>;
   // Each of these touches the row only while it still holds the request made at requestedAt.
@@ -74,7 +67,7 @@ export const make = Effect.gen(function* () {
           .from(syncRequests)
           .where(eq(syncRequests.login, keyOf(login))),
       ).pipe(Effect.flatMap(decodeRequests("syncRequests.get")), Effect.map(Arr.head)),
-    claim: Effect.fn("Db.syncRequests.claim")(function* ({ login, at, cooldown, lifetime, caller }: SyncClaim) {
+    claim: Effect.fn("Db.syncRequests.claim")(function* ({ login, at, cooldown, lifetime }: SyncClaim) {
       const requestedAt = yield* encodeTime(at);
       yield* run("syncRequests.prune", (db) =>
         db.delete(syncRequests).where(
@@ -92,23 +85,16 @@ export const make = Effect.gen(function* () {
       const claimed = yield* run("syncRequests.claim", (db) =>
         db
           .insert(syncRequests)
-          .values({ login: keyOf(login), requestedAt, outcome: "pending", caller })
+          .values({ login: keyOf(login), requestedAt, outcome: "pending" })
           .onConflictDoUpdate({
             target: syncRequests.login,
-            set: { requestedAt, outcome: "pending", startsAt: null, caller },
+            set: { requestedAt, outcome: "pending", startsAt: null },
             setWhere: sql`coalesce(${syncRequests.startsAt}, ${syncRequests.requestedAt}) <= ${before(requestedAt, cooldown)}`,
           })
           .returning({ login: syncRequests.login }),
       );
       return claimed.length > 0;
     }),
-    callerClaims: (caller, since) =>
-      run("syncRequests.callerClaims", (db) =>
-        db
-          .select({ claims: sql<number>`count(*)::int` })
-          .from(syncRequests)
-          .where(and(eq(syncRequests.caller, caller), gt(syncRequests.requestedAt, sql`${timeParam(since)}`))),
-      ).pipe(Effect.map((rows) => rows[0]?.claims ?? 0)),
     ahead: (startsAt, at) =>
       run("syncRequests.ahead", (db) =>
         db

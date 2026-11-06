@@ -1,0 +1,145 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "93b0eb08-314c-4011-bb86-d8e68b78ab06",
+  "prevIds": [
+    "0302bd73-2cf1-448d-9d08-6a22d4358f19"
+  ],
+  "footprints": [
+    {
+      "statementType": "alter_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "sync_request_outcome"
+      ],
+      "writes": [
+        "s|enum|public.sync_request_outcome"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "sync_lines"
+      ],
+      "writes": [
+        "s|tbl|public.sync_lines",
+        "n|tbl|public.sync_lines",
+        "e|tbl|public.sync_lines",
+        "n|rel|public.sync_lines",
+        "n|type|public.sync_lines",
+        "n|rel|public.sync_lines_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "sync_requests",
+        "starts_at"
+      ],
+      "writes": [
+        "s|col|public.sync_requests.starts_at",
+        "n|col|public.sync_requests.starts_at",
+        "e|col|public.sync_requests.starts_at"
+      ],
+      "reads": [
+        "n|tbl|public.sync_requests",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "sync_lines",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "sync_lines",
+        "name": "key",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "sync_lines",
+        "name": "busy_until",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "sync_requests",
+        "name": "starts_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "sync_lines",
+        "name": "sync_lines_pkey",
+        "columns": [
+          "key"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "alter",
+      "key": "enums\u0000[\"public\",\"sync_request_outcome\"]",
+      "set": {
+        "values": [
+          "pending",
+          "failed",
+          "missing"
+        ]
+      }
+    }
+  ]
+}

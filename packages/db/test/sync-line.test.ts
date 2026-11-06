@@ -16,17 +16,39 @@ const start = at("2026-11-06T09:00:00Z");
 const later = (count: number) => DateTime.addDuration(start, units(count));
 
 const reserve = (time: DateTime.Utc, cost: number, force = false) =>
-  Db.Db.use((db) => db.syncLine.reserve({ at: time, cost: units(cost), tolerance, maxWait, force }));
+  Db.Db.use((db) => db.syncLine.reserve({ line: "all", at: time, cost: units(cost), tolerance, maxWait, force }));
 
-const busyFor = (time: DateTime.Utc) => Db.Db.use((db) => db.syncLine.wait(time, Duration.zero));
+const busyFor = (time: DateTime.Utc, line: Db.LineKey = "all") =>
+  Db.Db.use((db) => db.syncLine.wait(line, time, Duration.zero));
 
-const clear = TestDatabase.TestDatabase.use((database) => database.query("delete from sync_line"));
+// A caller's line: 4 new logins at once, then one every 15 minutes, and never a wait.
+const quarter = Duration.minutes(15);
+const caller = (name: string) => Db.callerLine(Db.CallerKey.make(name));
+const reserveNew = (name: string, time: DateTime.Utc) =>
+  Db.Db.use((db) =>
+    db.syncLine.reserve({
+      line: caller(name),
+      at: time,
+      cost: quarter,
+      tolerance: Duration.times(quarter, 3),
+      maxWait: Duration.zero,
+      force: false,
+    }),
+  );
+
+const query = (text: string) => TestDatabase.TestDatabase.use((database) => database.query(text));
+
+const clear = query("delete from sync_lines");
+
+const lines = Effect.map(query("select key from sync_lines order by key"), (rows) =>
+  (rows as ReadonlyArray<{ readonly key: string }>).map((row) => row.key),
+);
 
 const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | TestDatabase.TestDatabase> }) => {
   test.effect("starts a reservation on an empty line now and moves the line by its cost", () =>
     Effect.gen(function* () {
       yield* clear;
-      expect(yield* Db.Db.use((db) => db.syncLine.wait(start, tolerance))).toEqual(Duration.zero);
+      expect(yield* Db.Db.use((db) => db.syncLine.wait("all", start, tolerance))).toEqual(Duration.zero);
       expect(yield* reserve(start, 27)).toEqual(Option.some(start));
       expect(yield* busyFor(start)).toEqual(units(27));
     }),
@@ -37,7 +59,7 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | Test
       yield* clear;
       for (let index = 0; index < 8; index++) expect(yield* reserve(start, 27)).toEqual(Option.some(start));
       expect(yield* reserve(start, 27)).toEqual(Option.some(later(8 * 27 - 200)));
-      expect(yield* Db.Db.use((db) => db.syncLine.wait(start, tolerance))).toEqual(units(9 * 27 - 200));
+      expect(yield* Db.Db.use((db) => db.syncLine.wait("all", start, tolerance))).toEqual(units(9 * 27 - 200));
     }),
   );
 
@@ -67,9 +89,44 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | Test
       yield* clear;
       yield* reserve(start, 4_000);
       const after = later(4_001);
-      expect(yield* Db.Db.use((db) => db.syncLine.wait(after, tolerance))).toEqual(Duration.zero);
+      expect(yield* Db.Db.use((db) => db.syncLine.wait("all", after, tolerance))).toEqual(Duration.zero);
       expect(yield* reserve(after, 27)).toEqual(Option.some(after));
       expect(yield* busyFor(after)).toEqual(units(27));
+    }),
+  );
+
+  test.effect(
+    "starts a caller's first 4 new logins at once, refuses the fifth, and starts one more 15 minutes on",
+    () =>
+      Effect.gen(function* () {
+        yield* clear;
+        for (let index = 0; index < 4; index++)
+          expect(yield* reserveNew("caller-a", start)).toEqual(Option.some(start));
+        expect(yield* reserveNew("caller-a", start)).toEqual(Option.none());
+        expect(yield* reserveNew("caller-b", start)).toEqual(Option.some(start));
+        expect(yield* busyFor(start)).toEqual(Duration.zero);
+
+        const fourteen = DateTime.addDuration(start, Duration.minutes(14));
+        expect(yield* reserveNew("caller-a", fourteen)).toEqual(Option.none());
+        const fifteen = DateTime.addDuration(start, quarter);
+        expect(yield* reserveNew("caller-a", fifteen)).toEqual(Option.some(fifteen));
+        expect(yield* reserveNew("caller-a", fifteen)).toEqual(Option.none());
+      }),
+  );
+
+  test.effect("deletes the lines the clock has passed when it reserves, and keeps the busy ones", () =>
+    Effect.gen(function* () {
+      yield* clear;
+      yield* reserveNew("caller-a", start);
+      yield* reserveNew("caller-b", DateTime.addDuration(start, Duration.minutes(10)));
+      yield* reserve(start, 27);
+      expect(yield* lines).toEqual(["all", "caller/caller-a", "caller/caller-b"]);
+
+      yield* reserve(DateTime.addDuration(start, Duration.minutes(20)), 1);
+      expect(yield* lines).toEqual(["all", "caller/caller-b"]);
+      expect(yield* reserveNew("caller-a", DateTime.addDuration(start, Duration.minutes(20)))).toEqual(
+        Option.some(DateTime.addDuration(start, Duration.minutes(20))),
+      );
     }),
   );
 };
@@ -96,6 +153,18 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 3
           ),
         );
         expect(yield* busyFor(start)).toEqual(units(2_500));
+      }),
+    );
+
+    test.effect("starts exactly 4 of 10 new logins one caller asks for at once", () =>
+      Effect.gen(function* () {
+        yield* clear;
+        const starts = yield* Effect.all(
+          Array.from({ length: 10 }, () => reserveNew("caller-a", start)),
+          { concurrency: "unbounded" },
+        );
+        expect(starts.filter(Option.isSome).map((reserved) => reserved.value)).toEqual([start, start, start, start]);
+        expect(yield* busyFor(start, caller("caller-a"))).toEqual(Duration.times(quarter, 4));
       }),
     );
   },
