@@ -25,7 +25,7 @@ interface Server {
   status: SyncStatus;
   search: (q: string) => Array<SearchResult>;
   searches: Array<string>;
-  refusals: Record<string, "LOGIN_NOT_FOUND" | "SYNC_BUSY" | "TOO_MANY_REQUESTS">;
+  refusals: Record<string, "LOGIN_NOT_FOUND" | "SYNC_BUSY" | "TOO_MANY_REQUESTS" | "SERVICE_UNAVAILABLE">;
   calls: { library: number; syncStatus: number };
 }
 
@@ -588,5 +588,16 @@ describe("the search page in each state", () => {
     );
     expect(page().getByRole("button", { name: "Try again" })).toBeTruthy();
     expect(strip()).toContain("taking a breather");
+  });
+
+  test("a sync that cannot reach github says so and offers to try again", async () => {
+    server.refusals.faraway = "SERVICE_UNAVAILABLE";
+    server.status = status({ login: "faraway", state: "unknown", syncedAt: null, requestedAt: null });
+    await open("/faraway", "Search @faraway's stars");
+    await waitFor(() =>
+      expect(page().getByRole("heading", { name: "stargrep couldn't reach github just now" })).toBeTruthy(),
+    );
+    expect(strip()).toContain("couldn't reach github");
+    expect(page().getAllByRole("button", { name: "Try again" }).length).toBeGreaterThan(0);
   });
 });

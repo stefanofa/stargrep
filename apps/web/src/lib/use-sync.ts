@@ -43,10 +43,10 @@ class SyncRefused extends Data.TaggedError("SyncRefused")<{ readonly refusal: Re
 
 class SyncFailed extends Data.TaggedError("SyncFailed")<{ readonly cause: unknown }> {}
 
-const failure = (cause: unknown) => {
-  const refusal = refusalOf(cause);
-  return refusal === undefined ? new SyncFailed({ cause }) : new SyncRefused({ refusal });
-};
+// A status read that fails is tried again at the next poll. A trigger that fails needs the visitor to ask again.
+const readFailure = (cause: unknown) => new SyncFailed({ cause });
+
+const triggerFailure = (cause: unknown) => new SyncRefused({ refusal: refusalOf(cause) });
 
 export type SyncWatch =
   | { readonly kind: "watching"; readonly status: SyncStatus | undefined }
@@ -63,8 +63,8 @@ export function useSync(login: string, onProgress: () => void, initial?: SyncSta
   useEffect(() => {
     if (round === 0 && refused !== undefined) return;
     const client = api();
-    const trigger = Effect.tryPromise({ try: () => client.triggerSync({ login }), catch: failure });
-    const read = Effect.tryPromise({ try: () => client.syncStatus({ login }), catch: failure }).pipe(
+    const trigger = Effect.tryPromise({ try: () => client.triggerSync({ login }), catch: triggerFailure });
+    const read = Effect.tryPromise({ try: () => client.syncStatus({ login }), catch: readFailure }).pipe(
       Effect.filterOrElse(
         (current) => current.state !== "unknown",
         () => trigger,

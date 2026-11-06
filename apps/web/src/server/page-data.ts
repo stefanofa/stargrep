@@ -80,7 +80,7 @@ const syncOf = async (client: Client, owner: string, own: boolean): Promise<Pick
   if (own || status === null || status.state !== "unknown") return { sync: status, refusal: null };
   return client.triggerSync({ login: owner }).then(
     (sync) => ({ sync, refusal: null }),
-    (error: unknown) => ({ sync: status, refusal: refusalOf(error) ?? null }),
+    (error: unknown) => ({ sync: status, refusal: refusalOf(error) }),
   );
 };
 

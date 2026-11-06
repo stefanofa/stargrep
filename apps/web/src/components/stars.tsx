@@ -149,6 +149,13 @@ const refused = (refusal: Refusal, owner: string) => {
         detail: "give it a few minutes, then try again. accounts stargrep already knows still work.",
         retry: true,
       } as const;
+    case "unavailable":
+      return {
+        status: { icon: "failed", label: "couldn't reach github" },
+        heading: "stargrep couldn't reach github just now",
+        detail: `@${owner}'s stars can import once it answers. try again in a moment.`,
+        retry: true,
+      } as const;
   }
 };
 
