@@ -1,13 +1,17 @@
 import { describe, expect } from "bun:test";
 import { effect } from "@stargrep/testing";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { GitHubRequestFailed, TokenBudgetExhausted } from "./errors.ts";
 import * as Fake from "./github.fixture.ts";
 import * as GitHub from "./github.ts";
@@ -202,4 +206,42 @@ describe("TokenGate.layerMissing", () => {
       ]);
     }).pipe(Effect.provide(GitHub.layer.pipe(Layer.provide(TokenGate.layerMissing)))),
   );
+});
+
+describe("TokenGate.counting", () => {
+  effect("counts each request it sends, a retried one and a failed one included, and none it refuses", () => {
+    const fake = Fake.make((_, index) =>
+      index === 0 ? { status: 502 } : index === 1 ? { body: { login: "octocat" } } : { status: 404 },
+    );
+    return Effect.gen(function* () {
+      const sent = yield* Ref.make(0);
+      const counted = Layer.succeed(TokenGate.TokenGate, TokenGate.counting(yield* TokenGate.TokenGate, sent));
+      const github = yield* Effect.map(Layer.build(GitHub.layer.pipe(Layer.provide(counted))), (context) =>
+        Context.get(context, GitHub.GitHub),
+      );
+      const fiber = yield* Effect.forkChild(Effect.result(github.account("octocat" as Login)));
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(fiber);
+      expect(fake.sent).toHaveLength(2);
+      expect(yield* Ref.get(sent)).toBe(2);
+      yield* Effect.flip(github.account("ghost" as Login));
+      expect(yield* Ref.get(sent)).toBe(3);
+
+      const refusing = TokenGate.counting(
+        TokenGate.TokenGate.of({
+          execute: () => Effect.fail(new TokenBudgetExhausted({ resource: "core", resetAt: 0 })),
+        }),
+        sent,
+      );
+      yield* Effect.flip(refusing.execute("account", HttpClientRequest.get("https://api.github.com/users/octocat")));
+      expect(yield* Ref.get(sent)).toBe(3);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        TokenGate.layerMemory({ token: Redacted.make(Fake.token), share: 1 as BudgetShare }).pipe(
+          Layer.provide(fake.client),
+        ),
+      ),
+    );
+  });
 });
