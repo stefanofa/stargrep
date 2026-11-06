@@ -1,7 +1,6 @@
 import { createCollection } from "@tanstack/db";
 import { useEffect, useState } from "react";
 import { searchText } from "./keyword.ts";
-import { planned } from "./planned.ts";
 import { api, type LibraryRepo } from "./rpc.ts";
 import { starsPages } from "./stars-pages.ts";
 
@@ -20,6 +19,7 @@ async function* onePage(repos: Promise<ReadonlyArray<LibraryRepo>>): Pages {
 // runs gather every page first, so a reload never shows a library cut down to its first page.
 export const makeLibrary = (load: () => Promise<ReadonlyArray<LibraryRepo>> | Pages, id = "library") => {
   let shown = false;
+  let failure: unknown;
   const collection = createCollection<LibraryEntry, number>({
     id,
     getKey: (repo) => repo.id,
@@ -52,6 +52,7 @@ export const makeLibrary = (load: () => Promise<ReadonlyArray<LibraryRepo>> | Pa
           shown = true;
         };
         run().catch((error: unknown) => {
+          failure = error;
           if (!stopped) fail(error);
         });
         return () => {
@@ -82,7 +83,7 @@ export const makeLibrary = (load: () => Promise<ReadonlyArray<LibraryRepo>> | Pa
     return next;
   };
 
-  return { collection, reload };
+  return { collection, reload, failure: () => failure };
 };
 
 export type Library = ReturnType<typeof makeLibrary>;
@@ -93,7 +94,7 @@ export const getLibrary = (login: string, own: boolean) => {
   const key = `${own ? "own" : "public"}:${login.toLowerCase()}`;
   const known = libraries.get(key);
   if (known !== undefined) return known;
-  const client = planned(api());
+  const client = api();
   const load = () => (own ? client.library().then(({ repos }) => repos) : starsPages(client, login));
   const library = makeLibrary(load, `library:${key}`);
   libraries.set(key, library);

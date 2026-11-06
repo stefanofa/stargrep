@@ -28,11 +28,10 @@ import { keywordTerms, normalize } from "../lib/keyword.ts";
 import { getLibrary, type Library, useRecoveries } from "../lib/library-collection.ts";
 import { type PageData, type PageRequest, pageOwner, type Session } from "../lib/page-data.ts";
 import { pageView } from "../lib/page-view.ts";
-import { planned } from "../lib/planned.ts";
 import { now, startsIn, toDetail } from "../lib/present.ts";
 import { withReply } from "../lib/results.ts";
 import { useReveal } from "../lib/reveal.ts";
-import { api, type Viewer } from "../lib/rpc.ts";
+import { api, type Viewer, wireCode } from "../lib/rpc.ts";
 import { librarySorts, type Params, searchSorts } from "../lib/search-params.ts";
 import { type Body, type Stage, stageOf } from "../lib/search-state.ts";
 import { useSemanticSearch } from "../lib/use-semantic.ts";
@@ -43,7 +42,7 @@ import { type Arriving, LibraryPlaceholder, LibraryView } from "./library-view.t
 import { OwnerPill } from "./owner-pill.tsx";
 
 export const loadSession = async (): Promise<Session> => {
-  const client = planned(api());
+  const client = api();
   const [viewer, config] = await Promise.all([client.viewer().catch(() => null), client.config()]);
   return { viewer, config };
 };
@@ -312,6 +311,7 @@ function OwnerStars({ data, library, onPose }: StarsProps & { library: Library |
             ? `live results from @${owner}, our demo account. try any username.`
             : `@${owner}'s stars, searched in plain words. try any username.`;
   const butterPose = reveal.phase === "typing" ? "thinking" : reveal.phase === "settled" ? "happy" : "idle";
+  const limited = isLoadingError && wireCode(library?.failure()) === "TOO_MANY_REQUESTS";
   const loadingStatus = <StatusLine icon="busy" label={`loading ${data.own ? "your stars" : `@${owner}'s stars`}`} />;
 
   const retryLibrary = () => {
@@ -387,6 +387,8 @@ function OwnerStars({ data, library, onPose }: StarsProps & { library: Library |
                 label={refusal.status.label}
                 detail={"detail" in refusal.status ? refusal.status.detail : undefined}
               />
+            ) : isLoadingError ? (
+              <StatusLine icon="failed" label={limited ? "taking a breather" : "couldn't load"} />
             ) : !ready ? (
               loadingStatus
             ) : (
@@ -438,9 +440,17 @@ function OwnerStars({ data, library, onPose }: StarsProps & { library: Library |
           />
         ) : isLoadingError ? (
           <Notice
-            heading="stargrep couldn't load these stars"
-            detail="the library didn't arrive"
-            pose="scared"
+            {...(limited
+              ? {
+                  heading: "lots of requests from your network",
+                  detail: "give it a minute, then try again.",
+                  pose: "unsure" as const,
+                }
+              : {
+                  heading: "stargrep couldn't load these stars",
+                  detail: "the library didn't arrive",
+                  pose: "scared" as const,
+                })}
             action={
               <Button variant="primary" size="lg" disabled={retrying} onClick={retryLibrary}>
                 Try again

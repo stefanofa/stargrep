@@ -1,14 +1,13 @@
 import type { Sort } from "@stargrep/ui";
-import type { PlannedSyncStatus, PublicConfig } from "./planned.ts";
 import type { Refusal } from "./refusals.ts";
-import type { SearchResult, Viewer } from "./rpc.ts";
+import type { PublicConfig, SearchResult, SyncStatus, Viewer } from "./rpc.ts";
 import type { SearchView } from "./search-state.ts";
 
 // What the server already knows when it renders a stars page, so the page paints its first answer with no request.
 export interface FirstAnswer {
   readonly query: string;
   readonly at: number;
-  readonly sync: PlannedSyncStatus;
+  readonly sync: SyncStatus;
   readonly hits: ReadonlyArray<SearchResult>;
   readonly view: SearchView;
 }
@@ -26,7 +25,7 @@ export interface PageData extends Session {
   readonly query: string;
   readonly first: FirstAnswer | null;
   // What the server learned about the owner's sync, so the first paint already shows an import or a refusal.
-  readonly sync: PlannedSyncStatus | null;
+  readonly sync: SyncStatus | null;
   readonly refusal: Refusal | null;
 }
 

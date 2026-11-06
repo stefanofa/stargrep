@@ -27,18 +27,12 @@ export type Stage =
   | { readonly name: "reading"; readonly read: number; readonly settled: number; readonly total: number }
   | { readonly name: "ready"; readonly total: number; readonly failed: number; readonly lastSync: LastSync };
 
-// syncStatus as #48 serves it: a sync can wait in line for GitHub budget before it starts.
-export interface StageSync extends Omit<SyncStatus, "state"> {
-  readonly state: SyncStatus["state"] | "waiting";
-  readonly waiting?: { readonly ahead: number; readonly startsAt: string } | null;
-}
-
 export const stageOf = ({
   sync,
   entries,
   starred,
 }: {
-  sync: StageSync | undefined;
+  sync: SyncStatus | undefined;
   entries: ReadonlyArray<Pick<LibraryRepo, "stars" | "pushedAt">>;
   starred: number | null;
 }): Stage => {

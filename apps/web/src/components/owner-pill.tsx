@@ -2,8 +2,7 @@ import { Popover } from "@base-ui/react/popover";
 import { Avatar } from "@stargrep/ui";
 import { useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
-import type { PublicConfig } from "../lib/planned.ts";
-import type { Viewer } from "../lib/rpc.ts";
+import type { PublicConfig, Viewer } from "../lib/rpc.ts";
 import { githubLogin } from "../lib/search-params.ts";
 
 const avatarOf = (login: string) => `https://github.com/${login}.png?size=64`;

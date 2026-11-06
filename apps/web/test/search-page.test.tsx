@@ -1,5 +1,6 @@
 import "./register.ts";
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { ORPCError } from "@orpc/client";
 import {
   type AnyRoute,
   createMemoryHistory,
@@ -10,6 +11,7 @@ import {
 } from "@tanstack/react-router";
 import { act, cleanup, configure, render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import * as DateTime from "effect/DateTime";
 import * as real from "../src/lib/library-collection.ts";
 import type { LibraryRepo, SearchResult, SyncStatus, Viewer } from "../src/lib/rpc.ts";
 import type {} from "../src/routeTree.gen.ts";
@@ -23,6 +25,7 @@ interface Server {
   status: SyncStatus;
   search: (q: string) => Array<SearchResult>;
   searches: Array<string>;
+  refusals: Record<string, "LOGIN_NOT_FOUND" | "SYNC_BUSY" | "TOO_MANY_REQUESTS">;
   calls: { library: number; syncStatus: number };
 }
 
@@ -54,7 +57,18 @@ const api = () => ({
     server.calls.syncStatus += 1;
     return server.status;
   },
-  triggerSync: async () => server.status,
+  triggerSync: async ({ login }: { login: string }) => {
+    const refusal = server.refusals[login];
+    if (refusal !== undefined) throw new ORPCError(refusal);
+    return server.status;
+  },
+  stars: async ({ login }: { login: string }) => ({ login, repos: server.repos, nextCursor: null }),
+  config: async () => ({
+    demoLogin: "stefanofa",
+    demoQuery: "terminal dashboard",
+    examples: ["python package manager", "terminal recorder", "fuzzy finder"],
+    featured: ["stefanofa"],
+  }),
   search: async ({ q }: { q: string }) => {
     server.searches.push(q);
     return { results: server.search(q) };
@@ -127,6 +141,19 @@ const status = (extra: Partial<Server["status"]>): Server["status"] => ({
   enrichment: allRead,
   ...extra,
 });
+// A sync waiting for GitHub budget, due to start in 24 minutes with 3 ahead of it.
+const inLine = () =>
+  status({
+    login: "linewaiter",
+    state: "waiting",
+    syncedAt: null,
+    waiting: {
+      ahead: 3,
+      startsAt: DateTime.formatIso(DateTime.add(DateTime.nowUnsafe(), { minutes: 24 })),
+    },
+    starredTotal: 412,
+    enrichment: arriving,
+  });
 const hit = (repo: Repo): SearchResult => ({ ...repo, reason: "meaning match", rankedBy: [], metrics: [] });
 
 beforeEach(() => {
@@ -137,6 +164,7 @@ beforeEach(() => {
     status: status({ enrichment: allRead }),
     search: () => [],
     searches: [],
+    refusals: {},
     calls: { library: 0, syncStatus: 0 },
   };
   library = real.makeLibrary(() =>
@@ -148,7 +176,7 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-const open = async (path: string, label: string | RegExp = "Search your stars") => {
+const open = async (path: string, label: string | RegExp = "Search your stars", settle = true) => {
   const root = createRootRoute({ component: Outlet });
   const search = HomeRoute.update({
     id: "/",
@@ -166,7 +194,7 @@ const open = async (path: string, label: string | RegExp = "Search your stars") 
   });
   render(<RouterProvider router={router} />);
   await page().findByRole("searchbox", { name: label });
-  await waitFor(() => expect(strip()).not.toContain("loading"));
+  if (settle) await waitFor(() => expect(strip()).not.toContain("loading"));
 };
 
 const strip = () => document.querySelector("[role=status]")?.closest("p")?.textContent ?? "";
@@ -183,7 +211,7 @@ const settle = (ms = 400) => act(() => Bun.sleep(ms));
 
 describe("the search page in each state", () => {
   test("browsing a synced library: the strip counts, the controls sit in the tile", async () => {
-    await open("/");
+    await open("/", "Search your stars", false);
     await waitFor(() => expect(strip()).toContain("6 stars"));
     expect(strip()).toContain("synced");
     expect(within(tile()).getByRole("button", { name: /Sort by/ })).toBeTruthy();
@@ -195,7 +223,7 @@ describe("the search page in each state", () => {
   test("importing: real counts on the strip and the rail, and placeholders where stars will land", async () => {
     server.viewer = { ...server.viewer, starredCount: 10 };
     server.status = status({ state: "queued", syncedAt: null, enrichment: arriving });
-    await open("/");
+    await open("/", "Search your stars", false);
     await waitFor(() => expect(strip()).toContain("importing your stars"));
     expect(strip()).toContain("6 of 10");
     const bar = page().getByRole("progressbar", { name: "importing your stars" });
@@ -213,7 +241,7 @@ describe("the search page in each state", () => {
 
   test("reading: the rail follows the read count and the library shows unread repos by their description", async () => {
     server.status = status({ enrichment: reading });
-    await open("/");
+    await open("/", "Search your stars", false);
     await waitFor(() => expect(strip()).toContain("reading your stars"));
     expect(strip()).toContain("4 of 6 understood");
     const bar = page().getByRole("progressbar", { name: "reading your stars" });
@@ -237,7 +265,7 @@ describe("the search page in each state", () => {
 
   test("a sync on a library that synced before checks quietly, then reads new stars in place", async () => {
     server.status = status({ state: "queued", enrichment: allRead });
-    await open("/");
+    await open("/", "Search your stars", false);
     await waitFor(() => expect(strip()).toContain("checking for new stars"));
     expect(rail()).toBeNull();
     expect(page().queryByText(/still arriving/)).toBeNull();
@@ -275,7 +303,7 @@ describe("the search page in each state", () => {
   }, 20_000);
 
   test("a sync that starts after the page settled is picked up when the tab is shown again", async () => {
-    await open("/");
+    await open("/", "Search your stars", false);
     await waitFor(() => expect(strip()).toContain("6 stars"));
     server.status = status({ state: "queued", enrichment: allRead });
     await act(async () => {
@@ -287,7 +315,7 @@ describe("the search page in each state", () => {
   test("the live region announces the state, not every count the poll brings", async () => {
     server.viewer = { ...server.viewer, starredCount: 10 };
     server.status = status({ state: "queued", syncedAt: null, enrichment: arriving });
-    await open("/");
+    await open("/", "Search your stars", false);
     await waitFor(() => expect(strip()).toContain("6 of 10"));
     expect(announced()).toBe("importing your stars");
     server.repos = [...server.repos, repo(7, "charmbracelet", "bubbletea", "A TUI framework.")];
@@ -297,7 +325,7 @@ describe("the search page in each state", () => {
 
   test("a failed check on a synced library says so and offers a retry", async () => {
     server.status = status({ state: "failed" });
-    await open("/");
+    await open("/", "Search your stars", false);
     await waitFor(() => expect(strip()).toContain("couldn't check for new stars"));
     expect(within(tile()).getByRole("button", { name: "try again" })).toBeTruthy();
     await waitFor(() => expect(mark()).toBe("scared"));
@@ -305,7 +333,7 @@ describe("the search page in each state", () => {
 
   test("checking for new stars doesn't reload the library on every poll", async () => {
     server.status = status({ state: "queued", enrichment: allRead });
-    await open("/");
+    await open("/", "Search your stars", false);
     await waitFor(() => expect(strip()).toContain("checking for new stars"));
     const polls = server.calls.syncStatus;
     const loads = server.calls.library;
@@ -316,7 +344,7 @@ describe("the search page in each state", () => {
 
   test("a hidden tab stops polling and checks at once when shown", async () => {
     server.status = status({ state: "queued", syncedAt: null, enrichment: arriving });
-    await open("/");
+    await open("/", "Search your stars", false);
     await waitFor(() => expect(strip()).toContain("importing your stars"));
     const visibility = Object.getOwnPropertyDescriptor(Document.prototype, "visibilityState");
     Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
@@ -339,7 +367,7 @@ describe("the search page in each state", () => {
   test("changing the sort keeps the library still instead of replaying its entrance", async () => {
     using played = entrances();
     const user = userEvent.setup();
-    await open("/");
+    await open("/", "Search your stars", false);
     await waitFor(() => expect(page().getByRole("link", { name: "tui-rs" })).toBeTruthy());
     await settle(50);
     const before = played.of(/tui-rs|ratatui|bottom/);
@@ -379,7 +407,7 @@ describe("the search page in each state", () => {
   test("the header mark stays calm while you type and is surprised once, after the results settle", async () => {
     const user = userEvent.setup();
     server.search = () => [hit(server.repos[4] as Repo)];
-    await open("/");
+    await open("/", "Search your stars", false);
     await waitFor(() => expect(strip()).toContain("6 stars"));
     const poses: Array<string | null | undefined> = [mark()];
     const watch = new MutationObserver(() => poses.push(mark()));
@@ -475,6 +503,7 @@ describe("the search page in each state", () => {
   }, 15_000);
 
   test("someone GitHub doesn't know: the tile and its pill stay, and the page says so", async () => {
+    server.refusals["nobody-here-x"] = "LOGIN_NOT_FOUND";
     server.status = status({ login: "nobody-here-x", state: "unknown", syncedAt: null, requestedAt: null });
     await open("/nobody-here-x", "Search @nobody-here-x's stars");
     await waitFor(() =>
@@ -486,7 +515,7 @@ describe("the search page in each state", () => {
   });
 
   test("someone waiting for an import slot sees their place in line", async () => {
-    server.status = status({ login: "linewaiter", state: "unknown", syncedAt: null, enrichment: arriving });
+    server.status = inLine();
     await open("/linewaiter", "Search @linewaiter's stars");
     await waitFor(() => expect(strip()).toContain("in line to import"));
     expect(strip()).toMatch(/3 ahead · starts in about 2[45] min/);
@@ -495,13 +524,14 @@ describe("the search page in each state", () => {
 
   test("a visitor watching someone's stars import is offered to skip the wait as that person", async () => {
     server.signedIn = false;
-    server.status = status({ login: "linewaiter", state: "unknown", syncedAt: null, enrichment: arriving });
+    server.status = inLine();
     await open("/linewaiter", "Search @linewaiter's stars");
     await waitFor(() => expect(strip()).toContain("in line to import"));
     expect(page().getByRole("heading", { name: "is this you? skip the wait" })).toBeTruthy();
   });
 
   test("a full import line says so calmly and offers to try again", async () => {
+    server.refusals.busyline = "SYNC_BUSY";
     server.status = status({ login: "busyline", state: "unknown", syncedAt: null, requestedAt: null });
     await open("/busyline", "Search @busyline's stars");
     await waitFor(() =>
@@ -513,6 +543,7 @@ describe("the search page in each state", () => {
   });
 
   test("a network that asked too often is told to wait a few minutes", async () => {
+    server.refusals.slowdown = "TOO_MANY_REQUESTS";
     server.status = status({ login: "slowdown", state: "unknown", syncedAt: null, requestedAt: null });
     await open("/slowdown", "Search @slowdown's stars");
     await waitFor(() =>
@@ -536,10 +567,26 @@ describe("the search page in each state", () => {
 
   test("someone else's stars say whose they are", async () => {
     server.signedIn = false;
-    server.status = status({ login: "octosync", state: "queued", syncedAt: null, enrichment: arriving });
+    server.status = status({
+      login: "octosync",
+      state: "queued",
+      syncedAt: null,
+      starredTotal: 10,
+      enrichment: arriving,
+    });
     await open("/octosync", "Search @octosync's stars");
     await waitFor(() => expect(strip()).toContain("importing @octosync's stars"));
     expect(page().getByRole("heading", { name: "is this you? skip the wait" })).toBeTruthy();
     expect(page().getByRole("progressbar", { name: "importing @octosync's stars" })).toBeTruthy();
+  });
+
+  test("a network that read too many stars is told to wait a minute", async () => {
+    library = real.makeLibrary(() => Promise.reject(new ORPCError("TOO_MANY_REQUESTS")));
+    await open("/", "Search your stars", false);
+    await waitFor(() =>
+      expect(page().getByRole("heading", { name: "lots of requests from your network" })).toBeTruthy(),
+    );
+    expect(page().getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(strip()).toContain("taking a breather");
   });
 });

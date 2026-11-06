@@ -8,6 +8,7 @@ export type Viewer = Outputs["viewer"];
 export type LibraryRepo = Outputs["library"]["repos"][number];
 export type SearchResult = Outputs["search"]["results"][number];
 export type SyncStatus = Outputs["syncStatus"];
+export type PublicConfig = Outputs["config"];
 export type EnrichmentProgress = SyncStatus["enrichment"];
 export type OwnerType = NonNullable<LibraryRepo["ownerType"]>;
 export type Client = ContractRouterClient<typeof contract>;

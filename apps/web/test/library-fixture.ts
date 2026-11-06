@@ -1,9 +1,7 @@
 import * as DateTime from "effect/DateTime";
-import type { LibraryRepo } from "./rpc.ts";
+import type { LibraryRepo } from "../src/lib/rpc.ts";
 
-// Stand-ins for what `feat(api): search anyone's stars safely` serves, until it merges. The local stage seed reads
-// these rows too, so the stage database and the fixtures agree.
-
+// A small starred library for tests: 24 repos with fixed dates.
 type Row = readonly [owner: string, name: string, type: "org" | "user", language: string, stars: number, text: string];
 
 const rows: ReadonlyArray<Row> = [
@@ -142,7 +140,7 @@ const day = 86_400_000;
 const base = Date.parse("2026-11-05T09:00:00.000Z");
 const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 
-export const fixtureRepos: ReadonlyArray<LibraryRepo> = rows.map(
+export const libraryRepos: ReadonlyArray<LibraryRepo> = rows.map(
   ([owner, name, type, language, stars, text], index) => ({
     id: (800_000 + index) as LibraryRepo["id"],
     owner,
@@ -165,29 +163,3 @@ export const fixtureRepos: ReadonlyArray<LibraryRepo> = rows.map(
     read: true,
   }),
 );
-
-export interface FixtureAccount {
-  readonly login: string;
-  readonly starredTotal: number;
-  readonly arrived: number;
-  readonly waiting?: { readonly ahead: number; readonly minutes: number };
-  readonly refuses?: "SYNC_BUSY" | "TOO_MANY_REQUESTS";
-}
-
-export const fixtureAccounts: ReadonlyArray<FixtureAccount> = [
-  { login: "stefanofa", starredTotal: fixtureRepos.length, arrived: fixtureRepos.length },
-  { login: "junodev", starredTotal: fixtureRepos.length, arrived: fixtureRepos.length },
-  { login: "octosync", starredTotal: fixtureRepos.length, arrived: 14 },
-  { login: "linewaiter", starredTotal: 412, arrived: 0, waiting: { ahead: 3, minutes: 24 } },
-  { login: "busyline", starredTotal: 900, arrived: 0, refuses: "SYNC_BUSY" },
-  { login: "slowdown", starredTotal: 120, arrived: 0, refuses: "TOO_MANY_REQUESTS" },
-];
-
-// #48 serves "let an ai agent control my iphone" for stefanofa's real stars. The stage seeds these rows instead, so its
-// demo query is one they answer.
-export const fixtureConfig = {
-  demoLogin: "stefanofa",
-  demoQuery: "terminal dashboard",
-  examples: ["python package manager", "terminal recorder", "fuzzy finder"],
-  featured: ["stefanofa"],
-};

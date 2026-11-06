@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { keywordTerms, searchText } from "../src/lib/keyword.ts";
 import { matchesEvery, pageView } from "../src/lib/page-view.ts";
-import { fixtureRepos } from "../src/lib/planned-fixtures.ts";
+import { libraryRepos } from "./library-fixture.ts";
 
-const entries = fixtureRepos.map((repo) => ({ ...repo, text: searchText(repo) }));
+const entries = libraryRepos.map((repo) => ({ ...repo, text: searchText(repo) }));
 const byId = new Map(entries.map((entry) => [entry.id as number, entry]));
 const at = Date.parse("2026-11-06T00:00:00.000Z");
 const sync = {

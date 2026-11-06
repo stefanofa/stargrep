@@ -2,7 +2,6 @@ import * as Result from "effect/Result";
 import { useEffect, useRef, useState } from "react";
 import { normalize } from "./keyword.ts";
 import type { Semantic } from "./page-view.ts";
-import { planned } from "./planned.ts";
 import { api, type SearchResult } from "./rpc.ts";
 import { type Answer, minimumLength, type SearchFailed, startSemanticSearch } from "./search-stream.ts";
 
@@ -29,7 +28,7 @@ export function useSemanticSearch(
   const readBefore = useRef<number>(undefined);
 
   useEffect(() => {
-    const client = planned(api());
+    const client = api();
     const running = startSemanticSearch(
       (q, signal) => client.search({ login, q }, { signal }).then(({ results }) => results),
       setAnswer,

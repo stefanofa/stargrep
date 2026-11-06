@@ -2,10 +2,9 @@ import type { Sort } from "@stargrep/ui";
 import { keywordTerms } from "./keyword.ts";
 import type { LibraryEntry } from "./library-collection.ts";
 import { orders } from "./order.ts";
-import type { PlannedSyncStatus } from "./planned.ts";
 import { syncedAgo } from "./present.ts";
 import { mergeResults } from "./results.ts";
-import type { SearchResult } from "./rpc.ts";
+import type { SearchResult, SyncStatus } from "./rpc.ts";
 import { type SearchView, searchView, stageOf, type Whose } from "./search-state.ts";
 
 export interface Semantic {
@@ -19,7 +18,7 @@ export interface PageInputs {
   readonly entries: ReadonlyArray<LibraryEntry>;
   readonly matched: ReadonlyArray<LibraryEntry>;
   readonly find: (id: number) => LibraryEntry | undefined;
-  readonly sync: PlannedSyncStatus | undefined;
+  readonly sync: SyncStatus | undefined;
   readonly starred: number | null;
   readonly semantic: Semantic;
   readonly sort: Sort;
