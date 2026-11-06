@@ -30,7 +30,7 @@ export const starSource = pgEnum("star_source", ["gharchive", "api"]);
 export const followSource = pgEnum("follow_source", ["github", "stargrep"]);
 export const collectionKind = pgEnum("collection_kind", ["user", "editorial"]);
 export const searchScope = pgEnum("search_scope", ["stars", "network", "global"]);
-export const syncRequestOutcome = pgEnum("sync_request_outcome", ["pending", "failed"]);
+export const syncRequestOutcome = pgEnum("sync_request_outcome", ["pending", "failed", "missing"]);
 export const iconSource = pgEnum("icon_source", ["repo-file", "readme-image", "homepage"]);
 export const iconPlate = pgEnum("icon_plate", ["none", "light", "dark"]);
 
@@ -233,8 +233,25 @@ export const syncRequests = pgTable(
     login: text("login").primaryKey(),
     requestedAt: time("requested_at").notNull(),
     outcome: syncRequestOutcome("outcome").notNull(),
+    // When a request that waits in line starts. Null starts at requested_at.
+    startsAt: time("starts_at"),
+    // A keyed hash of the network that asked, set only when anyone asks for a login that never synced.
+    caller: text("caller"),
   },
-  (table) => [index("sync_requests_requested_at_idx").on(table.requestedAt)],
+  (table) => [
+    index("sync_requests_requested_at_idx").on(table.requestedAt),
+    index("sync_requests_caller_idx").on(table.caller, table.requestedAt).where(sql`${table.caller} is not null`),
+  ],
+);
+
+// One row. Signed-out syncs reserve GitHub requests here, and the line is clear once the clock passes busy_until.
+export const syncLine = pgTable(
+  "sync_line",
+  {
+    singleton: boolean("singleton").primaryKey().default(true),
+    busyUntil: time("busy_until").notNull(),
+  },
+  () => [check("sync_line_one_row", sql`singleton`)],
 );
 
 export const searchEvents = pgTable("search_events", {

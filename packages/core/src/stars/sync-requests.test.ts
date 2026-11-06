@@ -43,7 +43,7 @@ const synced = (login: string, syncedAt: number) =>
   });
 
 const markFailed = (login: string, requestedAt: number) =>
-  Db.Db.use((db) => db.syncRequests.markFailed(login as Login, at(requestedAt)));
+  Db.Db.use((db) => db.syncRequests.settle(login as Login, at(requestedAt), "failed"));
 
 const request = (login: string, by: SyncRequests.Requester = "anyone") =>
   SyncRequests.SyncRequests.use((service) => service.request(login as Login, by));

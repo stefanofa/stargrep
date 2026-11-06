@@ -10,7 +10,7 @@ const markFailed = Effect.fn("SyncStarsConsumer.markFailed")(function* (
   if ("accountId" in body || body.requestedAt === undefined) return;
   const db = yield* Db.Db;
   yield* db.syncRequests
-    .markFailed(body.login, body.requestedAt)
+    .settle(body.login, body.requestedAt, "failed")
     .pipe(
       Effect.catchTag("DbQueryFailed", (error) =>
         Effect.logWarning("Could not mark a dead-lettered sync as failed", { reason: error.reason }),

@@ -12,10 +12,18 @@ import * as Repos from "./queries/repos.ts";
 import * as Search from "./queries/search.ts";
 import * as Settings from "./queries/settings.ts";
 import * as Stars from "./queries/stars.ts";
+import * as SyncLine from "./queries/sync-line.ts";
 import * as SyncRequests from "./queries/sync-requests.ts";
 import * as Usage from "./queries/usage.ts";
 
-export type { Account, AccountClaim, AccountFacts, OwnedRepoStars, StarSync } from "./queries/accounts.ts";
+export type {
+  Account,
+  AccountClaim,
+  AccountFacts,
+  OwnedRepoStars,
+  StarredCount,
+  StarSync,
+} from "./queries/accounts.ts";
 export type {
   DueIcon,
   EnrichFailures,
@@ -53,7 +61,9 @@ export type {
   StarsSnapshot,
   StarsUpsert,
 } from "./queries/stars.ts";
-export type { SyncClaim, SyncRequest } from "./queries/sync-requests.ts";
+export type { Reservation } from "./queries/sync-line.ts";
+export type { Settlement, SyncClaim, SyncRequest } from "./queries/sync-requests.ts";
+export { CallerKey } from "./queries/sync-requests.ts";
 export type { UsageCall, UsageCounts, UsageDay } from "./queries/usage.ts";
 export { enrichFailureCap } from "./schema.ts";
 
@@ -65,6 +75,7 @@ export class Db extends Context.Service<
     readonly stars: Stars.Queries;
     readonly search: Search.Queries;
     readonly syncRequests: SyncRequests.Queries;
+    readonly syncLine: SyncLine.Queries;
     readonly usage: Usage.Queries;
   }
 >()("@stargrep/db/db") {}
@@ -108,6 +119,7 @@ export const layer = (options: Options) =>
           stars: yield* Stars.make,
           search: yield* Search.make(embeddingModel),
           syncRequests: yield* SyncRequests.make,
+          syncLine: yield* SyncLine.make,
           usage: yield* Usage.make,
         });
       }),

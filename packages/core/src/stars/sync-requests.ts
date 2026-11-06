@@ -121,13 +121,13 @@ const make = Effect.gen(function* () {
     const { status: current, fullSyncedAt } = yield* read(login, now);
     if (current.state === "done" && within(policy.cooldown, now)(current.syncedAt)) return current;
     const cooldown = current.state === "queued" ? Duration.max(queuedWait, policy.cooldown) : policy.cooldown;
-    if (!(yield* db.syncRequests.claim({ login, at: now, cooldown, lifetime: requestLifetime }))) {
+    if (!(yield* db.syncRequests.claim({ login, at: now, cooldown, lifetime: requestLifetime, caller: null }))) {
       return (yield* read(login, now)).status;
     }
     const mode = fullReadDue(policy, current, fullSyncedAt, now) ? "full" : "incremental";
     yield* queue
       .send({ login, mode, requestedAt: now })
-      .pipe(Effect.tapError(() => db.syncRequests.markFailed(login, now).pipe(Effect.ignore)));
+      .pipe(Effect.tapError(() => db.syncRequests.settle(login, now, "failed").pipe(Effect.ignore)));
     return {
       state: "queued",
       requestedAt: now,

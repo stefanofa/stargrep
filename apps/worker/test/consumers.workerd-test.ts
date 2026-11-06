@@ -731,7 +731,7 @@ describe("dead letters", () => {
       Db.Db,
       Db.Db.of({
         syncRequests: {
-          markFailed: (login: string, requestedAt: DateTime.Utc) =>
+          settle: (login: string, requestedAt: DateTime.Utc) =>
             Effect.sync(() => void failed.push([login, DateTime.toEpochMillis(requestedAt)])),
         },
       } as unknown as Db.Db["Service"]),

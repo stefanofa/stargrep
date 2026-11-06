@@ -291,7 +291,13 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     Effect.gen(function* () {
       const db = yield* Db.Db;
       const claim = (name: string, time: string) =>
-        db.syncRequests.claim({ login: login(name), at: at(time), cooldown: syncCooldown, lifetime: syncLifetime });
+        db.syncRequests.claim({
+          login: login(name),
+          at: at(time),
+          cooldown: syncCooldown,
+          lifetime: syncLifetime,
+          caller: null,
+        });
       const first = at("2026-11-04T12:00:00Z");
       const claims = yield* Effect.all(
         Array.from({ length: 8 }, (_, i) => claim(i % 2 === 0 ? "Racer" : "racer", "2026-11-04T12:00:00Z")),
@@ -299,16 +305,22 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       );
       expect(claims.filter(Boolean)).toHaveLength(1);
       expect(yield* db.syncRequests.get(login("RACER"))).toEqual(
-        Option.some({ login: "racer", requestedAt: first, outcome: "pending" }),
+        Option.some({ login: "racer", requestedAt: first, outcome: "pending", startsAt: null, caller: null }),
       );
 
       expect(yield* claim("racer", "2026-11-04T12:09:59Z")).toBe(false);
       expect(yield* claim("racer", "2026-11-04T12:10:00Z")).toBe(true);
-      yield* db.syncRequests.markFailed(login("Racer"), at("2026-11-04T12:10:00Z"));
+      yield* db.syncRequests.settle(login("Racer"), at("2026-11-04T12:10:00Z"), "failed");
       expect(yield* db.syncRequests.get(login("racer"))).toEqual(
-        Option.some({ login: "racer", requestedAt: at("2026-11-04T12:10:00Z"), outcome: "failed" }),
+        Option.some({
+          login: "racer",
+          requestedAt: at("2026-11-04T12:10:00Z"),
+          outcome: "failed",
+          startsAt: null,
+          caller: null,
+        }),
       );
-      yield* db.syncRequests.markFailed(login("never-requested"), first);
+      yield* db.syncRequests.settle(login("never-requested"), first, "failed");
       expect(yield* db.syncRequests.get(login("never-requested"))).toEqual(Option.none());
     }),
   );
@@ -317,13 +329,119 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     Effect.gen(function* () {
       const db = yield* Db.Db;
       const claim = (time: string) =>
-        db.syncRequests.claim({ login: login("stale"), at: at(time), cooldown: syncCooldown, lifetime: syncLifetime });
+        db.syncRequests.claim({
+          login: login("stale"),
+          at: at(time),
+          cooldown: syncCooldown,
+          lifetime: syncLifetime,
+          caller: null,
+        });
       expect(yield* claim("2026-11-04T13:00:00Z")).toBe(true);
       expect(yield* claim("2026-11-04T13:11:00Z")).toBe(true);
-      yield* db.syncRequests.markFailed(login("stale"), at("2026-11-04T13:00:00Z"));
+      for (const outcome of ["failed", "missing", "released"] as const) {
+        yield* db.syncRequests.settle(login("stale"), at("2026-11-04T13:00:00Z"), outcome);
+        yield* db.syncRequests.schedule(login("stale"), at("2026-11-04T13:00:00Z"), at("2026-11-04T14:00:00Z"));
+      }
       expect(yield* db.syncRequests.get(login("stale"))).toEqual(
-        Option.some({ login: "stale", requestedAt: at("2026-11-04T13:11:00Z"), outcome: "pending" }),
+        Option.some({
+          login: "stale",
+          requestedAt: at("2026-11-04T13:11:00Z"),
+          outcome: "pending",
+          startsAt: null,
+          caller: null,
+        }),
       );
+    }),
+  );
+
+  test.effect("settles a request missing or releases it, so only a released login claims again at once", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const claim = (name: string) =>
+        db.syncRequests.claim({
+          login: login(name),
+          at: at("2026-11-04T15:00:00Z"),
+          cooldown: syncCooldown,
+          lifetime: syncLifetime,
+          caller: null,
+        });
+      yield* claim("ghost");
+      yield* claim("released");
+      yield* db.syncRequests.settle(login("Ghost"), at("2026-11-04T15:00:00Z"), "missing");
+      yield* db.syncRequests.settle(login("Released"), at("2026-11-04T15:00:00Z"), "released");
+      expect(Option.map(yield* db.syncRequests.get(login("ghost")), (row) => row.outcome)).toEqual(
+        Option.some("missing"),
+      );
+      expect(yield* db.syncRequests.get(login("released"))).toEqual(Option.none());
+      expect(yield* claim("ghost")).toBe(false);
+      expect(yield* claim("released")).toBe(true);
+    }),
+  );
+
+  test.effect("counts a request's cooldown from when it starts in line", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const claim = (time: string) =>
+        db.syncRequests.claim({
+          login: login("waiter"),
+          at: at(time),
+          cooldown: syncCooldown,
+          lifetime: syncLifetime,
+          caller: null,
+        });
+      expect(yield* claim("2026-11-04T16:00:00Z")).toBe(true);
+      yield* db.syncRequests.schedule(login("Waiter"), at("2026-11-04T16:00:00Z"), at("2026-11-04T16:30:00Z"));
+      expect(Option.map(yield* db.syncRequests.get(login("waiter")), (row) => row.startsAt)).toEqual(
+        Option.some(at("2026-11-04T16:30:00Z")),
+      );
+      expect(yield* claim("2026-11-04T16:20:00Z")).toBe(false);
+      expect(yield* claim("2026-11-04T16:39:59Z")).toBe(false);
+      expect(yield* claim("2026-11-04T16:40:00Z")).toBe(true);
+      expect(Option.map(yield* db.syncRequests.get(login("waiter")), (row) => row.startsAt)).toEqual(Option.some(null));
+    }),
+  );
+
+  test.effect("counts the logins one caller claimed in a window, and nobody else's", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const [mine, theirs] = [Db.CallerKey.make("caller-mine"), Db.CallerKey.make("caller-theirs")];
+      const claim = (name: string, time: string, caller: Db.CallerKey | null) =>
+        db.syncRequests.claim({
+          login: login(name),
+          at: at(time),
+          cooldown: syncCooldown,
+          lifetime: syncLifetime,
+          caller,
+        });
+      yield* claim("first-new", "2026-11-04T17:00:00Z", mine);
+      yield* claim("second-new", "2026-11-04T17:30:00Z", mine);
+      yield* claim("first-new", "2026-11-04T17:40:00Z", mine);
+      yield* claim("known", "2026-11-04T17:45:00Z", null);
+      yield* claim("their-new", "2026-11-04T17:50:00Z", theirs);
+      expect(yield* db.syncRequests.callerClaims(mine, at("2026-11-04T17:00:00Z"))).toBe(2);
+      expect(yield* db.syncRequests.callerClaims(mine, at("2026-11-04T17:35:00Z"))).toBe(1);
+      expect(yield* db.syncRequests.callerClaims(theirs, at("2026-11-04T17:00:00Z"))).toBe(1);
+      expect(yield* db.syncRequests.callerClaims(Db.CallerKey.make("caller-none"), at("2026-11-04T17:00:00Z"))).toBe(0);
+    }),
+  );
+
+  test.effect("counts the pending requests that wait in line and start before a given one", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const now = "2026-11-04T18:00:00Z";
+      const waiting = (name: string, startsAt: string) =>
+        db.syncRequests
+          .claim({ login: login(name), at: at(now), cooldown: syncCooldown, lifetime: syncLifetime, caller: null })
+          .pipe(Effect.andThen(db.syncRequests.schedule(login(name), at(now), at(startsAt))));
+      yield* waiting("line-a", "2026-11-04T18:05:00Z");
+      yield* waiting("line-b", "2026-11-04T18:10:00Z");
+      yield* waiting("line-c", "2026-11-04T18:20:00Z");
+      yield* waiting("line-failed", "2026-11-04T18:06:00Z");
+      yield* db.syncRequests.settle(login("line-failed"), at(now), "failed");
+      yield* waiting("line-started", "2026-11-04T17:59:00Z");
+      expect(yield* db.syncRequests.ahead(at("2026-11-04T18:20:00Z"), at(now))).toBe(2);
+      expect(yield* db.syncRequests.ahead(at("2026-11-04T18:05:00Z"), at(now))).toBe(0);
+      expect(yield* db.syncRequests.ahead(at("2026-11-04T18:20:00Z"), at("2026-11-04T18:07:00Z"))).toBe(1);
     }),
   );
 
@@ -331,7 +449,13 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     Effect.gen(function* () {
       const db = yield* Db.Db;
       const claim = (name: string, time: string) =>
-        db.syncRequests.claim({ login: login(name), at: at(time), cooldown: syncCooldown, lifetime: syncLifetime });
+        db.syncRequests.claim({
+          login: login(name),
+          at: at(time),
+          cooldown: syncCooldown,
+          lifetime: syncLifetime,
+          caller: null,
+        });
       yield* claim("expired", "2026-11-01T08:00:00Z");
       yield* claim("recent", "2026-11-05T07:00:00Z");
       yield* claim("newcomer", "2026-11-05T08:00:00Z");
@@ -353,6 +477,22 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.accounts.setOwnedRepoStars({ accountId: id, stars: 42 });
       yield* db.accounts.upsert(account(id, { followers: 3 }));
       expect(yield* db.accounts.require(id)).toMatchObject({ id, followers: 3, ownedRepoStars: 42 });
+    }),
+  );
+
+  test.effect("writes a looked-up starred count with the facts, keeps it when facts come alone, and sets it", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const id = accountId(104);
+      expect((yield* Effect.flip(db.accounts.setStarredCount({ accountId: id, starredCount: 1 })))._tag).toBe(
+        "AccountNotFound",
+      );
+      yield* db.accounts.upsert(account(id, { followers: null }), 2431);
+      expect(yield* db.accounts.require(id)).toMatchObject({ followers: null, starredCount: 2431 });
+      yield* db.accounts.upsert(account(id, { followers: 5 }));
+      expect(yield* db.accounts.require(id)).toMatchObject({ followers: 5, starredCount: 2431 });
+      yield* db.accounts.setStarredCount({ accountId: id, starredCount: 2440 });
+      expect((yield* db.accounts.require(id)).starredCount).toBe(2440);
     }),
   );
 

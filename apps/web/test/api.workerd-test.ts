@@ -300,10 +300,10 @@ describe("sync", () => {
     expect(queued.status).toBe(202);
     const requestedAt = DateTime.toUtc(DateTime.makeUnsafe(queued.body.requestedAt));
     await Effect.runPromise(
-      syncRequests.markFailed(Login.make("hubot"), DateTime.subtract(requestedAt, { minutes: 11 })),
+      syncRequests.settle(Login.make("hubot"), DateTime.subtract(requestedAt, { minutes: 11 }), "failed"),
     );
     expect((await rest("/sync/hubot")).body.state).toBe("queued");
-    await Effect.runPromise(syncRequests.markFailed(Login.make("hubot"), requestedAt));
+    await Effect.runPromise(syncRequests.settle(Login.make("hubot"), requestedAt, "failed"));
     expect((await rest("/sync/hubot")).body).toMatchObject({ login: "hubot", state: "failed", syncedAt: null });
   });
 

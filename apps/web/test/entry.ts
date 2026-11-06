@@ -64,24 +64,53 @@ const search = Search.Search.of({
 
 const requests = new Map<string, Db.SyncRequest>();
 
+const held = (login: Login, requestedAt: DateTime.Utc) =>
+  Option.filter(Option.fromUndefinedOr(requests.get(login.toLowerCase())), (current) =>
+    DateTime.Equivalence(current.requestedAt, requestedAt),
+  );
+
 export const syncRequests: Db.Db["Service"]["syncRequests"] = {
   get: (login) => Effect.sync(() => Option.fromUndefinedOr(requests.get(login.toLowerCase()))),
-  claim: ({ login, at, cooldown }) =>
+  claim: ({ login, at, cooldown, caller }) =>
     Effect.sync(() => {
       const current = requests.get(login.toLowerCase());
       const claimed =
-        current === undefined || DateTime.isLessThanOrEqualTo(DateTime.addDuration(current.requestedAt, cooldown), at);
-      if (claimed)
-        requests.set(login.toLowerCase(), { login: login.toLowerCase(), requestedAt: at, outcome: "pending" });
+        current === undefined ||
+        DateTime.isLessThanOrEqualTo(DateTime.addDuration(current.startsAt ?? current.requestedAt, cooldown), at);
+      if (claimed) {
+        const key = login.toLowerCase();
+        requests.set(key, { login: key, requestedAt: at, outcome: "pending", startsAt: null, caller });
+      }
       return claimed;
     }),
-  markFailed: (login, requestedAt) =>
-    Effect.sync(() => {
-      const current = requests.get(login.toLowerCase());
-      if (current !== undefined && DateTime.Equivalence(current.requestedAt, requestedAt)) {
-        requests.set(login.toLowerCase(), { ...current, outcome: "failed" });
-      }
-    }),
+  callerClaims: (caller, since) =>
+    Effect.sync(
+      () =>
+        [...requests.values()].filter(
+          (request) => request.caller === caller && DateTime.isGreaterThan(request.requestedAt, since),
+        ).length,
+    ),
+  ahead: (startsAt, at) =>
+    Effect.sync(
+      () =>
+        [...requests.values()].filter(
+          (request) =>
+            request.outcome === "pending" &&
+            request.startsAt !== null &&
+            DateTime.isGreaterThan(request.startsAt, at) &&
+            DateTime.isLessThan(request.startsAt, startsAt),
+        ).length,
+    ),
+  schedule: (login, requestedAt, startsAt) =>
+    Effect.sync(() =>
+      Option.map(held(login, requestedAt), (current) => requests.set(current.login, { ...current, startsAt })),
+    ),
+  settle: (login, requestedAt, outcome) =>
+    Effect.sync(() =>
+      Option.map(held(login, requestedAt), (current) =>
+        outcome === "released" ? requests.delete(current.login) : requests.set(current.login, { ...current, outcome }),
+      ),
+    ),
 };
 
 const db = {
