@@ -200,7 +200,8 @@ const statusOf = (
 
 const syncedAtOf = (status: SyncStatus) => (status.state === "unknown" ? null : status.syncedAt);
 
-// Only a full read finds unstars. It waits while a request is queued, because that sync may still be reading.
+// Only a full read finds unstars. It waits while a request is queued, because that sync may still be reading. A
+// request still waiting in line has not started reading.
 const fullReadDue = (
   policy: Policy,
   current: SyncStatus,
@@ -208,7 +209,6 @@ const fullReadDue = (
   now: DateTime.Utc,
 ) =>
   current.state !== "queued" &&
-  current.state !== "waiting" &&
   Option.exists(policy.fullSyncEvery, (every) =>
     Option.match(fullSyncedAt, {
       onNone: () => true,

@@ -352,7 +352,7 @@ it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (i
       expect(queue.delays).toEqual([units(3_800), Duration.zero]);
       expect(queue.sent[1]).toEqual({
         login: "octocat" as Login,
-        mode: "incremental",
+        mode: "full",
         requestedAt: at(start + 15 * minute),
       });
       expect(yield* status("octocat")).toEqual(opened);
@@ -360,6 +360,19 @@ it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (i
       yield* TestClock.adjust("1 minute");
       expect(yield* request("octocat", owner)).toEqual(opened);
       expect(queue.sent).toHaveLength(2);
+    }),
+  );
+
+  it.effect("runs the owner's due weekly full read now when it takes over a request still waiting in line", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      yield* synced("octocat", start - 8 * 24 * 60 * minute);
+      yield* fullSynced(start - 8 * 24 * 60 * minute);
+      yield* fill(4_000);
+      expect(yield* request("octocat")).toMatchObject({ state: "waiting" });
+      expect(yield* request("octocat", owner)).toMatchObject({ state: "queued", requestedAt: at(start) });
+      expect(modes()).toEqual(["incremental", "full"]);
+      expect(queue.delays[1]).toEqual(Duration.zero);
     }),
   );
 
