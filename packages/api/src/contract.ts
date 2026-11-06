@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { errors } from "./errors.ts";
 
-const GitHubLogin = Login.check(Schema.isPattern(/^[a-z\d][a-z\d-]{0,38}$/i)).annotate({
+export const GitHubLogin = Login.check(Schema.isPattern(/^[a-z\d][a-z\d-]{0,38}$/i)).annotate({
   description: "A GitHub login, such as octocat.",
 });
 
@@ -104,10 +104,23 @@ export const SyncStatus = Schema.Struct({
   login: Schema.String,
   state: SyncRequests.SyncState.annotate({
     description:
-      "unknown means Stargrep never synced the login, queued means a sync is waiting or running, failed means the last requested sync could not finish, and done means the stars are synced.",
+      "unknown means Stargrep never synced the login, waiting means the sync waits in line for GitHub budget until waiting.startsAt, queued means a sync is about to run or running, failed means the last requested sync could not finish, and done means the stars are synced.",
   }),
   requestedAt: Schema.NullOr(Timestamp),
   syncedAt: Schema.NullOr(Timestamp),
+  waiting: Schema.NullOr(
+    Schema.Struct({
+      ahead: Schema.Int.annotate({ description: "How many syncs waiting in line start before this one." }),
+      startsAt: Timestamp.annotate({ description: "When this sync is due to start. An estimate that can move later." }),
+    }),
+  ).annotate({ description: "Where the sync stands in line. Null unless state is waiting." }),
+  starredTotal: Schema.NullOr(Schema.Int).annotate({
+    description:
+      "How many repos the login has starred on GitHub, as of Stargrep's latest look. Null until Stargrep has looked. 0 for an org.",
+  }),
+  accountType: Schema.NullOr(Db.OwnerType).annotate({
+    description: "Whether the login is a user or an org, or null until Stargrep has looked. An org cannot star repos.",
+  }),
   enrichment: EnrichmentProgress,
 });
 
@@ -141,6 +154,38 @@ export const LibraryRepo = Schema.Struct({
 
 export const Library = Schema.Struct({ repos: Schema.Array(LibraryRepo) });
 
+export const maxStarsPage = 1000;
+
+const StarsCursor = Schema.String.check(Schema.isPattern(/^\d{1,15}-\d{1,15}$/)).annotate({
+  description: "Where a page of stars continues, from nextCursor.",
+});
+
+export const StarsInput = Schema.Struct({
+  login: GitHubLogin,
+  limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: maxStarsPage }))
+    .annotate({ description: `How many repos to return, at most. ${maxStarsPage} when left out.` })
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed(maxStarsPage))),
+  cursor: Schema.optionalKey(StarsCursor),
+});
+
+export const PublicStars = Schema.Struct({
+  login: Schema.String,
+  repos: Schema.Array(LibraryRepo).annotate({ description: "The login's stars, newest first." }),
+  nextCursor: Schema.NullOr(StarsCursor).annotate({
+    description: "Pass as cursor to read the next page, or null when this page is the last.",
+  }),
+});
+
+export const PublicConfig = Schema.Struct({
+  demoLogin: Schema.String.annotate({ description: "The account whose stars / searches before anyone picks one." }),
+  demoQuery: Schema.String.annotate({ description: "The query / answers before anyone types." }),
+  examples: Schema.Array(Schema.String).annotate({ description: "More queries that suit the demo account's stars." }),
+  featured: Schema.Array(Schema.String).annotate({
+    description: "Accounts to offer when someone picks whose stars to search.",
+  }),
+});
+export type PublicConfig = typeof PublicConfig.Type;
+
 export const signedIn = new Set(["viewer", "library"]);
 
 const procedure = oc.errors(errors);
@@ -167,7 +212,7 @@ export const contract = {
       operationId: "triggerSync",
       summary: "Sync a login's GitHub stars",
       description:
-        "Queues a sync of the stars of a public GitHub login and returns its status. A login synced, queued, or failed in the last 10 minutes is not queued again.",
+        "Checks that the GitHub login exists, queues a sync of its stars, and returns its status. A login synced, queued, or failed in the last 10 minutes is not queued again. When GitHub's budget for new imports is spent, the sync waits in line and the status says when it starts.",
     })
     .input(SyncInput)
     .output(SyncStatus),
@@ -210,4 +255,26 @@ export const contract = {
       description: "Returns every repo the signed-in account starred, newest star first.",
     })
     .output(Library),
+  stars: procedure
+    .route({
+      method: "GET",
+      path: "/stars/{login}",
+      operationId: "stars",
+      summary: "List a login's synced stars",
+      description:
+        "Returns the repos a GitHub login starred that Stargrep has synced, newest star first, a page at a time.",
+    })
+    .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
+    .input(StarsInput)
+    .output(PublicStars),
+  config: procedure
+    .route({
+      method: "GET",
+      path: "/config",
+      operationId: "config",
+      summary: "Read the public settings",
+      description: "Returns the demo account and the queries the home page offers.",
+    })
+    .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
+    .output(PublicConfig),
 };

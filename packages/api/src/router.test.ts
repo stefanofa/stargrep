@@ -146,6 +146,13 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
   );
 };
 
+const publicConfig = {
+  demoLogin: "ada",
+  demoQuery: "terminal dashboards",
+  examples: ["postgres for ai agents"],
+  featured: ["ada"],
+};
+
 const contextFor = (
   transport: Transport,
   servicesEffect: ApiContext["services"],
@@ -153,6 +160,7 @@ const contextFor = (
 ): ApiContext => ({
   "effect/context": Context.make(Tracer.Tracer, tracer),
   transport,
+  publicConfig,
   procedureTime: Ref.makeUnsafe(Option.none()),
   services: servicesEffect,
 });
@@ -285,6 +293,9 @@ describe("sync", () => {
       state: "queued",
       requestedAt: "2026-10-01T08:00:00.000Z",
       syncedAt: null,
+      waiting: null,
+      starredTotal: null,
+      accountType: null,
       enrichment: reading,
     });
     expect(sent).toEqual(["octocat" as Login]);
@@ -293,6 +304,9 @@ describe("sync", () => {
       state: "failed",
       requestedAt: "2026-10-01T08:00:00.000Z",
       syncedAt: null,
+      waiting: null,
+      starredTotal: null,
+      accountType: null,
       enrichment: reading,
     });
   });
@@ -314,6 +328,13 @@ describe("sync", () => {
       }),
     });
     expect((await failure(api.triggerSync({ login: "octocat" }))).code).toBe("SERVICE_UNAVAILABLE");
+  });
+});
+
+describe("config", () => {
+  test("returns the public settings without building the request's services", async () => {
+    const context = contextFor("rest", Effect.die("the config needs no services"));
+    expect(await createRouterClient(router, { context }).config()).toEqual(publicConfig);
   });
 });
 

@@ -1,5 +1,6 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import { apiKeyName } from "@stargrep/ai/gateway";
+import { demoLoginName } from "@stargrep/api/public-config";
 import { bindings, githubSignIn, names, optionalSecret, required } from "@stargrep/auth/config";
 import { aiGatewayKey } from "@stargrep/runtime/config";
 import MainWorker from "@stargrep/worker";
@@ -8,6 +9,7 @@ import { prodWebHosting } from "@stargrep/worker/domain";
 import { Icons } from "@stargrep/worker/icons";
 import { SyncStars } from "@stargrep/worker/queues";
 import * as Alchemy from "alchemy";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -47,6 +49,7 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
   Effect.gen(function* () {
     const { stage } = yield* Alchemy.Stack;
     const key = yield* aiGatewayKey;
+    const demoLogin = yield* Config.option(Config.String(demoLoginName));
     return {
       rootDir: new URL(".", import.meta.url).pathname,
       memo: { include: ["**/*", "../../packages/*/src/**", "../../packages/*/package.json"], lockfile: true },
@@ -70,6 +73,7 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
           simple: { limit: 60, period: 60 },
         }),
         ...Option.match(key, { onNone: () => ({}), onSome: (value) => ({ [apiKeyName]: value }) }),
+        ...Option.match(demoLogin, { onNone: () => ({}), onSome: (value) => ({ [demoLoginName]: value }) }),
         ...(yield* signInBindings),
       },
     };

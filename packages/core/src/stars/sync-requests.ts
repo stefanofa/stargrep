@@ -10,11 +10,18 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SyncQueue from "./sync-queue.ts";
 
-export const SyncState = Schema.Literals(["unknown", "queued", "failed", "done"]);
+export const SyncState = Schema.Literals(["unknown", "waiting", "queued", "failed", "done"]);
 export type SyncState = typeof SyncState.Type;
 
 export type SyncStatus =
   | { readonly state: "unknown" }
+  | {
+      readonly state: "waiting";
+      readonly requestedAt: DateTime.Utc;
+      readonly startsAt: DateTime.Utc;
+      readonly ahead: number;
+      readonly syncedAt: DateTime.Utc | null;
+    }
   | {
       readonly state: "queued" | "failed";
       readonly requestedAt: DateTime.Utc;

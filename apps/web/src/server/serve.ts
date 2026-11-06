@@ -7,9 +7,10 @@ import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { COMMON_ERROR_STATUS_MAP, ORPCError, RPCSerializer } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
 import type { StandardHandlerInterceptor } from "@orpc/server/standard";
-import { signedIn } from "@stargrep/api/contract";
+import { type PublicConfig, signedIn } from "@stargrep/api/contract";
 import { errorStatus, wireError, withTraceId } from "@stargrep/api/errors";
 import type { Transport } from "@stargrep/api/middleware/instrumentation";
+import { defaultPublicConfig } from "@stargrep/api/public-config";
 import { type ApiContext, type ApiServices, ApiServicesUnavailable, router } from "@stargrep/api/router";
 import * as Auth from "@stargrep/auth/auth";
 import * as Cause from "effect/Cause";
@@ -177,6 +178,7 @@ export const requestContext = Effect.fn("Web.requestContext")(function* (
   transport: Transport,
   layer: Layer.Layer<ApiServices, { readonly _tag: string }>,
   requestTraceId: string,
+  publicConfig: PublicConfig,
 ) {
   const scope = yield* Scope.Scope;
   const services = yield* Effect.cached(
@@ -188,6 +190,7 @@ export const requestContext = Effect.fn("Web.requestContext")(function* (
   return {
     "effect/context": yield* Effect.context<never>(),
     transport,
+    publicConfig,
     procedureTime: yield* Ref.make(Option.none<Duration.Duration>()),
     services,
     requestTraceId,
@@ -212,11 +215,11 @@ const withTiming = (
   return timed;
 };
 
-const respond = (route: Route, request: Request, layerFor: RequestLayer) =>
+const respond = (route: Route, request: Request, layerFor: RequestLayer, publicConfig: PublicConfig) =>
   Effect.useSpan(`Web.${route.transport}`, { kind: "server" }, (span) =>
     Effect.gen(function* () {
       const started = yield* Clock.currentTimeMillis;
-      const context = yield* requestContext(route.transport, layerFor(request), span.traceId);
+      const context = yield* requestContext(route.transport, layerFor(request), span.traceId, publicConfig);
       const response =
         (yield* Effect.promise(() => route.answer(request, context))) ?? route.fail(noRoute(span.traceId));
       const total = (yield* Clock.currentTimeMillis) - started;
@@ -280,11 +283,12 @@ export const makeAuthServer =
       ? Effect.runPromise(respondAuth(request, layerFor).pipe(Effect.provide(tracer)))
       : undefined;
 
+// The public settings are read on the first request, because TanStack Start's dev server loads the entry before env is set.
 export const makeServer =
-  (layerFor: RequestLayer, tracer: Layer.Layer<never>) =>
+  (layerFor: RequestLayer, tracer: Layer.Layer<never>, publicConfig: () => PublicConfig = () => defaultPublicConfig) =>
   (request: Request): Promise<Response> | undefined => {
     const pathname = new URL(request.url).pathname;
     const route = routes.find((candidate) => candidate.matches(pathname));
     if (route === undefined) return undefined;
-    return Effect.runPromise(respond(route, request, layerFor).pipe(Effect.provide(tracer)));
+    return Effect.runPromise(respond(route, request, layerFor, publicConfig()).pipe(Effect.provide(tracer)));
   };

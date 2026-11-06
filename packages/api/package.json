@@ -8,6 +8,7 @@
     "./icon-host": "./src/icon-host.ts",
     "./router": "./src/router.ts",
     "./middleware/instrumentation": "./src/middleware/instrumentation.ts",
+    "./public-config": "./src/public-config.ts",
     "./sync-limiter": "./src/sync-limiter.ts",
     "./viewers": "./src/viewers.ts"
   },

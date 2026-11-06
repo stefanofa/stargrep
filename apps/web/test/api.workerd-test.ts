@@ -159,7 +159,7 @@ describe("when the services cannot start", () => {
     const down = await send("/api/search", post({ login: "ada", q: "dashboards" }));
     expect([down.status, down.body.code]).toEqual([503, "SERVICE_UNAVAILABLE"]);
     expect(down.body.data.traceId).toEqual(traceId);
-    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(4);
+    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(6);
   });
 });
 
@@ -235,7 +235,7 @@ describe("when the database is unreachable", () => {
       data: { traceId },
     });
 
-    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(4);
+    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(6);
     expect(JSON.stringify([viaRest, viaRpc, viaMcp])).not.toContain("postgres://");
   });
 });
@@ -244,8 +244,10 @@ describe("mcp", () => {
   it("lists every procedure as a tool with an input schema", async () => {
     const { tools } = await mcp("tools/list", {});
     expect(tools.map((each: { name: string }) => each.name).sort()).toEqual([
+      "config",
       "getRepo",
       "search",
+      "stars",
       "syncStatus",
       "triggerSync",
     ]);
@@ -353,7 +355,13 @@ describe("getRepo and the spec", () => {
   it("lists every procedure in the OpenAPI document with only finite numbers", async () => {
     const response = await call("/openapi.json");
     const text = await response.text();
-    expect(Object.keys(JSON.parse(text).paths).sort()).toEqual(["/repos/{id}", "/search", "/sync/{login}"]);
+    expect(Object.keys(JSON.parse(text).paths).sort()).toEqual([
+      "/config",
+      "/repos/{id}",
+      "/search",
+      "/stars/{login}",
+      "/sync/{login}",
+    ]);
     expect(text).not.toMatch(/Infinity|NaN/);
     expect(JSON.parse(text).security).toEqual([]);
   });

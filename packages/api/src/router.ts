@@ -10,7 +10,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { contract, type RepoInput, type SearchInput, type SyncInput } from "./contract.ts";
+import { contract, type PublicConfig, type RepoInput, type SearchInput, type SyncInput } from "./contract.ts";
 import { errorStatus, type WireCode, wireError } from "./errors.ts";
 import { IconHost, iconUrl } from "./icon-host.ts";
 import { instrumentation, type ProcedureTime, type Transport } from "./middleware/instrumentation.ts";
@@ -32,6 +32,7 @@ export class ApiServicesUnavailable extends Schema.TaggedError<
 
 export interface ApiContext extends WithEffectContext<never> {
   readonly transport: Transport;
+  readonly publicConfig: PublicConfig;
   readonly procedureTime: ProcedureTime;
   readonly services: Effect.Effect<Context.Context<ApiServices>, ApiServicesUnavailable>;
 }
@@ -116,8 +117,11 @@ const syncStatus =
   ([status, enrichment]: readonly [SyncRequests.SyncStatus, Db.EnrichmentProgress]) => ({
     login,
     state: status.state,
-    requestedAt: status.state === "queued" || status.state === "failed" ? iso(status.requestedAt) : null,
+    requestedAt: status.state === "unknown" || status.state === "done" ? null : iso(status.requestedAt),
     syncedAt: status.state === "unknown" ? null : iso(status.syncedAt),
+    waiting: status.state === "waiting" ? { ahead: status.ahead, startsAt: DateTime.formatIso(status.startsAt) } : null,
+    starredTotal: null,
+    accountType: null,
     enrichment,
   });
 
@@ -209,6 +213,10 @@ export const router = implementer.router({
       }),
     ),
   ),
+
+  stars: os.stars.use(provideServices).effect(handle(() => Effect.die("not implemented"))),
+
+  config: os.config.handler(({ context }) => context.publicConfig),
 
   getRepo: os.getRepo.use(provideServices).effect(
     handle((input: typeof RepoInput.Type) =>
