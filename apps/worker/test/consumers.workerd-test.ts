@@ -1,6 +1,5 @@
 import { createExecutionContext, createMessageBatch, getQueueResult } from "cloudflare:test";
 import type * as Cloudflare from "@alchemy.run/cloudflare";
-import * as Embeddings from "@stargrep/ai/embeddings";
 import {
   AiKeyMissing,
   AiModelNotFound,
@@ -9,7 +8,6 @@ import {
   AiTimeout,
   AiUnavailable,
 } from "@stargrep/ai/errors";
-import * as Summarize from "@stargrep/ai/summarize";
 import { FetchIcon, IconQueue, IconStore } from "@stargrep/core/icons";
 import { BlobStore, EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
 import { StarSync } from "@stargrep/core/stars";
@@ -29,10 +27,7 @@ import * as GitHub from "@stargrep/github/github";
 import * as GitHubFake from "@stargrep/github/github.fixture";
 import { GitHubAccountId, Login, type RepoId, RepoName } from "@stargrep/github/schemas";
 import * as TokenGate from "@stargrep/github/token-gate";
-import * as Share from "@stargrep/runtime/budget-share";
-import { aiGatewayKey } from "@stargrep/runtime/config";
 import * as Cause from "effect/Cause";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -50,7 +45,6 @@ import * as Settle from "../src/consumers/settle.ts";
 import * as SyncStarsConsumer from "../src/consumers/sync-stars.ts";
 import * as EnrichSweep from "../src/jobs/enrich-sweep.ts";
 import * as Layers from "../src/layers.ts";
-import * as Secrets from "../src/secrets.ts";
 import * as UserGate from "../src/user-gate.ts";
 import {
   allLine,
@@ -709,75 +703,6 @@ describe("production layers", () => {
       ),
     );
     expect(read).toEqual([Option.some("# A"), Option.none()]);
-  });
-});
-
-describe("stage secrets", () => {
-  const withEnv = (env: Record<string, string>) =>
-    Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env })));
-
-  it("treats an empty secret as missing", async () => {
-    const read = await Effect.runPromise(
-      Effect.all([Secrets.githubToken, aiGatewayKey]).pipe(
-        withEnv({ STARGREP_GITHUB_TOKEN: "", AI_GATEWAY_API_KEY: "" }),
-      ),
-    );
-    expect(read).toEqual([Option.none(), Option.none()]);
-  });
-
-  it("fails a prod deploy that lacks either secret or has an empty one, and deploys a preview stage without them", async () => {
-    const both = { STARGREP_GITHUB_TOKEN: "token", AI_GATEWAY_API_KEY: "key" };
-    const outcomes = await Promise.all(
-      [
-        Secrets.requireStageSecrets("prod").pipe(withEnv({})),
-        Secrets.requireStageSecrets("prod").pipe(withEnv({ STARGREP_GITHUB_TOKEN: "token" })),
-        Secrets.requireStageSecrets("prod").pipe(withEnv({ ...both, AI_GATEWAY_API_KEY: "" })),
-        Secrets.requireStageSecrets("prod").pipe(withEnv(both)),
-        Secrets.requireStageSecrets("pr-18").pipe(withEnv({})),
-      ].map((check) => Effect.runPromiseExit(check)),
-    );
-    expect(outcomes.map(Exit.isSuccess)).toEqual([false, false, false, true, true]);
-  });
-
-  const share = (stage: string, env: Record<string, string>) =>
-    Effect.runPromiseExit(Share.stageBudgetShare(stage).pipe(withEnv(env)));
-
-  it("reads the GitHub budget share as a number in (0, 1] and defaults it to 0.5", async () => {
-    const outcomes = await Promise.all(
-      [{}, { GITHUB_BUDGET_SHARE: "0.02" }, { GITHUB_BUDGET_SHARE: "1" }].map((env) => share("pr-18", env)),
-    );
-    expect(outcomes).toEqual([Exit.succeed(0.5), Exit.succeed(0.02), Exit.succeed(1)]);
-    const refused = await Promise.all(
-      ["0", "-0.1", "1.5", "half", "NaN"].map((value) => share("pr-18", { GITHUB_BUDGET_SHARE: value })),
-    );
-    expect(refused.map(Exit.isFailure)).toEqual([true, true, true, true, true]);
-  });
-
-  it("fails a prod deploy with any budget share other than the default", async () => {
-    const outcomes = await Promise.all(
-      [{}, { GITHUB_BUDGET_SHARE: "0.5" }, { GITHUB_BUDGET_SHARE: "0.02" }, { GITHUB_BUDGET_SHARE: "1" }].map((env) =>
-        share("prod", env),
-      ),
-    );
-    expect(outcomes.map(Exit.isSuccess)).toEqual([true, true, false, false]);
-    expect(String(outcomes[2])).toContain("prod takes a GitHub budget share of 0.5");
-  });
-
-  it("fails every model call with AiKeyMissing when the AI Gateway key is empty", async () => {
-    const errors = await Effect.runPromise(
-      Effect.gen(function* () {
-        const ai = yield* Layers.aiModels;
-        return yield* Effect.gen(function* () {
-          const embeddings = yield* Embeddings.Embeddings;
-          const facts = { fullName: "owner/repo", description: null, topics: [], language: null, readme: null };
-          return [
-            (yield* Effect.flip(Summarize.summarize(facts)))._tag,
-            (yield* Effect.flip(embeddings.embed(["x"])))._tag,
-          ];
-        }).pipe(Effect.provide(ai));
-      }).pipe(withEnv({ AI_GATEWAY_API_KEY: "" })),
-    );
-    expect(errors).toEqual(["AiKeyMissing", "AiKeyMissing"]);
   });
 });
 

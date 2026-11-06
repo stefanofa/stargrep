@@ -1,7 +1,15 @@
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
-export const Operation = Schema.Literals(["account", "owner", "list-stars", "star-count", "repo-facts", "readme"]);
+export const Operation = Schema.Literals([
+  "account",
+  "owner",
+  "list-stars",
+  "star-count",
+  "repo-facts",
+  "readme",
+  "app-token",
+]);
 export type Operation = typeof Operation.Type;
 
 export class NotFound extends Schema.TaggedError<NotFound, { readonly brand: unique symbol }>()("NotFound", {
@@ -64,7 +72,7 @@ export class GitHubRequestFailed extends Schema.TaggedError<GitHubRequestFailed,
     method: Schema.String,
     path: Schema.String,
     status: Schema.NullOr(Schema.Int),
-    reason: Schema.Literals(["transport", "timeout", "status", "graphql-errors"]),
+    reason: Schema.Literals(["transport", "timeout", "status", "graphql-errors", "malformed"]),
   },
 ) {
   override get message(): string {

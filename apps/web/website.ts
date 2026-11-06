@@ -4,6 +4,7 @@ import { demoLoginName } from "@stargrep/api/public-config";
 import { bindings, githubSignIn, names } from "@stargrep/auth/config";
 import { budgetShareName, stageBudgetShare } from "@stargrep/runtime/budget-share";
 import { aiGatewayKey } from "@stargrep/runtime/config";
+import { serverTokenKind, serverTokenName } from "@stargrep/runtime/server-token";
 import MainWorker from "@stargrep/worker";
 import { betterAuthSecret } from "@stargrep/worker/auth";
 import { Database, DatabaseMigrations } from "@stargrep/worker/database";
@@ -46,6 +47,7 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
   "Web",
   Effect.gen(function* () {
     const { stage } = yield* Alchemy.Stack;
+    const kind = yield* serverTokenKind;
     const key = yield* aiGatewayKey;
     const demoLogin = yield* Config.option(Config.String(demoLoginName));
     return {
@@ -62,7 +64,8 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
         SYNC_STARS: SyncStars,
         WORKER: MainWorker,
         CALLER_KEY: yield* CallerKey,
-        [budgetShareName]: String(yield* stageBudgetShare(stage)),
+        [budgetShareName]: String(yield* stageBudgetShare(stage, kind)),
+        [serverTokenName]: kind,
         ICONS: yield* Icons,
         SYNC_PER_CALLER: Cloudflare.RateLimit("SYNC_PER_CALLER", {
           namespaceId: namespaceId(stage, "sync-per-caller"),

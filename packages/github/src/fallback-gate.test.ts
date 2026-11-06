@@ -43,8 +43,8 @@ const gates = (fake: ReturnType<typeof Fake.make>) =>
     const user = yield* TokenGate.makeMemory({ share: FallbackGate.userShare });
     const server = yield* TokenGate.makeMemory({ share: 1 as BudgetShare });
     return {
-      user: TokenGate.TokenGate.of({ execute: user.execute(Redacted.make(userToken)) }),
-      server: TokenGate.TokenGate.of({ execute: server.execute(Redacted.make(serverToken)) }),
+      user: TokenGate.TokenGate.of({ execute: user.execute(TokenGate.fixed(Redacted.make(userToken))) }),
+      server: TokenGate.TokenGate.of({ execute: server.execute(TokenGate.fixed(Redacted.make(serverToken))) }),
     };
   }).pipe(Effect.provide(fake.client));
 
