@@ -7,7 +7,7 @@ import type { contract } from "@stargrep/api/contract";
 import type { ApiServices } from "@stargrep/api/services";
 import { SearchCache } from "@stargrep/core/search";
 import { DbQueryFailed } from "@stargrep/db/errors";
-import { BudgetShare, Login } from "@stargrep/github/schemas";
+import { BudgetShare } from "@stargrep/github/schemas";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";

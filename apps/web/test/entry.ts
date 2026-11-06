@@ -5,7 +5,7 @@ import { QueryPlan, Search } from "@stargrep/core/search";
 import { OwnerLookup, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import { DbQueryFailed, RepoNotFound } from "@stargrep/db/errors";
-import { BudgetShare, type GitHubAccountId, type Login, type RepoId, type RepoName } from "@stargrep/github/schemas";
+import type { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
