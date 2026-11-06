@@ -16,10 +16,9 @@ const largestSize = (sizes: string) =>
 
 // The UI draws an icon under 64 px small on a plain tile, so a raster that small ranks below an SVG.
 const fullTileSide = 64;
-// Apple's default apple-touch-icon is 180 px, so one without `sizes` ranks as large, after those that declare a size.
 const appleTouchSide = 180;
 
-const ranks = ["apple-touch", "large-raster", "svg", "small-raster"] as const;
+const rank = { appleTouch: 0, largeRaster: 1, svg: 2, smallRaster: 3 } as const;
 
 interface Link {
   readonly url: string;
@@ -28,10 +27,12 @@ interface Link {
   readonly order: number;
 }
 
-const rankOf = (svg: boolean, appleTouch: boolean, size: number): (typeof ranks)[number] => {
-  if (svg) return "svg";
-  if (size < fullTileSide) return "small-raster";
-  return appleTouch ? "apple-touch" : "large-raster";
+// An apple-touch icon without `sizes` is Apple's default 180 px for its rank, but sorts by the size it declares, so
+// it comes after the apple-touch icons that declare one.
+const rankOf = (svg: boolean, appleTouch: boolean, size: number) => {
+  if (svg) return rank.svg;
+  if ((size || (appleTouch ? appleTouchSide : 0)) < fullTileSide) return rank.smallRaster;
+  return appleTouch ? rank.appleTouch : rank.largeRaster;
 };
 
 export const iconUrls = (html: string, page: string): ReadonlyArray<string> => {
@@ -45,8 +46,7 @@ export const iconUrls = (html: string, page: string): ReadonlyArray<string> => {
     if (url === null || !/^https?:$/.test(url.protocol)) return [];
     const svg = (tag.get("type") ?? "").includes("svg") || url.pathname.toLowerCase().endsWith(".svg");
     const size = largestSize(tag.get("sizes") ?? "");
-    const rank = rankOf(svg, appleTouch, size || (appleTouch ? appleTouchSide : 0));
-    return [{ url: url.href, rank: ranks.indexOf(rank), size, order }];
+    return [{ url: url.href, rank: rankOf(svg, appleTouch, size), size, order }];
   });
   const ranked = links
     .toSorted((a, b) => a.rank - b.rank || b.size - a.size || a.order - b.order)
