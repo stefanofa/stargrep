@@ -51,6 +51,8 @@ describe("icon normalization", () => {
     ["next-favicon.ico", "light", 128],
     ["cdnjs-favicon.svg", "none", 128],
     ["sandstorm-favicon.ico", "light", 16],
+    ["agent-device-apple-touch-icon.png", "none", 128],
+    ["stricli-logo.svg", "none", 128],
   ] as const)("accepts %s as a WebP with plate %s, %i px and never upscaled", async (name, plate, size) => {
     const result = await accepted(name);
     expect({ plate: result.plate, size: result.size }).toEqual({ plate, size });
@@ -67,7 +69,11 @@ describe("icon normalization", () => {
     ["tiny.png", "repo-file", "too-small"],
     ["oversized.png", "readme-image", "oversized"],
     ["blank.svg", "homepage", "blank"],
-    ["partykit-emoji.svg", "homepage", "blank"],
+    ["partykit-emoji.svg", "homepage", "svg-text"],
+    ["agent-device-favicon.svg", "homepage", "svg-text"],
+    ["rari-icon.svg", "homepage", "blank"],
+    ["openworkflow-android-chrome.png", "homepage", "blank"],
+    ["batrachian-apple-touch-icon.png", "homepage", "blank"],
   ] as const)("rejects %s from a %s as %s", async (name, source, reason) => {
     expect(await run(name, source)).toEqual(Normalize.Normalized.Rejected({ reason }));
   });
