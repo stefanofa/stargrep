@@ -16,7 +16,7 @@ const answered = async () => {
   );
   const matchers = sources.flatMap((source) =>
     Array.from(
-      source.matchAll(/(?:under\(|pathname === |basePath = |iconsPath = )["`](\/[^"`/]+)/g),
+      source.matchAll(/(?:under\(|startsWith\(|pathname === |basePath = |iconsPath = )["`](\/[^"`/]+)/g),
       ([, path]) => path,
     ),
   );

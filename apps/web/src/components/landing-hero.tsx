@@ -31,8 +31,9 @@ export const heroCopy = ({
       progress: stage.total === null ? 0 : stage.done / Math.max(1, stage.total),
     } as const;
     return {
-      subtitle:
-        stage.line === null
+      subtitle: stage.starting
+        ? `@${owner} is new here. their stars are ready to import from github, and search covers them as they land.`
+        : stage.line === null
           ? `@${owner} is new here. their stars are on the way from github, and search covers the ones that landed.`
           : `@${owner} is new here and waits in line for github. search covers their stars as they land.`,
       butter,

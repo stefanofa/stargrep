@@ -182,6 +182,20 @@ function useSurprise(query: string, landed: boolean) {
   return surprised;
 }
 
+function useWhole(library: Library | undefined) {
+  const [whole, setWhole] = useState(false);
+  useEffect(() => {
+    let current = true;
+    library?.whole.then(() => {
+      if (current) setWhole(true);
+    });
+    return () => {
+      current = false;
+    };
+  }, [library]);
+  return whole;
+}
+
 interface StarsProps {
   readonly data: PageData;
   readonly onPose: (pose: PipPose) => void;
@@ -227,6 +241,9 @@ function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Li
       : q.from({ repo: collection }).where(({ repo }) => containsEvery(repo.text, [head, ...rest]));
   });
   const isReady = collection !== undefined && queried;
+  // The server's first answer read every page, so it stays until the library has every page too. A view of the first
+  // page alone can read differently, such as "found 20 so far" for a library still reading.
+  const whole = useWhole(library);
   const { watch, retry } = useSync(owner, reload, first?.sync ?? data.sync ?? undefined, data.refusal ?? undefined);
   const sync = watch.kind === "watching" ? watch.status : undefined;
   const starred = data.own ? (data.viewer?.starredCount ?? null) : (sync?.starredTotal ?? null);
@@ -254,7 +271,8 @@ function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Li
     timeLeft,
     whose: data.own ? undefined : owner,
   });
-  const frozen = first !== null && !isReady && normalize(query) === normalize(first.query) ? first.view : undefined;
+  const frozen =
+    first !== null && !(isReady && whole) && normalize(query) === normalize(first.query) ? first.view : undefined;
   const state = frozen ?? live;
   const ready = isReady || frozen !== undefined || (empty && entries.length === 0);
   const trouble: Trouble | undefined =

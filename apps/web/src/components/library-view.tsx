@@ -57,7 +57,9 @@ function CountTile({
             <Digits>{formatCount(count)}</Digits>
           )}
         </p>
-        <p className="font-display text-lg leading-6 font-semibold sm:text-2xl">
+        {/* Phones wrap "of 27 stars, still arriving" to two lines, so the caption keeps two lines once the import is
+            done and the library below never moves. */}
+        <p className="font-display text-lg leading-6 font-semibold max-sm:min-h-[2lh] sm:text-2xl">
           {arriving === undefined
             ? "stars"
             : arriving.total === null
@@ -122,7 +124,8 @@ function MonthHeading({ heading, size, arriving }: { heading: string; size: numb
       <span className="font-display text-2xl font-semibold tracking-snug">{heading}</span>
       <span className="font-sans text-base text-muted-foreground tabular-nums">
         {stars(size)}
-        {arriving && " so far"}
+        {/* Phones leave "so far" to the status line, so the heading keeps one line when the import finishes. */}
+        {arriving && <span className="max-sm:hidden"> so far</span>}
       </span>
     </h2>
   );

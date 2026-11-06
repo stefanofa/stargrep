@@ -21,14 +21,14 @@ const onServer = () => {
 
 // The root route loads the session once, on the server, and never reloads it. Signing in or out reloads the whole page.
 export const loadSession = async (): Promise<Session> => {
-  if (!import.meta.env.SSR) throw new Error("the session loads with the first page, on the server");
+  if (!import.meta.env.SSR) throw new Error("no session in the browser");
   return onServer().session();
 };
 
 // The server preloads the engine with the page, so it renders in one pass. A navigation in the browser loads the engine
 // too, and the page starts from what the browser already knows.
 export const loadPage = async (request: PageRequest, session: Session | undefined): Promise<PageData> => {
-  if (session === undefined) throw new Error("the root route loads the session before any page");
+  if (session === undefined) throw new Error("no session");
   if (import.meta.env.SSR) {
     const [page] = await Promise.all([onServer().page(request, session), loadEngine()]);
     return page;

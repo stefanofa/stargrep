@@ -102,6 +102,9 @@ describe("a stars page from the Worker to the browser", () => {
     const loaded = router.state.matches.at(-1)?.loaderData as { first: unknown } | undefined;
     expect(loaded?.first).not.toBeNull();
     const painted = { status: statusText(), results: resultNames(), query: searchValue() };
+    const shown = new Set([statusText()]);
+    const watching = new MutationObserver(() => shown.add(statusText()));
+    watching.observe(document.body, { subtree: true, childList: true, characterData: true });
     expect(painted).toEqual({
       status: "found 1!",
       results: ["mobile-mcp"],
@@ -111,7 +114,11 @@ describe("a stars page from the Worker to the browser", () => {
     await waitFor(() =>
       expect(document.querySelector("[role=status]")?.closest("p")?.textContent).toContain("3 stars"),
     );
+    await act(() => Bun.sleep(1000));
+    watching.disconnect();
     expect({ status: statusText(), results: resultNames(), query: searchValue() }).toEqual(painted);
+    // Not even for a moment while the library's first page alone has landed.
+    expect([...shown]).toEqual(["found 1!"]);
     expect(errors).toEqual([]);
     expect(requested).toEqual([]);
   }, 60_000);

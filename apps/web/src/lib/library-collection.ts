@@ -20,6 +20,11 @@ export async function* onePage(repos: Promise<ReadonlyArray<LibraryRepo>>): Page
 export const makeLibrary = (load: () => Pages, id = "library") => {
   let shown = false;
   let failure: unknown;
+  // Settles once the first run has every page, or failed.
+  let settle = () => {};
+  const whole = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
   const collection = createCollection<LibraryEntry, number>({
     id,
     getKey: (repo) => repo.id,
@@ -49,9 +54,11 @@ export const makeLibrary = (load: () => Pages, id = "library") => {
           else if (first) put([], true);
           markReady();
           shown = true;
+          settle();
         };
         run().catch((error: unknown) => {
           failure = error;
+          settle();
           if (!stopped) fail(error);
         });
         return () => {
@@ -82,7 +89,7 @@ export const makeLibrary = (load: () => Pages, id = "library") => {
     return next;
   };
 
-  return { collection, reload, failure: () => failure };
+  return { collection, reload, whole, failure: () => failure };
 };
 
 export type Library = ReturnType<typeof makeLibrary>;

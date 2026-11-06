@@ -32,7 +32,13 @@ describe("the hero above a visitor's search", () => {
       subtitle: "@octo is new here. their stars are on the way from github, and search covers the ones that landed.",
       butter: { kind: "claim", progress: 0.5 },
     });
-    expect(copy(importing({ total: null, starting: true })).butter).toEqual({ kind: "claim", progress: 0 });
+  });
+
+  test("says a login nobody asked for yet is ready to import, as the status line does", () => {
+    expect(copy(importing({ done: 0, total: null, starting: true }))).toEqual({
+      subtitle: "@octo is new here. their stars are ready to import from github, and search covers them as they land.",
+      butter: { kind: "claim", progress: 0 },
+    });
   });
 
   test("says an import waits in line, and leaves its start time to the status line", () => {

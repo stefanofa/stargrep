@@ -15,8 +15,8 @@ import * as Option from "effect/Option";
 import type { Client } from "../src/lib/rpc.ts";
 import { testServer } from "./serve.ts";
 
-// The real API behind the stars pages, with fake services: the demo account stefanofa is synced with three stars, of
-// which mobile-mcp answers the demo query; octosync is importing, two stars in; every other login is unknown, and
+// The real API behind the stars pages, with fake services: the demo account stefanofa is synced with three stars in two
+// pages, of which mobile-mcp answers the demo query and asciinema, on the second page, is new and not read yet; octosync is importing, two stars in; every other login is unknown, and
 // ghost-login is no one on GitHub. Each process keeps its own record of the imports it was asked for.
 
 const at = DateTime.makeUnsafe("2026-11-01T08:00:00Z");
@@ -49,8 +49,10 @@ const repo = (id: number, owner: string, name: string, description: string): Db.
 export const demoRepos = [
   repo(1, "mobile-next", "mobile-mcp", "Let an AI agent control your iPhone and Android phone through MCP."),
   repo(2, "junegunn", "fzf", "A command-line fuzzy finder."),
-  repo(3, "asciinema", "asciinema", "Terminal session recorder."),
+  { ...repo(3, "asciinema", "asciinema", "Terminal session recorder."), pushedAt: null },
 ];
+
+const perPage = 2;
 
 const accounts: Record<string, { id: number; repos: ReadonlyArray<Db.Repo>; synced: boolean }> = {
   stefanofa: { id: 11, repos: demoRepos, synced: true },
@@ -109,20 +111,32 @@ const search = Layer.succeed(
 const db = {
   accounts: { byLogin: (login: Login) => Effect.succeed(accountOf(login)) },
   stars: {
-    page: (id: number) =>
-      Effect.succeed({
-        entries: (Object.values(accounts).find((account) => account.id === id)?.repos ?? []).map((each, index) => ({
+    // The second page takes a moment, as a page past the first does on a big library.
+    page: (id: number, { after }: { after: Option.Option<unknown> }) => {
+      const entries = (Object.values(accounts).find((account) => account.id === id)?.repos ?? []).map(
+        (each, index) => ({
           repo: each,
           starredAt: DateTime.subtract(at, { days: index }),
-          stars: 1000 * (index + 1),
-          read: true,
-        })),
-        next: Option.none(),
-      }),
+          stars: each.pushedAt === null ? null : 1000 * (index + 1),
+          read: each.pushedAt !== null,
+        }),
+      );
+      const last = entries[perPage - 1];
+      return Option.isNone(after)
+        ? Effect.succeed({
+            entries: entries.slice(0, perPage),
+            next:
+              last === undefined || entries.length <= perPage
+                ? Option.none()
+                : Option.some({ starredAt: last.starredAt, repoId: last.repo.id }),
+          })
+        : Effect.as(Effect.sleep("150 millis"), { entries: entries.slice(perPage), next: Option.none() });
+    },
     enrichment: (login: Login) => {
       const found = accounts[login.toLowerCase()];
       const total = found?.synced === false ? 2 : (found?.repos.length ?? 0);
-      return Effect.succeed({ total, read: total, failed: 0 });
+      const unread = found?.repos.filter((each) => each.pushedAt === null).length ?? 0;
+      return Effect.succeed({ total, read: total - unread, failed: 0 });
     },
   },
 } as unknown as Db.Db["Service"];

@@ -1,7 +1,7 @@
 import { Popover } from "@base-ui/react/popover";
 import { Avatar } from "@stargrep/ui";
 import { useNavigate } from "@tanstack/react-router";
-import { type FormEvent, useEffect, useId, useRef, useState } from "react";
+import { type FormEvent, useId, useState } from "react";
 import type { PublicConfig, Viewer } from "../lib/rpc.ts";
 import { githubLogin, reservedLogin } from "../lib/search-params.ts";
 
@@ -23,20 +23,12 @@ function Chevron() {
 
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
-// Switching owner remounts the page with a new pill, so the new pill takes focus where the old one had it.
-let switched = false;
-
 export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Viewer | null; config: PublicConfig }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
   const field = useId();
-  const trigger = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (!switched) return;
-    switched = false;
-    trigger.current?.focus();
-  }, []);
+
   const login = typed.trim().replace(/^@/, "");
   const valid = githubLogin.test(login);
   const people = [...(viewer === null ? [] : [viewer.login]), ...config.featured].filter(
@@ -47,11 +39,15 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
     setOpen(false);
     setTyped("");
     if (same(next, owner)) return;
-    switched = true;
     const home = viewer === null ? same(next, config.demoLogin) : same(next, viewer.login);
-    if (home) navigate({ to: "/" });
-    else if (reservedLogin(next)) navigate({ to: "/@{$login}", params: { login: next } });
-    else navigate({ to: "/$login", params: { login: next } });
+    const moved = home
+      ? navigate({ to: "/" })
+      : reservedLogin(next)
+        ? navigate({ to: "/@{$login}", params: { login: next } })
+        : navigate({ to: "/$login", params: { login: next } });
+    // The switch remounts the page with a new pill, which takes focus where the old one had it. A page without a pill,
+    // such as the viewer's own, leaves focus alone.
+    moved.then(() => document.querySelector<HTMLElement>("[data-owner-pill]")?.focus());
   };
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -61,7 +57,7 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger
-        ref={trigger}
+        data-owner-pill
         aria-label={`Whose stars: @${owner}. Change`}
         className="relative flex h-9 max-w-[150px] sm:max-w-[45%] shrink-0 items-center gap-1.5 rounded-full bg-accent-soft pr-2.5 pl-1 font-sans text-meta font-semibold text-foreground transition-[background-color,scale] duration-120 select-none after:absolute after:inset-x-0 after:-inset-y-1 hover:bg-accent/30 motion-safe:active:scale-[0.96] sm:h-11 sm:gap-2 sm:pr-3 sm:pl-1.5 sm:text-base sm:after:hidden"
       >

@@ -240,7 +240,12 @@ describe("the search page in each state", () => {
     ]).toEqual(["0", "6", "10"]);
     expect(bar.getAttribute("aria-valuetext")).toBe("6 of 10 imported");
     await waitFor(() => expect(mark()).toBe("happy"));
-    await waitFor(() => expect(page().getAllByText(/stars so far/).length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(
+        page().getAllByText((_, element) => element?.tagName === "H2" && /stars so far/.test(element.textContent ?? ""))
+          .length,
+      ).toBeGreaterThan(0),
+    );
     expect(document.querySelectorAll("ol[aria-busy=true] > li").length).toBe(8);
     expect(document.querySelectorAll("ol > li > [aria-busy=true]").length).toBe(2);
   });
