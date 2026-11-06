@@ -364,8 +364,10 @@ const make = Effect.gen(function* () {
 
     const claim = { login, at: now, cooldown, lifetime: requestLifetime, overtakesWaiting: policy.overtakesWaiting };
     if (!(yield* db.syncRequests.claim(claim))) {
-      if (readsLeft > 0) return yield* afterClaim();
       const winner = yield* read(login, now);
+      // A winner already released leaves the login free to claim again after the wait.
+      const settled = Option.isSome(winner.stored) && !inFlight(winner.stored);
+      if (readsLeft > 0 && !settled) return yield* afterClaim();
       if (missing(winner.stored)) return yield* notFound;
       yield* decide("deduped");
       return winner.status;

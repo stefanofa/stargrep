@@ -949,6 +949,72 @@ const releasedClaimCases = (test: {
       expect(jobs).toHaveLength(1);
     }),
   );
+
+  test.effect("answers at once when it loses a claim again to a job already scheduled", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      const db = yield* Db.Db;
+      const login = "swarm" as Login;
+      yield* db.syncRequests.claim({
+        login,
+        at: at(start),
+        cooldown: Duration.minutes(10),
+        lifetime: SyncRequests.requestLifetime,
+        overtakesWaiting: false,
+      });
+      const asleep = yield* Queue.unbounded<void>();
+      const trigger = yield* Effect.forkChild(watched(asleep, request("swarm", anyone("caller-b"))));
+      yield* Queue.take(asleep);
+      yield* db.syncRequests.settle(login, at(start), "released");
+      // A peer claims and sends its job before this request's claim reaches the database.
+      const peer = yield* SyncRequests.SyncRequests;
+      claiming.run = (claim) => {
+        claiming.run = (next) => next;
+        return peer.request(login, anyone("caller-c")).pipe(Effect.orDie, Effect.andThen(claim));
+      };
+      yield* TestClock.adjust(claimPoll);
+      yield* TestClock.adjust("6 seconds");
+      expect(yield* Fiber.join(trigger)).toMatchObject({ state: "queued" });
+      expect(yield* Queue.size(asleep)).toBe(0);
+      expect(queue.sent.filter((sent) => sent.login === "swarm")).toHaveLength(1);
+    }),
+  );
+
+  test.effect("reads a claim in flight at most 24 times across every claim it waits on", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      const db = yield* Db.Db;
+      const login = "swarm" as Login;
+      const seed = Effect.flatMap(DateTime.now, (now) =>
+        db.syncRequests.claim({
+          login,
+          at: now,
+          cooldown: Duration.minutes(10),
+          lifetime: SyncRequests.requestLifetime,
+          overtakesWaiting: false,
+        }),
+      );
+      yield* seed;
+      const asleep = yield* Queue.unbounded<void>();
+      const trigger = yield* Effect.forkChild(watched(asleep, request("swarm", anyone("caller-b"))));
+      for (let read = 0; read < 10; read++) {
+        yield* Queue.take(asleep);
+        yield* TestClock.adjust(claimPoll);
+      }
+      yield* Queue.take(asleep);
+      const first = Option.getOrThrow(yield* row("swarm"));
+      yield* db.syncRequests.settle(login, first.requestedAt, "released");
+      // Another claim lands just before this request's, and never settles.
+      claiming.run = (claim) => {
+        claiming.run = (next) => next;
+        return seed.pipe(Effect.andThen(claim));
+      };
+      yield* TestClock.adjust(claimPoll);
+      yield* TestClock.adjust("6 seconds");
+      expect(yield* Fiber.join(trigger)).toMatchObject({ state: "queued" });
+      expect(yield* Queue.size(asleep)).toBe(24 - 11);
+    }),
+  );
 };
 
 it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("PGlite SyncRequests at once", concurrentCases);
