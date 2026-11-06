@@ -65,6 +65,8 @@ export const afterFailure = (error: Failure, now: number): Settlement =>
     AiOutputInvalid: retry,
     AiTimeout: retry,
     AiUnavailable: retry,
+    // Only the web Worker's planner has an allowance, so this never comes up here.
+    AiSpendLimited: retry,
     // The SDK marks this not retryable, such as a 400 for the request itself.
     AiRequestFailed: deadLetter,
     // A raw.githubusercontent.com 429 can come from another tenant on the same egress IP, so it waits and never

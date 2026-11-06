@@ -63,4 +63,23 @@ export class AiKeyMissing extends Schema.TaggedError<AiKeyMissing, { readonly br
   }
 }
 
-export type AiError = AiModelNotFound | AiOutputInvalid | AiTimeout | AiRequestFailed | AiUnavailable | AiKeyMissing;
+export class AiSpendLimited extends Schema.TaggedError<AiSpendLimited, { readonly brand: unique symbol }>()(
+  "AiSpendLimited",
+  {
+    operation: Operation,
+    limit: Schema.Literals(["caller", "overall"]),
+  },
+) {
+  override get message(): string {
+    return `Model calls for '${this.operation}' are over the ${this.limit} allowance`;
+  }
+}
+
+export type AiError =
+  | AiModelNotFound
+  | AiOutputInvalid
+  | AiTimeout
+  | AiRequestFailed
+  | AiUnavailable
+  | AiKeyMissing
+  | AiSpendLimited;

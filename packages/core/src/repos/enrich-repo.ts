@@ -65,6 +65,7 @@ const ownError = (error: EnrichRepoError): boolean =>
     AiRequestFailed: () => false,
     AiTimeout: () => false,
     AiUnavailable: () => false,
+    AiSpendLimited: () => false,
   });
 
 const repoFailed = (outcome: Enrichment): boolean =>

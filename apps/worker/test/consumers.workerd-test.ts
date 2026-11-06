@@ -6,6 +6,7 @@ import {
   AiModelNotFound,
   AiOutputInvalid,
   AiRequestFailed,
+  AiSpendLimited,
   AiTimeout,
   AiUnavailable,
 } from "@stargrep/ai/errors";
@@ -521,6 +522,7 @@ describe("settlement table", () => {
     AiOutputInvalid: [[new AiOutputInvalid({ operation: "generate", model: "m", detail: "d" }), "Retry"]],
     AiTimeout: [[new AiTimeout({ operation: "embed", model: "m", timeoutMillis: 30_000 }), "Retry"]],
     AiUnavailable: [[new AiUnavailable({ operation: "generate", model: "m", detail: "503" }), "Retry"]],
+    AiSpendLimited: [[new AiSpendLimited({ operation: "generate", limit: "overall" }), "Retry"]],
     AiRequestFailed: [[new AiRequestFailed({ operation: "generate", model: "m", detail: "400" }), "DeadLetter"]],
     IconFetchFailed: [
       [iconFetchFailed({ status: 429, retryAfterMillis: 60_000 }), "RetryLater"],
