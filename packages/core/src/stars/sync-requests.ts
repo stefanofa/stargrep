@@ -106,13 +106,19 @@ export const callerLimit = { burst: 4, every: Duration.minutes(15) } as const;
 // A missing login or an org costs its lookup and nothing more.
 export const lookupCost = 1;
 
-// The lookup, the account read, and one star page, or one page per 100 stars when the sync reads every page.
-export const costOf = (work: {
-  readonly lookedUp: boolean;
-  readonly readsEveryPage: boolean;
-  readonly starredTotal: number;
-}): number =>
-  (work.lookedUp ? lookupCost : 0) + 1 + (work.readsEveryPage ? Math.max(1, Math.ceil(work.starredTotal / 100)) : 1);
+// A page holds 100 stars. A first or full read reads every page. An incremental read stops at the newest star already
+// stored, so it reads the stars added since and that one.
+export type StarRead =
+  | { readonly _tag: "every"; readonly starredTotal: number }
+  | { readonly _tag: "since"; readonly starredTotal: number; readonly storedStars: number };
+
+const pagesOf = (read: StarRead) =>
+  read._tag === "every"
+    ? Math.max(1, Math.ceil(read.starredTotal / 100))
+    : Math.ceil((Math.max(0, read.starredTotal - read.storedStars) + 1) / 100);
+
+// The lookup when one ran, the account read, and the star pages.
+export const costOf = (lookedUp: boolean, read: StarRead): number => (lookedUp ? lookupCost : 0) + 1 + pagesOf(read);
 
 type Decision =
   | "started"
@@ -253,6 +259,14 @@ const make = Effect.gen(function* () {
       force: false,
     });
 
+  const starRead = (login: Login, readsEveryPage: boolean, starredTotal: number) =>
+    readsEveryPage
+      ? Effect.succeed<StarRead>({ _tag: "every", starredTotal })
+      : Effect.map(
+          db.stars.enrichment(login),
+          ({ total }): StarRead => ({ _tag: "since", starredTotal, storedStars: total }),
+        );
+
   // A lookup GitHub answered spent a request whatever comes of the sync, so it always pays into the line.
   const payLookup = (at: DateTime.Utc) => reserve(at, lookupCost, true);
 
@@ -327,7 +341,7 @@ const make = Effect.gen(function* () {
         Option.flatMapNullishOr(account, (found) => found.starredCount),
         () => 0,
       );
-      const cost = costOf({ lookedUp: false, readsEveryPage: neverSynced || mode === "full", starredTotal });
+      const cost = costOf(false, yield* starRead(login, neverSynced || mode === "full", starredTotal));
       yield* reserve(now, cost, true);
       yield* decide("started", cost);
       return yield* start(login, now, mode, now, { ...lookedOf(account), syncedAt });
@@ -363,7 +377,7 @@ const make = Effect.gen(function* () {
       return { state: "done", syncedAt: now, ...looked } satisfies SyncStatus;
     }
 
-    const cost = costOf({ lookedUp: true, readsEveryPage: neverSynced, starredTotal });
+    const cost = costOf(true, yield* starRead(login, neverSynced, starredTotal));
     const startsAt = yield* reserve(now, cost, false);
     if (Option.isNone(startsAt)) {
       yield* db.syncRequests.settle(login, now, "released");

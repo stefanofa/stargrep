@@ -6,12 +6,16 @@ import * as Fake from "@stargrep/github/github.fixture";
 import type { GitHubAccountId, Login } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import * as EnrichQueue from "../repos/enrich-queue.ts";
 import type * as DiffPage from "./diff-page.ts";
+import * as OwnerLookup from "./owner-lookup.ts";
 import * as StarSync from "./star-sync.ts";
+import * as SyncQueue from "./sync-queue.ts";
+import * as SyncRequests from "./sync-requests.ts";
 
 const embeddingModel = "test/model" as EmbeddingModelId;
 const second = 1_000;
@@ -553,3 +557,57 @@ it.layer(layerOn(TestDatabase.layerNodePostgres({ embeddingModel })), { timeout:
   "StarSync on Postgres",
   cases,
 );
+
+const owners = OwnerLookup.layerMemory();
+const syncs = SyncQueue.layerMemory();
+
+const admission = SyncRequests.layer.pipe(
+  Layer.provideMerge(layerOn(TestDatabase.layerMemory({ embeddingModel }))),
+  Layer.provideMerge(owners.layer),
+  Layer.provideMerge(syncs.layer),
+);
+
+it.layer(admission, { timeout: 30_000 })("SyncRequests with StarSync", (it) => {
+  it.effect("reserves every GitHub request an incremental sync of a known account makes", () =>
+    Effect.gen(function* () {
+      yield* reset();
+      yield* query("truncate sync_requests, sync_lines");
+      syncs.sent.length = 0;
+      const ada = { id: 7 as GitHubAccountId, login: "ada" as Login };
+      const lookup = (starredTotal: number) =>
+        owners.owners.set("ada", {
+          account: { ...ada, type: "user", name: null, avatarUrl: null, followers: 1, publicRepos: 2 },
+          starredTotal,
+        });
+      const syncSent = (index: number) => {
+        const message = syncs.sent[index];
+        if (message === undefined) throw new Error(`no sync message ${index}`);
+        return StarSync.StarSync.use((service) => service.syncLogin(message));
+      };
+      const request = SyncRequests.SyncRequests.use((service) =>
+        service.request(ada.login, { _tag: "anyone", caller: Db.CallerKey.make("caller-a") }),
+      );
+
+      users.set("ada", ada);
+      lists.set("ada", newestFirst(1));
+      lookup(1);
+      yield* request;
+      yield* syncSent(0);
+
+      yield* TestClock.adjust("11 minutes");
+      const added = Array.from({ length: 500 }, (_, index) => ({ repo: index + 2, at: syncTime + minute }));
+      lists.set("ada", [...added, ...newestFirst(1)]);
+      lookup(501);
+      github.sent.length = 0;
+      expect(yield* request).toMatchObject({ state: "queued", starredTotal: 501 });
+      const reserved = yield* Effect.flatMap(DateTime.now, (now) =>
+        Db.Db.use((db) => db.syncLine.wait("all", now, Duration.zero)),
+      );
+      yield* syncSent(1);
+
+      const rest = github.sent.filter((request) => request.url.pathname !== "/graphql");
+      expect(rest.filter((request) => request.url.pathname.endsWith("/starred"))).toHaveLength(6);
+      expect(Duration.toMillis(reserved) / 1_800).toBeGreaterThanOrEqual(SyncRequests.lookupCost + rest.length);
+    }),
+  );
+});

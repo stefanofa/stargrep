@@ -606,6 +606,22 @@ it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (i
     }),
   );
 
+  it.effect("prices a known account's star pages by the stars added since those it stored", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      yield* synced("octocat", start - 60 * minute);
+      yield* fullSynced(start - 60 * minute);
+      github.owners.set("octocat", user("octocat", 583231, 542));
+      yield* request("octocat");
+      expect(yield* lineUnits).toBe(1 + 1 + 6);
+
+      yield* TestClock.adjust("10 minutes");
+      yield* request("octocat", owner);
+      expect(modes()).toEqual(["incremental", "incremental"]);
+      expect(yield* lineUnits).toBe(1 + 6);
+    }),
+  );
+
   it.effect("starts the owner's first sync now past a full line, and moves the line by its cost", () =>
     Effect.gen(function* () {
       yield* reset;
@@ -700,11 +716,18 @@ it.layer(layerWith(queue.layer, TestDatabase.layerNodePostgres({ embeddingModel 
 
 it.effect("prices the GitHub requests a sync makes", () =>
   Effect.sync(() => {
-    expect(SyncRequests.costOf({ lookedUp: true, readsEveryPage: false, starredTotal: 2_431 })).toBe(3);
+    const since = (starredTotal: number, storedStars: number) =>
+      ({ _tag: "since", starredTotal, storedStars }) as const;
     expect(SyncRequests.lookupCost).toBe(1);
-    expect(SyncRequests.costOf({ lookedUp: true, readsEveryPage: true, starredTotal: 0 })).toBe(3);
-    expect(SyncRequests.costOf({ lookedUp: true, readsEveryPage: true, starredTotal: 2_431 })).toBe(27);
-    expect(SyncRequests.costOf({ lookedUp: false, readsEveryPage: true, starredTotal: 2_431 })).toBe(26);
+    expect(SyncRequests.costOf(true, since(2_431, 2_431))).toBe(3);
+    expect(SyncRequests.costOf(true, since(2_431, 2_500))).toBe(3);
+    expect(SyncRequests.costOf(true, since(2_431, 2_332))).toBe(3);
+    expect(SyncRequests.costOf(true, since(2_431, 2_331))).toBe(4);
+    expect(SyncRequests.costOf(true, since(501, 1))).toBe(8);
+    expect(SyncRequests.costOf(false, since(501, 1))).toBe(7);
+    expect(SyncRequests.costOf(true, { _tag: "every", starredTotal: 0 })).toBe(3);
+    expect(SyncRequests.costOf(true, { _tag: "every", starredTotal: 2_431 })).toBe(27);
+    expect(SyncRequests.costOf(false, { _tag: "every", starredTotal: 2_431 })).toBe(26);
   }),
 );
 
