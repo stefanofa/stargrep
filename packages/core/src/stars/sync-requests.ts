@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as OwnerLookup from "./owner-lookup.ts";
 import type { Mode } from "./star-sync.ts";
@@ -157,7 +158,18 @@ export const admissions = Metric.counter("stargrep_sync_admissions", {
     "Sync requests by admission decision: started, waiting, deduped, org, not-found, caller-limit, line-full, github-budget, lookup-failed.",
 });
 
-const decide = (decision: Decision, cost = 0, wait = Duration.zero) =>
+// What admission decided for one request. cost is what the request put in the line all, in units.
+type Admission =
+  | { readonly _tag: "Deduped"; readonly status: SyncStatus }
+  | { readonly _tag: "Started"; readonly cost: number; readonly status: SyncStatus }
+  | { readonly _tag: "Waiting"; readonly cost: number; readonly wait: Duration.Duration; readonly status: SyncStatus }
+  | { readonly _tag: "Org"; readonly status: SyncStatus }
+  | { readonly _tag: "NotFound"; readonly cost: number }
+  | { readonly _tag: "CallerLimit" }
+  | { readonly _tag: "LineFull"; readonly cost: number; readonly wait: Duration.Duration }
+  | { readonly _tag: "LookupFailed"; readonly error: OwnerLookup.OwnerLookupFailed };
+
+const record = (decision: Decision, cost: number, wait: Duration.Duration) =>
   Effect.all([
     Metric.update(Metric.withAttributes(admissions, { decision }), 1),
     Effect.annotateCurrentSpan({
@@ -167,22 +179,52 @@ const decide = (decision: Decision, cost = 0, wait = Duration.zero) =>
     }),
   ]);
 
-interface Policy {
-  readonly cooldown: Duration.Duration;
-  readonly fullSyncEvery: Option.Option<Duration.Duration>;
-  // Takes the login over from a request still waiting in line, whose sync then runs once more later.
-  readonly overtakesWaiting: boolean;
-}
-
-// Anyone can ask for any login, so their cooldown is long. The owner asks on every library open, and a weekly full
-// read is the only sync that finds the stars they removed. Owners pay into the line but never wait in it.
-const policies: Record<Requester["_tag"], Policy> = {
-  anyone: { cooldown: Duration.minutes(10), fullSyncEvery: Option.none(), overtakesWaiting: false },
-  owner: { cooldown: Duration.minutes(1), fullSyncEvery: Option.some(Duration.days(7)), overtakesWaiting: true },
+// Counts the decision, marks the request's span, and answers it.
+const decide = (
+  login: Login,
+  admission: Admission,
+): Effect.Effect<SyncStatus, LoginNotFound | SyncBusy | NewAccountLimited | OwnerLookup.OwnerLookupFailed> => {
+  switch (admission._tag) {
+    case "Deduped":
+      return Effect.as(record("deduped", 0, Duration.zero), admission.status);
+    case "Started":
+      return Effect.as(record("started", admission.cost, Duration.zero), admission.status);
+    case "Waiting":
+      return Effect.as(record("waiting", admission.cost, admission.wait), admission.status);
+    case "Org":
+      return Effect.as(record("org", lookupCost, Duration.zero), admission.status);
+    case "NotFound":
+      return Effect.andThen(
+        record("not-found", admission.cost, Duration.zero),
+        Effect.fail(new LoginNotFound({ login })),
+      );
+    case "CallerLimit":
+      return Effect.andThen(record("caller-limit", 0, Duration.zero), Effect.fail(new NewAccountLimited()));
+    case "LineFull":
+      return Effect.andThen(
+        record("line-full", admission.cost, admission.wait),
+        Effect.fail(new SyncBusy({ reason: "line-full" })),
+      );
+    case "LookupFailed":
+      return admission.error.reason === "budget"
+        ? Effect.andThen(
+            record("github-budget", 0, Duration.zero),
+            Effect.fail(new SyncBusy({ reason: "github-budget" })),
+          )
+        : Effect.andThen(record("lookup-failed", 0, Duration.zero), Effect.fail(admission.error));
+  }
 };
 
+// Anyone can ask for any login, so their cooldown is long. It also covers a queued sync still reading pages.
+const anyoneCooldown = Duration.minutes(10);
+
+// The owner asks on every library open, and a weekly full read is the only sync that finds the stars they removed.
+// Owners pay into the line but never wait in it.
+const ownerCooldown = Duration.minutes(1);
+const fullReadEvery = Duration.days(7);
+
 // A queued sync may still be reading pages. An account's first sync has no stop line, so a second request would read
-// every star again. Every requester waits this long for a queued request. A cooldown counts from a finished or failed one.
+// every star again. The owner waits this long for a queued request, and a cooldown counts from a finished or failed one.
 const queuedWait = Duration.minutes(10);
 
 export const requestLifetime = Duration.days(1);
@@ -196,24 +238,20 @@ export const prune = Effect.fn("SyncRequests.prune")(function* () {
   yield* db.rateLines.prune(now);
 });
 
-// A claim writes starts_at once its message is sent, so a pending row without one is a claim whose lookup or
-// reservation still runs. The lookup gives up after 5 seconds, so a request that finds such a claim reads the row again
-// every 250 ms, up to 24 times in all, however many claims it waits on, before it answers from the row as it stands.
-const claimWait = { every: Duration.millis(250), reads: 24 } as const;
-
-const inFlight = (row: Option.Option<Db.SyncRequest>) =>
-  Option.exists(row, (found) => found.outcome === "pending" && found.startsAt === null);
-
 const within = (window: Duration.Duration, now: DateTime.Utc) => (at: DateTime.Utc) =>
   Duration.isLessThan(DateTime.distance(at, now), window);
+
+// A row holds its login for the cooldown, counted from when its sync starts.
+const holds = (cooldown: Duration.Duration, now: DateTime.Utc) => (row: Db.SyncRequest) =>
+  DateTime.isGreaterThan(DateTime.addDuration(row.startsAt ?? row.requestedAt, cooldown), now);
 
 const lookedOf = (account: Option.Option<Db.Account>): Looked => ({
   starredTotal: Option.getOrNull(Option.flatMapNullishOr(account, (found) => found.starredCount)),
   accountType: Option.getOrNull(Option.map(account, (found) => found.type)),
 });
 
-// A missing login is no request: its row only answers triggers that GitHub has no such login. A waiting request's
-// ahead is left at 0 here, and read counts it.
+// A missing login is no request: its row only answers triggers that GitHub has no such login. A claimed request is
+// about to send its sync, so it reads as queued. A waiting request's ahead is left at 0 here, and read counts it.
 const statusOf = (
   account: Option.Option<Db.Account>,
   stored: Option.Option<Db.SyncRequest>,
@@ -237,22 +275,6 @@ const statusOf = (
 };
 
 const syncedAtOf = (status: SyncStatus) => (status.state === "unknown" ? null : status.syncedAt);
-
-// Only a full read finds unstars. It waits while a request is queued, because that sync may still be reading. A
-// request still waiting in line has not started reading.
-const fullReadDue = (
-  policy: Policy,
-  current: SyncStatus,
-  fullSyncedAt: Option.Option<DateTime.Utc>,
-  now: DateTime.Utc,
-) =>
-  current.state !== "queued" &&
-  Option.exists(policy.fullSyncEvery, (every) =>
-    Option.match(fullSyncedAt, {
-      onNone: () => true,
-      onSome: (at) => Duration.isGreaterThanOrEqualTo(DateTime.distance(at, now), every),
-    }),
-  );
 
 const make = Effect.gen(function* () {
   const db = yield* Db.Db;
@@ -295,160 +317,132 @@ const make = Effect.gen(function* () {
           ({ total }): StarRead => ({ _tag: "since", starredTotal, storedStars: total }),
         );
 
-  // A lookup GitHub answered spent a request whatever comes of the sync, so it always pays into the line.
-  const payLookup = (at: DateTime.Utc) => reserve(db, at, lookupCost, true);
-
-  // Reads the row until the claim settles or the reads run out, and returns the reads left.
-  const awaitClaim = Effect.fnUntraced(function* (login: Login, reads: number) {
-    let left = reads;
-    while (left > 0) {
-      left -= 1;
-      if (!inFlight(yield* db.syncRequests.get(login).pipe(Effect.delay(claimWait.every)))) break;
-    }
-    return left;
+  // A signed-out request that loses the claim answers from the row that won it.
+  const fromWinner = Effect.fnUntraced(function* (login: Login, now: DateTime.Utc) {
+    const winner = yield* read(login, now);
+    return Option.exists(winner.stored, (row) => row.outcome === "missing")
+      ? ({ _tag: "NotFound", cost: lookupCost } satisfies Admission)
+      : ({ _tag: "Deduped", status: winner.status } satisfies Admission);
   });
 
-  // The message goes out before starts_at is written. A crash in between leaves a row that others wait on and then read
-  // as queued while its job waits in the queue, instead of a login held until starts_at with no job behind it.
+  // The message goes out before the row is scheduled. A crash in between leaves a claimed row, which reads as queued
+  // while its job waits in the queue, instead of a login held until starts_at with no job behind it.
   const start = Effect.fn("SyncRequests.start")(function* (
     login: Login,
     at: DateTime.Utc,
-    sync: { readonly mode: Mode; readonly reserved: number; readonly startsAt: DateTime.Utc },
+    sync: { readonly mode: Mode; readonly reserved: number; readonly startsAt: DateTime.Utc; readonly cost: number },
     fields: Looked & { readonly syncedAt: DateTime.Utc | null },
   ) {
-    const { mode, reserved, startsAt } = sync;
-    const delay = DateTime.isGreaterThan(startsAt, at) ? DateTime.distance(at, startsAt) : Duration.zero;
+    const { mode, reserved, startsAt, cost } = sync;
+    const wait = DateTime.isGreaterThan(startsAt, at) ? DateTime.distance(at, startsAt) : Duration.zero;
     yield* queue
-      .send({ login, mode, requestedAt: at, reserved }, delay)
+      .send({ login, mode, requestedAt: at, reserved }, wait)
       .pipe(Effect.tapError(() => db.syncRequests.settle(login, at, "failed").pipe(Effect.ignore)));
     yield* db.syncRequests.schedule(login, at, startsAt);
-    if (Duration.isZero(delay)) return { state: "queued", requestedAt: at, ...fields } satisfies SyncStatus;
+    if (Duration.isZero(wait)) {
+      return { _tag: "Started", cost, status: { state: "queued", requestedAt: at, ...fields } } satisfies Admission;
+    }
     const ahead = yield* db.syncRequests.ahead(startsAt, at);
-    return { state: "waiting", requestedAt: at, startsAt, ahead, ...fields } satisfies SyncStatus;
+    const status: SyncStatus = { state: "waiting", requestedAt: at, startsAt, ahead, ...fields };
+    return { _tag: "Waiting", cost, wait, status } satisfies Admission;
   });
 
-  // A request that finds another's claim in flight waits for its outcome, then decides again by the same rules, from
-  // one budget of reads, so requests that wake together and lose again keep waiting. Untraced, so the pass that
-  // decides marks the request's span.
-  const admit = Effect.fnUntraced(function* (
-    login: Login,
-    by: Requester,
-    readsLeft: number,
-  ): Effect.fn.Return<SyncStatus, SyncRequestError> {
-    const policy = policies[by._tag];
+  // The owner never waits and needs no lookup, because sign-in already read their account. The owner's claim takes over
+  // a request still waiting in line, and runs a full read when one is due.
+  const admitOwner = Effect.fnUntraced(function* (login: Login): Effect.fn.Return<Admission, SyncRequestError> {
     const now = yield* DateTime.now;
     const { account, stored, status: current, fullSyncedAt } = yield* read(login, now);
-    if (current.state === "done" && within(policy.cooldown, now)(current.syncedAt)) {
-      yield* decide("deduped");
-      return current;
+    if (current.state === "done" && within(ownerCooldown, now)(current.syncedAt)) {
+      return { _tag: "Deduped", status: current };
     }
-    const afterClaim = () => awaitClaim(login, readsLeft).pipe(Effect.flatMap((left) => admit(login, by, left)));
-    const busy = current.state === "queued" || current.state === "waiting";
-    const cooldown = busy ? Duration.max(queuedWait, policy.cooldown) : policy.cooldown;
-    const held =
-      policy.overtakesWaiting && current.state === "waiting"
-        ? Option.none()
-        : Option.filter(stored, (row) =>
-            DateTime.isGreaterThan(DateTime.addDuration(row.startsAt ?? row.requestedAt, cooldown), now),
-          );
-    const missing = (row: Option.Option<Db.SyncRequest>) =>
-      by._tag === "anyone" && Option.exists(row, (found) => found.outcome === "missing");
-    const notFound = decide("not-found").pipe(Effect.andThen(Effect.fail(new LoginNotFound({ login }))));
-    if (readsLeft > 0 && inFlight(held)) return yield* afterClaim();
-    if (missing(held)) return yield* notFound;
-    if (Option.isSome(held)) {
-      yield* decide("deduped");
-      return current;
+    const cooldown = current.state === "queued" || current.state === "waiting" ? queuedWait : ownerCooldown;
+    if (current.state !== "waiting" && Option.exists(stored, holds(cooldown, now))) {
+      return { _tag: "Deduped", status: current };
     }
+    const claim = { login, at: now, cooldown, overtakesWaiting: true, outcome: "claimed" } as const;
+    if (!(yield* db.syncRequests.claim(claim))) return { _tag: "Deduped", status: (yield* read(login, now)).status };
 
     const syncedAt = syncedAtOf(current);
-    const neverSynced = syncedAt === null;
-    if (by._tag === "anyone") {
-      const wait = yield* db.rateLines.wait("all", now, tolerance);
-      if (Duration.isGreaterThan(wait, line.maxWait)) {
-        yield* decide("line-full", 0, wait);
-        return yield* new SyncBusy({ reason: "line-full" });
-      }
-    }
-
-    const claim = { login, at: now, cooldown, overtakesWaiting: policy.overtakesWaiting };
-    if (!(yield* db.syncRequests.claim(claim))) {
-      const winner = yield* read(login, now);
-      // A winner already released leaves the login free to claim again after the wait.
-      const settled = Option.isSome(winner.stored) && !inFlight(winner.stored);
-      if (readsLeft > 0 && !settled) return yield* afterClaim();
-      if (missing(winner.stored)) return yield* notFound;
-      yield* decide("deduped");
-      return winner.status;
-    }
-    if (by._tag === "anyone" && neverSynced && Option.isNone(yield* reserveNewLogin(by.caller, now))) {
-      yield* db.syncRequests.settle(login, now, "released");
-      yield* decide("caller-limit");
-      return yield* new NewAccountLimited();
-    }
-    const mode = fullReadDue(policy, current, fullSyncedAt, now) ? "full" : "incremental";
-
-    if (by._tag === "owner") {
-      const starredTotal = Option.getOrElse(
-        Option.flatMapNullishOr(account, (found) => found.starredCount),
-        () => 0,
-      );
-      const cost = costOf(yield* starRead(login, neverSynced || mode === "full", starredTotal));
-      yield* reserve(db, now, cost, true);
-      yield* decide("started", cost);
-      return yield* start(login, now, { mode, reserved: cost, startsAt: now }, { ...lookedOf(account), syncedAt });
-    }
-
-    const found = yield* owners.lookup(login).pipe(
-      Effect.tapError((error) =>
-        Effect.all([
-          db.syncRequests.settle(login, now, "released").pipe(Effect.ignore),
-          decide(error.reason === "budget" ? "github-budget" : "lookup-failed"),
-        ]),
-      ),
-      Effect.catchIf(
-        (error) => error.reason === "budget",
-        () => Effect.fail(new SyncBusy({ reason: "github-budget" })),
-      ),
+    const fullReadDue =
+      current.state !== "queued" &&
+      Option.match(fullSyncedAt, {
+        onNone: () => true,
+        onSome: (at) => Duration.isGreaterThanOrEqualTo(DateTime.distance(at, now), fullReadEvery),
+      });
+    const mode = fullReadDue ? "full" : "incremental";
+    const starredTotal = Option.getOrElse(
+      Option.flatMapNullishOr(account, (found) => found.starredCount),
+      () => 0,
     );
-    if (Option.isNone(found)) {
-      yield* db.syncRequests.settle(login, now, "missing");
-      yield* payLookup(now);
-      yield* decide("not-found", lookupCost);
-      return yield* new LoginNotFound({ login });
-    }
-    const { account: facts, starredTotal } = found.value;
-    yield* db.accounts.upsertLooked(found.value);
-    const looked: Looked = { starredTotal, accountType: facts.type };
+    const cost = costOf(yield* starRead(login, syncedAt === null || fullReadDue, starredTotal));
+    yield* reserve(db, now, cost, true);
+    return yield* start(login, now, { mode, reserved: cost, startsAt: now, cost }, { ...lookedOf(account), syncedAt });
+  });
 
-    if (facts.type === "org") {
-      yield* payLookup(now);
+  // A signed-out request looks the login up before it claims it, so its claim already knows whether the login exists,
+  // and no request ever waits on another's lookup. Requests for the same login at once each pay a lookup.
+  const admitAnyone = Effect.fnUntraced(function* (
+    login: Login,
+    caller: Db.CallerKey,
+  ): Effect.fn.Return<Admission, SyncRequestError> {
+    const now = yield* DateTime.now;
+    const { stored, status: current } = yield* read(login, now);
+    if (current.state === "done" && within(anyoneCooldown, now)(current.syncedAt)) {
+      return { _tag: "Deduped", status: current };
+    }
+    const held = Option.filter(stored, holds(anyoneCooldown, now));
+    if (Option.isSome(held)) {
+      return held.value.outcome === "missing" ? { _tag: "NotFound", cost: 0 } : { _tag: "Deduped", status: current };
+    }
+
+    const wait = yield* db.rateLines.wait("all", now, tolerance);
+    if (Duration.isGreaterThan(wait, line.maxWait)) return { _tag: "LineFull", cost: 0, wait };
+    const syncedAt = syncedAtOf(current);
+    if (syncedAt === null && Option.isNone(yield* reserveNewLogin(caller, now))) return { _tag: "CallerLimit" };
+
+    const found = yield* Effect.result(owners.lookup(login));
+    if (Result.isFailure(found)) return { _tag: "LookupFailed", error: found.failure };
+    // GitHub answered, so the lookup spent a request whatever comes of the sync.
+    yield* reserve(db, now, lookupCost, true);
+    const claim = (outcome: "claimed" | "missing") =>
+      db.syncRequests.claim({ login, at: now, cooldown: anyoneCooldown, overtakesWaiting: false, outcome });
+
+    if (Option.isNone(found.success)) {
+      if (!(yield* claim("missing"))) return yield* fromWinner(login, now);
+      return { _tag: "NotFound", cost: lookupCost };
+    }
+    const owner = found.success.value;
+    yield* db.accounts.upsertLooked(owner);
+    const looked: Looked = { starredTotal: owner.starredTotal, accountType: owner.account.type };
+    if (!(yield* claim("claimed"))) return yield* fromWinner(login, now);
+
+    if (owner.account.type === "org") {
       // The facts were written just above, so the account row exists.
       yield* db.accounts
-        .recordStarSync({ accountId: facts.id, etag: null, at: now })
+        .recordStarSync({ accountId: owner.account.id, etag: null, at: now })
         .pipe(Effect.catchTags({ AccountNotFound: Effect.die }));
-      // An org has nothing to send, so its claim starts now and no request waits on it.
+      // An org has nothing to send, so its claim starts now.
       yield* db.syncRequests.schedule(login, now, now);
-      yield* decide("org", lookupCost);
-      return { state: "done", syncedAt: now, ...looked } satisfies SyncStatus;
+      return { _tag: "Org", status: { state: "done", syncedAt: now, ...looked } };
     }
 
-    const work = costOf(yield* starRead(login, neverSynced, starredTotal));
-    const cost = lookupCost + work;
-    const startsAt = yield* reserve(db, now, cost, false);
+    const work = costOf(yield* starRead(login, syncedAt === null, owner.starredTotal));
+    const startsAt = yield* reserve(db, now, work, false);
     if (Option.isNone(startsAt)) {
       yield* db.syncRequests.settle(login, now, "released");
-      yield* payLookup(now);
-      yield* decide("line-full", lookupCost);
-      return yield* new SyncBusy({ reason: "line-full" });
+      return { _tag: "LineFull", cost: lookupCost, wait: line.maxWait };
     }
-    const wait = DateTime.isGreaterThan(startsAt.value, now) ? DateTime.distance(now, startsAt.value) : Duration.zero;
-    yield* decide(Duration.isZero(wait) ? "started" : "waiting", cost, wait);
-    return yield* start(login, now, { mode, reserved: work, startsAt: startsAt.value }, { ...looked, syncedAt });
+    return yield* start(
+      login,
+      now,
+      { mode: "incremental", reserved: work, startsAt: startsAt.value, cost: lookupCost + work },
+      { ...looked, syncedAt },
+    );
   });
 
   const request = Effect.fn("SyncRequests.request")(function* (login: Login, by: Requester) {
-    return yield* admit(login, by, claimWait.reads);
+    const admission = by._tag === "owner" ? yield* admitOwner(login) : yield* admitAnyone(login, by.caller);
+    return yield* decide(login, admission);
   });
 
   return SyncRequests.of({ request, status });

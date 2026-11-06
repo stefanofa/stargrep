@@ -295,6 +295,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           at: at(time),
           cooldown: syncCooldown,
           overtakesWaiting: false,
+          outcome: "claimed",
         });
       const first = at("2026-11-04T12:00:00Z");
       const claims = yield* Effect.all(
@@ -303,7 +304,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       );
       expect(claims.filter(Boolean)).toHaveLength(1);
       expect(yield* db.syncRequests.get(login("RACER"))).toEqual(
-        Option.some({ login: "racer", requestedAt: first, outcome: "pending", startsAt: null }),
+        Option.some({ login: "racer", requestedAt: first, outcome: "claimed", startsAt: null }),
       );
 
       expect(yield* claim("racer", "2026-11-04T12:09:59Z")).toBe(false);
@@ -322,7 +323,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     }),
   );
 
-  test.effect("keeps a fresh claim pending when the dead letter of an older one arrives", () =>
+  test.effect("keeps a fresh claim when the dead letter or the schedule of an older one arrives", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
       const claim = (time: string) =>
@@ -331,10 +332,11 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           at: at(time),
           cooldown: syncCooldown,
           overtakesWaiting: false,
+          outcome: "claimed",
         });
       expect(yield* claim("2026-11-04T13:00:00Z")).toBe(true);
       expect(yield* claim("2026-11-04T13:11:00Z")).toBe(true);
-      for (const outcome of ["failed", "missing", "released"] as const) {
+      for (const outcome of ["failed", "released"] as const) {
         yield* db.syncRequests.settle(login("stale"), at("2026-11-04T13:00:00Z"), outcome);
         yield* db.syncRequests.schedule(login("stale"), at("2026-11-04T13:00:00Z"), at("2026-11-04T14:00:00Z"));
       }
@@ -342,33 +344,33 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         Option.some({
           login: "stale",
           requestedAt: at("2026-11-04T13:11:00Z"),
-          outcome: "pending",
+          outcome: "claimed",
           startsAt: null,
         }),
       );
     }),
   );
 
-  test.effect("settles a request missing or releases it, so only a released login claims again at once", () =>
+  test.effect("claims a login missing or releases a claim, so only a released login claims again at once", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
-      const claim = (name: string) =>
+      const claim = (name: string, outcome: "claimed" | "missing") =>
         db.syncRequests.claim({
           login: login(name),
           at: at("2026-11-04T15:00:00Z"),
           cooldown: syncCooldown,
           overtakesWaiting: false,
+          outcome,
         });
-      yield* claim("ghost");
-      yield* claim("released");
-      yield* db.syncRequests.settle(login("Ghost"), at("2026-11-04T15:00:00Z"), "missing");
+      yield* claim("Ghost", "missing");
+      yield* claim("released", "claimed");
       yield* db.syncRequests.settle(login("Released"), at("2026-11-04T15:00:00Z"), "released");
       expect(Option.map(yield* db.syncRequests.get(login("ghost")), (row) => row.outcome)).toEqual(
         Option.some("missing"),
       );
       expect(yield* db.syncRequests.get(login("released"))).toEqual(Option.none());
-      expect(yield* claim("ghost")).toBe(false);
-      expect(yield* claim("released")).toBe(true);
+      expect(yield* claim("ghost", "claimed")).toBe(false);
+      expect(yield* claim("released", "claimed")).toBe(true);
     }),
   );
 
@@ -381,11 +383,17 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           at: at(time),
           cooldown: syncCooldown,
           overtakesWaiting: false,
+          outcome: "claimed",
         });
       expect(yield* claim("2026-11-04T16:00:00Z")).toBe(true);
       yield* db.syncRequests.schedule(login("Waiter"), at("2026-11-04T16:00:00Z"), at("2026-11-04T16:30:00Z"));
-      expect(Option.map(yield* db.syncRequests.get(login("waiter")), (row) => row.startsAt)).toEqual(
-        Option.some(at("2026-11-04T16:30:00Z")),
+      expect(yield* db.syncRequests.get(login("waiter"))).toEqual(
+        Option.some({
+          login: "waiter",
+          requestedAt: at("2026-11-04T16:00:00Z"),
+          outcome: "pending",
+          startsAt: at("2026-11-04T16:30:00Z"),
+        }),
       );
       expect(yield* claim("2026-11-04T16:20:00Z")).toBe(false);
       expect(yield* claim("2026-11-04T16:39:59Z")).toBe(false);
@@ -403,6 +411,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           at: at(time),
           cooldown: syncCooldown,
           overtakesWaiting,
+          outcome: "claimed",
         });
       expect(yield* claim("2026-11-04T19:00:00Z", false)).toBe(true);
       expect(yield* claim("2026-11-04T19:01:00Z", true)).toBe(false);
@@ -413,7 +422,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         Option.some({
           login: "overtaken",
           requestedAt: at("2026-11-04T19:05:00Z"),
-          outcome: "pending",
+          outcome: "claimed",
           startsAt: null,
         }),
       );
@@ -435,6 +444,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
             at: at(now),
             cooldown: syncCooldown,
             overtakesWaiting: false,
+            outcome: "claimed",
           })
           .pipe(Effect.andThen(db.syncRequests.schedule(login(name), at(now), at(startsAt))));
       yield* waiting("line-a", "2026-11-04T18:05:00Z");
@@ -458,6 +468,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           at: at(time),
           cooldown: syncCooldown,
           overtakesWaiting: false,
+          outcome: "claimed",
         });
       yield* claim("expired", "2026-11-01T08:00:00Z");
       yield* claim("recent", "2026-11-05T07:00:00Z");

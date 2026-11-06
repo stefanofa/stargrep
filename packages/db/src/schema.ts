@@ -233,7 +233,8 @@ export const syncRequests = pgTable(
     login: text("login").primaryKey(),
     requestedAt: time("requested_at").notNull(),
     outcome: syncRequestOutcome("outcome").notNull(),
-    // When a request that waits in line starts. Null starts at requested_at.
+    // When a sent sync starts: requested_at, or the start of its turn in line. Null while the request is claimed and
+    // not yet sent, and for a missing login.
     startsAt: time("starts_at"),
   },
   (table) => [index("sync_requests_requested_at_idx").on(table.requestedAt)],

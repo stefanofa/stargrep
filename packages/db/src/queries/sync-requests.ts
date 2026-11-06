@@ -25,16 +25,19 @@ export interface SyncClaim {
   readonly cooldown: Duration.Duration;
   // Also wins over a request still waiting in line, for a requester who never waits.
   readonly overtakesWaiting: boolean;
+  // claimed holds the login while its sync is reserved and sent. missing records a login GitHub does not have.
+  readonly outcome: "claimed" | "missing";
 }
 
-export type Settlement = "failed" | "missing" | "released";
+export type Settlement = "failed" | "released";
 
 export interface Queries {
   readonly get: (login: Login) => Effect.Effect<Option.Option<SyncRequest>, DbQueryFailed | DbRowInvalid>;
   readonly claim: (claim: SyncClaim) => Effect.Effect<boolean, DbQueryFailed>;
   // How many pending requests still wait in line at the given time and start before startsAt.
   readonly ahead: (startsAt: DateTime.Utc, at: DateTime.Utc) => Effect.Effect<number, DbQueryFailed>;
-  // Each of these touches the row only while it still holds the request made at requestedAt.
+  // Each of these touches the row only while it still holds the request made at requestedAt. schedule records a sent
+  // sync and when it starts.
   readonly schedule: (
     login: Login,
     requestedAt: DateTime.Utc,
@@ -71,15 +74,21 @@ export const make = Effect.gen(function* () {
           .from(syncRequests)
           .where(eq(syncRequests.login, keyOf(login))),
       ).pipe(Effect.flatMap(decodeRequests("syncRequests.get")), Effect.map(Arr.head)),
-    claim: Effect.fn("Db.syncRequests.claim")(function* ({ login, at, cooldown, overtakesWaiting }: SyncClaim) {
+    claim: Effect.fn("Db.syncRequests.claim")(function* ({
+      login,
+      at,
+      cooldown,
+      overtakesWaiting,
+      outcome,
+    }: SyncClaim) {
       const requestedAt = yield* encodeTime(at);
       const claimed = yield* run("syncRequests.claim", (db) =>
         db
           .insert(syncRequests)
-          .values({ login: keyOf(login), requestedAt, outcome: "pending" })
+          .values({ login: keyOf(login), requestedAt, outcome })
           .onConflictDoUpdate({
             target: syncRequests.login,
-            set: { requestedAt, outcome: "pending", startsAt: null },
+            set: { requestedAt, outcome, startsAt: null },
             setWhere: overtakesWaiting
               ? sql`${cooledDown(requestedAt, cooldown)} or ${syncRequests.startsAt} > ${requestedAt}::timestamptz`
               : cooledDown(requestedAt, cooldown),
@@ -105,7 +114,7 @@ export const make = Effect.gen(function* () {
       Effect.all([encodeTime(requestedAt), encodeTime(startsAt)]).pipe(
         Effect.flatMap(([time, start]) =>
           run("syncRequests.schedule", (db) =>
-            db.update(syncRequests).set({ startsAt: start }).where(holding(login, time)),
+            db.update(syncRequests).set({ outcome: "pending", startsAt: start }).where(holding(login, time)),
           ),
         ),
         Effect.asVoid,

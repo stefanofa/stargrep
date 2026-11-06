@@ -762,7 +762,7 @@ it.layer(admission, { timeout: 30_000 })("SyncRequests with StarSync", (it) => {
       const burst = SyncRequests.line.burstUnits;
       expect(next).toMatchObject({
         state: "waiting",
-        startsAt: DateTime.makeUnsafe(at + (300 + run.served - burst) * 1_800),
+        startsAt: DateTime.makeUnsafe(at + (300 + run.served + SyncRequests.lookupCost - burst) * 1_800),
       });
     }),
   );

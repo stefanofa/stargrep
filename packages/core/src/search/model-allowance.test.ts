@@ -72,7 +72,7 @@ const searchAs = (caller: string, query: string) =>
     ),
   );
 
-const clearLines = TestDatabase.TestDatabase.use((database) => database.query("delete from sync_lines"));
+const clearLines = TestDatabase.TestDatabase.use((database) => database.query("delete from rate_lines"));
 
 const refusals = (call: ModelAllowance.ModelCall, reason: ModelAllowance.ModelCallRefused["reason"]) =>
   Effect.map(
