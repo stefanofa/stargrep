@@ -106,8 +106,9 @@ export const callerLimit = { burst: 4, every: Duration.minutes(15) } as const;
 // A missing login or an org costs its lookup and nothing more.
 export const lookupCost = 1;
 
-// A page holds 100 stars. A first or full read reads every page. An incremental read stops at the newest star already
-// stored, so it reads the stars added since and that one.
+// A page holds 100 stars. A first or full read reads every page and counts the stars through GraphQL before and after.
+// An incremental read stops at the first star older than the newest one already stored, so it reads the stars added
+// since, that one, and the next.
 export type StarRead =
   | { readonly _tag: "every"; readonly starredTotal: number }
   | { readonly _tag: "since"; readonly starredTotal: number; readonly storedStars: number };
@@ -115,10 +116,30 @@ export type StarRead =
 const pagesOf = (read: StarRead) =>
   read._tag === "every"
     ? Math.max(1, Math.ceil(read.starredTotal / 100))
-    : Math.ceil((Math.max(0, read.starredTotal - read.storedStars) + 1) / 100);
+    : Math.ceil((Math.max(0, read.starredTotal - read.storedStars) + 2) / 100);
 
-// The lookup when one ran, the account read, and the star pages.
-export const costOf = (lookedUp: boolean, read: StarRead): number => (lookedUp ? lookupCost : 0) + 1 + pagesOf(read);
+// What a sync is expected to request: the account read, the counts, and the star pages. Only the read shows where it
+// stops, because stars removed, starred again, or swapped at an unchanged total all move it, so this is an estimate.
+export const costOf = (read: StarRead): number => 1 + (read._tag === "every" ? 2 : 0) + pagesOf(read);
+
+const reserve = (db: Db.Db["Service"], at: DateTime.Utc, units: number, force: boolean) =>
+  db.syncLine.reserve({
+    line: "all",
+    at,
+    cost: Duration.times(unit, units),
+    tolerance,
+    maxWait: line.maxWait,
+    force,
+  });
+
+// A sync that has run pays the line, forced, for the GitHub requests it made past what admission reserved for it, so
+// the next signed-out start moves later by the difference. A message that reserved nothing pays for every request.
+export const billSync = Effect.fn("SyncRequests.billSync")(function* (reserved: number | undefined, requests: number) {
+  const owed = Math.max(0, requests - (reserved ?? 0));
+  yield* Effect.annotateCurrentSpan({ "sync.requests": requests, "sync.owed": owed });
+  if (owed === 0) return;
+  yield* reserve(yield* Db.Db, yield* DateTime.now, owed, true);
+});
 
 type Decision =
   | "started"
@@ -239,16 +260,6 @@ const make = Effect.gen(function* () {
     return (yield* read(login, yield* DateTime.now)).status;
   });
 
-  const reserve = (at: DateTime.Utc, units: number, force: boolean) =>
-    db.syncLine.reserve({
-      line: "all",
-      at,
-      cost: Duration.times(unit, units),
-      tolerance,
-      maxWait: line.maxWait,
-      force,
-    });
-
   const reserveNewLogin = (caller: Db.CallerKey, at: DateTime.Utc) =>
     db.syncLine.reserve({
       line: Db.callerLine(caller),
@@ -268,20 +279,20 @@ const make = Effect.gen(function* () {
         );
 
   // A lookup GitHub answered spent a request whatever comes of the sync, so it always pays into the line.
-  const payLookup = (at: DateTime.Utc) => reserve(at, lookupCost, true);
+  const payLookup = (at: DateTime.Utc) => reserve(db, at, lookupCost, true);
 
   // The message goes out before starts_at is written. A crash in between leaves a row that says queued while its job
   // waits in the queue, instead of a login held until starts_at with no job behind it.
   const start = Effect.fn("SyncRequests.start")(function* (
     login: Login,
     at: DateTime.Utc,
-    mode: Mode,
-    startsAt: DateTime.Utc,
+    sync: { readonly mode: Mode; readonly reserved: number; readonly startsAt: DateTime.Utc },
     fields: Looked & { readonly syncedAt: DateTime.Utc | null },
   ) {
+    const { mode, reserved, startsAt } = sync;
     const delay = DateTime.isGreaterThan(startsAt, at) ? DateTime.distance(at, startsAt) : Duration.zero;
     yield* queue
-      .send({ login, mode, requestedAt: at }, delay)
+      .send({ login, mode, requestedAt: at, reserved }, delay)
       .pipe(Effect.tapError(() => db.syncRequests.settle(login, at, "failed").pipe(Effect.ignore)));
     if (Duration.isZero(delay)) return { state: "queued", requestedAt: at, ...fields } satisfies SyncStatus;
     yield* db.syncRequests.schedule(login, at, startsAt);
@@ -343,10 +354,10 @@ const make = Effect.gen(function* () {
         Option.flatMapNullishOr(account, (found) => found.starredCount),
         () => 0,
       );
-      const cost = costOf(false, yield* starRead(login, neverSynced || mode === "full", starredTotal));
-      yield* reserve(now, cost, true);
+      const cost = costOf(yield* starRead(login, neverSynced || mode === "full", starredTotal));
+      yield* reserve(db, now, cost, true);
       yield* decide("started", cost);
-      return yield* start(login, now, mode, now, { ...lookedOf(account), syncedAt });
+      return yield* start(login, now, { mode, reserved: cost, startsAt: now }, { ...lookedOf(account), syncedAt });
     }
 
     const found = yield* owners
@@ -379,8 +390,9 @@ const make = Effect.gen(function* () {
       return { state: "done", syncedAt: now, ...looked } satisfies SyncStatus;
     }
 
-    const cost = costOf(true, yield* starRead(login, neverSynced, starredTotal));
-    const startsAt = yield* reserve(now, cost, false);
+    const work = costOf(yield* starRead(login, neverSynced, starredTotal));
+    const cost = lookupCost + work;
+    const startsAt = yield* reserve(db, now, cost, false);
     if (Option.isNone(startsAt)) {
       yield* db.syncRequests.settle(login, now, "released");
       yield* payLookup(now);
@@ -389,7 +401,7 @@ const make = Effect.gen(function* () {
     }
     const wait = DateTime.isGreaterThan(startsAt.value, now) ? DateTime.distance(now, startsAt.value) : Duration.zero;
     yield* decide(Duration.isZero(wait) ? "started" : "waiting", cost, wait);
-    return yield* start(login, now, mode, startsAt.value, { ...looked, syncedAt });
+    return yield* start(login, now, { mode, reserved: work, startsAt: startsAt.value }, { ...looked, syncedAt });
   });
 
   return SyncRequests.of({ request, status });

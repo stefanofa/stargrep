@@ -25,8 +25,17 @@ export const LoginSyncRequest = Schema.Struct({
   mode: Mode,
   // The debug Worker's queue route and messages queued before triggers recorded a request time carry none.
   requestedAt: Schema.optionalKey(Schema.DateTimeUtcFromMillis),
+  // The units admission reserved in the line for the sync's own GitHub requests. A message without them, such as one
+  // from the debug Worker, pays for every request the sync makes.
+  reserved: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 export type LoginSyncRequest = typeof LoginSyncRequest.Type;
+
+// requests counts the GitHub requests the run made: a login sync's account read, each star page, and each GraphQL
+// count.
+export interface SyncReport extends DiffPage.SyncReport {
+  readonly requests: number;
+}
 
 export type StarSyncError =
   | GitHubError
@@ -38,8 +47,8 @@ export type StarSyncError =
 export class StarSync extends Context.Service<
   StarSync,
   {
-    readonly sync: (request: SyncRequest) => Effect.Effect<DiffPage.SyncReport, StarSyncError>;
-    readonly syncLogin: (request: LoginSyncRequest) => Effect.Effect<DiffPage.SyncReport, StarSyncError>;
+    readonly sync: (request: SyncRequest) => Effect.Effect<SyncReport, StarSyncError>;
+    readonly syncLogin: (request: LoginSyncRequest) => Effect.Effect<SyncReport, StarSyncError>;
   }
 >()("@stargrep/core/stars/star-sync/StarSync") {}
 
@@ -112,13 +121,15 @@ const make = Effect.gen(function* () {
           })
         : noChanges;
     if (!shifted) yield* db.accounts.recordStarSync({ accountId: account.id, etag: null, at });
-    return DiffPage.report(stored, pages, snapshot, shifted);
+    const counts = account.type === "org" ? 0 : [countBefore, countAfter].filter(Option.isSome).length;
+    return { ...DiffPage.report(stored, pages, snapshot, shifted), requests: pages.length + counts };
   });
 
   const syncLogin = Effect.fn("StarSync.syncLogin")(function* (request: LoginSyncRequest) {
     const account = yield* github.account(request.login);
     yield* db.accounts.upsert(account);
-    return yield* sync({ accountId: account.id, mode: request.mode });
+    const report = yield* sync({ accountId: account.id, mode: request.mode });
+    return { ...report, requests: report.requests + 1 };
   });
 
   return StarSync.of({ sync, syncLogin });

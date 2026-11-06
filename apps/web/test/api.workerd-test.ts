@@ -266,7 +266,7 @@ describe("sync", () => {
     expect((await rest("/sync/octocat", from("192.0.2.1"))).body.state).toBe("queued");
     expect(queued).toEqual([
       {
-        body: { login: "octocat", mode: "incremental", requestedAt: Date.parse(first.body.requestedAt) },
+        body: { login: "octocat", mode: "incremental", requestedAt: Date.parse(first.body.requestedAt), reserved: 4 },
         delaySeconds: 0,
       },
     ]);
@@ -350,7 +350,7 @@ describe("sync", () => {
         accountType: "user",
       });
       expect(queued.filter((sent) => sent.body.login === "Patient")).toEqual([
-        { body: { login: "Patient", mode: "incremental", requestedAt }, delaySeconds: 91 },
+        { body: { login: "Patient", mode: "incremental", requestedAt, reserved: 4 }, delaySeconds: 91 },
       ]);
       expect((await rest("/sync/patient")).body).toMatchObject({ state: "waiting", waiting: { ahead: 0 } });
     } finally {

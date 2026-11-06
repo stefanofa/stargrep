@@ -196,7 +196,9 @@ it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (i
         syncedAt: null,
         ...octocat,
       });
-      expect(queue.sent).toEqual([{ login: "octocat" as Login, mode: "incremental", requestedAt: at(start) }]);
+      expect(queue.sent).toEqual([
+        { login: "octocat" as Login, mode: "incremental", requestedAt: at(start), reserved: 4 },
+      ]);
 
       yield* synced("octocat", start + 30_000);
       expect(yield* status("Octocat")).toEqual({ state: "done", syncedAt: at(start + 30_000), ...octocat });
@@ -291,7 +293,9 @@ it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (i
         syncedAt: at(start - 2 * minute),
         ...signedUp,
       });
-      expect(queue.sent).toEqual([{ login: "octocat" as Login, mode: "incremental", requestedAt: at(start) }]);
+      expect(queue.sent).toEqual([
+        { login: "octocat" as Login, mode: "incremental", requestedAt: at(start), reserved: 2 },
+      ]);
       expect(github.lookups).toEqual([]);
     }),
   );
@@ -333,7 +337,7 @@ it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (i
         yield* TestClock.adjust("8 minutes");
         yield* TestClock.adjust("58 seconds");
         yield* request("octocat", owner);
-        expect(queue.sent).toEqual([{ login: "octocat" as Login, mode: "full", requestedAt: at(start) }]);
+        expect(queue.sent).toEqual([{ login: "octocat" as Login, mode: "full", requestedAt: at(start), reserved: 4 }]);
 
         yield* TestClock.adjust("1 second");
         expect(yield* request("octocat", owner)).toMatchObject({ state: "queued", requestedAt: at(start + 600_000) });
@@ -354,6 +358,7 @@ it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (i
         login: "octocat" as Login,
         mode: "full",
         requestedAt: at(start + 15 * minute),
+        reserved: 4,
       });
       expect(yield* status("octocat")).toEqual(opened);
 
@@ -520,7 +525,7 @@ it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (i
       github.owners.set("big-library", user("big-library", 7_001, 2_431));
       expect(yield* request("big-library")).toMatchObject({ state: "queued", starredTotal: 2_431 });
       expect(queue.delays).toEqual([Duration.zero]);
-      expect(yield* lineUnits).toBe(27);
+      expect(yield* lineUnits).toBe(29);
       const stored = yield* Db.Db.use((db) => db.accounts.byLogin("big-library" as Login));
       expect(Option.map(stored, (found) => found.starredCount)).toEqual(Option.some(2_431));
     }),
@@ -677,7 +682,7 @@ it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (i
         accountType: "user",
       });
       expect(queue.delays).toEqual([Duration.zero]);
-      expect(yield* lineUnits).toBe(4_500 + 26);
+      expect(yield* lineUnits).toBe(4_500 + 28);
     }),
   );
 
@@ -687,7 +692,7 @@ it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (i
       yield* Db.Db.use((db) => db.accounts.upsert(user("linus", 9004, 2_431).account, 2_431));
       yield* fill(300);
       yield* request("linus", owner);
-      expect(yield* request("octocat")).toMatchObject({ state: "waiting", startsAt: at(start + 126 * unitMillis) });
+      expect(yield* request("octocat")).toMatchObject({ state: "waiting", startsAt: at(start + 128 * unitMillis) });
     }),
   );
 
@@ -720,7 +725,7 @@ it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (i
       expect(yield* admitted("not-found")).toBe(notFound + 1);
       const span = collected.named("SyncRequests.request");
       expect(span?.attributes.get("sync.admission.decision")).toBe("started");
-      expect(span?.attributes.get("sync.admission.cost")).toBe(3);
+      expect(span?.attributes.get("sync.admission.cost")).toBe(5);
       expect(span?.attributes.get("sync.admission.wait_seconds")).toBe(0);
       const attributes = collected.spans.flatMap((each) => [...each.attributes.values()].map(String));
       expect(attributes.join(" ")).not.toMatch(/octocat|no-such-login|caller-a/);
@@ -793,15 +798,13 @@ it.effect("prices the GitHub requests a sync makes", () =>
     const since = (starredTotal: number, storedStars: number) =>
       ({ _tag: "since", starredTotal, storedStars }) as const;
     expect(SyncRequests.lookupCost).toBe(1);
-    expect(SyncRequests.costOf(true, since(2_431, 2_431))).toBe(3);
-    expect(SyncRequests.costOf(true, since(2_431, 2_500))).toBe(3);
-    expect(SyncRequests.costOf(true, since(2_431, 2_332))).toBe(3);
-    expect(SyncRequests.costOf(true, since(2_431, 2_331))).toBe(4);
-    expect(SyncRequests.costOf(true, since(501, 1))).toBe(8);
-    expect(SyncRequests.costOf(false, since(501, 1))).toBe(7);
-    expect(SyncRequests.costOf(true, { _tag: "every", starredTotal: 0 })).toBe(3);
-    expect(SyncRequests.costOf(true, { _tag: "every", starredTotal: 2_431 })).toBe(27);
-    expect(SyncRequests.costOf(false, { _tag: "every", starredTotal: 2_431 })).toBe(26);
+    expect(SyncRequests.costOf(since(2_431, 2_431))).toBe(2);
+    expect(SyncRequests.costOf(since(2_431, 2_500))).toBe(2);
+    expect(SyncRequests.costOf(since(2_431, 2_333))).toBe(2);
+    expect(SyncRequests.costOf(since(2_431, 2_332))).toBe(3);
+    expect(SyncRequests.costOf(since(501, 1))).toBe(7);
+    expect(SyncRequests.costOf({ _tag: "every", starredTotal: 0 })).toBe(4);
+    expect(SyncRequests.costOf({ _tag: "every", starredTotal: 2_431 })).toBe(28);
   }),
 );
 

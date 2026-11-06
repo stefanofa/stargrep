@@ -521,7 +521,7 @@ it.layer(signedInWith(queue.layer), { timeout: 30_000 })("opening the library", 
         syncedAt: "2026-11-05T11:35:30.000Z",
       });
       expect(queue.sent).toEqual([
-        { login: ada.account.login, mode: "incremental", requestedAt: DateTime.makeUnsafe(now) },
+        { login: ada.account.login, mode: "incremental", requestedAt: DateTime.makeUnsafe(now), reserved: 2 },
       ]);
     }),
   );
