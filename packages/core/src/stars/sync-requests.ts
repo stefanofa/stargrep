@@ -428,7 +428,9 @@ const make = Effect.fnUntraced(function* (share: BudgetShare) {
     if (current.state === "done" && within(anyoneCooldown, now)(current.syncedAt)) {
       return { _tag: "Deduped", status: current };
     }
-    const held = Option.filter(stored, holds(anyoneCooldown, now));
+    // A signed-in requester never waits, so a request still waiting in line does not hold the login for them.
+    const overtakes = userId !== undefined && current.state === "waiting";
+    const held = overtakes ? Option.none() : Option.filter(stored, holds(anyoneCooldown, now));
     if (Option.isSome(held)) {
       return held.value.outcome === "missing" ? { _tag: "NotFound", cost: 0 } : { _tag: "Deduped", status: current };
     }
@@ -446,7 +448,7 @@ const make = Effect.fnUntraced(function* (share: BudgetShare) {
     // GitHub answered, so the lookup spent a request whatever comes of the sync.
     yield* reserve(db, line, now, lookupCost, true);
     const claim = (outcome: "claimed" | "missing") =>
-      db.syncRequests.claim({ login, at: now, cooldown: anyoneCooldown, overtakesWaiting: false, outcome });
+      db.syncRequests.claim({ login, at: now, cooldown: anyoneCooldown, overtakesWaiting: overtakes, outcome });
 
     if (Option.isNone(found.success)) {
       if (!(yield* claim("missing"))) return yield* fromWinner(login, now);

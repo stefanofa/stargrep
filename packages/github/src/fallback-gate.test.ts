@@ -144,6 +144,29 @@ describe("FallbackGate.prefer", () => {
     });
   });
 
+  effect("moves a job to the server's token when GraphQL says the user's window is spent", () => {
+    const fake = github(4000, (token) =>
+      token === "user"
+        ? {
+            body: { data: null, errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }] },
+            headers: Fake.rateLimitHeaders(0, 5400, "graphql"),
+          }
+        : Fake.starCountReply(150),
+    );
+    return Effect.gen(function* () {
+      const { user, server } = yield* gates(fake);
+      const job = yield* FallbackGate.prefer(user, server);
+      const client = yield* Effect.provide(
+        GitHub.GitHub,
+        GitHub.layer.pipe(Layer.provide(Layer.succeed(TokenGate.TokenGate, job))),
+      );
+      const before = yield* fallbacksFor("rate-limited");
+      expect(yield* client.starCount("octocat" as Login)).toBe(150);
+      expect(fake.sent.map(tokenOf)).toEqual(["user", "server"]);
+      expect((yield* fallbacksFor("rate-limited")) - before).toBe(1);
+    });
+  });
+
   effect("waits out a secondary rate limit on the user's token, which still has quota", () => {
     const fake = github(4000, (token, remaining) =>
       token === "user" && remaining === 3999

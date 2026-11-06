@@ -20,14 +20,18 @@ export const fallbacks = Metric.counter("stargrep_github_fallbacks", {
     "Jobs a user started that moved to the server's GitHub token, by reason: budget, unauthorized, rate-limited, token-unavailable.",
 });
 
+// GraphQL answers a spent window with a 200 whose errors name RATE_LIMITED.
+const graphQLRateLimited = /"type"\s*:\s*"RATE_LIMITED"/;
+
 // A 401 means the token expired or the user revoked it. A rate limit with nothing remaining means the user's own tools
 // spent the window. A secondary rate limit keeps quota, so the GitHub client waits it out on the same token.
 const replyReason = (reply: TokenGate.Reply): Option.Option<FallbackReason> => {
   if (reply.status === 401) return Option.some("unauthorized");
-  if ((reply.status === 403 || reply.status === 429) && Option.contains(reply.rateLimit.remaining, 0)) {
-    return Option.some("rate-limited");
-  }
-  return Option.none();
+  const spent =
+    reply.status === 403 ||
+    reply.status === 429 ||
+    (TokenGate.isSuccess(reply.status) && Option.exists(reply.body, (body) => graphQLRateLimited.test(body)));
+  return spent && Option.contains(reply.rateLimit.remaining, 0) ? Option.some("rate-limited") : Option.none();
 };
 
 const logFallback = (reason: FallbackReason, operation: Operation) => {

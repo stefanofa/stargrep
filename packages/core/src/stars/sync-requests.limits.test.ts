@@ -231,6 +231,29 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests line", (it) => {
     ),
   );
 
+  it.effect("lets a signed-in import take over a signed-out request still waiting in line, and start it now", () =>
+    admitting(({ sent, delays }) =>
+      Effect.gen(function* () {
+        yield* fill(4_000);
+        expect(yield* request("octocat")).toMatchObject({ state: "waiting" });
+        expect(yield* request("octocat", signedIn("caller-b"))).toMatchObject({
+          state: "queued",
+          requestedAt: at(start),
+        });
+        expect(delays.at(-1)).toEqual(Duration.zero);
+        expect(sent.at(-1)).toEqual({
+          login: "octocat" as Login,
+          mode: "incremental",
+          requestedAt: at(start),
+          reserved: 0,
+          userId: memberId,
+        });
+        expect(yield* request("octocat", signedIn("caller-c"))).toMatchObject({ state: "queued" });
+        expect(sent).toHaveLength(2);
+      }),
+    ),
+  );
+
   it.effect("prunes requests older than a day and lines the clock has passed, and keeps the rest", () =>
     admitting(() =>
       Effect.gen(function* () {

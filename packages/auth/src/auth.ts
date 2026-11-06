@@ -7,6 +7,7 @@ import { oAuthProxy } from "better-auth/plugins/oauth-proxy";
 import { drizzle } from "drizzle-orm/node-postgres";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -49,6 +50,8 @@ export class Auth extends Context.Service<
   }
 >()("@stargrep/auth/auth") {}
 
+const tokenReadTimeout = Duration.seconds(10);
+
 interface TokenSource {
   readonly $context: Promise<{
     readonly internalAdapter: {
@@ -77,6 +80,11 @@ export const readGitHubToken = (auth: TokenSource, userId: UserId) =>
     },
     catch: (cause) => new AuthFailed({ operation: "token", cause }),
   }).pipe(
+    // A refresh waits on GitHub's token endpoint, and a job that waits on it holds its queue message.
+    Effect.timeoutOrElse({
+      duration: tokenReadTimeout,
+      orElse: () => Effect.fail(new AuthFailed({ operation: "token", cause: "Reading the GitHub token timed out" })),
+    }),
     Effect.flatMap(({ accessToken, accessTokenExpiresAt }) =>
       Effect.flatMap(Clock.currentTimeMillis, (now) =>
         accessTokenExpiresAt !== undefined && accessTokenExpiresAt.getTime() <= now
