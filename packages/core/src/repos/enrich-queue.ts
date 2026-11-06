@@ -1,10 +1,15 @@
+import { UserId } from "@stargrep/db/auth-schema";
 import { RepoId } from "@stargrep/github/schemas";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-export const EnrichRepo = Schema.Struct({ repoId: RepoId });
+export const EnrichRepo = Schema.Struct({
+  repoId: RepoId,
+  // The signed-in user whose import brought the repo in. Their token pays for its GitHub reads. A sweep's repo has none.
+  userId: Schema.optionalKey(UserId),
+});
 export type EnrichRepo = typeof EnrichRepo.Type;
 
 export class EnrichQueueFailed extends Schema.TaggedError<EnrichQueueFailed, { readonly brand: unique symbol }>()(

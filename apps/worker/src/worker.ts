@@ -1,4 +1,6 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
+import { tokenConfig } from "@stargrep/auth/config";
+import * as Tokens from "@stargrep/auth/tokens";
 import { SyncRequests } from "@stargrep/core/stars";
 import * as GitHub from "@stargrep/github/github";
 import { budgetShare, budgetShareName, stageBudgetShare } from "@stargrep/runtime/budget-share";
@@ -8,12 +10,14 @@ import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
+import { tokenBindings } from "./auth.ts";
 import * as Crons from "./crons.ts";
 import { Database, DatabaseMigrations } from "./database.ts";
 import { prodWorkerHosting } from "./domain.ts";
-import { tokenGate } from "./github-gate.ts";
+import { tokenGate, UserGitHubGate } from "./github-gate.ts";
 import { healthResponse } from "./health.ts";
 import { Icons } from "./icons/bucket.ts";
 import * as Layers from "./layers.ts";
@@ -21,6 +25,7 @@ import * as OwnerLookup from "./owner-lookup.ts";
 import * as Queues from "./queues.ts";
 import { Readmes } from "./readmes.ts";
 import { requireStageSecrets } from "./secrets.ts";
+import * as UserGate from "./user-gate.ts";
 
 export default class Worker extends Cloudflare.Worker<Worker>()(
   "Worker",
@@ -35,6 +40,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
       env: {
         DATABASE_MIGRATIONS: yield* DatabaseMigrations,
         [budgetShareName]: String(yield* stageBudgetShare(stage)),
+        ...(yield* tokenBindings(stage)),
       },
       placement: { region: "aws:us-east-1" },
       observability: { enabled: true, logs: { enabled: true, invocationLogs: true }, traces: { enabled: true } },
@@ -45,6 +51,12 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
     const database = yield* Cloudflare.Hyperdrive.Connect(Database);
     const iconQueue = yield* Cloudflare.Queues.WriteQueue(yield* Queues.FetchIcons);
     const gate = yield* tokenGate;
+    const userGitHubGates = yield* UserGitHubGate;
+    const userGates = Option.match(yield* Effect.orDie(tokenConfig), {
+      onNone: () => UserGate.layerServerOnly,
+      onSome: (config) =>
+        UserGate.layer(userGitHubGates).pipe(Layer.provide(Tokens.layer(config, database.connectionString))),
+    });
     const runtime = Layers.layerRuntime({
       database: database.connectionString,
       readmes: yield* Cloudflare.R2.ReadWriteBucket(Readmes),
@@ -52,6 +64,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
       enrichQueue: yield* Cloudflare.Queues.WriteQueue(yield* Queues.EnrichRepos),
       iconQueue,
       tokenGate: gate,
+      userGates,
       ai: yield* Effect.orDie(Layers.aiModels),
       adopted: yield* Ref.make(false),
     });

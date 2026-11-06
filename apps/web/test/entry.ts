@@ -122,7 +122,7 @@ const db = {
 const serve = testServer((request) =>
   Layer.mergeAll(
     Layer.succeed(Search.Search, search),
-    Layer.succeed(Viewers, Viewers.of({ current: Effect.fail(new NotSignedIn()) })),
+    Layer.succeed(Viewers, Viewers.of({ current: Effect.fail(new NotSignedIn()), signedIn: Effect.succeedNone })),
     Layer.succeed(IconHost, IconHost.of({ origin: new URL(request.url).origin })),
     admission,
     layerRateLimiter(env),

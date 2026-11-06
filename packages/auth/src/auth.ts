@@ -3,9 +3,12 @@ import { UserId } from "@stargrep/db/auth-schema";
 import { acquirePool } from "@stargrep/db/node-postgres";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { refreshAccessToken } from "better-auth/oauth2";
 import { oAuthProxy } from "better-auth/plugins/oauth-proxy";
 import { drizzle } from "drizzle-orm/node-postgres";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -15,11 +18,26 @@ import type pg from "pg";
 import type { AuthConfig } from "./config.ts";
 
 export const basePath = "/auth";
-const providerId = "github";
+export const providerId = "github";
 
 // The proxy secret sits in the preview environment, which every branch's workflow can read. So prod forwards a
 // preview's sign-in, which carries the user's GitHub token, only to a preview Worker of this account.
 export const previewHost = /^stargrep-web-pr-\d+-[a-z0-9]+\.rewebdotso\.workers\.dev$/;
+
+const tokenEndpoint = "https://github.com/login/oauth/access_token";
+
+// GitHub refuses a used or revoked refresh token with a 200 that names an error, and Better Auth would then store the
+// refresh token it read over the one a concurrent refresh just wrote. A refresh with no access token fails before Better
+// Auth writes anything, so the newest refresh token stays.
+export const githubProvider = (clientId: string, clientSecret?: string) => ({
+  clientId,
+  ...(clientSecret === undefined ? {} : { clientSecret }),
+  refreshAccessToken: async (refreshToken: string) => {
+    const tokens = await refreshAccessToken({ refreshToken, options: { clientId, clientSecret }, tokenEndpoint });
+    if (!tokens.accessToken) throw new Error("GitHub refused the refresh token");
+    return tokens;
+  },
+});
 
 export const redirectAllowed = (location: string, origin: string) => {
   const target = URL.parse(location, origin);
@@ -48,6 +66,50 @@ export class Auth extends Context.Service<
   }
 >()("@stargrep/auth/auth") {}
 
+export const tokenReadTimeout = Duration.seconds(10);
+
+interface TokenSource {
+  readonly $context: Promise<{
+    readonly internalAdapter: {
+      readonly findAccounts: (
+        userId: string,
+      ) => Promise<ReadonlyArray<{ readonly id: string; readonly providerId: string }>>;
+    };
+  }>;
+  readonly api: {
+    readonly getAccessToken: (input: {
+      readonly body: { readonly accountId: string; readonly userId: string };
+    }) => Promise<{ readonly accessToken: string; readonly accessTokenExpiresAt?: Date | undefined }>;
+  };
+}
+
+// Better Auth decrypts the stored token, refreshes it when it is within five seconds of expiry, and stores the new one
+// encrypted. Better Auth fails a refresh only on an error status. GitHub can name the error in a 200 body instead, and
+// Better Auth then answers with the expired token, so an answer that is still expired is a failure here.
+export const readGitHubToken = (auth: TokenSource, userId: UserId) =>
+  Effect.tryPromise({
+    try: async () => {
+      const { internalAdapter } = await auth.$context;
+      const account = (await internalAdapter.findAccounts(userId)).find((found) => found.providerId === providerId);
+      if (account === undefined) throw new Error("The user has no GitHub account");
+      return auth.api.getAccessToken({ body: { accountId: account.id, userId } });
+    },
+    catch: (cause) => new AuthFailed({ operation: "token", cause }),
+  }).pipe(
+    // A refresh waits on GitHub's token endpoint, and a job that waits on it holds its queue message.
+    Effect.timeoutOrElse({
+      duration: tokenReadTimeout,
+      orElse: () => Effect.fail(new AuthFailed({ operation: "token", cause: "Reading the GitHub token timed out" })),
+    }),
+    Effect.flatMap(({ accessToken, accessTokenExpiresAt }) =>
+      Effect.flatMap(Clock.currentTimeMillis, (now) =>
+        accessTokenExpiresAt !== undefined && accessTokenExpiresAt.getTime() <= now
+          ? Effect.fail(new AuthFailed({ operation: "token", cause: "The GitHub token expired and did not refresh" }))
+          : Effect.succeed(Redacted.make(accessToken)),
+      ),
+    ),
+  );
+
 export interface SignIn {
   readonly userId: UserId;
   readonly githubToken: Effect.Effect<Redacted.Redacted<string>, AuthFailed>;
@@ -68,7 +130,7 @@ export const signInOptions = ({ config, origin }: Pick<Options, "config" | "orig
   const signIn = config.github;
   if (signIn._tag === "proxied") {
     return {
-      provider: { clientId: signIn.clientId },
+      provider: githubProvider(signIn.clientId),
       plugins: [
         oAuthProxy({
           productionURL: signIn.productionOrigin,
@@ -81,7 +143,7 @@ export const signInOptions = ({ config, origin }: Pick<Options, "config" | "orig
   // Prod only forwards previews' sign-ins, which the plugin's hooks do. Without its endpoints, prod has no route that
   // turns a profile encrypted with the proxy secret into a session.
   return {
-    provider: { clientId: signIn.clientId, clientSecret: Redacted.value(signIn.clientSecret) },
+    provider: githubProvider(signIn.clientId, Redacted.value(signIn.clientSecret)),
     plugins: Option.match(signIn.proxySecret, {
       onNone: () => [],
       onSome: (secret) => [
@@ -121,22 +183,10 @@ export const make = (pool: pg.Pool, options: Options) => {
       },
     },
   });
-  const githubToken = async (userId: UserId): Promise<string> => {
-    const { internalAdapter } = await auth.$context;
-    const account = (await internalAdapter.findAccounts(userId)).find((found) => found.providerId === providerId);
-    if (account === undefined) throw new Error("The user has no GitHub account");
-    const { accessToken } = await auth.api.getAccessToken({ body: { accountId: account.id, userId } });
-    return accessToken;
-  };
   const tokenOf: (userId: UserId) => Effect.Effect<Redacted.Redacted<string>, AuthFailed> = Effect.fn(
     "Auth.githubToken",
   )(function* (userId: UserId) {
-    return Redacted.make(
-      yield* Effect.tryPromise({
-        try: () => githubToken(userId),
-        catch: (cause) => new AuthFailed({ operation: "token", cause }),
-      }),
-    );
+    return yield* readGitHubToken(auth, userId);
   });
   return { handler: auth.handler, getSession: auth.api.getSession, tokenOf };
 };

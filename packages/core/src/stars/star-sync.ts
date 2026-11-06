@@ -1,4 +1,5 @@
 import * as Db from "@stargrep/db";
+import { UserId } from "@stargrep/db/auth-schema";
 import type { AccountNotFound, DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
 import type { GitHubError } from "@stargrep/github/errors";
 import * as GitHub from "@stargrep/github/github";
@@ -17,7 +18,10 @@ import * as DiffPage from "./diff-page.ts";
 export const Mode = Schema.Literals(["incremental", "full"]);
 export type Mode = typeof Mode.Type;
 
-export const SyncRequest = Schema.Struct({ accountId: GitHubAccountId, mode: Mode });
+// The signed-in user who started a sync. Their token pays for its GitHub reads and for the enrichment it queues.
+const PaidBy = Schema.optionalKey(UserId);
+
+export const SyncRequest = Schema.Struct({ accountId: GitHubAccountId, mode: Mode, userId: PaidBy });
 export type SyncRequest = typeof SyncRequest.Type;
 
 export const LoginSyncRequest = Schema.Struct({
@@ -28,6 +32,7 @@ export const LoginSyncRequest = Schema.Struct({
   // The units admission reserved in the line for the sync's own GitHub requests. A message without them, such as one
   // from the debug Worker, pays for every request the sync makes.
   reserved: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  userId: PaidBy,
 });
 export type LoginSyncRequest = typeof LoginSyncRequest.Type;
 
@@ -99,7 +104,10 @@ const make = Effect.gen(function* () {
     const pages = written.map(({ page }) => page);
     // Enrichment shares the token gate, so repos enqueued mid-read would hold it between pages.
     const pending = written.flatMap((entry) => entry.pending);
-    if (Arr.isReadonlyArrayNonEmpty(pending)) yield* queue.send(pending.map((repoId) => ({ repoId })));
+    if (Arr.isReadonlyArrayNonEmpty(pending)) {
+      const paidBy = request.userId === undefined ? {} : { userId: request.userId };
+      yield* queue.send(pending.map((repoId) => ({ repoId, ...paidBy })));
+    }
 
     const snapshotReady = !pages.some((page) => page.stopped) && Option.isSome(countBefore);
     const countAfter = snapshotReady ? Option.some(yield* countStars) : Option.none<number>();
@@ -123,7 +131,8 @@ const make = Effect.gen(function* () {
   const syncLogin = Effect.fn("StarSync.syncLogin")(function* (request: LoginSyncRequest) {
     const account = yield* github.account(request.login);
     yield* db.accounts.upsert(account);
-    return yield* sync({ accountId: account.id, mode: request.mode });
+    const paidBy = request.userId === undefined ? {} : { userId: request.userId };
+    return yield* sync({ accountId: account.id, mode: request.mode, ...paidBy });
   });
 
   return StarSync.of({ sync, syncLogin });

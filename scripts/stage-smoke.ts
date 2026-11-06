@@ -9,7 +9,7 @@ import { readStageOutput } from "./stage-output.ts";
 
 const [stage, ...alchemyArgs] = process.argv.slice(2);
 if (!stage) throw new Error("usage: bun scripts/stage-smoke.ts <stage> [alchemy state read flags]");
-const { debugUrl, debugToken, webUrl } = await readStageOutput(stage, alchemyArgs);
+const { url: workerUrl, debugUrl, debugToken, webUrl } = await readStageOutput(stage, alchemyArgs);
 
 const Budget = Schema.Struct({ minute: Schema.Int, used: Schema.Int, cap: Schema.Int });
 const Count = Schema.Struct({ count: Schema.Int });
@@ -198,6 +198,12 @@ const web = Effect.gen(function* () {
   ];
 });
 
+// The main Worker starts its runtime on every request, so a startup failure answers 500 here before any queue message.
+const worker = Effect.gen(function* () {
+  const health = yield* send(HttpClientRequest.get(new URL("/health", workerUrl)));
+  return [check("the main Worker starts and reads its database", health.status === 200, { status: health.status })];
+});
+
 const flood = Effect.gen(function* () {
   const now = yield* Clock.currentTimeMillis;
   yield* Effect.sleep(60_000 - (now % 60_000) + 1_000);
@@ -222,7 +228,7 @@ const flood = Effect.gen(function* () {
 const checks = (
   await Effect.runPromise(
     ready.pipe(
-      Effect.andThen(Effect.all([web, unauthenticated, traffic, flood])),
+      Effect.andThen(Effect.all([web, worker, unauthenticated, traffic, flood])),
       Effect.provide(FetchHttpClient.layer),
     ),
   )

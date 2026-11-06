@@ -33,7 +33,7 @@ export const importViewer = Effect.fn("Viewers.import")(
     const { account: facts, starredCount } = GitHubViewer.toViewer(read.data.viewer);
     const db = yield* Db.Db;
     yield* db.accounts.claim({ facts, userId, starredCount });
-    yield* requestOwnerSync(facts.login, "sign-in");
+    yield* requestOwnerSync(facts.login, userId, "sign-in");
     return yield* db.accounts.require(facts.id).pipe(Effect.catchTags({ AccountNotFound: Effect.die }));
   },
   Effect.catchTags({
@@ -62,8 +62,9 @@ const signedIn = (headers: Headers) =>
       const auth = yield* Auth.Auth;
       const db = yield* Db.Db;
       const context = yield* Effect.context<ImportServices>();
+      const signedIn = yield* Effect.cached(auth.session(headers).pipe(Effect.catch(unavailable("session"))));
       const current = Effect.gen(function* () {
-        const session = yield* auth.session(headers).pipe(Effect.catch(unavailable("session")));
+        const session = yield* signedIn;
         if (Option.isNone(session)) return yield* new NotSignedIn();
         const userId = session.value;
         const claimed = yield* db.accounts.claimedBy(userId);
@@ -72,11 +73,14 @@ const signedIn = (headers: Headers) =>
         const account = yield* importViewer(userId, token).pipe(Effect.provide(context));
         return { userId, account } satisfies Viewer;
       }).pipe(Effect.withSpan("Viewers.current"));
-      return Viewers.of({ current: yield* Effect.cached(current) });
+      return Viewers.of({ current: yield* Effect.cached(current), signedIn });
     }),
   );
 
-const signedOut = Layer.succeed(Viewers, Viewers.of({ current: Effect.fail(new NotSignedIn()) }));
+const signedOut = Layer.succeed(
+  Viewers,
+  Viewers.of({ current: Effect.fail(new NotSignedIn()), signedIn: Effect.succeedNone }),
+);
 
 export const layerViewers = (
   config: Option.Option<AuthConfig>,

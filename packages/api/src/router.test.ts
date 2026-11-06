@@ -80,6 +80,7 @@ interface Fakes {
   readonly requests?: SyncRequests.SyncRequests["Service"];
   readonly sent?: Array<readonly [Login, SyncRequests.Requester]>;
   readonly viewer?: Effect.Effect<Viewer, ViewerError>;
+  readonly signedIn?: Effect.Effect<Option.Option<UserId>, ViewerUnavailable>;
 }
 
 const ada: Viewer = {
@@ -160,7 +161,13 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
     ),
     Context.add(SyncRequests.SyncRequests, requests),
     Context.add(RateLimiter, RateLimiter.of({ acquire: fakes.limiter ?? (() => Effect.void) })),
-    Context.add(Viewers, Viewers.of({ current: fakes.viewer ?? Effect.fail(new NotSignedIn()) })),
+    Context.add(
+      Viewers,
+      Viewers.of({
+        current: fakes.viewer ?? Effect.fail(new NotSignedIn()),
+        signedIn: fakes.signedIn ?? Effect.succeedNone,
+      }),
+    ),
     Context.add(IconHost, IconHost.of({ origin: "https://stargrep.test" })),
     Context.add(Caller, Caller.of({ key: Db.CallerKey.make("caller-test"), address: "192.0.2.1" })),
   );
@@ -316,6 +323,20 @@ describe("search", () => {
 });
 
 describe("sync", () => {
+  test("queues a signed-in import as that user's work, and a broken session as a signed-out one", async () => {
+    const sent: Array<readonly [Login, SyncRequests.Requester]> = [];
+    const caller = Db.CallerKey.make("caller-test");
+    const userId = UserId.make("user-ada");
+    await client({ sent, signedIn: Effect.succeedSome(userId) }).api.triggerSync({ login: "octocat" });
+    await client({ sent, signedIn: Effect.fail(new ViewerUnavailable({ step: "session" })) }).api.triggerSync({
+      login: "hubot",
+    });
+    expect(sent).toEqual([
+      ["octocat" as Login, { _tag: "signed-in", userId, caller }],
+      ["hubot" as Login, { _tag: "anyone", caller }],
+    ]);
+  });
+
   test("queues a sync and reports a failed one", async () => {
     const sent: Array<readonly [Login, SyncRequests.Requester]> = [];
     const { api } = client({ sent });
@@ -459,13 +480,15 @@ describe("signed-in procedures", () => {
   });
 
   test("return the signed-in account and its stars, newest first", async () => {
-    const { api } = client({ viewer: Effect.succeed(ada) });
+    const sent: Array<readonly [Login, SyncRequests.Requester]> = [];
+    const { api } = client({ viewer: Effect.succeed(ada), sent });
     expect(await api.viewer()).toEqual({
       login: "ada",
       name: "Ada",
       avatarUrl: "https://avatars.githubusercontent.com/u/7",
       starredCount: 2431,
     });
+    expect(sent).toEqual([["ada" as Login, { _tag: "owner", userId: ada.userId }]]);
     expect(await api.library()).toEqual({
       repos: [
         expect.objectContaining({
@@ -539,7 +562,13 @@ it.layer(signedInWith(queue.layer), { timeout: 30_000 })("opening the library", 
         syncedAt: "2026-11-05T11:35:30.000Z",
       });
       expect(queue.sent).toEqual([
-        { login: ada.account.login, mode: "incremental", requestedAt: DateTime.makeUnsafe(now), reserved: 2 },
+        {
+          login: ada.account.login,
+          mode: "incremental",
+          requestedAt: DateTime.makeUnsafe(now),
+          reserved: 0,
+          userId: ada.userId,
+        },
       ]);
     }),
   );

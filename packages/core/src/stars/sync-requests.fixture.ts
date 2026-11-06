@@ -1,4 +1,5 @@
 import * as Db from "@stargrep/db";
+import { UserId } from "@stargrep/db/auth-schema";
 import type { EmbeddingModelId } from "@stargrep/db/embedding";
 import type { DbQueryFailed } from "@stargrep/db/errors";
 import * as TestDatabase from "@stargrep/db/test-database";
@@ -139,7 +140,14 @@ export const anyone = (caller = "caller-a"): SyncRequests.Requester => ({
   _tag: "anyone",
   caller: Db.CallerKey.make(caller),
 });
-export const owner: SyncRequests.Requester = { _tag: "owner" };
+export const ownerId = UserId.make("user-owner");
+export const owner: SyncRequests.Requester = { _tag: "owner", userId: ownerId };
+export const memberId = UserId.make("user-member");
+export const signedIn = (caller = "caller-a"): SyncRequests.Requester => ({
+  _tag: "signed-in",
+  userId: memberId,
+  caller: Db.CallerKey.make(caller),
+});
 
 export const request = (login: string, by: SyncRequests.Requester = anyone()) =>
   SyncRequests.SyncRequests.use((service) => service.request(login as Login, by));

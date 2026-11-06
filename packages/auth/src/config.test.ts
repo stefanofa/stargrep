@@ -5,7 +5,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
-import { authConfig, bindings, names } from "./config.ts";
+import { authConfig, bindings, names, tokenClientBindings } from "./config.ts";
 
 const read = <A>(config: Config.Config<A>, env: Record<string, string>) =>
   config.parse(ConfigProvider.fromUnknown(env));
@@ -111,6 +111,35 @@ describe("auth config", () => {
         );
         expect(written).toEqual(env);
       }
+    }),
+  );
+
+  it.effect("gives the main Worker the same token bindings when it starts as at deploy, for both sign-in modes", () =>
+    Effect.gen(function* () {
+      const deployEnvs = [
+        { [names.clientId]: "Iv1.app", [names.clientSecret]: clientSecret, [names.proxySecret]: "proxy" },
+        {
+          [names.clientId]: "Iv1.app",
+          [names.clientSecret]: clientSecret,
+          [names.proxyOrigin]: "https://stargrep.com",
+          [names.proxySecret]: "proxy",
+        },
+        {},
+      ];
+      const results = [];
+      for (const env of deployEnvs) {
+        const atDeploy = yield* read(tokenClientBindings, env);
+        const atStart = yield* read(tokenClientBindings, JSON.parse(reveal(atDeploy)));
+        results.push([reveal(atDeploy), reveal(atStart)]);
+      }
+      expect(results).toEqual([
+        [
+          JSON.stringify({ [names.clientId]: "Iv1.app", [names.clientSecret]: clientSecret }),
+          JSON.stringify({ [names.clientId]: "Iv1.app", [names.clientSecret]: clientSecret }),
+        ],
+        [JSON.stringify({ [names.clientId]: "Iv1.app" }), JSON.stringify({ [names.clientId]: "Iv1.app" })],
+        ["{}", "{}"],
+      ]);
     }),
   );
 });

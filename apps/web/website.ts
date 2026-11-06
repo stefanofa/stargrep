@@ -1,10 +1,11 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import { apiKeyName } from "@stargrep/ai/gateway";
 import { demoLoginName } from "@stargrep/api/public-config";
-import { bindings, githubSignIn, names, optionalSecret, required } from "@stargrep/auth/config";
+import { bindings, githubSignIn, names } from "@stargrep/auth/config";
 import { budgetShareName, stageBudgetShare } from "@stargrep/runtime/budget-share";
 import { aiGatewayKey } from "@stargrep/runtime/config";
 import MainWorker from "@stargrep/worker";
+import { betterAuthSecret } from "@stargrep/worker/auth";
 import { Database, DatabaseMigrations } from "@stargrep/worker/database";
 import { prodWebHosting } from "@stargrep/worker/domain";
 import { Icons } from "@stargrep/worker/icons";
@@ -15,8 +16,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 const SearchCache = Cloudflare.KV.Namespace("SearchCache");
-
-const BetterAuthSecret = Alchemy.makeRandom("BetterAuthSecret");
 
 const CallerKey = Alchemy.makeRandom("CallerKey");
 
@@ -30,14 +29,10 @@ const signInBindings = Effect.gen(function* () {
         `prod signs in directly and forwards previews' sign-ins, so it needs ${names.clientId}, ${names.proxySecret}, and no ${names.proxyOrigin}`,
       );
     }
-    return { ...bindings(github.value), [names.secret]: yield* required(names.secret) };
+    return { ...bindings(github.value), [names.secret]: yield* betterAuthSecret(stage) };
   }
   if (Option.isNone(signIn)) return {};
-  const secret = yield* optionalSecret(names.secret);
-  return {
-    ...bindings(signIn.value),
-    [names.secret]: Option.isSome(secret) ? secret.value : yield* BetterAuthSecret,
-  };
+  return { ...bindings(signIn.value), [names.secret]: yield* betterAuthSecret(stage) };
 });
 
 // Cloudflare counts a rate limit per namespace ID across the whole account, so each stage gets its own IDs.

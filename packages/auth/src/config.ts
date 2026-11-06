@@ -92,6 +92,46 @@ export const authConfig: Config.Config<Option.Option<AuthConfig>> = Config.all({
   ),
 );
 
+export interface TokenConfig {
+  readonly secret: Redacted.Redacted<string>;
+  readonly clientId: string;
+  // A stage that signs in through prod's proxy has no client secret, so a token there cannot refresh.
+  readonly clientSecret: Option.Option<Redacted.Redacted<string>>;
+}
+
+// What reading a signed-in user's GitHub token needs, without the routes or the proxy.
+export const tokenConfig: Config.Config<Option.Option<TokenConfig>> = Config.all({
+  clientId: optionalText(names.clientId),
+  clientSecret: optionalSecret(names.clientSecret),
+  secret: optionalSecret(names.secret),
+}).pipe(
+  Config.map(({ clientId, clientSecret, secret }) =>
+    Option.zipWith(clientId, secret, (id, key) => ({ clientId: id, clientSecret, secret: key })),
+  ),
+);
+
+// What the main Worker binds to read and refresh users' tokens: the client ID, and the client secret only on a stage that
+// signs in directly. Alchemy evaluates a Worker's props again each time the Worker starts, against that Worker's own
+// bindings, which hold no proxy origin or proxy secret. So every value here is optional, and the same env gives the same
+// answer at deploy and at start.
+export const tokenClientBindings: Config.Config<Record<string, string | Redacted.Redacted<string>>> = Config.all({
+  clientId: optionalText(names.clientId),
+  clientSecret: optionalSecret(names.clientSecret),
+  proxyOrigin: optionalText(names.proxyOrigin),
+}).pipe(
+  Config.map(({ clientId, clientSecret, proxyOrigin }) =>
+    Option.match(clientId, {
+      onNone: () => ({}),
+      onSome: (id) => ({
+        [names.clientId]: id,
+        ...(Option.isNone(proxyOrigin) && Option.isSome(clientSecret)
+          ? { [names.clientSecret]: clientSecret.value }
+          : {}),
+      }),
+    }),
+  ),
+);
+
 export const bindings = (github: GitHubSignIn): Record<string, string | Redacted.Redacted<string>> =>
   github._tag === "direct"
     ? {

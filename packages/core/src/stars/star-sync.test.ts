@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 import * as Db from "@stargrep/db";
+import { UserId } from "@stargrep/db/auth-schema";
 import type { EmbeddingModelId } from "@stargrep/db/embedding";
 import * as TestDatabase from "@stargrep/db/test-database";
 import * as Fake from "@stargrep/github/github.fixture";
@@ -528,6 +529,24 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
     }),
   );
 
+  test.effect("queues the repos of a sync a signed-in user started for enrichment on that user's token", () =>
+    Effect.gen(function* () {
+      yield* reset();
+      users.set("ada", { id: 7, login: "ada" });
+      lists.set("ada", newestFirst(3));
+      const starSync = yield* StarSync.StarSync;
+      const userId = UserId.make("user-grace");
+      yield* starSync.syncLogin({ login: "ada" as Login, mode: "incremental", userId });
+      expect(sent.map((message) => message.userId)).toEqual([userId, userId, userId]);
+
+      yield* reset();
+      users.set("ada", { id: 7, login: "ada" });
+      lists.set("ada", newestFirst(2));
+      yield* starSync.syncLogin({ login: "ada" as Login, mode: "incremental" });
+      expect(sent.map((message) => "userId" in message)).toEqual([false, false]);
+    }),
+  );
+
   test.effect("keeps rows and owned repo stars under the same account ID after a rename", () =>
     Effect.gen(function* () {
       yield* reset();
@@ -570,7 +589,7 @@ const admission = SyncRequests.layer(share).pipe(
 
 const ada = { id: 7 as GitHubAccountId, login: "ada" as Login };
 const anyone: SyncRequests.Requester = { _tag: "anyone", caller: Db.CallerKey.make("caller-a") };
-const owner: SyncRequests.Requester = { _tag: "owner" };
+const owner: SyncRequests.Requester = { _tag: "owner", userId: UserId.make("user-ada") };
 
 const begin = Effect.gen(function* () {
   yield* reset();
