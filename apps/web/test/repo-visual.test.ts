@@ -30,17 +30,17 @@ describe("the repo icon slot", () => {
     });
   });
 
-  test("by default a person's repo gets a monogram of two lowercase owner letters", () => {
-    expect(avatarOwners.has("user")).toBe(false);
-    expect(repoVisual({ ...repo, owner: "ClementTsang", ownerType: "user" })).toEqual({
-      kind: "monogram",
+  test("a person's repo without an icon shows their avatar", () => {
+    expect(avatarOwners.has("user")).toBe(true);
+    expect(repoVisual({ ...repo, owner: "ClementTsang", ownerType: "user" })).toMatchObject({
+      kind: "avatar",
       letters: "cl",
     });
   });
 
-  test("with users switched on, a person's repo shows their avatar", () => {
-    expect(repoVisual({ ...repo, owner: "ClementTsang", ownerType: "user" }, everyone)).toMatchObject({
-      kind: "avatar",
+  test("with only orgs switched on, a person's repo gets a monogram of two lowercase owner letters", () => {
+    expect(repoVisual({ ...repo, owner: "ClementTsang", ownerType: "user" }, new Set(["org"] as const))).toEqual({
+      kind: "monogram",
       letters: "cl",
     });
   });
