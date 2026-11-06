@@ -73,59 +73,59 @@ const endpointOf = (operation: Operation, request: HttpClientRequest.HttpClientR
 });
 
 interface MemoryOptions {
-  readonly token: Redacted.Redacted<string>;
   readonly share: BudgetShare;
   readonly windows?: TokenBudget.Windows | undefined;
 }
 
+// One request in flight and one budget, whichever token sends a request. GitHub counts every token of one user, or of
+// one app installation, against the same limits, so a refreshed token keeps the windows of the one it replaced.
 export const makeMemory = Effect.fn("TokenGate.makeMemory")(function* (options: MemoryOptions) {
   const client = HttpClient.withScope(yield* HttpClient.HttpClient);
   const permit = yield* Semaphore.make(1);
   const budget = yield* Ref.make(TokenBudget.make(options.share, options.windows));
 
-  const execute = Effect.fn("TokenGate.execute")(function* (
-    operation: Operation,
-    request: HttpClientRequest.HttpClientRequest,
-  ) {
-    const endpoint = endpointOf(operation, request);
-    yield* Effect.annotateCurrentSpan({ "http.request.method": endpoint.method, "url.path": endpoint.path });
-    const resource = TokenBudget.resourceOf(endpoint.path);
-    const decision = TokenBudget.check(yield* Ref.get(budget), resource, yield* Clock.currentTimeMillis);
-    if (decision._tag === "Exhausted") {
-      return yield* new TokenBudgetExhausted({ resource, resetAt: decision.resetAt });
-    }
-    const reply = yield* Effect.scoped(
-      Effect.gen(function* () {
-        const response = yield* client.execute(HttpClientRequest.bearerToken(request, options.token));
-        const rateLimit = rateLimitHeaders(response.headers);
-        const observed = Option.all(rateLimit);
-        if (Option.isSome(observed)) {
-          yield* Ref.update(budget, (current) => TokenBudget.observe(current, observed.value));
-        }
-        const body = yield* readBody(response);
-        return { status: response.status, headers: response.headers, body, rateLimit };
-      }),
-    ).pipe(
-      Effect.timeoutOrElse({
-        duration: EXCHANGE_TIMEOUT,
-        orElse: () => Effect.fail(new GitHubRequestFailed({ ...endpoint, status: null, reason: "timeout" })),
-      }),
-      Effect.catchTags({
-        HttpClientError: () => Effect.fail(new GitHubRequestFailed({ ...endpoint, status: null, reason: "transport" })),
-      }),
-      Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
-    );
-    yield* Effect.annotateCurrentSpan({ "http.response.status_code": reply.status });
-    return reply;
-  }, permit.withPermit);
+  const execute = (token: Redacted.Redacted<string>) =>
+    Effect.fn("TokenGate.execute")(function* (operation: Operation, request: HttpClientRequest.HttpClientRequest) {
+      const endpoint = endpointOf(operation, request);
+      yield* Effect.annotateCurrentSpan({ "http.request.method": endpoint.method, "url.path": endpoint.path });
+      const resource = TokenBudget.resourceOf(endpoint.path);
+      const decision = TokenBudget.check(yield* Ref.get(budget), resource, yield* Clock.currentTimeMillis);
+      if (decision._tag === "Exhausted") {
+        return yield* new TokenBudgetExhausted({ resource, resetAt: decision.resetAt });
+      }
+      const reply = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const response = yield* client.execute(HttpClientRequest.bearerToken(request, token));
+          const rateLimit = rateLimitHeaders(response.headers);
+          const observed = Option.all(rateLimit);
+          if (Option.isSome(observed)) {
+            yield* Ref.update(budget, (current) => TokenBudget.observe(current, observed.value));
+          }
+          const body = yield* readBody(response);
+          return { status: response.status, headers: response.headers, body, rateLimit };
+        }),
+      ).pipe(
+        Effect.timeoutOrElse({
+          duration: EXCHANGE_TIMEOUT,
+          orElse: () => Effect.fail(new GitHubRequestFailed({ ...endpoint, status: null, reason: "timeout" })),
+        }),
+        Effect.catchTags({
+          HttpClientError: () =>
+            Effect.fail(new GitHubRequestFailed({ ...endpoint, status: null, reason: "transport" })),
+        }),
+        Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
+      );
+      yield* Effect.annotateCurrentSpan({ "http.response.status_code": reply.status });
+      return reply;
+    }, permit.withPermit);
 
   return { execute, budget: Ref.get(budget) };
 });
 
-export const layerMemory = (options: MemoryOptions) =>
+export const layerMemory = (options: MemoryOptions & { readonly token: Redacted.Redacted<string> }) =>
   Layer.effect(
     TokenGate,
-    Effect.map(makeMemory(options), ({ execute }) => TokenGate.of({ execute })),
+    Effect.map(makeMemory(options), ({ execute }) => TokenGate.of({ execute: execute(options.token) })),
   );
 
 // Counts each request the gate sent to GitHub, the client's retries and requests that failed included. A request the
@@ -214,30 +214,30 @@ export const serve = (gate: TokenGate["Service"]) =>
     return yield* Effect.orDie(encodeRemoteResult(result));
   });
 
-export const layerRemote = (remote: { readonly execute: (request: RemoteRequest) => Effect.Effect<unknown> }) =>
-  Layer.succeed(
-    TokenGate,
-    TokenGate.of({
-      execute: Effect.fn("TokenGate.execute")(function* (
-        operation: Operation,
-        request: HttpClientRequest.HttpClientRequest,
-      ) {
-        const endpoint = endpointOf(operation, request);
-        const sent = yield* toRemoteRequest(operation, request);
-        // A failed RPC call reaches here as a failure the stub's type does not name, or as a defect.
-        const exit = yield* Effect.exit(Effect.flatMap(remote.execute(sent), decodeRemoteResult));
-        if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) return yield* Effect.interrupt;
-        const result = Exit.isSuccess(exit)
-          ? exit.value
-          : new GitHubRequestFailed({ ...endpoint, status: null, reason: "transport" });
-        if (result._tag !== "Replied") return yield* result;
-        const headers = Headers.fromInput(result.headers);
-        return {
-          status: result.status,
-          headers,
-          body: Option.fromNullOr(result.body),
-          rateLimit: rateLimitHeaders(headers),
-        } satisfies Reply;
-      }),
+export const remote = (stub: { readonly execute: (request: RemoteRequest) => Effect.Effect<unknown> }) =>
+  TokenGate.of({
+    execute: Effect.fn("TokenGate.execute")(function* (
+      operation: Operation,
+      request: HttpClientRequest.HttpClientRequest,
+    ) {
+      const endpoint = endpointOf(operation, request);
+      const sent = yield* toRemoteRequest(operation, request);
+      // A failed RPC call reaches here as a failure the stub's type does not name, or as a defect.
+      const exit = yield* Effect.exit(Effect.flatMap(stub.execute(sent), decodeRemoteResult));
+      if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) return yield* Effect.interrupt;
+      const result = Exit.isSuccess(exit)
+        ? exit.value
+        : new GitHubRequestFailed({ ...endpoint, status: null, reason: "transport" });
+      if (result._tag !== "Replied") return yield* result;
+      const headers = Headers.fromInput(result.headers);
+      return {
+        status: result.status,
+        headers,
+        body: Option.fromNullOr(result.body),
+        rateLimit: rateLimitHeaders(headers),
+      } satisfies Reply;
     }),
-  );
+  });
+
+export const layerRemote = (stub: { readonly execute: (request: RemoteRequest) => Effect.Effect<unknown> }) =>
+  Layer.succeed(TokenGate, remote(stub));

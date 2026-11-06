@@ -66,12 +66,10 @@ class GateBudget extends Context.Service<GateBudget, Effect.Effect<TokenBudget.B
 
 const layerGitHub = Layer.unwrap(
   Effect.gen(function* () {
-    const gate = yield* TokenGate.makeMemory({
-      token: yield* Config.Redacted("GITHUB_TOKEN"),
-      share: yield* shareConfig,
-    });
+    const token = yield* Config.Redacted("GITHUB_TOKEN");
+    const gate = yield* TokenGate.makeMemory({ share: yield* shareConfig });
     return GitHub.layer.pipe(
-      Layer.provideMerge(Layer.succeed(TokenGate.TokenGate, TokenGate.TokenGate.of({ execute: gate.execute }))),
+      Layer.provideMerge(Layer.succeed(TokenGate.TokenGate, TokenGate.TokenGate.of({ execute: gate.execute(token) }))),
       Layer.merge(Layer.succeed(GateBudget, gate.budget)),
     );
   }).pipe(Effect.provide(layerLoggedFetch)),

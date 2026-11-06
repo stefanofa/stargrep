@@ -238,9 +238,15 @@ export const router = implementer.router({
       Effect.gen(function* () {
         yield* admit("sync");
         const { key } = yield* Caller;
+        // A session that cannot be read still imports, as a signed-out request.
+        const signedIn = yield* (yield* Viewers).signedIn.pipe(Effect.orElseSucceed(Option.none));
+        const by: SyncRequests.Requester = Option.match(signedIn, {
+          onNone: () => ({ _tag: "anyone", caller: key }),
+          onSome: (userId) => ({ _tag: "signed-in", userId, caller: key }),
+        });
         return yield* withProgress(
           input.login,
-          SyncRequests.SyncRequests.use((requests) => requests.request(input.login, { _tag: "anyone", caller: key })),
+          SyncRequests.SyncRequests.use((requests) => requests.request(input.login, by)),
         );
       }),
     ),
@@ -259,8 +265,8 @@ export const router = implementer.router({
   viewer: os.viewer.effect(
     handle(() =>
       Effect.gen(function* () {
-        const { account } = yield* (yield* Viewers).current;
-        yield* requestOwnerSync(account.login, "library open");
+        const { userId, account } = yield* (yield* Viewers).current;
+        yield* requestOwnerSync(account.login, userId, "library open");
         return {
           login: account.login,
           name: account.name,

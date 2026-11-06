@@ -8,6 +8,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
+import { UserGates } from "../user-gate.ts";
 import * as Settle from "./settle.ts";
 
 const Body = Schema.Union([StarSync.SyncRequest, StarSync.LoginSyncRequest]);
@@ -41,8 +42,9 @@ const reconcile = (line: SyncRequests.Rate, delivery: Settle.Delivery<Body>, cou
     ),
   );
 
-// Each message runs on a token gate of its own that counts the requests it sends, so the line is billed for what the
-// sync spent, failed and retried requests included.
+// Each message runs on a token gate of its own that counts the requests it sends on the server's token, so the line is
+// billed for what the sync spent there, failed and retried requests included. A sync a signed-in user started runs on
+// their token first. The messages of a batch run at once, so such a sync never waits behind the server's syncs.
 export const pipeline = <R>(
   line: SyncRequests.Rate,
   syncs: Layer.Layer<StarSync.StarSync, never, TokenGate.TokenGate | R>,
@@ -51,21 +53,25 @@ export const pipeline = <R>(
     schema: Body,
     run: Effect.fn("SyncStarsConsumer.run")(function* (deliveries) {
       const gate = yield* TokenGate.TokenGate;
-      return yield* Effect.forEach(deliveries, (delivery) =>
-        Effect.gen(function* () {
-          const sent = yield* Ref.make(0);
-          // Fresh, because a nested provide reuses the layers the runtime already built, such as GitHub on the gate
-          // that counts nothing.
-          const counted = Layer.fresh(
-            syncs.pipe(Layer.provide(Layer.succeed(TokenGate.TokenGate, TokenGate.counting(gate, sent)))),
-          );
-          const { body } = delivery;
-          const synced = yield* StarSync.StarSync.use((starSync) =>
-            "accountId" in body ? starSync.sync(body) : starSync.syncLogin(body),
-          ).pipe(Effect.provide(counted), Effect.result);
-          yield* reconcile(line, delivery, yield* Ref.get(sent));
-          return Result.map(synced, () => Settle.Settlement.Done());
-        }),
+      const users = yield* UserGates;
+      return yield* Effect.forEach(
+        deliveries,
+        (delivery) =>
+          Effect.gen(function* () {
+            const sent = yield* Ref.make(0);
+            const { body } = delivery;
+            const server = TokenGate.counting(gate, sent);
+            const job = body.userId === undefined ? server : yield* users.gate(body.userId, server);
+            // Fresh, because a nested provide reuses the layers the runtime already built, such as GitHub on the gate
+            // that counts nothing.
+            const counted = Layer.fresh(syncs.pipe(Layer.provide(Layer.succeed(TokenGate.TokenGate, job))));
+            const synced = yield* StarSync.StarSync.use((starSync) =>
+              "accountId" in body ? starSync.sync(body) : starSync.syncLogin(body),
+            ).pipe(Effect.provide(counted), Effect.result);
+            yield* reconcile(line, delivery, yield* Ref.get(sent));
+            return Result.map(synced, () => Settle.Settlement.Done());
+          }),
+        { concurrency: "unbounded" },
       );
     }),
     describe: (body) =>

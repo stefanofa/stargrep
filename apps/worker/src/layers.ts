@@ -3,7 +3,7 @@ import type * as Embeddings from "@stargrep/ai/embeddings";
 import * as Gateway from "@stargrep/ai/gateway";
 import type * as TextGeneration from "@stargrep/ai/text-generation";
 import { FetchIcon, IconHttp, IconQueue, IconStore, Normalize } from "@stargrep/core/icons";
-import { BlobStore, EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
+import { BlobStore, EnrichQueue } from "@stargrep/core/repos";
 import * as GitHub from "@stargrep/github/github";
 import type * as TokenGate from "@stargrep/github/token-gate";
 import { aiGatewayKey } from "@stargrep/runtime/config";
@@ -17,6 +17,7 @@ import * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
 import type * as Ref from "effect/Ref";
 import { codecs } from "./icons/codecs.ts";
+import type { UserGates } from "./user-gate.ts";
 
 const queueBatchLimit = 100;
 // A Worker invocation holds at most six connections, and R2 and the queue need some of them.
@@ -134,6 +135,7 @@ interface Bindings {
   readonly enrichQueue: Cloudflare.Queues.WriteQueueClient;
   readonly iconQueue: Cloudflare.Queues.WriteQueueClient;
   readonly tokenGate: Layer.Layer<TokenGate.TokenGate, never, RuntimeContext>;
+  readonly userGates: Layer.Layer<UserGates, never, RuntimeContext>;
   readonly ai: Layer.Layer<TextGeneration.TextGeneration | Embeddings.Embeddings>;
   readonly adopted: Ref.Ref<boolean>;
 }
@@ -141,10 +143,11 @@ interface Bindings {
 // Built again for every invocation, because a socket opened in one request cannot serve another.
 export const layerRuntime = (bindings: Bindings) =>
   Layer.empty.pipe(
-    Layer.provideMerge(Layer.mergeAll(EnrichRepo.layer, FetchIcon.layer)),
+    Layer.provideMerge(FetchIcon.layer),
     Layer.provideMerge(
       Layer.mergeAll(
         GitHub.layer.pipe(Layer.provideMerge(bindings.tokenGate)),
+        bindings.userGates,
         layerBlobStore(bindings.readmes),
         layerEnrichQueue(bindings.enrichQueue),
         layerIconQueue(bindings.iconQueue),

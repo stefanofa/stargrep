@@ -9,7 +9,8 @@
     "./domain": "./src/domain.ts",
     "./queues": "./src/queues.ts",
     "./readmes": "./src/readmes.ts",
-    "./icons": "./src/icons/bucket.ts"
+    "./icons": "./src/icons/bucket.ts",
+    "./auth": "./src/auth.ts"
   },
   "scripts": {
     "test": "vitest run",
@@ -23,6 +24,7 @@
     "@jsquash/webp": "1.5.0",
     "@resvg/resvg-wasm": "2.6.2",
     "@stargrep/ai": "workspace:*",
+    "@stargrep/auth": "workspace:*",
     "@stargrep/core": "workspace:*",
     "@stargrep/db": "workspace:*",
     "@stargrep/github": "workspace:*",

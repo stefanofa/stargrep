@@ -1,6 +1,8 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
+import type * as Embeddings from "@stargrep/ai/embeddings";
+import type * as TextGeneration from "@stargrep/ai/text-generation";
 import { type FetchIcon, IconQueue } from "@stargrep/core/icons";
-import type { EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
+import { type BlobStore, type EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
 import { StarSync, type SyncRequests } from "@stargrep/core/stars";
 import type * as Db from "@stargrep/db";
 import * as GitHub from "@stargrep/github/github";
@@ -13,6 +15,7 @@ import * as EnrichRepoConsumer from "./consumers/enrich-repo.ts";
 import * as FetchIconConsumer from "./consumers/fetch-icon.ts";
 import * as Settle from "./consumers/settle.ts";
 import * as SyncStarsConsumer from "./consumers/sync-stars.ts";
+import type { UserGates } from "./user-gate.ts";
 
 export const SyncStars = Cloudflare.Queues.Queue("SyncStars");
 const SyncStarsDeadLetters = Cloudflare.Queues.Queue("SyncStarsDeadLetters");
@@ -50,10 +53,19 @@ const consume = Effect.fn("Queues.consume")(function* <A, R, D, E>(
 });
 
 const syncs = StarSync.layer.pipe(Layer.provide(GitHub.layer));
+const enrichers = EnrichRepo.layer.pipe(Layer.provide(GitHub.layer));
 
 export const consumeAll = <E>(
   runtime: Layer.Layer<
-    TokenGate.TokenGate | EnrichQueue.EnrichQueue | EnrichRepo.EnrichRepo | FetchIcon.FetchIcon | Db.Db,
+    | TokenGate.TokenGate
+    | UserGates
+    | EnrichQueue.EnrichQueue
+    | FetchIcon.FetchIcon
+    | IconQueue.IconQueue
+    | BlobStore.BlobStore
+    | TextGeneration.TextGeneration
+    | Embeddings.Embeddings
+    | Db.Db,
     E,
     RuntimeContext
   >,
@@ -71,7 +83,7 @@ export const consumeAll = <E>(
       queueNames.enrichRepo,
       { queue: EnrichRepos, deadLetters: EnrichReposDeadLetters },
       { batchSize: 100, maxConcurrency: 1, maxWaitTime: "5 seconds", ...retries },
-      EnrichRepoConsumer.pipeline,
+      EnrichRepoConsumer.pipeline(enrichers),
       runtime,
     ),
     consume(

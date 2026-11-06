@@ -17,15 +17,18 @@ import {
   fullSynced,
   lineUnits,
   markFailed,
+  memberId,
   memory,
   minute,
   networkUnits,
   octocat,
   org,
   owner,
+  ownerId,
   request,
   reserveUnits,
   row,
+  signedIn,
   start,
   status,
   synced,
@@ -170,18 +173,14 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests line", (it) => {
         yield* fullSynced(start - 60 * minute);
         owners.set("octocat", user("octocat", 583231, 542));
         yield* request("octocat");
+        expect(sent.map((each) => each.mode)).toEqual(["incremental"]);
         expect(yield* lineUnits()).toBe(1 + 1 + 6);
-
-        yield* TestClock.adjust("10 minutes");
-        yield* request("octocat", owner);
-        expect(sent.map((each) => each.mode)).toEqual(["incremental", "incremental"]);
-        expect(yield* lineUnits()).toBe(1 + 6);
       }),
     ),
   );
 
-  it.effect("starts the owner's first sync now past a full line, and moves the line by its cost", () =>
-    admitting(({ delays }) =>
+  it.effect("starts the owner's first sync now past a full line, on their own token, and leaves the line alone", () =>
+    admitting(({ sent, delays }) =>
       Effect.gen(function* () {
         yield* Db.Db.use((db) => db.accounts.upsertLooked(user("octocat", 583231, 2_431)));
         yield* fill(4_500);
@@ -193,18 +192,41 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests line", (it) => {
           accountType: "user",
         });
         expect(delays).toEqual([Duration.zero]);
-        expect(yield* lineUnits()).toBe(4_500 + 28);
+        expect(sent).toEqual([
+          { login: "octocat" as Login, mode: "full", requestedAt: at(start), reserved: 0, userId: ownerId },
+        ]);
+        expect(yield* lineUnits()).toBe(4_500);
       }),
     ),
   );
 
-  it.effect("pushes the next signed-out start later by what the owner's sync costs", () =>
+  it.effect("leaves the next signed-out start where it was after the owner's sync", () =>
     admitting(() =>
       Effect.gen(function* () {
         yield* Db.Db.use((db) => db.accounts.upsertLooked(user("linus", 9004, 2_431)));
         yield* fill(300);
         yield* request("linus", owner);
-        expect(yield* request("octocat")).toMatchObject({ state: "waiting", startsAt: at(start + 129 * unitMillis) });
+        expect(yield* request("octocat")).toMatchObject({ state: "waiting", startsAt: at(start + 101 * unitMillis) });
+      }),
+    ),
+  );
+
+  it.effect("starts a signed-in import of another login now past a full line, on the requester's token", () =>
+    admitting(({ sent, delays }) =>
+      Effect.gen(function* () {
+        yield* fill(4_500);
+        expect(yield* Effect.flip(request("octocat"))).toMatchObject({ _tag: "SyncBusy", reason: "line-full" });
+        expect(yield* request("octocat", signedIn())).toEqual({
+          state: "queued",
+          requestedAt: at(start),
+          syncedAt: null,
+          ...octocat,
+        });
+        expect(delays).toEqual([Duration.zero]);
+        expect(sent).toEqual([
+          { login: "octocat" as Login, mode: "incremental", requestedAt: at(start), reserved: 0, userId: memberId },
+        ]);
+        expect(yield* lineUnits()).toBe(4_500 + 1);
       }),
     ),
   );
@@ -263,6 +285,19 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests network limit", (it) => {
           expect(yield* request("grace")).toMatchObject({ state: "queued" });
         }),
       ),
+  );
+
+  it.effect("keeps a signed-in requester's network limits, because their import still pays its lookup", () =>
+    admitting(({ owners, lookups }) =>
+      Effect.gen(function* () {
+        owners.set("huge", user("huge", 7_002, 100_000));
+        expect(yield* request("huge", signedIn())).toMatchObject({ state: "queued", starredTotal: 100_000 });
+        expect(yield* networkUnits()).toBe(1 + 1_003);
+        expect(yield* lineUnits()).toBe(1);
+        expect((yield* Effect.flip(request("hubot", signedIn())))._tag).toBe("NewAccountLimited");
+        expect(lookups).toEqual(["huge" as Login]);
+      }),
+    ),
   );
 
   it.effect(

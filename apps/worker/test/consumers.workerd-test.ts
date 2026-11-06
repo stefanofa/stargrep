@@ -10,10 +10,13 @@ import {
   AiUnavailable,
 } from "@stargrep/ai/errors";
 import * as Summarize from "@stargrep/ai/summarize";
+import { AuthFailed } from "@stargrep/auth/auth";
+import { GitHubTokens } from "@stargrep/auth/tokens";
 import { FetchIcon, IconQueue, IconStore } from "@stargrep/core/icons";
 import { BlobStore, EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
 import { StarSync, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
+import { UserId } from "@stargrep/db/auth-schema";
 import { EmbeddingModelId, EmbeddingModelMismatch } from "@stargrep/db/embedding";
 import { AccountNotFound, DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
 import {
@@ -36,6 +39,7 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -45,6 +49,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -53,9 +58,11 @@ import * as EnrichRepoConsumer from "../src/consumers/enrich-repo.ts";
 import * as FetchIconConsumer from "../src/consumers/fetch-icon.ts";
 import * as Settle from "../src/consumers/settle.ts";
 import * as SyncStarsConsumer from "../src/consumers/sync-stars.ts";
+import type { UserGitHubGate } from "../src/github-gate.ts";
 import * as EnrichSweep from "../src/jobs/enrich-sweep.ts";
 import * as Layers from "../src/layers.ts";
 import * as Secrets from "../src/secrets.ts";
+import * as UserGate from "../src/user-gate.ts";
 
 const report = { listed: 1, added: 1, unchanged: 0, unstarred: 0, enqueued: 1, shifted: false };
 const repoId = Schema.decodeSync(RepoId);
@@ -138,12 +145,18 @@ const syncing =
     syncs: Layer.Layer<StarSync.StarSync, never, TokenGate.TokenGate>,
     line = recordingLine(),
     logs: Array<unknown> = [],
+    users: Layer.Layer<UserGate.UserGates> = UserGate.layerServerOnly,
   ) =>
   (queues: Settle.Queues, batch: MessageBatch) =>
     run(
       Settle.processBatch(SyncStarsConsumer.pipeline(allLine, syncs), queues, batch.messages).pipe(
         Effect.provide(
-          Layer.mergeAll(answering, line.layer, Logger.layer([Logger.make(({ message }) => logs.push(message))])),
+          Layer.mergeAll(
+            answering,
+            users,
+            line.layer,
+            Logger.layer([Logger.make(({ message }) => logs.push(message))]),
+          ),
         ),
       ),
       batch,
@@ -199,9 +212,9 @@ describe("sync-stars consumer", () => {
       { accountId: 7, mode: "full" },
     ]);
     const result = await syncing(sending(7), line)(queues, batch);
-    expect(line.adjusted).toEqual([
-      { line: "all", units: 5 },
+    expect(line.adjusted.toSorted((a, b) => a.units - b.units)).toEqual([
       { line: "all", units: -2 },
+      { line: "all", units: 5 },
       { line: "all", units: 7 },
       { line: "all", units: 7 },
     ]);
@@ -280,7 +293,7 @@ describe("sync-stars consumer", () => {
     const ctx = createExecutionContext();
     await Effect.runPromise(
       Settle.processBatch(SyncStarsConsumer.pipeline(allLine, syncs), queues, batch.messages).pipe(
-        Effect.provide(Layer.merge(TokenGate.layerMissing, unusedDb)),
+        Effect.provide(Layer.mergeAll(TokenGate.layerMissing, UserGate.layerServerOnly, unusedDb)),
       ),
     );
     const result = await getQueueResult(batch, ctx);
@@ -311,7 +324,7 @@ describe("sync-stars consumer", () => {
         );
         yield* TestClock.adjust("3 minutes");
         yield* Fiber.join(fiber);
-      }).pipe(Effect.provide(Layer.mergeAll(github.layer, line.layer, TestClock.layer()))),
+      }).pipe(Effect.provide(Layer.mergeAll(github.layer, UserGate.layerServerOnly, line.layer, TestClock.layer()))),
     );
     const result = await getQueueResult(batch, ctx);
     expect(deadLetters).toEqual([]);
@@ -343,7 +356,12 @@ describe("sync-stars consumer", () => {
     await Effect.runPromise(
       Settle.processBatch(SyncStarsConsumer.pipeline(allLine, layer), queues, batch.messages).pipe(
         Effect.provide(
-          Layer.mergeAll(answering, unusedDb, Logger.layer([Logger.make(({ message }) => logs.push(message))])),
+          Layer.mergeAll(
+            answering,
+            UserGate.layerServerOnly,
+            unusedDb,
+            Logger.layer([Logger.make(({ message }) => logs.push(message))]),
+          ),
         ),
       ),
     );
@@ -375,7 +393,12 @@ describe("sync-stars consumer", () => {
         batch.messages,
       ).pipe(
         Effect.provide(
-          Layer.mergeAll(answering, unusedDb, Logger.layer([Logger.make(({ message }) => logs.push(message))])),
+          Layer.mergeAll(
+            answering,
+            UserGate.layerServerOnly,
+            unusedDb,
+            Logger.layer([Logger.make(({ message }) => logs.push(message))]),
+          ),
         ),
       ),
     );
@@ -384,6 +407,128 @@ describe("sync-stars consumer", () => {
     expect(result.retryMessages).toEqual([{ msgId: "m0" }]);
     expect(retried).toEqual([undefined]);
     expect(JSON.stringify(logs)).toContain('"sendError":"QueueSendFailed"');
+  });
+});
+
+// A signed-in user's gate that answers their first `own` requests itself and sends the rest to the server's gate.
+const userGates = (own: number) => {
+  const asked: Array<UserId> = [];
+  const layer = Layer.succeed(
+    UserGate.UserGates,
+    UserGate.UserGates.of({
+      gate: Effect.fn("UserGates.gate")(function* (userId: UserId, server: TokenGate.TokenGate["Service"]) {
+        asked.push(userId);
+        const left = { count: own };
+        return TokenGate.TokenGate.of({
+          execute: (operation, request) =>
+            left.count-- > 0 ? Effect.succeed(reply) : server.execute(operation, request),
+        });
+      }),
+    }),
+  );
+  return { asked, layer };
+};
+
+describe("sync-stars consumer for signed-in users", () => {
+  it("runs a signed-in user's sync on their gate, and bills the line only for what fell back to the server", async () => {
+    const { queues } = recordingQueues();
+    const line = recordingLine();
+    const users = userGates(5);
+    const batch = batchOf("sync-stars", [{ login: "octocat", mode: "full", reserved: 0, userId: "user-ada" }]);
+    const result = await syncing(sending(7), line, [], users.layer)(queues, batch);
+    expect(users.asked).toEqual([UserId.make("user-ada")]);
+    expect(line.adjusted).toEqual([{ line: "all", units: 2 }]);
+    expect(result.explicitAcks).toEqual(["m0"]);
+  });
+
+  it("runs the syncs of a batch at once, so a user's sync never waits behind the server's", async () => {
+    const { queues } = recordingQueues();
+    const userDone = Effect.runSync(Deferred.make<void>());
+    const layer = Layer.mock(StarSync.StarSync, {
+      syncLogin: (request) =>
+        request.userId === undefined
+          ? Effect.as(Deferred.await(userDone), report)
+          : Effect.as(Deferred.succeed(userDone, undefined), report),
+    });
+    const batch = batchOf("sync-stars", [
+      { login: "octocat", mode: "full" },
+      { login: "ada", mode: "full", userId: "user-ada" },
+    ]);
+    const result = await syncing(layer, recordingLine(), [], userGates(0).layer)(queues, batch);
+    expect(result.explicitAcks.toSorted()).toEqual(["m0", "m1"]);
+  });
+});
+
+describe("user gates", () => {
+  const remoteReply = { _tag: "Replied", status: 200, headers: {}, body: "{}" };
+
+  const wired = (read: Effect.Effect<Redacted.Redacted<string>, AuthFailed>) => {
+    const reads = { count: 0 };
+    const calls: Array<{ readonly name: string; readonly token: string }> = [];
+    const namespace = {
+      getByName: (name: string) => ({
+        execute: (_request: TokenGate.RemoteRequest, token: string) =>
+          Effect.sync(() => {
+            calls.push({ name, token });
+            return remoteReply;
+          }),
+      }),
+    } as unknown as Effect.Success<typeof UserGitHubGate>;
+    const tokens = Layer.succeed(
+      GitHubTokens,
+      GitHubTokens.of({
+        read: () =>
+          Effect.andThen(
+            Effect.sync(() => reads.count++),
+            read,
+          ),
+      }),
+    );
+    const layer = UserGate.layer(namespace).pipe(Layer.provide(Layer.merge(tokens, runtimeContext)));
+    return { reads, calls, layer };
+  };
+
+  const twoRequests = (server: TokenGate.TokenGate["Service"]) =>
+    Effect.gen(function* () {
+      const gate = yield* (yield* UserGate.UserGates).gate(UserId.make("user-ada"), server);
+      const request = HttpClientRequest.get("https://api.github.com/users/octocat/starred");
+      return yield* Effect.all([gate.execute("list-stars", request), gate.execute("list-stars", request)]);
+    });
+
+  it("reads the user's token once a job and sends each request to that user's object with it", async () => {
+    const { reads, calls, layer } = wired(Effect.succeed(Redacted.make("gho_ada")));
+    const sent = { count: 0 };
+    const server = TokenGate.TokenGate.of({
+      execute: () =>
+        Effect.as(
+          Effect.sync(() => sent.count++),
+          reply,
+        ),
+    });
+    const replies = await Effect.runPromise(twoRequests(server).pipe(Effect.provide(layer)));
+    expect(replies.map((each) => each.status)).toEqual([200, 200]);
+    expect(reads.count).toBe(1);
+    expect(calls).toEqual([
+      { name: "user-ada", token: "gho_ada" },
+      { name: "user-ada", token: "gho_ada" },
+    ]);
+    expect(sent.count).toBe(0);
+  });
+
+  it("moves a job to the server's token when the user's token cannot be read, and never asks the object", async () => {
+    const { reads, calls, layer } = wired(Effect.fail(new AuthFailed({ operation: "token", cause: "no account" })));
+    const sent = { count: 0 };
+    const server = TokenGate.TokenGate.of({
+      execute: () =>
+        Effect.as(
+          Effect.sync(() => sent.count++),
+          reply,
+        ),
+    });
+    await Effect.runPromise(twoRequests(server).pipe(Effect.provide(layer)));
+    expect(reads.count).toBe(1);
+    expect(calls).toEqual([]);
+    expect(sent.count).toBe(2);
   });
 });
 
@@ -475,7 +620,9 @@ describe("enrich-repo consumer", () => {
       },
     });
     const result = await run(
-      Settle.processBatch(EnrichRepoConsumer.pipeline, queues, batch.messages).pipe(Effect.provide(layer)),
+      Settle.processBatch(EnrichRepoConsumer.pipeline(layer), queues, batch.messages).pipe(
+        Effect.provide(Layer.merge(answering, UserGate.layerServerOnly)),
+      ),
       batch,
     );
     expect(asked).toEqual([[1, 2, 3, 1]]);
@@ -494,11 +641,68 @@ describe("enrich-repo consumer", () => {
         ),
     });
     const result = await run(
-      Settle.processBatch(EnrichRepoConsumer.pipeline, queues, batch.messages).pipe(Effect.provide(layer)),
+      Settle.processBatch(EnrichRepoConsumer.pipeline(layer), queues, batch.messages).pipe(
+        Effect.provide(Layer.merge(answering, UserGate.layerServerOnly)),
+      ),
       batch,
     );
     expect(later.map((sent) => sent.body)).toEqual([{ repoId: 3 }, { repoId: 4 }]);
     expect(result.explicitAcks.toSorted()).toEqual(["m0", "m1"]);
+    expect(result.retryMessages).toEqual([]);
+  });
+});
+
+describe("enrich-repo consumer for signed-in users", () => {
+  it("reads each signed-in user's repos on that user's gate, and settles every message in place", async () => {
+    const { queues, later } = recordingQueues();
+    const owners = new Map<TokenGate.TokenGate["Service"], UserId>();
+    const users = Layer.succeed(
+      UserGate.UserGates,
+      UserGate.UserGates.of({
+        gate: Effect.fn("UserGates.gate")(function* (userId: UserId) {
+          const gate = TokenGate.TokenGate.of({ execute: () => Effect.succeed(reply) });
+          owners.set(gate, userId);
+          return gate;
+        }),
+      }),
+    );
+    const asked: Array<readonly [string, ReadonlyArray<RepoId>]> = [];
+    const enrichers = Layer.effect(
+      EnrichRepo.EnrichRepo,
+      Effect.map(TokenGate.TokenGate, (gate) =>
+        EnrichRepo.EnrichRepo.of({
+          enrichRepo: () => Effect.die("unused"),
+          enrichRepos: (ids) => {
+            const paidBy = owners.get(gate) ?? "server";
+            asked.push([paidBy, ids]);
+            return paidBy === "user-grace"
+              ? Effect.flatMap(inMillis(60_000), (resetAt) =>
+                  Effect.fail(new TokenBudgetExhausted({ resource: "graphql", resetAt })),
+                )
+              : Effect.succeed(ids.map((id) => EnrichRepo.Enrichment.Unchanged({ id })));
+          },
+        }),
+      ),
+    );
+    const batch = batchOf("enrich-repo", [
+      { repoId: 1, userId: "user-ada" },
+      { repoId: 2 },
+      { repoId: 3, userId: "user-ada" },
+      { repoId: 4, userId: "user-grace" },
+    ]);
+    const result = await run(
+      Settle.processBatch(EnrichRepoConsumer.pipeline(enrichers), queues, batch.messages).pipe(
+        Effect.provide(Layer.merge(answering, users)),
+      ),
+      batch,
+    );
+    expect(asked).toEqual([
+      ["user-ada", [1, 3]],
+      ["server", [2]],
+      ["user-grace", [4]],
+    ]);
+    expect(later.map((sent) => sent.body)).toEqual([{ repoId: 4, userId: "user-grace" }]);
+    expect(result.explicitAcks.toSorted()).toEqual(["m0", "m1", "m2", "m3"]);
     expect(result.retryMessages).toEqual([]);
   });
 });
@@ -538,7 +742,9 @@ describe("enrichment outcome table", () => {
       enrichRepos: () => Effect.succeed(rows.map(([outcome]) => outcome)),
     });
     const result = await run(
-      Settle.processBatch(EnrichRepoConsumer.pipeline, queues, batch.messages).pipe(Effect.provide(layer)),
+      Settle.processBatch(EnrichRepoConsumer.pipeline(layer), queues, batch.messages).pipe(
+        Effect.provide(Layer.merge(answering, UserGate.layerServerOnly)),
+      ),
       batch,
     );
     const dead = new Set(deadLetters.map((body) => (body as { readonly repoId: number }).repoId));
@@ -899,7 +1105,7 @@ describe("dead letters", () => {
     await Effect.runPromise(
       Settle.handleDeadLetters(
         "enrich-repo",
-        EnrichRepoConsumer.pipeline,
+        EnrichRepoConsumer.pipeline(Layer.mock(EnrichRepo.EnrichRepo, {})),
       )(Stream.fromIterable(batchOf("enrich-repo-dead-letters", [{ repoId: 11 }]).messages)).pipe(
         Effect.provide(Layer.merge(touched, Logger.layer([Logger.make(({ message }) => logs.push(message))]))),
       ),

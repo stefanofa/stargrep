@@ -70,7 +70,7 @@ describe("the demo answer cache on the Cache API", () => {
       Layer.succeed(Db.Db, {} as Db.Db["Service"]),
       Layer.succeed(SyncRequests.SyncRequests, {} as SyncRequests.SyncRequests["Service"]),
       Layer.succeed(RateLimiter, RateLimiter.of({ acquire: () => Effect.void })),
-      Layer.succeed(Viewers, Viewers.of({ current: Effect.fail(new NotSignedIn()) })),
+      Layer.succeed(Viewers, Viewers.of({ current: Effect.fail(new NotSignedIn()), signedIn: Effect.succeedNone })),
       Layer.succeed(IconHost, IconHost.of({ origin: new URL(request.url).origin })),
       Layer.succeed(Caller, Caller.of({ key: Db.CallerKey.make("caller-test"), address: "192.0.2.1" })),
     );

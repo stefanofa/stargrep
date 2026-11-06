@@ -92,6 +92,24 @@ export const authConfig: Config.Config<Option.Option<AuthConfig>> = Config.all({
   ),
 );
 
+export interface TokenConfig {
+  readonly secret: Redacted.Redacted<string>;
+  readonly clientId: string;
+  // A stage that signs in through prod's proxy has no client secret, so a token there cannot refresh.
+  readonly clientSecret: Option.Option<Redacted.Redacted<string>>;
+}
+
+// What reading a signed-in user's GitHub token needs, without the routes or the proxy.
+export const tokenConfig: Config.Config<Option.Option<TokenConfig>> = Config.all({
+  clientId: optionalText(names.clientId),
+  clientSecret: optionalSecret(names.clientSecret),
+  secret: optionalSecret(names.secret),
+}).pipe(
+  Config.map(({ clientId, clientSecret, secret }) =>
+    Option.zipWith(clientId, secret, (id, key) => ({ clientId: id, clientSecret, secret: key })),
+  ),
+);
+
 export const bindings = (github: GitHubSignIn): Record<string, string | Redacted.Redacted<string>> =>
   github._tag === "direct"
     ? {
