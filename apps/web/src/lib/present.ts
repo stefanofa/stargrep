@@ -96,4 +96,5 @@ export const toDetail = (repo: LibraryEntry, at: number): RepoDetail => ({
   network: [],
   alsoStarred: [],
   githubUrl: repo.url,
+  visual: repoVisual(repo),
 });

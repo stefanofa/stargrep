@@ -2,6 +2,7 @@ import { Dialog } from "@base-ui/react/dialog";
 import { Avatar, type Person } from "./avatar.tsx";
 import { Button, buttonVariants } from "./button.tsx";
 import { CloseIcon, ExternalIcon, PlusIcon, StarIcon } from "./icons.tsx";
+import { RepoIcon, type RepoVisual } from "./repo-icon.tsx";
 import { type Activity, activityLabel, formatStars } from "./results.tsx";
 
 export type RelatedRepo = {
@@ -25,6 +26,7 @@ export type RepoDetail = {
   readonly network: ReadonlyArray<Person>;
   readonly alsoStarred: ReadonlyArray<RelatedRepo>;
   readonly githubUrl: string;
+  readonly visual: RepoVisual;
 };
 
 const heading = "font-display text-[20px] leading-6 font-semibold";
@@ -56,9 +58,10 @@ export function RepoPanel({
           {repo && (
             <>
               <div className="flex flex-col gap-[14px]">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex flex-col gap-0.5">
-                    <Dialog.Title className="font-display text-3xl leading-[40px] font-semibold tracking-snug">
+                <div className="flex items-start gap-4">
+                  <RepoIcon visual={repo.visual} size="panel" />
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <Dialog.Title className="font-display text-3xl leading-[40px] font-semibold tracking-snug break-words">
                       {repo.name}
                     </Dialog.Title>
                     <p className="font-sans text-base leading-gap font-medium text-muted-foreground">

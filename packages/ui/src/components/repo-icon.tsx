@@ -25,28 +25,33 @@ const shownSide = (visual: RepoVisual) =>
 
 const slot = "flex shrink-0 items-center justify-center overflow-clip squircle rounded-sm";
 
-const slotSize = "size-11 list:size-9";
+export type RepoIconSize = "card" | "panel";
 
-export function Monogram({ letters }: { letters: string }) {
+const sizes: Record<RepoIconSize, { slot: string; letters: string; side: number }> = {
+  card: {
+    slot: "size-11 list:size-9",
+    letters: "text-[17px] leading-[20px] list:text-[15px] list:leading-[18px]",
+    side: 44,
+  },
+  panel: { slot: "size-14", letters: "text-[22px] leading-[26px]", side: 56 },
+};
+
+export function Monogram({ letters, size = "card" }: { letters: string; size?: RepoIconSize }) {
   return (
     <span
       aria-hidden
       data-slot="repo-icon"
-      className={cn(
-        slot,
-        slotSize,
-        "bg-avatar-2 font-display text-[17px] leading-[20px] font-semibold text-ink list:text-[15px] list:leading-[18px]",
-      )}
+      className={cn(slot, sizes[size].slot, sizes[size].letters, "bg-avatar-2 font-display font-semibold text-ink")}
     >
       {letters}
     </span>
   );
 }
 
-export function RepoIcon({ visual }: { visual: RepoVisual }) {
+export function RepoIcon({ visual, size = "card" }: { visual: RepoVisual; size?: RepoIconSize }) {
   const [failedUrl, setFailedUrl] = useState<string>();
   if (visual.kind === "monogram" || failedUrl === visual.url) {
-    return <Monogram letters={visual.letters} />;
+    return <Monogram letters={visual.letters} size={size} />;
   }
   const plate = visual.kind === "icon" ? visual.plate : "none";
   const small = shownSide(visual);
@@ -56,7 +61,7 @@ export function RepoIcon({ visual }: { visual: RepoVisual }) {
       data-slot="repo-icon"
       className={cn(
         slot,
-        slotSize,
+        sizes[size].slot,
         "outline-1 -outline-offset-1 outline-image-edge",
         small === undefined ? plates[plate] : "bg-muted",
       )}
@@ -64,8 +69,8 @@ export function RepoIcon({ visual }: { visual: RepoVisual }) {
       <img
         src={visual.url}
         alt=""
-        width={small ?? 44}
-        height={small ?? 44}
+        width={small ?? sizes[size].side}
+        height={small ?? sizes[size].side}
         loading="lazy"
         decoding="async"
         onError={() => setFailedUrl(visual.url)}

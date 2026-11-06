@@ -128,6 +128,7 @@ export const ratatui: RepoDetail = {
     { owner: "extrawurst", name: "gitui", href: "?repo=extrawurst/gitui", stars: 20_600 },
   ],
   githubUrl: "https://github.com/ratatui/ratatui",
+  visual: { kind: "icon", url: icons.ratatui, plate: "light", size: 128, letters: "ra" },
 };
 
 const week = (index: number) => `2025-W${String(index + 1).padStart(2, "0")}`;
@@ -155,4 +156,5 @@ export const detailFor = (result: Result): RepoDetail =>
         network: result.network,
         alsoStarred: ratatui.alsoStarred.filter((related) => related.name !== result.name),
         githubUrl: `https://github.com/${result.owner}/${result.name}`,
+        visual: result.visual,
       };
