@@ -116,7 +116,7 @@ export function ResultItem({
         "list:grid-cols-[auto_1fr] list:grid-rows-none list:gap-x-4 list:gap-y-2 list:sm:gap-x-0 list:rounded-md list:py-gap list:pr-tile list:pl-[74px] list:[grid-template-areas:'head_head'_'reason_reason'_'alive_stars'] list:sm:grid-cols-[180px_100px_190px_1fr] list:sm:[grid-template-areas:'head_head_head_head'_'reason_reason_reason_reason'_'alive_stars_starred_network']",
       )}
     >
-      <header className="[grid-area:head] flex min-w-0 items-center gap-3 list:items-baseline">
+      <header className="[grid-area:head] flex min-w-0 items-start gap-3 list:items-baseline">
         <span className="shrink-0 list:absolute list:top-gap list:left-[22px]">
           <RepoIcon visual={result.visual} />
         </span>

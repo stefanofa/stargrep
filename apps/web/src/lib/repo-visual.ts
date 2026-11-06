@@ -1,7 +1,7 @@
 import type { RepoVisual } from "@stargrep/ui";
 import type { LibraryRepo, OwnerType } from "./rpc.ts";
 
-export const avatarOwners: ReadonlySet<OwnerType> = new Set(["org"]);
+export const avatarOwners: ReadonlySet<OwnerType> = new Set(["org", "user"]);
 
 const avatarSize = 88;
 
