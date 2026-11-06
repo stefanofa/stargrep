@@ -6,19 +6,10 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type { Caller } from "./caller.ts";
 import type { IconHost } from "./icon-host.ts";
-import type { SearchLimiter } from "./search-limiter.ts";
-import type { SyncLimiter } from "./sync-limiter.ts";
+import type { RateLimiter } from "./rate-limiter.ts";
 import type { Viewers } from "./viewers.ts";
 
-export type ApiServices =
-  | Db.Db
-  | Search.Search
-  | SyncRequests.SyncRequests
-  | SyncLimiter
-  | SearchLimiter
-  | Viewers
-  | IconHost
-  | Caller;
+export type ApiServices = Db.Db | Search.Search | SyncRequests.SyncRequests | RateLimiter | Viewers | IconHost | Caller;
 
 export class ApiServicesUnavailable extends Schema.TaggedError<
   ApiServicesUnavailable,

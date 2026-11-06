@@ -17,4 +17,11 @@ describe("callerAddress", () => {
     expect(callerAddress(from("2001:db8:85a3:0:ffff::1"))).toBe(expected);
     expect(callerAddress(from("::1"))).toBe("0:0:0:0::/64");
   });
+
+  test("counts an IPv4-mapped IPv6 caller as its IPv4 address, in every way it can be written", () => {
+    for (const mapped of ["::ffff:192.0.2.1", "::FFFF:192.0.2.1", "0:0:0:0:0:ffff:192.0.2.1", "::ffff:c000:201"]) {
+      expect(callerAddress(from(mapped))).toBe("192.0.2.1");
+    }
+    expect(callerAddress(from("64:ff9b::192.0.2.1"))).toBe("64:ff9b:0:0::/64");
+  });
 });

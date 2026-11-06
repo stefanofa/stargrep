@@ -25,10 +25,9 @@ import { Caller } from "./caller.ts";
 import { errorStatus, type WireCode } from "./errors.ts";
 import { IconHost } from "./icon-host.ts";
 import type { Transport } from "./middleware/instrumentation.ts";
+import { RateLimited, RateLimiter, RateLimiterUnavailable, type RateLimitKind } from "./rate-limiter.ts";
 import { type ApiContext, router } from "./router.ts";
-import { SearchLimiter, SearchLimiterUnavailable, SearchRateLimited } from "./search-limiter.ts";
 import { type ApiServices, ApiServicesUnavailable, withServices } from "./services.ts";
-import { SyncLimiter, SyncLimiterUnavailable, SyncRateLimited } from "./sync-limiter.ts";
 import { NotSignedIn, type Viewer, type ViewerError, Viewers, ViewerUnavailable } from "./viewers.ts";
 
 const canary = "PRIVATE_QUERY_CANARY";
@@ -70,8 +69,7 @@ const unchecked: Db.Repo = {
 
 interface Fakes {
   readonly search?: (request: Search.SearchRequest) => Effect.Effect<Search.SearchOutcome, Search.SearchError>;
-  readonly limiter?: Effect.Effect<void, SyncRateLimited | SyncLimiterUnavailable>;
-  readonly searchLimiter?: Effect.Effect<void, SearchRateLimited | SearchLimiterUnavailable>;
+  readonly limiter?: (kind: RateLimitKind) => Effect.Effect<void, RateLimited | RateLimiterUnavailable>;
   readonly requests?: SyncRequests.SyncRequests["Service"];
   readonly sent?: Array<readonly [Login, SyncRequests.Requester]>;
   readonly viewer?: Effect.Effect<Viewer, ViewerError>;
@@ -154,11 +152,10 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
       }),
     ),
     Context.add(SyncRequests.SyncRequests, requests),
-    Context.add(SyncLimiter, SyncLimiter.of({ acquire: fakes.limiter ?? Effect.void })),
-    Context.add(SearchLimiter, SearchLimiter.of({ acquire: fakes.searchLimiter ?? Effect.void })),
+    Context.add(RateLimiter, RateLimiter.of({ acquire: fakes.limiter ?? (() => Effect.void) })),
     Context.add(Viewers, Viewers.of({ current: fakes.viewer ?? Effect.fail(new NotSignedIn()) })),
     Context.add(IconHost, IconHost.of({ origin: "https://stargrep.test" })),
-    Context.add(Caller, Caller.of({ key: Db.CallerKey.make("caller-test") })),
+    Context.add(Caller, Caller.of({ key: Db.CallerKey.make("caller-test"), address: "192.0.2.1" })),
   );
 };
 
@@ -338,13 +335,16 @@ describe("sync", () => {
     });
   });
 
-  test("refuses a caller over the rate limit without queueing, and treats a limiter outage as unavailable", async () => {
+  test("refuses a caller over the sync limit without queueing", async () => {
     const sent: Array<readonly [Login, SyncRequests.Requester]> = [];
-    const limited = client({ sent, limiter: Effect.fail(new SyncRateLimited({ limit: "caller" })) });
+    const asked: Array<RateLimitKind> = [];
+    const limited = client({
+      sent,
+      limiter: (kind) =>
+        Effect.sync(() => asked.push(kind)).pipe(Effect.andThen(new RateLimited({ limit: "network" }))),
+    });
     expect((await failure(limited.api.triggerSync({ login: "octocat" }))).code).toBe("TOO_MANY_REQUESTS");
-    const down = client({ sent, limiter: Effect.fail(new SyncLimiterUnavailable({ cause: "down" })) });
-    expect((await failure(down.api.triggerSync({ login: "octocat" }))).code).toBe("SERVICE_UNAVAILABLE");
-    expect(sent).toEqual([]);
+    expect([asked, sent]).toEqual([["sync"], []]);
   });
 
   test("maps a sync queue failure to service unavailable", async () => {
@@ -674,32 +674,53 @@ describe("the demo answer cache", () => {
 
   it.effect("takes from the network's search limit only when a search runs, never for a cached demo answer", () =>
     Effect.gen(function* () {
-      let acquired = 0;
+      const acquired: Array<RateLimitKind> = [];
       let refuse = false;
-      const limiter = Effect.suspend(() => {
-        acquired++;
-        return refuse ? Effect.fail(new SearchRateLimited()) : Effect.void;
-      });
+      const limiter = (kind: RateLimitKind) =>
+        Effect.suspend(() => {
+          acquired.push(kind);
+          return refuse ? Effect.fail(new RateLimited({ limit: "network" })) : Effect.void;
+        });
       const demo = demoSearch();
       const planned = (request: Search.SearchRequest) =>
         Effect.succeed({ ...searchOutcome(request), planSource: "model" as const });
-      const limited = Effect.succeed(services({ search: planned, searchLimiter: limiter }));
+      const limited = Effect.succeed(services({ search: planned, limiter }));
       yield* demo.call({ login: "ada", q: "terminal dashboards" }, limited);
       refuse = true;
       expect((yield* demo.call({ login: "ada", q: "terminal dashboards" }, limited)).cache).toBe("hit");
-      expect(acquired).toBe(1);
+      expect(acquired).toEqual(["search"]);
       const error = yield* Effect.promise(() =>
-        failure(client({ searchLimiter: limiter }).api.search({ login: "ada", q: "other words" })),
+        failure(client({ limiter }).api.search({ login: "ada", q: "other words" })),
       );
-      expect([error.code, acquired]).toEqual(["TOO_MANY_REQUESTS", 2]);
+      expect([error.code, acquired]).toEqual(["TOO_MANY_REQUESTS", ["search", "search"]]);
     }),
   );
 });
 
-describe("search limits", () => {
-  test("map a limiter outage to service unavailable and a refused planner to too many requests", async () => {
-    const down = client({ searchLimiter: Effect.fail(new SearchLimiterUnavailable({ cause: "down" })) });
-    expect((await failure(down.api.search({ login: "grace", q: "x" }))).code).toBe("SERVICE_UNAVAILABLE");
+describe("rate limits", () => {
+  test("answer a refusal with 429 and a limiter outage with 503, for every limited procedure", async () => {
+    const calls = (api: ReturnType<typeof client>["api"]) => [
+      api.search({ login: "grace", q: "x" }),
+      api.triggerSync({ login: "octocat" }),
+      api.stars({ login: "grace" }),
+    ];
+    const refused = client({ limiter: () => Effect.fail(new RateLimited({ limit: "all" })) });
+    const down = client({ limiter: () => Effect.fail(new RateLimiterUnavailable({ cause: "down" })) });
+    for (const call of calls(refused.api)) {
+      const error = await failure(call);
+      expect([error.code, errorStatus[error.code as WireCode], error.data]).toEqual([
+        "TOO_MANY_REQUESTS",
+        429,
+        traceData,
+      ]);
+    }
+    for (const call of calls(down.api)) {
+      const error = await failure(call);
+      expect([error.code, errorStatus[error.code as WireCode]]).toEqual(["SERVICE_UNAVAILABLE", 503]);
+    }
+  });
+
+  test("map a refused model call to too many requests", async () => {
     const spent = client({ search: () => Effect.fail(new AiSpendLimited({ operation: "embed", limit: "caller" })) });
     const error = await failure(spent.api.search({ login: "grace", q: "x" }));
     expect([error.code, errorStatus[error.code as WireCode]]).toEqual(["TOO_MANY_REQUESTS", 429]);

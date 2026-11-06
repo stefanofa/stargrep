@@ -5,9 +5,8 @@ import * as TextGeneration from "@stargrep/ai/text-generation";
 import { Caller } from "@stargrep/api/caller";
 import { IconHost } from "@stargrep/api/icon-host";
 import { defaultPublicConfig } from "@stargrep/api/public-config";
-import { SearchLimiter } from "@stargrep/api/search-limiter";
+import { RateLimiter } from "@stargrep/api/rate-limiter";
 import type { ApiServices } from "@stargrep/api/services";
-import { SyncLimiter } from "@stargrep/api/sync-limiter";
 import { NotSignedIn, Viewers } from "@stargrep/api/viewers";
 import { QueryPlan, Search } from "@stargrep/core/search";
 import { SyncRequests } from "@stargrep/core/stars";
@@ -74,11 +73,10 @@ describe("the demo answer cache on the Cache API", () => {
       search,
       Layer.succeed(Db.Db, {} as Db.Db["Service"]),
       Layer.succeed(SyncRequests.SyncRequests, {} as SyncRequests.SyncRequests["Service"]),
-      Layer.succeed(SyncLimiter, SyncLimiter.of({ acquire: Effect.void })),
-      Layer.succeed(SearchLimiter, SearchLimiter.of({ acquire: Effect.void })),
+      Layer.succeed(RateLimiter, RateLimiter.of({ acquire: () => Effect.void })),
       Layer.succeed(Viewers, Viewers.of({ current: Effect.fail(new NotSignedIn()) })),
       Layer.succeed(IconHost, IconHost.of({ origin: new URL(request.url).origin })),
-      Layer.succeed(Caller, Caller.of({ key: Db.CallerKey.make("caller-test") })),
+      Layer.succeed(Caller, Caller.of({ key: Db.CallerKey.make("caller-test"), address: "192.0.2.1" })),
     );
 
   const cache = () => caches.open("answers-test");

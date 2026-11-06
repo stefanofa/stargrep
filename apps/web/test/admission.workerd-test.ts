@@ -81,6 +81,7 @@ describe("the caller key", () => {
     const key = await keyFor("192.0.2.1");
     expect(key).toMatch(/^[0-9a-f]{32}$/);
     expect(await keyFor("192.0.2.1")).toBe(key);
+    expect(await keyFor("::ffff:192.0.2.1")).toBe(key);
     expect(await keyFor("192.0.2.2")).not.toBe(key);
     expect(await keyFor("192.0.2.1", "another-stage")).not.toBe(key);
     expect(await keyFor("2001:db8:85a3::1")).toBe(await keyFor("2001:db8:85a3:0:ffff::2"));

@@ -79,6 +79,10 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
           namespaceId: namespaceId(stage, "search-per-caller"),
           simple: { limit: 120, period: 60 },
         }),
+        STARS_PER_CALLER: Cloudflare.RateLimit("STARS_PER_CALLER", {
+          namespaceId: namespaceId(stage, "stars-per-caller"),
+          simple: { limit: 60, period: 60 },
+        }),
         PLANNER_PER_CALLER: Cloudflare.RateLimit("PLANNER_PER_CALLER", {
           namespaceId: namespaceId(stage, "planner-per-caller"),
           simple: { limit: 20, period: 60 },

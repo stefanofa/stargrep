@@ -18,6 +18,7 @@ export default defineConfig({
           SYNC_PER_CALLER: { namespace_id: "1", simple: { limit: 5, period: 60 } },
           SYNC_OVERALL: { namespace_id: "2", simple: { limit: 60, period: 60 } },
           SEARCH_PER_CALLER: { namespace_id: "3", simple: { limit: 120, period: 60 } },
+          STARS_PER_CALLER: { namespace_id: "7", simple: { limit: 60, period: 60 } },
           PLANNER_PER_CALLER: { namespace_id: "4", simple: { limit: 20, period: 60 } },
           PLANNER_OVERALL: { namespace_id: "5", simple: { limit: 300, period: 60 } },
           PLANNER_ONE_CALL: { namespace_id: "6", simple: { limit: 1, period: 60 } },

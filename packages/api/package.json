@@ -10,10 +10,9 @@
     "./icon-host": "./src/icon-host.ts",
     "./middleware/instrumentation": "./src/middleware/instrumentation.ts",
     "./public-config": "./src/public-config.ts",
+    "./rate-limiter": "./src/rate-limiter.ts",
     "./router": "./src/router.ts",
-    "./search-limiter": "./src/search-limiter.ts",
     "./services": "./src/services.ts",
-    "./sync-limiter": "./src/sync-limiter.ts",
     "./viewers": "./src/viewers.ts"
   },
   "scripts": {

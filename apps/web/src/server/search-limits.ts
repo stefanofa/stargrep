@@ -1,22 +1,6 @@
 import * as Allowance from "@stargrep/ai/allowance";
 import { AiSpendLimited } from "@stargrep/ai/errors";
-import { SearchLimiter, SearchLimiterUnavailable, SearchRateLimited } from "@stargrep/api/search-limiter";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-
-export const layerSearchLimiter = (limit: RateLimit, caller: string) =>
-  Layer.succeed(
-    SearchLimiter,
-    SearchLimiter.of({
-      acquire: Effect.tryPromise({
-        try: () => limit.limit({ key: caller }),
-        catch: (cause) => new SearchLimiterUnavailable({ cause }),
-      }).pipe(
-        Effect.flatMap(({ success }) => (success ? Effect.void : Effect.fail(new SearchRateLimited()))),
-        Effect.withSpan("SearchLimiter.acquire"),
-      ),
-    }),
-  );
 
 interface PlannerLimits {
   readonly perCaller: RateLimit;

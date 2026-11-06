@@ -9,11 +9,12 @@ import * as Layer from "effect/Layer";
 import type * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
-import { layerSearchCache, layerSyncLimiter, layerSyncQueue } from "./adapters.ts";
+import { layerSearchCache, layerSyncQueue } from "./adapters.ts";
 import { callerAddress, layerCaller } from "./caller.ts";
 import type { WebEnv } from "./env.ts";
 import { layerOwnerLookup } from "./owner-lookup.ts";
-import { layerPlannerAllowance, layerSearchLimiter } from "./search-limits.ts";
+import { layerRateLimiter } from "./rate-limiter.ts";
+import { layerPlannerAllowance } from "./search-limits.ts";
 import { layerAuth, layerViewers } from "./viewers.ts";
 
 const maxDatabaseConnections = 2;
@@ -39,15 +40,11 @@ export const layerRequest = (
 ) =>
   Layer.mergeAll(
     Search.layer,
-    layerSyncLimiter(
-      { perCaller: env.SYNC_PER_CALLER, overall: env.SYNC_OVERALL },
-      request.headers.get("cf-connecting-ip") ?? "unknown",
-    ),
-    layerSearchLimiter(env.SEARCH_PER_CALLER, callerAddress(request)),
+    layerRateLimiter(env),
     layerViewers(auth, request, connectionString(env)),
     Layer.succeed(IconHost, IconHost.of({ origin: new URL(request.url).origin })),
-    layerCaller(env.CALLER_KEY, request),
   ).pipe(
+    Layer.provideMerge(layerCaller(env.CALLER_KEY, request)),
     Layer.provideMerge(QueryPlanner.layer),
     Layer.provideMerge(layerSearchCache(env.SEARCH_CACHE)),
     Layer.provideMerge(

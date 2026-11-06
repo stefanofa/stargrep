@@ -11,11 +11,11 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { layerSyncLimiter, layerSyncQueue } from "../src/server/adapters.ts";
-import { callerAddress, layerCaller } from "../src/server/caller.ts";
+import { layerSyncQueue } from "../src/server/adapters.ts";
+import { layerCaller } from "../src/server/caller.ts";
 import { withHealth } from "../src/server/health.ts";
 import { layerOwnerLookup } from "../src/server/owner-lookup.ts";
-import { layerSearchLimiter } from "../src/server/search-limits.ts";
+import { layerRateLimiter } from "../src/server/rate-limiter.ts";
 import { testServer } from "./serve.ts";
 
 export const repo: Db.Repo = {
@@ -153,13 +153,9 @@ const serve = testServer((request) =>
     Layer.succeed(Viewers, Viewers.of({ current: Effect.fail(new NotSignedIn()) })),
     Layer.succeed(IconHost, IconHost.of({ origin: new URL(request.url).origin })),
     SyncRequests.layer,
-    layerSyncLimiter(
-      { perCaller: env.SYNC_PER_CALLER, overall: env.SYNC_OVERALL },
-      request.headers.get("cf-connecting-ip") ?? "unknown",
-    ),
-    layerSearchLimiter(env.SEARCH_PER_CALLER, callerAddress(request)),
-    layerCaller(env.CALLER_KEY, request),
+    layerRateLimiter(env),
   ).pipe(
+    Layer.provideMerge(layerCaller(env.CALLER_KEY, request)),
     Layer.provideMerge(Layer.succeed(Db.Db, db)),
     Layer.provide(Layer.merge(layerSyncQueue(syncQueue), layerOwnerLookup(env.WORKER))),
   ),

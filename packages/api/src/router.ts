@@ -26,10 +26,9 @@ import {
 import { errorStatus, type WireCode, wireError } from "./errors.ts";
 import { IconHost, iconUrl } from "./icon-host.ts";
 import { instrumentation, type ProcedureTime, type Transport } from "./middleware/instrumentation.ts";
-import { SearchLimiter, type SearchLimiterUnavailable, type SearchRateLimited } from "./search-limiter.ts";
+import { type RateLimited, RateLimiter, type RateLimiterUnavailable, type RateLimitKind } from "./rate-limiter.ts";
 import type { ApiServices, ApiServicesUnavailable } from "./services.ts";
 import * as Services from "./services.ts";
-import { SyncLimiter, type SyncLimiterUnavailable, type SyncRateLimited } from "./sync-limiter.ts";
 import { requestOwnerSync, type ViewerError, Viewers } from "./viewers.ts";
 
 export interface ApiContext extends WithEffectContext<never>, AnswerContext {
@@ -44,10 +43,8 @@ type ApiFailure =
   | RepoNotFound
   | DbQueryFailed
   | DbRowInvalid
-  | SyncRateLimited
-  | SyncLimiterUnavailable
-  | SearchRateLimited
-  | SearchLimiterUnavailable
+  | RateLimited
+  | RateLimiterUnavailable
   | ViewerError
   | ApiServicesUnavailable;
 
@@ -57,8 +54,7 @@ const wireCodes = {
   LoginNotFound: "LOGIN_NOT_FOUND",
   RepoNotFound: "REPO_NOT_FOUND",
   SearchScopeUnavailable: "SCOPE_UNAVAILABLE",
-  SyncRateLimited: "TOO_MANY_REQUESTS",
-  SearchRateLimited: "TOO_MANY_REQUESTS",
+  RateLimited: "TOO_MANY_REQUESTS",
   AiSpendLimited: "TOO_MANY_REQUESTS",
   NewAccountLimited: "TOO_MANY_REQUESTS",
   SyncBusy: "SYNC_BUSY",
@@ -69,8 +65,7 @@ const wireCodes = {
   ApiServicesUnavailable: "SERVICE_UNAVAILABLE",
   DbQueryFailed: "SERVICE_UNAVAILABLE",
   OwnerLookupFailed: "SERVICE_UNAVAILABLE",
-  SyncLimiterUnavailable: "SERVICE_UNAVAILABLE",
-  SearchLimiterUnavailable: "SERVICE_UNAVAILABLE",
+  RateLimiterUnavailable: "SERVICE_UNAVAILABLE",
   SyncQueueFailed: "SERVICE_UNAVAILABLE",
   ViewerUnavailable: "SERVICE_UNAVAILABLE",
   AiModelNotFound: "INTERNAL_SERVER_ERROR",
@@ -170,7 +165,7 @@ const demoSearchKey = (input: typeof SearchInput.Type, config: PublicConfig) => 
     : Option.none();
 };
 
-const admitSearch = SearchLimiter.use((limiter) => limiter.acquire);
+const admit = (kind: RateLimitKind) => RateLimiter.use((limiter) => limiter.acquire(kind));
 
 const starsAnswers: AnswerPolicy<typeof PublicStars.Type> = {
   procedure: "stars",
@@ -231,15 +226,15 @@ const os = implementer.use(instrumentation);
 export const router = implementer.router({
   search: os.search.effect(function* ({ input, context }) {
     return yield* Option.match(demoSearchKey(input, context.publicConfig), {
-      onNone: () => withServices(context, Effect.andThen(admitSearch, searchAnswer(input))),
-      onSome: (key) => cached(context, searchAnswers, key, searchAnswer(input), admitSearch),
+      onNone: () => withServices(context, Effect.andThen(admit("search"), searchAnswer(input))),
+      onSome: (key) => cached(context, searchAnswers, key, searchAnswer(input), admit("search")),
     });
   }),
 
   triggerSync: os.triggerSync.effect(
     handle((input: typeof SyncInput.Type) =>
       Effect.gen(function* () {
-        yield* (yield* SyncLimiter).acquire;
+        yield* admit("sync");
         const { key } = yield* Caller;
         return yield* withProgress(
           input.login,
@@ -296,7 +291,7 @@ export const router = implementer.router({
       );
     }
     const key = `stars/${input.login.toLowerCase()}/${input.limit}/${input.cursor ?? ""}`;
-    const answer = yield* cached(context, starsAnswers, key, starsAnswer(input, after), Effect.void);
+    const answer = yield* cached(context, starsAnswers, key, starsAnswer(input, after), admit("stars"));
     context.resHeaders?.set("cache-control", "public, max-age=10");
     return answer;
   }),
