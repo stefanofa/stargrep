@@ -7,13 +7,17 @@ import type { Owner } from "@stargrep/github/owner";
 import type { GitHubAccountId, Login } from "@stargrep/github/schemas";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import type * as Result from "effect/Result";
 import * as TestClock from "effect/testing/TestClock";
 import * as OwnerLookup from "./owner-lookup.ts";
 import * as SyncQueue from "./sync-queue.ts";
@@ -178,6 +182,44 @@ const fill = (count: number) => Db.Db.use((db) => reserveUnits(db, count));
 const admitted = (decision: string) =>
   Effect.map(Metric.value(Metric.withAttributes(SyncRequests.admissions, { decision })), (state) => state.count);
 
+// A request reads a claim still in flight again this often.
+const claimPoll = Duration.millis(250);
+
+// Gives a request a clock that reports each wait for a claim in flight, so a test moves time only once the request
+// waits. Every query also races a timeout on the clock, which it does not report.
+const watched = <A, E, R>(asleep: Queue.Queue<void>, effect: Effect.Effect<A, E, R>) =>
+  Clock.clockWith((clock) =>
+    Effect.provideService(effect, Clock.Clock, {
+      ...clock,
+      sleep: (duration) =>
+        Duration.equals(duration, claimPoll)
+          ? Queue.offer(asleep, undefined).pipe(Effect.andThen(clock.sleep(duration)))
+          : clock.sleep(duration),
+    }),
+  );
+
+// Holds each claim until count of them have arrived, so they race for the row at once.
+const lineUpClaims = (count: number) =>
+  Effect.map(Deferred.make<void>(), (arrived) => {
+    let claims = 0;
+    claiming.run = (claim) =>
+      Effect.suspend(() => {
+        claims += 1;
+        return claims === count ? Deferred.succeed(arrived, undefined) : Effect.void;
+      }).pipe(Effect.andThen(Deferred.await(arrived)), Effect.andThen(claim));
+  });
+
+// Holds each lookup until the test answers it.
+const holdLookups = Effect.gen(function* () {
+  const looking = yield* Deferred.make<void>();
+  const answer = yield* Deferred.make<void>();
+  duringLookup.run = () => Deferred.succeed(looking, undefined).pipe(Effect.andThen(Deferred.await(answer)));
+  return { looking, answer };
+});
+
+const outcomeOf = (result: Result.Result<SyncRequests.SyncStatus, SyncRequests.SyncRequestError>) =>
+  result._tag === "Success" ? result.success.state : result.failure._tag;
+
 it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (it) => {
   it.effect("queues an unknown login once and reports it done after a later sync", () =>
     Effect.gen(function* () {
@@ -208,10 +250,16 @@ it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("SyncRequests", (i
   it.effect("looks up and queues one job when the same login is triggered many times at once", () =>
     Effect.gen(function* () {
       yield* reset;
-      const answers = yield* Effect.all(
-        Array.from({ length: 6 }, (_, index) => request("swarm", anyone(`caller-${index}`))),
-        { concurrency: "unbounded" },
+      yield* lineUpClaims(6);
+      const asleep = yield* Queue.unbounded<void>();
+      const triggers = yield* Effect.forEach(
+        Array.from({ length: 6 }, (_, index) => `caller-${index}`),
+        (caller) => Effect.forkChild(watched(asleep, request("swarm", anyone(caller)))),
       );
+      yield* Queue.takeN(asleep, 5);
+      yield* Effect.raceAll(triggers.map(Fiber.join));
+      yield* TestClock.adjust(claimPoll);
+      const answers = yield* Fiber.joinAll(triggers);
       expect(queue.sent).toHaveLength(1);
       expect(github.lookups).toEqual(["swarm" as Login]);
       expect(answers.every((answer) => answer.state === "queued")).toBe(true);
@@ -754,35 +802,68 @@ const concurrentCases = (test: {
     }),
   );
 
-  test.effect("answers every trigger for a login GitHub does not have not found, after one lookup", () =>
+  test.effect("answers triggers that lose the claim to a missing login's lookup not found, after one lookup", () =>
     Effect.gen(function* () {
       yield* reset;
-      const arrived = yield* Deferred.make<void>();
-      const settled = yield* Deferred.make<void>();
-      let claimed = 0;
-      claiming.run = (claim) =>
-        Effect.gen(function* () {
-          claimed += 1;
-          if (claimed === 3) yield* Deferred.succeed(arrived, undefined);
-          yield* Deferred.await(arrived);
-          const won = yield* claim;
-          if (!won) yield* Deferred.await(settled);
-          return won;
-        });
-      const results = yield* Effect.forEach(
-        ["caller-0", "caller-1", "caller-2"],
-        (caller) =>
-          Effect.result(request("missing-login", anyone(caller))).pipe(
-            Effect.ensuring(Deferred.succeed(settled, undefined)),
-          ),
-        { concurrency: "unbounded" },
+      yield* lineUpClaims(3);
+      const lookup = yield* holdLookups;
+      const asleep = yield* Queue.unbounded<void>();
+      const triggers = yield* Effect.forEach(["caller-0", "caller-1", "caller-2"], (caller) =>
+        Effect.forkChild(Effect.result(watched(asleep, request("missing-login", anyone(caller))))),
       );
-      const outcomes = results.map((result) =>
-        result._tag === "Success" ? result.success.state : result.failure._tag,
-      );
+      yield* Queue.takeN(asleep, 2);
+      yield* Deferred.succeed(lookup.answer, undefined);
+      yield* Effect.raceAll(triggers.map(Fiber.join));
+      yield* TestClock.adjust(claimPoll);
+      const outcomes = (yield* Fiber.joinAll(triggers)).map(outcomeOf);
       expect(outcomes).toEqual(["LoginNotFound", "LoginNotFound", "LoginNotFound"]);
       expect(github.lookups).toEqual(["missing-login" as Login]);
       expect(queue.sent).toEqual([]);
+    }),
+  );
+
+  test.effect("answers triggers that arrive during a missing login's lookup not found, after one lookup", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      const lookup = yield* holdLookups;
+      const asleep = yield* Queue.unbounded<void>();
+      const trigger = (caller: string) =>
+        Effect.forkChild(Effect.result(watched(asleep, request("missing-login", anyone(caller)))));
+      const first = yield* trigger("caller-0");
+      yield* Deferred.await(lookup.looking);
+      const others = [yield* trigger("caller-1"), yield* trigger("caller-2")];
+      yield* Queue.takeN(asleep, 2);
+      yield* Deferred.succeed(lookup.answer, undefined);
+      const winner = yield* Fiber.join(first);
+      yield* TestClock.adjust(claimPoll);
+      const outcomes = [winner, ...(yield* Fiber.joinAll(others))].map(outcomeOf);
+      expect(outcomes).toEqual(["LoginNotFound", "LoginNotFound", "LoginNotFound"]);
+      expect(github.lookups).toEqual(["missing-login" as Login]);
+      expect(queue.sent).toEqual([]);
+    }),
+  );
+
+  test.effect("queues a job behind another network's answer when an over-limit network releases its claim", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      for (const login of ["hubot", "grace", "linus", "ada"]) yield* request(login);
+      const claimed = yield* Deferred.make<void>();
+      const released = yield* Deferred.make<void>();
+      claiming.run = (claim) =>
+        Effect.tap(claim, (won) =>
+          won ? Deferred.succeed(claimed, undefined).pipe(Effect.andThen(Deferred.await(released))) : Effect.void,
+        );
+      const limited = yield* Effect.forkChild(Effect.flip(request("swarm")));
+      yield* Deferred.await(claimed);
+      const asleep = yield* Queue.unbounded<void>();
+      const other = yield* Effect.forkChild(watched(asleep, request("swarm", anyone("caller-b"))));
+      yield* Queue.take(asleep);
+      yield* Deferred.succeed(released, undefined);
+      expect((yield* Fiber.join(limited))._tag).toBe("NewAccountLimited");
+      yield* TestClock.adjust(claimPoll);
+      expect(yield* Fiber.join(other)).toMatchObject({ state: "queued" });
+      expect(queue.sent.filter((sent) => sent.login === "swarm")).toHaveLength(1);
+      expect(yield* status("swarm")).toMatchObject({ state: "queued" });
     }),
   );
 };

@@ -208,7 +208,8 @@ describe("direct sign-in", () => {
       databases.AUTH_LOCAL_DATABASE,
       `update github_accounts set stars_synced_at = now() - interval '2 minutes',
          stars_full_synced_at = now() - interval '2 minutes' where login = 'ada';
-       update sync_requests set requested_at = now() - interval '3 minutes' where login = 'ada'`,
+       update sync_requests set requested_at = now() - interval '3 minutes', starts_at = now() - interval '3 minutes'
+         where login = 'ada'`,
     );
     const before = await syncStatus(await local.send("/api/sync/ada"));
     expect(before).toMatchObject({ state: "done" });
