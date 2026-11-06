@@ -868,7 +868,94 @@ const concurrentCases = (test: {
   );
 };
 
+// These two line up waiters on a test clock that reports each wait, which only PGlite's in-process queries keep in step.
+const releasedClaimCases = (test: {
+  readonly effect: it.Tester<SyncRequests.SyncRequests | Db.Db | TestDatabase.TestDatabase>;
+}) => {
+  test.effect(
+    "answers not found to triggers that waited on a released claim, and lose again, for a missing login",
+    () =>
+      Effect.gen(function* () {
+        yield* reset;
+        // caller-a spends its 4 new logins, so its claim on missing-login is released.
+        for (const login of ["hubot", "grace", "linus", "ada"]) yield* request(login);
+        const claimed = yield* Deferred.make<void>();
+        const released = yield* Deferred.make<void>();
+        let first = true;
+        claiming.run = (claim) =>
+          Effect.tap(claim, (won) => {
+            if (!won || !first) return Effect.void;
+            first = false;
+            return Deferred.succeed(claimed, undefined).pipe(Effect.andThen(Deferred.await(released)));
+          });
+        const limited = yield* Effect.forkChild(Effect.flip(request("missing-login")));
+        yield* Deferred.await(claimed);
+        const asleep = yield* Queue.unbounded<void>();
+        const b = yield* Effect.forkChild(Effect.result(watched(asleep, request("missing-login", anyone("caller-b")))));
+        const c = yield* Effect.forkChild(Effect.result(watched(asleep, request("missing-login", anyone("caller-c")))));
+        yield* Queue.takeN(asleep, 2);
+        const lookup = yield* holdLookups;
+        yield* Deferred.succeed(released, undefined);
+        expect((yield* Fiber.join(limited))._tag).toBe("NewAccountLimited");
+        yield* TestClock.adjust(claimPoll);
+        yield* Deferred.await(lookup.looking);
+        // The waiter that lost the second race waits on the new claim's lookup instead of answering.
+        yield* Queue.take(asleep);
+        yield* Deferred.succeed(lookup.answer, undefined);
+        yield* TestClock.adjust(claimPoll);
+        expect((yield* Fiber.joinAll([b, c])).map(outcomeOf)).toEqual(["LoginNotFound", "LoginNotFound"]);
+        expect(github.lookups.filter((login) => login === "missing-login")).toHaveLength(1);
+        expect(queue.sent.filter((sent) => sent.login === "missing-login")).toHaveLength(0);
+      }),
+  );
+
+  test.effect("puts a job behind every queued answer when a waiter's peer re-claims and is released too", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      // caller-a and caller-b each spend their 4 new logins, so each one's claim on swarm is released.
+      for (const login of ["hubot", "grace", "linus", "ada"]) yield* request(login);
+      for (const login of ["alan", "octocat", "x1", "x2"]) {
+        github.owners.set(login, user(login, 9100 + login.length, 42));
+        yield* request(login, anyone("caller-b"));
+      }
+      const gates = [yield* Deferred.make<void>(), yield* Deferred.make<void>()];
+      const wins = [yield* Deferred.make<void>(), yield* Deferred.make<void>()];
+      let won = 0;
+      claiming.run = (claim) =>
+        Effect.tap(claim, (didWin) => {
+          if (!didWin || won >= 2) return Effect.void;
+          const index = won++;
+          return Deferred.succeed(wins[index] as Deferred.Deferred<void>, undefined).pipe(
+            Effect.andThen(Deferred.await(gates[index] as Deferred.Deferred<void>)),
+          );
+        });
+      const limited = yield* Effect.forkChild(Effect.flip(request("swarm")));
+      yield* Deferred.await(wins[0] as Deferred.Deferred<void>);
+      const asleep = yield* Queue.unbounded<void>();
+      const b = yield* Effect.forkChild(Effect.result(watched(asleep, request("swarm", anyone("caller-b")))));
+      const c = yield* Effect.forkChild(Effect.result(watched(asleep, request("swarm", anyone("caller-c")))));
+      yield* Queue.takeN(asleep, 2);
+      yield* Deferred.succeed(gates[0] as Deferred.Deferred<void>, undefined);
+      expect((yield* Fiber.join(limited))._tag).toBe("NewAccountLimited");
+      yield* TestClock.adjust(claimPoll);
+      yield* Deferred.await(wins[1] as Deferred.Deferred<void>);
+      // The waiter that lost the second race waits on the new claim instead of answering queued with no job.
+      yield* Queue.take(asleep);
+      yield* Deferred.succeed(gates[1] as Deferred.Deferred<void>, undefined);
+      yield* TestClock.adjust(claimPoll);
+      const outcomes = (yield* Fiber.joinAll([b, c])).map(outcomeOf);
+      const jobs = queue.sent.filter((sent) => sent.login === "swarm");
+      expect(outcomes.filter((outcome) => outcome === "queued")).toHaveLength(jobs.length);
+      expect(jobs).toHaveLength(1);
+    }),
+  );
+};
+
 it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })("PGlite SyncRequests at once", concurrentCases);
+it.layer(layerWith(queue.layer, memory), { timeout: 30_000 })(
+  "PGlite SyncRequests after a released claim",
+  releasedClaimCases,
+);
 it.layer(layerWith(queue.layer, TestDatabase.layerNodePostgres({ embeddingModel })), { timeout: 30_000 })(
   "node-postgres SyncRequests at once",
   concurrentCases,

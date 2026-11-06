@@ -189,7 +189,7 @@ export const requestLifetime = Duration.days(1);
 
 // A claim writes starts_at once its message is sent, so a pending row without one is a claim whose lookup or
 // reservation still runs. The lookup gives up after 5 seconds, so a request that finds such a claim reads the row again
-// every 250 ms, up to 24 times, before it answers from the row as it stands.
+// every 250 ms, up to 24 times in all, however many claims it waits on, before it answers from the row as it stands.
 const claimWait = { every: Duration.millis(250), reads: 24 } as const;
 
 const inFlight = (row: Option.Option<Db.SyncRequest>) =>
@@ -289,10 +289,15 @@ const make = Effect.gen(function* () {
   // A lookup GitHub answered spent a request whatever comes of the sync, so it always pays into the line.
   const payLookup = (at: DateTime.Utc) => reserve(db, at, lookupCost, true);
 
-  const awaitClaim = (login: Login) =>
-    db.syncRequests
-      .get(login)
-      .pipe(Effect.delay(claimWait.every), Effect.repeat({ while: inFlight, times: claimWait.reads - 1 }));
+  // Reads the row until the claim settles or the reads run out, and returns the reads left.
+  const awaitClaim = Effect.fnUntraced(function* (login: Login, reads: number) {
+    let left = reads;
+    while (left > 0) {
+      left -= 1;
+      if (!inFlight(yield* db.syncRequests.get(login).pipe(Effect.delay(claimWait.every)))) break;
+    }
+    return left;
+  });
 
   // The message goes out before starts_at is written. A crash in between leaves a row that others wait on and then read
   // as queued while its job waits in the queue, instead of a login held until starts_at with no job behind it.
@@ -313,12 +318,13 @@ const make = Effect.gen(function* () {
     return { state: "waiting", requestedAt: at, startsAt, ahead, ...fields } satisfies SyncStatus;
   });
 
-  // A request that finds another's claim in flight waits for its outcome, then decides once more by the same rules.
-  // Untraced, so that second pass marks the request's span with its decision.
+  // A request that finds another's claim in flight waits for its outcome, then decides again by the same rules, from
+  // one budget of reads, so requests that wake together and lose again keep waiting. Untraced, so the pass that
+  // decides marks the request's span.
   const admit = Effect.fnUntraced(function* (
     login: Login,
     by: Requester,
-    waitsForClaim: boolean,
+    readsLeft: number,
   ): Effect.fn.Return<SyncStatus, SyncRequestError> {
     const policy = policies[by._tag];
     const now = yield* DateTime.now;
@@ -327,7 +333,7 @@ const make = Effect.gen(function* () {
       yield* decide("deduped");
       return current;
     }
-    const afterClaim = () => awaitClaim(login).pipe(Effect.andThen(admit(login, by, false)));
+    const afterClaim = () => awaitClaim(login, readsLeft).pipe(Effect.flatMap((left) => admit(login, by, left)));
     const busy = current.state === "queued" || current.state === "waiting";
     const cooldown = busy ? Duration.max(queuedWait, policy.cooldown) : policy.cooldown;
     const held =
@@ -339,7 +345,7 @@ const make = Effect.gen(function* () {
     const missing = (row: Option.Option<Db.SyncRequest>) =>
       by._tag === "anyone" && Option.exists(row, (found) => found.outcome === "missing");
     const notFound = decide("not-found").pipe(Effect.andThen(Effect.fail(new LoginNotFound({ login }))));
-    if (waitsForClaim && inFlight(held)) return yield* afterClaim();
+    if (readsLeft > 0 && inFlight(held)) return yield* afterClaim();
     if (missing(held)) return yield* notFound;
     if (Option.isSome(held)) {
       yield* decide("deduped");
@@ -358,7 +364,7 @@ const make = Effect.gen(function* () {
 
     const claim = { login, at: now, cooldown, lifetime: requestLifetime, overtakesWaiting: policy.overtakesWaiting };
     if (!(yield* db.syncRequests.claim(claim))) {
-      if (waitsForClaim) return yield* afterClaim();
+      if (readsLeft > 0) return yield* afterClaim();
       const winner = yield* read(login, now);
       if (missing(winner.stored)) return yield* notFound;
       yield* decide("deduped");
@@ -429,7 +435,7 @@ const make = Effect.gen(function* () {
   });
 
   const request = Effect.fn("SyncRequests.request")(function* (login: Login, by: Requester) {
-    return yield* admit(login, by, true);
+    return yield* admit(login, by, claimWait.reads);
   });
 
   return SyncRequests.of({ request, status });
