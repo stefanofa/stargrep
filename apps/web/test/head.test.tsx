@@ -5,6 +5,12 @@ import { themeColor } from "../scripts/theme.ts";
 
 // Bun loads a CSS import as an object, where Vite gives the root route a URL string.
 mock.module("../src/styles.css?url", () => ({ default: "/styles.css" }));
+// The root route reads the session, which on a real page the Worker answers.
+const loads = await import("../src/lib/load-page.ts");
+mock.module("../src/lib/load-page.ts", () => ({
+  ...loads,
+  loadSession: async () => ({ viewer: null, demo: { login: "demo", query: "", examples: [], featured: [] } }),
+}));
 const { routeTree } = await import("../src/routeTree.gen.ts");
 
 const renderPage = async (path: string) => {
@@ -13,8 +19,9 @@ const renderPage = async (path: string) => {
   return renderToString(<RouterProvider router={router} />);
 };
 
+// The root route owns the head. A path that is no GitHub login stops before any page loads data.
 test("the head carries a theme color for light and for dark mode", async () => {
-  const head = (await renderPage("/")).split("</head>")[0] ?? "";
+  const head = (await renderPage("/not.a.login")).split("</head>")[0] ?? "";
   const themeColors = [...head.matchAll(/<meta name="theme-color" content="([^"]*)" media="([^"]*)"\/>/g)].map(
     ([, content, media]) => ({ content, media }),
   );

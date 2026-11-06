@@ -104,3 +104,22 @@ describe("status line", () => {
     expect(label()?.className).not.toContain("animate-settle");
   });
 });
+
+describe("a server-rendered tile", () => {
+  test("keeps what was typed before its script arrived", async () => {
+    const { renderToString } = await import("react-dom/server");
+    const { hydrateRoot } = await import("react-dom/client");
+    const { act } = await import("@testing-library/react");
+    const container = document.createElement("div");
+    container.innerHTML = renderToString(<SearchTile query="terminal dashboard" />);
+    document.body.append(container);
+    const input = container.querySelector("input") as HTMLInputElement;
+    input.value = "terminal recorder";
+    const seen: Array<string> = [];
+    await act(async () => {
+      hydrateRoot(container, <SearchTile query="terminal dashboard" onQueryChange={(next) => seen.push(next)} />);
+    });
+    expect(seen).toEqual(["terminal recorder"]);
+    container.remove();
+  });
+});

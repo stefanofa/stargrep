@@ -57,7 +57,7 @@ const query = { terms: ["record", "terminal", "sessions", "gifs"] };
 
 describe("the stage", () => {
   test("a first sync imports, and an unknown star count leaves the total open", () => {
-    expect(importing).toEqual({ name: "importing", done: 1204, total: 1776, read: 0 });
+    expect(importing).toEqual({ name: "importing", done: 1204, total: 1776, read: 0, line: null });
     const unknown = stageOf({ sync: sync({ state: "queued", syncedAt: null }), entries: entries(40), starred: null });
     expect(unknown).toMatchObject({ name: "importing", total: null });
   });

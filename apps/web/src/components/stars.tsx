@@ -1,0 +1,470 @@
+import {
+  Button,
+  EmptyTile,
+  type OpenResult,
+  Pip,
+  type PipPose,
+  RephraseChips,
+  RepoPanel,
+  Results,
+  ScopeSwitch,
+  SearchTile,
+  type Sort,
+  SortMenu,
+  StatusLine,
+  Tile,
+  useStoredView,
+  type View,
+  ViewToggle,
+} from "@stargrep/ui";
+import { and, ilike } from "@tanstack/db";
+import { useLiveQuery } from "@tanstack/react-db";
+import { useHydrated, useNavigate, useSearch } from "@tanstack/react-router";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { keywordTerms, normalize } from "../lib/keyword.ts";
+import { getLibrary, type Library, useRecoveries } from "../lib/library-collection.ts";
+import { type PageData, type PageRequest, pageOwner, type Session } from "../lib/page-data.ts";
+import { pageView } from "../lib/page-view.ts";
+import { planned } from "../lib/planned.ts";
+import { now, startsIn, toDetail } from "../lib/present.ts";
+import { withReply } from "../lib/results.ts";
+import { useReveal } from "../lib/reveal.ts";
+import { api, type Viewer } from "../lib/rpc.ts";
+import { librarySorts, type Params, searchSorts } from "../lib/search-params.ts";
+import { type Body, type Stage, stageOf } from "../lib/search-state.ts";
+import { useSemanticSearch } from "../lib/use-semantic.ts";
+import { type SyncWatch, useSync } from "../lib/use-sync.ts";
+import { AccountMenu } from "./account-menu.tsx";
+import { type Butter, Hero, TryChips } from "./landing-hero.tsx";
+import { type Arriving, LibraryPlaceholder, LibraryView } from "./library-view.tsx";
+import { OwnerPill } from "./owner-pill.tsx";
+
+export const loadSession = async (): Promise<Session> => {
+  const client = planned(api());
+  const [viewer, config] = await Promise.all([client.viewer().catch(() => null), client.config()]);
+  return { viewer, config };
+};
+
+export const loadPage = async (request: PageRequest, { viewer, config }: Session): Promise<PageData> => {
+  const { owner, own, query } = pageOwner(viewer, config, request);
+  return { viewer, owner, own, config, query, first: null, sync: null, refusal: null };
+};
+
+const scopes = [{ value: "stars", label: "Your stars", href: "/" }];
+
+export function HeaderControls({ viewer }: { viewer: Viewer }) {
+  return (
+    <>
+      <ScopeSwitch scopes={scopes} value="stars" className="max-sm:hidden" />
+      <AccountMenu login={viewer.login} avatarUrl={viewer.avatarUrl} />
+    </>
+  );
+}
+
+function Notice({
+  heading,
+  detail,
+  pose,
+  action,
+}: {
+  heading: string;
+  detail?: string;
+  pose: PipPose;
+  action?: ReactNode;
+}) {
+  return (
+    <Tile className="relative flex min-h-[240px] flex-col justify-center gap-6 px-tile-lg py-10 sm:px-12">
+      <div className="relative z-10 flex max-w-[640px] flex-col gap-2">
+        <h2 className="font-display text-3xl font-semibold tracking-tight sm:text-display sm:leading-[56px]">
+          {heading}
+        </h2>
+        {detail && <p className="font-sans text-lg text-secondary-foreground">{detail}</p>}
+      </div>
+      {action && <div className="relative z-10">{action}</div>}
+      <Pip pose={pose} size={200} className="absolute top-5 right-[88px] -rotate-12 max-md:hidden" />
+    </Tile>
+  );
+}
+
+const dock =
+  "max-sm:fixed max-sm:inset-x-3 max-sm:bottom-[max(16px,env(safe-area-inset-bottom))] max-sm:z-30 max-sm:[&_[data-slot=tile]]:shadow-dock";
+
+// With an owner pill in the phone strip there is no room for the sort trigger, so phones sort by the default there.
+function useControls(searching: boolean, roomForSort: boolean) {
+  const params: Params = useSearch({ strict: false });
+  const navigate = useNavigate();
+  const [storedView, storeView] = useStoredView();
+  const view = params.view ?? storedView;
+  const sort = params.sort ?? (searching ? "best" : "starred");
+  const setView = (next: View) => {
+    storeView(next);
+    navigate({ to: ".", search: (previous) => ({ ...previous, view: next }), replace: true });
+  };
+  const setSort = (next: Sort) =>
+    navigate({ to: ".", search: (previous) => ({ ...previous, sort: next }), replace: true });
+  const controls = (
+    <>
+      <div className={roomForSort ? "contents" : "contents max-sm:hidden"}>
+        <SortMenu value={sort} onValueChange={setSort} options={searching ? searchSorts : librarySorts} />
+      </div>
+      <ViewToggle value={view} onValueChange={setView} />
+    </>
+  );
+  return { view, sort, controls };
+}
+
+function Waiting({ view, searching, arriving }: { view: View; searching: boolean; arriving: Arriving | undefined }) {
+  return searching ? (
+    <Results view={view} groups={[{ key: "all", results: [], pending: 4 }]} />
+  ) : (
+    <LibraryPlaceholder view={view} arriving={arriving} />
+  );
+}
+
+type Refusal = Exclude<SyncWatch["kind"], "watching">;
+
+// What the page says when the import of someone's stars is refused. Only a login GitHub doesn't know is a dead end.
+const refused = (refusal: Refusal, owner: string) => {
+  switch (refusal) {
+    case "missing":
+      return {
+        status: { icon: "failed", label: "no such github user" },
+        heading: `github has no one called @${owner}`,
+        detail: "check the spelling, or pick someone else from the pill above",
+        retry: false,
+      } as const;
+    case "busy":
+      return {
+        status: { icon: "done", label: "the import line is full", detail: "for now" },
+        heading: "github's line for new imports is full",
+        detail: `stargrep can read @${owner}'s stars once there's room. try again in a while.`,
+        retry: true,
+      } as const;
+    case "limited":
+      return {
+        status: { icon: "done", label: "taking a breather" },
+        heading: "lots of new accounts from your network",
+        detail: "give it a few minutes, then try again. accounts stargrep already knows still work.",
+        retry: true,
+      } as const;
+  }
+};
+
+const idlePlaceholder = "the rust tui library I starred last year";
+
+type Text = Parameters<typeof ilike>[0];
+
+const containsEvery = (text: Text, [first, ...rest]: readonly [string, ...Array<string>]) => {
+  const [second, ...others] = rest.map((term) => ilike(text, `%${term}%`));
+  const head = ilike(text, `%${first}%`);
+  return second === undefined ? head : and(head, second, ...others);
+};
+
+const measured = (stage: Stage) => {
+  if (stage.name === "importing") return { done: stage.done, total: stage.total };
+  if (stage.name === "reading") return { done: stage.settled, total: stage.total };
+  return undefined;
+};
+
+function useTimeLeft(stage: Stage) {
+  const [stageStart, setStageStart] = useState<{
+    readonly stage: Stage["name"];
+    readonly at: number;
+    readonly done: number;
+  }>();
+  const progress = measured(stage);
+  const done = progress?.done ?? 0;
+  const total = progress?.total ?? null;
+  const active = progress !== undefined;
+  useEffect(() => {
+    if (!active) setStageStart(undefined);
+    else setStageStart((current) => (current?.stage === stage.name ? current : { stage: stage.name, at: now(), done }));
+  }, [active, stage.name, done]);
+  if (!active || stageStart === undefined || total === null) return undefined;
+  const perSecond = (done - stageStart.done) / Math.max(1, (now() - stageStart.at) / 1000);
+  if (perSecond <= 0) return undefined;
+  const seconds = Math.ceil((total - done) / perSecond);
+  if (seconds <= 5) return "almost done";
+  return seconds < 90 ? `about ${seconds} seconds left` : `about ${Math.round(seconds / 60)} minutes left`;
+}
+
+const quiet = 600;
+
+function useSurprise(query: string, landed: boolean) {
+  const typedAt = useRef(0);
+  const [surprised, setSurprised] = useState(false);
+  useEffect(() => {
+    typedAt.current = now();
+  }, [query]);
+  useEffect(() => {
+    if (!landed) return;
+    const wait = Math.max(0, quiet - (now() - typedAt.current));
+    const fiber = Effect.runFork(
+      Effect.sleep(Duration.millis(wait)).pipe(
+        Effect.andThen(Effect.sync(() => setSurprised(true))),
+        Effect.andThen(Effect.sleep(Duration.millis(1200))),
+        Effect.ensuring(Effect.sync(() => setSurprised(false))),
+      ),
+    );
+    return () => {
+      Effect.runFork(Fiber.interrupt(fiber));
+    };
+  }, [query, landed]);
+  return surprised;
+}
+
+interface StarsProps {
+  readonly data: PageData;
+  readonly onPose: (pose: PipPose) => void;
+}
+
+// The server and the hydrating browser render without the library, so both paint the same first answer. The library
+// loads once the page is hydrated.
+export function Stars({ data, onPose }: StarsProps) {
+  const hydrated = useHydrated();
+  const library = hydrated ? getLibrary(data.owner, data.own) : undefined;
+  const recoveries = useRecoveries(library);
+  return <OwnerStars key={recoveries} data={data} library={library} onPose={onPose} />;
+}
+
+function OwnerStars({ data, library, onPose }: StarsProps & { library: Library | undefined }) {
+  const { owner, first } = data;
+  const collection = library?.collection;
+  const reloadRef = useRef(library?.reload);
+  reloadRef.current = library?.reload;
+  const reload = useCallback(() => {
+    reloadRef.current?.();
+  }, []);
+  const [retrying, setRetrying] = useState(false);
+  const [at] = useState(() => first?.at ?? now());
+  const params: Params = useSearch({ strict: false });
+  const navigate = useNavigate();
+  const [query, setQuery] = useState(params.q ?? data.query);
+  const [opener, setOpener] = useState<HTMLElement | null>(null);
+  const terms = useMemo(() => keywordTerms(query), [query]);
+
+  const {
+    data: entries = [],
+    isReady: queried,
+    isLoadingError,
+  } = useLiveQuery((q) => (collection === undefined ? undefined : q.from({ repo: collection })));
+  const { data: matched = [] } = useLiveQuery((q) => {
+    const [head, ...rest] = terms;
+    return head === undefined || collection === undefined
+      ? undefined
+      : q.from({ repo: collection }).where(({ repo }) => containsEvery(repo.text, [head, ...rest]));
+  });
+  const isReady = collection !== undefined && queried;
+  const { watch, retry } = useSync(owner, reload, first?.sync ?? data.sync ?? undefined, data.refusal ?? undefined);
+  const sync = watch.kind === "watching" ? watch.status : undefined;
+  const starred = data.own ? (data.viewer?.starredCount ?? null) : (sync?.starredTotal ?? null);
+  const stage = stageOf({ sync, entries, starred });
+  const estimate = useTimeLeft(stage);
+  const timeLeft = stage.name === "importing" && stage.line !== null ? startsIn(stage.line.startsAt, now()) : estimate;
+  const semantic = useSemanticSearch(owner, query, {
+    read: sync?.enrichment.read,
+    settled: stage.name === "ready",
+    known: first === null ? undefined : { query: first.query, results: first.hits },
+  });
+
+  const searching = terms.length > 0 || semantic.pending || semantic.results.length > 0;
+  const { view, sort, controls } = useControls(searching, data.own);
+  const live = pageView({
+    query,
+    entries,
+    matched,
+    find: (id) => collection?.get(id),
+    sync,
+    starred,
+    semantic,
+    sort,
+    at,
+    timeLeft,
+    whose: data.own ? undefined : owner,
+  });
+  const frozen = first !== null && !isReady && normalize(query) === normalize(first.query) ? first.view : undefined;
+  const state = frozen ?? live;
+  const ready = isReady || frozen !== undefined;
+  const refusal = watch.kind === "watching" ? undefined : refused(watch.kind, owner);
+  const surprised = useSurprise(query, !semantic.pending && semantic.results.length > 0);
+  const pose = refusal !== undefined ? "unsure" : surprised && state.pose === "idle" ? "surprised" : state.pose;
+  useEffect(() => onPose(pose), [onPose, pose]);
+
+  const visitor = data.viewer === null;
+  const showcase = first !== null && normalize(query) === normalize(first.query);
+  const reveal = useReveal(query, showcase && frozen !== undefined);
+  const importing = !data.own && stage.name === "importing" ? stage : undefined;
+  const butter: Butter =
+    importing === undefined
+      ? { kind: "join" }
+      : { kind: "claim", progress: importing.total === null ? 0 : importing.done / Math.max(1, importing.total) };
+  const subtitle =
+    refusal !== undefined
+      ? "try any username."
+      : importing?.line != null
+        ? `@${owner} is new here and waits in line for github. their import ${timeLeft ?? "starts soon"}, and search covers their stars as they land.`
+        : importing !== undefined
+          ? `@${owner} is new here. their stars are on the way from github, and search already covers the ones that landed.`
+          : owner.toLowerCase() === data.config.demoLogin.toLowerCase()
+            ? `live results from @${owner}, our demo account. try any username.`
+            : `@${owner}'s stars, searched in plain words. try any username.`;
+  const butterPose = reveal.phase === "typing" ? "thinking" : reveal.phase === "settled" ? "happy" : "idle";
+  const loadingStatus = <StatusLine icon="busy" label={`loading ${data.own ? "your stars" : `@${owner}'s stars`}`} />;
+
+  const retryLibrary = () => {
+    setRetrying(true);
+    library?.reload().finally(() => setRetrying(false));
+  };
+  const search = (next: string) => {
+    reveal.skip();
+    setQuery(next);
+    navigate({ to: ".", search: (previous) => ({ ...previous, q: next === "" ? undefined : next }), replace: true });
+  };
+  const open: OpenResult = (result, link) => {
+    setOpener(link);
+    navigate({ to: ".", search: (previous) => ({ ...previous, repo: `${result.owner}/${result.name}` }) });
+  };
+  const entry =
+    params.repo === undefined ? undefined : entries.find((repo) => `${repo.owner}/${repo.name}` === params.repo);
+  const hit = semantic.results.find((result) => result.id === entry?.id);
+  const opened = entry && (hit ? withReply(entry, hit) : entry);
+
+  const body = (current: Body) => {
+    switch (current.kind) {
+      case "library":
+        return (
+          <LibraryView
+            entries={entries}
+            at={at}
+            view={view}
+            sort={sort}
+            language={params.lang}
+            arriving={stage.name === "importing" ? { total: stage.total } : undefined}
+            pose={pose}
+            onOpen={open}
+          />
+        );
+      case "results":
+        return <Results view={view} groups={current.groups} onOpen={open} />;
+      case "empty-reading":
+        return <EmptyTile pose={pose} ring={current.ring} {...current.copy} />;
+      case "empty":
+        return (
+          <EmptyTile pose={pose} {...current.copy}>
+            <RephraseChips phrases={current.phrases} onPick={search} />
+          </EmptyTile>
+        );
+      case "failed":
+        return <EmptyTile pose={pose} {...current.copy} />;
+    }
+  };
+
+  return (
+    <>
+      {visitor && <Hero subtitle={subtitle} butter={butter} pose={butterPose} />}
+      <div
+        data-reveal-tile
+        className="contents"
+        onKeyDownCapture={reveal.skip}
+        onPointerDownCapture={reveal.skip}
+        onFocusCapture={reveal.skip}
+      >
+        <SearchTile
+          query={reveal.typed ?? query}
+          onQueryChange={search}
+          label={data.own ? "Search your stars" : `Search @${owner}'s stars`}
+          placeholder={stage.name === "importing" ? "search what has arrived" : idlePlaceholder}
+          className={dock}
+          owner={data.own ? undefined : <OwnerPill owner={owner} viewer={data.viewer} config={data.config} />}
+          progress={ready ? state.progress : undefined}
+          status={
+            refusal !== undefined ? (
+              <StatusLine
+                icon={refusal.status.icon}
+                label={refusal.status.label}
+                detail={"detail" in refusal.status ? refusal.status.detail : undefined}
+              />
+            ) : !ready ? (
+              loadingStatus
+            ) : (
+              <StatusLine
+                icon={state.status.icon}
+                label={state.status.label}
+                phoneLabel={state.status.phoneLabel}
+                detail={state.status.detail}
+                phoneDetail={state.status.phoneDetail}
+                continues={state.status.continues}
+                instant={state.status.instant}
+                action={
+                  state.status.retry && (
+                    <Button
+                      variant="bare"
+                      size="default"
+                      className="max-sm:h-[18px] max-sm:px-0 max-sm:text-sm max-sm:after:-inset-x-2 max-sm:after:-inset-y-2.5 max-sm:hover:bg-transparent"
+                      onClick={retry}
+                    >
+                      try again
+                    </Button>
+                  )
+                }
+              />
+            )
+          }
+          controls={controls}
+        />
+      </div>
+      {visitor && (
+        <TryChips
+          examples={data.config.examples.filter((example) => normalize(example) !== normalize(query))}
+          onPick={search}
+        />
+      )}
+      <div data-reveal-results className="flex flex-col gap-gap max-sm:pb-44">
+        {refusal !== undefined ? (
+          <Notice
+            heading={refusal.heading}
+            detail={refusal.detail}
+            pose="unsure"
+            action={
+              refusal.retry && (
+                <Button variant="ghost" size="lg" onClick={retry}>
+                  Try again
+                </Button>
+              )
+            }
+          />
+        ) : isLoadingError ? (
+          <Notice
+            heading="stargrep couldn't load these stars"
+            detail="the library didn't arrive"
+            pose="scared"
+            action={
+              <Button variant="primary" size="lg" disabled={retrying} onClick={retryLibrary}>
+                Try again
+              </Button>
+            }
+          />
+        ) : !ready ? (
+          <Waiting
+            view={view}
+            searching={terms.length > 0}
+            arriving={stage.name === "importing" ? { total: stage.total } : undefined}
+          />
+        ) : (
+          body(state.body)
+        )}
+      </div>
+      <RepoPanel
+        repo={opened && toDetail(opened, at)}
+        open={opened !== undefined}
+        onOpenChange={(next) => {
+          if (!next) navigate({ to: ".", search: (previous) => ({ ...previous, repo: undefined }) });
+        }}
+        returnFocus={opener}
+      />
+    </>
+  );
+}

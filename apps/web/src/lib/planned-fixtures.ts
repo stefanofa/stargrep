@@ -1,0 +1,193 @@
+import * as DateTime from "effect/DateTime";
+import type { LibraryRepo } from "./rpc.ts";
+
+// Stand-ins for what `feat(api): search anyone's stars safely` serves, until it merges. The local stage seed reads
+// these rows too, so the stage database and the fixtures agree.
+
+type Row = readonly [owner: string, name: string, type: "org" | "user", language: string, stars: number, text: string];
+
+const rows: ReadonlyArray<Row> = [
+  ["astral-sh", "uv", "org", "Rust", 78_200, "An extremely fast Python package and project manager, written in Rust."],
+  [
+    "helix-editor",
+    "helix",
+    "org",
+    "Rust",
+    38_900,
+    "A post-modern modal text editor with tree-sitter and LSP built in.",
+  ],
+  [
+    "tldraw",
+    "tldraw",
+    "org",
+    "TypeScript",
+    43_500,
+    "Infinite canvas SDK for React. Whiteboards, diagrams, and canvas apps.",
+  ],
+  [
+    "oven-sh",
+    "bun",
+    "org",
+    "Zig",
+    81_300,
+    "Fast JavaScript runtime, bundler, test runner, and package manager in one.",
+  ],
+  [
+    "biomejs",
+    "biome",
+    "org",
+    "Rust",
+    23_100,
+    "Fast formatter and linter for JavaScript, TypeScript, JSON, CSS, and more.",
+  ],
+  [
+    "tursodatabase",
+    "turso",
+    "org",
+    "Rust",
+    14_100,
+    "An in-process SQL database written in Rust, compatible with SQLite.",
+  ],
+  [
+    "ratatui",
+    "ratatui",
+    "org",
+    "Rust",
+    16_400,
+    "Widgets for charts, gauges, sparklines, and tables. The maintained fork of tui-rs.",
+  ],
+  ["ClementTsang", "bottom", "user", "Rust", 11_600, "A system monitor dashboard for the terminal, built on ratatui."],
+  [
+    "tokio-rs",
+    "console",
+    "org",
+    "Rust",
+    4_100,
+    "A debugger for async rust, with a live terminal dashboard of your tasks.",
+  ],
+  [
+    "gyscos",
+    "cursive",
+    "user",
+    "Rust",
+    4_600,
+    "A text UI library with views, layouts, and themes. Fewer chart widgets.",
+  ],
+  [
+    "fdehau",
+    "tui-rs",
+    "user",
+    "Rust",
+    11_100,
+    "Where ratatui came from. Archived in 2023, so ratatui is the one to use.",
+  ],
+  [
+    "rhysd",
+    "tui-textarea",
+    "user",
+    "Rust",
+    500,
+    "Multi-line text editor widget library for terminal apps built on ratatui.",
+  ],
+  [
+    "ajeetdsouza",
+    "zoxide",
+    "user",
+    "Rust",
+    26_900,
+    "A smarter cd command that remembers which directories you use most.",
+  ],
+  ["junegunn", "fzf", "user", "Go", 74_000, "A command-line fuzzy finder for files, history, processes, and any list."],
+  [
+    "charmbracelet",
+    "bubbletea",
+    "org",
+    "Go",
+    37_400,
+    "A powerful little TUI framework, based on The Elm Architecture.",
+  ],
+  ["jesseduffield", "lazygit", "user", "Go", 62_000, "A simple terminal UI for git commands."],
+  ["sharkdp", "bat", "user", "Rust", 54_000, "A cat clone with syntax highlighting and Git integration."],
+  [
+    "BurntSushi",
+    "ripgrep",
+    "user",
+    "Rust",
+    56_000,
+    "Recursively searches directories for a regex pattern while respecting gitignore.",
+  ],
+  ["casey", "just", "user", "Rust", 27_000, "A handy way to save and run project-specific commands."],
+  ["denoland", "deno", "org", "Rust", 104_000, "A modern runtime for JavaScript and TypeScript."],
+  [
+    "ghostty-org",
+    "ghostty",
+    "org",
+    "Zig",
+    32_000,
+    "A fast, feature-rich, cross-platform terminal emulator with native UI.",
+  ],
+  [
+    "zed-industries",
+    "zed",
+    "org",
+    "Rust",
+    74_600,
+    "A high-performance, multiplayer code editor from the creators of Atom.",
+  ],
+  ["charmbracelet", "vhs", "org", "Go", 17_000, "Your CLI home video recorder. Write terminal GIFs as code."],
+  ["asciinema", "asciinema", "org", "Rust", 15_000, "Terminal session recorder."],
+];
+
+const day = 86_400_000;
+const base = Date.parse("2026-11-05T09:00:00.000Z");
+const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
+
+export const fixtureRepos: ReadonlyArray<LibraryRepo> = rows.map(
+  ([owner, name, type, language, stars, text], index) => ({
+    id: (800_000 + index) as LibraryRepo["id"],
+    owner,
+    name,
+    url: `https://github.com/${owner}/${name}`,
+    description: text,
+    summary: text,
+    language,
+    topics: [],
+    license: null,
+    kind: null,
+    archived: name === "tui-rs",
+    pushedAt: iso(base - (index % 9) * 3 * day),
+    icon: null,
+    ownerType: type,
+    ownerAvatarUrl: `https://github.com/${owner}.png`,
+    keywords: [],
+    starredAt: iso(base - (index < 4 ? index : 4 + index * 6) * day),
+    stars,
+    read: true,
+  }),
+);
+
+export interface FixtureAccount {
+  readonly login: string;
+  readonly starredTotal: number;
+  readonly arrived: number;
+  readonly waiting?: { readonly ahead: number; readonly minutes: number };
+  readonly refuses?: "SYNC_BUSY" | "TOO_MANY_REQUESTS";
+}
+
+export const fixtureAccounts: ReadonlyArray<FixtureAccount> = [
+  { login: "stefanofa", starredTotal: fixtureRepos.length, arrived: fixtureRepos.length },
+  { login: "junodev", starredTotal: fixtureRepos.length, arrived: fixtureRepos.length },
+  { login: "octosync", starredTotal: fixtureRepos.length, arrived: 14 },
+  { login: "linewaiter", starredTotal: 412, arrived: 0, waiting: { ahead: 3, minutes: 24 } },
+  { login: "busyline", starredTotal: 900, arrived: 0, refuses: "SYNC_BUSY" },
+  { login: "slowdown", starredTotal: 120, arrived: 0, refuses: "TOO_MANY_REQUESTS" },
+];
+
+// #48 serves "let an ai agent control my iphone" for stefanofa's real stars. The stage seeds these rows instead, so its
+// demo query is one they answer.
+export const fixtureConfig = {
+  demoLogin: "stefanofa",
+  demoQuery: "terminal dashboard",
+  examples: ["python package manager", "terminal recorder", "fuzzy finder"],
+  featured: ["stefanofa"],
+};

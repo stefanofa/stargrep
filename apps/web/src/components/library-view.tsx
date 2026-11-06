@@ -97,18 +97,14 @@ function LanguagesTile({
         shares.length > 0 && <LanguageBar languages={shares} />
       )}
       <nav aria-label="Filter by language" className="flex flex-wrap gap-2">
-        <Link
-          to="/search"
-          search={(previous) => ({ ...previous, lang: undefined })}
-          className={chip(language === undefined)}
-        >
+        <Link to="." search={(previous) => ({ ...previous, lang: undefined })} className={chip(language === undefined)}>
           All
         </Link>
         {shares === undefined && waitingChips.map((width) => <Skeleton key={width} className={`h-9 ${width}`} />)}
         {(shares ?? []).slice(0, 3).map((share) => (
           <Link
             key={share.name}
-            to="/search"
+            to="."
             search={(previous) => ({ ...previous, lang: share.name })}
             className={chip(language === share.name)}
           >
@@ -132,11 +128,11 @@ function MonthHeading({ heading, size, arriving }: { heading: string; size: numb
   );
 }
 
-export function LibraryPlaceholder({ view }: { view: View }) {
+export function LibraryPlaceholder({ view, arriving }: { view: View; arriving?: Arriving | undefined }) {
   return (
     <>
       <div aria-busy className="grid gap-gap lg:grid-cols-2">
-        <CountTile count={undefined} arriving={undefined} pose="idle" />
+        <CountTile count={undefined} arriving={arriving} pose="idle" />
         <LanguagesTile shares={undefined} language={undefined} />
       </div>
       <section className="flex flex-col gap-gap pt-3">

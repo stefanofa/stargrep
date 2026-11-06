@@ -1,12 +1,16 @@
 import { Button } from "@stargrep/ui";
-import { type ComponentProps, useState } from "react";
+import { type ComponentProps, type ReactNode, useState } from "react";
 import { signIn } from "../lib/auth-client.ts";
 import { GitHubMark } from "./github-mark.tsx";
 
 export function SignInButton({
   label = "Sign in with GitHub",
+  markClassName,
   ...props
-}: { label?: string } & Pick<ComponentProps<typeof Button>, "variant" | "size" | "className">) {
+}: { label?: ReactNode; markClassName?: string } & Pick<
+  ComponentProps<typeof Button>,
+  "variant" | "size" | "className"
+>) {
   const [pending, setPending] = useState(false);
   const start = () => {
     setPending(true);
@@ -14,7 +18,7 @@ export function SignInButton({
   };
   return (
     <Button variant="ghost" {...props} disabled={pending} onClick={start}>
-      <GitHubMark className="size-4" />
+      <GitHubMark className={markClassName ?? "size-4"} />
       {label}
     </Button>
   );

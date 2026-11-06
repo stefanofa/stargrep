@@ -1,34 +1,37 @@
 import * as Result from "effect/Result";
 import { useEffect, useRef, useState } from "react";
 import { normalize } from "./keyword.ts";
+import type { Semantic } from "./page-view.ts";
+import { planned } from "./planned.ts";
 import { api, type SearchResult } from "./rpc.ts";
 import { type Answer, minimumLength, type SearchFailed, startSemanticSearch } from "./search-stream.ts";
 
 type Search = ReturnType<typeof startSemanticSearch<ReadonlyArray<SearchResult>>>;
 
-export interface Semantic {
-  readonly results: ReadonlyArray<SearchResult>;
-  readonly pending: boolean;
-  readonly failed: boolean;
-}
+export type { Semantic };
 
 const none: Semantic = { results: [], pending: false, failed: false };
+
+export interface Known {
+  readonly query: string;
+  readonly results: ReadonlyArray<SearchResult>;
+}
 
 export function useSemanticSearch(
   login: string,
   query: string,
-  { read, settled }: { read: number | undefined; settled: boolean },
+  { read, settled, known }: { read: number | undefined; settled: boolean; known?: Known | undefined },
 ): Semantic {
-  const [answer, setAnswer] = useState<Answer<ReadonlyArray<SearchResult>, SearchFailed>>();
+  const [answer, setAnswer] = useState<Answer<ReadonlyArray<SearchResult>, SearchFailed> | undefined>(
+    known && { query: normalize(known.query), result: Result.succeed(known.results) },
+  );
   const search = useRef<Search>(undefined);
   const readBefore = useRef<number>(undefined);
 
   useEffect(() => {
+    const client = planned(api());
     const running = startSemanticSearch(
-      (q, signal) =>
-        api()
-          .search({ login, q }, { signal })
-          .then(({ results }) => results),
+      (q, signal) => client.search({ login, q }, { signal }).then(({ results }) => results),
       setAnswer,
     );
     search.current = running;

@@ -16,31 +16,45 @@ export const fewNewStars = 20;
 export type LastSync = "done" | "failed-first" | "failed-refresh";
 
 export type Stage =
-  | { readonly name: "importing"; readonly done: number; readonly total: number | null; readonly read: number | null }
+  | {
+      readonly name: "importing";
+      readonly done: number;
+      readonly total: number | null;
+      readonly read: number | null;
+      readonly line: { readonly ahead: number; readonly startsAt: string } | null;
+    }
   | { readonly name: "refreshing"; readonly total: number; readonly arriving: number }
   | { readonly name: "reading"; readonly read: number; readonly settled: number; readonly total: number }
   | { readonly name: "ready"; readonly total: number; readonly failed: number; readonly lastSync: LastSync };
+
+// syncStatus as #48 serves it: a sync can wait in line for GitHub budget before it starts.
+export interface StageSync extends Omit<SyncStatus, "state"> {
+  readonly state: SyncStatus["state"] | "waiting";
+  readonly waiting?: { readonly ahead: number; readonly startsAt: string } | null;
+}
 
 export const stageOf = ({
   sync,
   entries,
   starred,
 }: {
-  sync: SyncStatus | undefined;
+  sync: StageSync | undefined;
   entries: ReadonlyArray<Pick<LibraryRepo, "stars" | "pushedAt">>;
   starred: number | null;
 }): Stage => {
   const enrichment = sync?.enrichment ?? null;
-  if (sync?.state === "queued" && sync.syncedAt === null)
+  const pending = sync?.state === "queued" || sync?.state === "waiting";
+  if (pending && sync?.syncedAt === null)
     return {
       name: "importing",
       done: entries.length,
       total: starred === null ? null : Math.max(starred, entries.length),
       read: enrichment?.read ?? null,
+      line: sync.waiting ?? null,
     };
   const arriving = entries.filter(factsPending).length;
   const backlog = enrichment === null ? 0 : enrichment.total - enrichment.read - enrichment.failed;
-  if (sync?.state === "queued" || (arriving > 0 && backlog > 0 && backlog <= fewNewStars))
+  if (pending || (arriving > 0 && backlog > 0 && backlog <= fewNewStars))
     return { name: "refreshing", total: entries.length, arriving };
   if (enrichment !== null && readingIncomplete(enrichment))
     return {
@@ -64,7 +78,9 @@ type Answer =
 export interface Status {
   readonly icon: StatusIcon;
   readonly label: string;
+  readonly phoneLabel?: string;
   readonly detail?: string;
+  readonly phoneDetail?: string;
   readonly continues?: boolean;
   readonly retry?: boolean;
   readonly instant?: boolean;
@@ -127,19 +143,24 @@ const unreadDetail = (stage: Stage) => {
   return undefined;
 };
 
-const progressOf = (stage: Stage): Progress | undefined => {
+// Whose stars the page shows: undefined for the viewer's own, a login for anyone else's.
+export type Whose = string | undefined;
+
+const theirs = (whose: Whose) => (whose === undefined ? "your stars" : `@${whose}'s stars`);
+
+const progressOf = (stage: Stage, whose: Whose): Progress | undefined => {
   if (stage.name === "importing" && stage.total !== null)
     return {
       value: stage.done,
       max: stage.total,
-      label: "importing your stars",
+      label: `importing ${theirs(whose)}`,
       text: `${n(stage.done)} of ${n(stage.total)} imported`,
     };
   if (stage.name === "reading")
     return {
       value: stage.settled,
       max: stage.total,
-      label: "reading your stars",
+      label: `reading ${theirs(whose)}`,
       text: `${n(stage.read)} of ${n(stage.total)} read`,
     };
   return undefined;
@@ -148,12 +169,19 @@ const progressOf = (stage: Stage): Progress | undefined => {
 const withTime = (text: string, timeLeft: string | undefined) =>
   timeLeft === undefined ? text : `${text} · ${timeLeft}`;
 
-const browsing = (stage: Stage, synced: string | undefined, timeLeft: string | undefined): Status => {
+const browsing = (stage: Stage, synced: string | undefined, timeLeft: string | undefined, whose: Whose): Status => {
   switch (stage.name) {
     case "importing":
+      if (stage.line !== null)
+        return {
+          icon: "busy",
+          label: "in line to import",
+          detail: withTime(stage.line.ahead === 0 ? "next up" : `${n(stage.line.ahead)} ahead`, timeLeft),
+        };
       return {
         icon: "busy",
-        label: "importing your stars",
+        label: `importing ${theirs(whose)}`,
+        ...(whose === undefined ? {} : { phoneLabel: "importing" }),
         detail:
           stage.total === null
             ? `${n(stage.done)} imported so far`
@@ -170,7 +198,8 @@ const browsing = (stage: Stage, synced: string | undefined, timeLeft: string | u
     case "reading":
       return {
         icon: "busy",
-        label: "reading your stars",
+        label: `reading ${theirs(whose)}`,
+        ...(whose === undefined ? {} : { phoneLabel: "reading" }),
         detail: `${n(stage.read)} of ${n(stage.total)} understood · names and descriptions already searchable`,
       };
     case "ready":
@@ -182,7 +211,7 @@ const browsing = (stage: Stage, synced: string | undefined, timeLeft: string | u
   }
 };
 
-const answered = (stage: Stage, answer: Exclude<Answer, { kind: "browsing" }>): Status => {
+const answered = (stage: Stage, answer: Exclude<Answer, { kind: "browsing" }>, whose: Whose): Status => {
   const detail = unreadDetail(stage);
   const rest = detail === undefined ? {} : { detail };
   switch (answer.kind) {
@@ -191,7 +220,14 @@ const answered = (stage: Stage, answer: Exclude<Answer, { kind: "browsing" }>): 
     case "found":
       return partial(stage)
         ? { icon: "busy", label: `found ${n(answer.count)} so far`, ...rest }
-        : { icon: "found", label: `found ${n(answer.count)}`, detail: `of ${n(stage.total)}`, continues: true };
+        : whose === undefined
+          ? { icon: "found", label: `found ${n(answer.count)}`, detail: `of ${n(stage.total)}`, continues: true }
+          : {
+              icon: "found",
+              label: `found ${n(answer.count)}!`,
+              detail: `in @${whose}'s ${stars(stage.total)}`,
+              phoneDetail: `of ${stars(stage.total)}`,
+            };
     case "none":
       if (partial(stage)) return { icon: "busy", label: "nothing yet", ...rest };
       return {
@@ -251,12 +287,12 @@ const rephrasings = (terms: ReadonlyArray<string>, limit = 3): ReadonlyArray<str
   return [...new Set([...pairs, ...singles])].slice(0, limit);
 };
 
-const notYetCopy = (stage: Underway, timeLeft: string | undefined): EmptyCopy => {
+const notYetCopy = (stage: Underway, timeLeft: string | undefined, whose: Whose): EmptyCopy => {
   const meta = withTime("i'll search again when reading finishes", timeLeft);
   const read = stage.read ?? 0;
   if (read === 0)
     return {
-      heading: "i haven't read your stars yet",
+      heading: `i haven't read ${theirs(whose)} yet`,
       body: "names and descriptions already match. the rest can match once i've read them.",
       meta,
     };
@@ -271,12 +307,12 @@ const notYetCopy = (stage: Underway, timeLeft: string | undefined): EmptyCopy =>
   };
 };
 
-const nothingCopy = (stage: Exclude<Stage, Underway>, rephrased: boolean): EmptyCopy => {
+const nothingCopy = (stage: Exclude<Stage, Underway>, rephrased: boolean, whose: Whose): EmptyCopy => {
   const read = stage.name === "ready" && stage.failed > 0 ? "i've read every one i could" : "i've read all of them";
   const others = rephrased ? " try one of these:" : "";
   return {
     heading: `nothing in all ${stars(stage.total)}`,
-    body: `${read}, and none matches that. maybe you starred it under different words.${others}`,
+    body: `${read}, and none matches that. maybe ${whose === undefined ? "you" : `@${whose}`} starred it under different words.${others}`,
   };
 };
 
@@ -291,6 +327,7 @@ const bodyOf = (
   search: Search,
   progress: Progress | undefined,
   timeLeft: string | undefined,
+  whose: Whose,
 ): Body => {
   switch (answer.kind) {
     case "browsing":
@@ -304,11 +341,11 @@ const bodyOf = (
       if (partial(stage))
         return {
           kind: "empty-reading",
-          copy: notYetCopy(stage, timeLeft),
+          copy: notYetCopy(stage, timeLeft, whose),
           ring: progress === undefined ? undefined : progress.value / Math.max(1, progress.max),
         };
       const phrases = rephrasings(search.terms);
-      return { kind: "empty", copy: nothingCopy(stage, phrases.length > 0), phrases };
+      return { kind: "empty", copy: nothingCopy(stage, phrases.length > 0, whose), phrases };
     }
   }
 };
@@ -318,19 +355,23 @@ export const searchView = ({
   search,
   synced,
   timeLeft,
+  whose,
 }: {
   stage: Stage;
   search: Search;
   synced: string | undefined;
   timeLeft: string | undefined;
+  whose?: Whose;
 }): SearchView => {
   const answer = answerOf(search);
-  const progress = progressOf(stage);
+  const progress = progressOf(stage, whose);
   return {
     status:
-      answer.kind === "browsing" ? browsing(stage, synced, timeLeft) : { ...answered(stage, answer), instant: true },
+      answer.kind === "browsing"
+        ? browsing(stage, synced, timeLeft, whose)
+        : { ...answered(stage, answer, whose), instant: true },
     progress,
     pose: poseOf(stage, answer),
-    body: bodyOf(stage, answer, search, progress, timeLeft),
+    body: bodyOf(stage, answer, search, progress, timeLeft, whose),
   };
 };

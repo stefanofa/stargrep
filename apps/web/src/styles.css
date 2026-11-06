@@ -7,3 +7,9 @@
     scrollbar-gutter: stable;
   }
 }
+
+/* The reveal (src/lib/reveal.ts) types the query into the search input once per visit. Until it starts, only the
+   input's own text is hidden. Results and status are never hidden. */
+html[data-reveal="pending"] [data-reveal-tile] input {
+  color: transparent;
+}
