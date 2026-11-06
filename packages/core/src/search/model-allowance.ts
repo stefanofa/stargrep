@@ -45,7 +45,7 @@ interface Rate {
 }
 
 // Planner and embedding calls count one each. A planner call costs about $0.0004, so one network spends at most about
-// $0.75 an hour on plans, and everyone together about $2.40.
+// $0.73 an hour on plans, and everyone together about $2.40.
 export const limits = {
   network: { calls: 30, per: Duration.minutes(1), burst: 30 },
   all: { calls: 6_000, per: Duration.hours(1), burst: 600 },
