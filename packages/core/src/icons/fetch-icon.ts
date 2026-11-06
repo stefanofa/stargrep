@@ -17,7 +17,7 @@ import { iconUrls } from "./homepage.ts";
 import * as IconHttp from "./icon-http.ts";
 import { BackfillIcons, IconQueue, type IconQueueFailed, type IconRequest, iconRequest } from "./icon-queue.ts";
 import { IconStore, type IconStoreFailed } from "./icon-store.ts";
-import { contentKey, gitKey } from "./keys.ts";
+import { contentKey, gitKey, outputVersion } from "./keys.ts";
 import { IconNormalizer } from "./normalize.ts";
 import { templateBlobs } from "./templates.ts";
 
@@ -240,7 +240,7 @@ const make = Effect.gen(function* () {
 
   const backfill = Effect.fn("FetchIcon.backfill")(function* (after: number) {
     const checkedBefore = DateTime.subtractDuration(yield* DateTime.now, refreshAfter);
-    const page = yield* db.repos.dueIcons({ after, limit: backfillPage, checkedBefore });
+    const page = yield* db.repos.dueIcons({ after, limit: backfillPage, checkedBefore, keyVersion: outputVersion });
     if (page.length === 0) return { queued: 0, next: null };
     const facts = yield* github.repoFacts(page.map((row) => row.nodeId));
     const live = new Set<number>(facts.map((entry) => entry.id));

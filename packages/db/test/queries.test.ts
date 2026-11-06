@@ -565,8 +565,10 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.repos.saveFacts(facts(noNode));
       yield* embedSummarized(db, found, embedding({ 0: 1 }));
       const checkedBefore = at("2020-01-01T00:00:00Z");
-      const page = (after: number) =>
-        Effect.map(db.repos.dueIcons({ after, limit: 4, checkedBefore }), (rows) => rows.map((row) => row.id));
+      const page = (after: number, keyVersion = "v1") =>
+        Effect.map(db.repos.dueIcons({ after, limit: 4, checkedBefore, keyVersion }), (rows) =>
+          rows.map((row) => row.id),
+        );
 
       expect(yield* page(2800)).toEqual([found, missing, unchecked, stale]);
       expect(yield* page(found)).toEqual([missing, unchecked, stale]);
@@ -578,6 +580,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* database.query("update repos set icon_checked_at = '2019-06-01' where id = $1", [stale]);
 
       expect(yield* page(2800)).toEqual([unchecked, stale]);
+      expect(yield* page(2800, "v2")).toEqual([found, unchecked, stale]);
       const stored = Option.getOrThrow(yield* db.repos.get(found));
       expect(stored).toMatchObject({ icon, summary: summaryOf(found) });
       expect(stored).not.toHaveProperty("iconKey");

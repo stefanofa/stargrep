@@ -425,6 +425,23 @@ it.layer(layer, { timeout: 30_000 })("backfill", (it) => {
       }),
   );
 
+  it.effect("sends a checked repo whose icon key has an older version, and skips one on the current version", () =>
+    Effect.gen(function* () {
+      yield* seed([2003, 2004]);
+      const db = yield* Db.Db;
+      const icon = { source: "repo-file", plate: "none", size: 64 } as const;
+      yield* db.repos.saveIcon({ id: idOf(2003), icon: { ...icon, key: `v1/git/${"a".repeat(40)}.webp` } });
+      yield* db.repos.saveIcon({ id: idOf(2004), icon: { ...icon, key: Keys.gitKey(oid("a")) } });
+
+      const backfill = (yield* FetchIcon.FetchIcon).backfill;
+      expect(yield* backfill(2002)).toEqual({ queued: 1, next: null });
+      expect(queue.sent).toEqual([request(2003, { homepage: "https://kit.dev" })]);
+
+      yield* db.repos.saveIcon({ id: idOf(2003), icon: { ...icon, key: Keys.gitKey(oid("b")) } });
+      expect(yield* backfill(2002)).toEqual({ queued: 0, next: null });
+    }),
+  );
+
   it.effect("pages by repo ID and chains the next page until a short page ends it", () =>
     Effect.gen(function* () {
       const numbers = Array.from({ length: FetchIcon.backfillPage + 1 }, (_, index) => 1001 + index);

@@ -205,6 +205,7 @@ export interface Queries {
     readonly after: number;
     readonly limit: number;
     readonly checkedBefore: DateTime.Utc;
+    readonly keyVersion: string;
   }) => Effect.Effect<ReadonlyArray<DueIcon>, DbQueryFailed | DbRowInvalid>;
   readonly get: (id: RepoId) => Effect.Effect<Option.Option<Repo>, DbQueryFailed | DbRowInvalid>;
   readonly require: (id: RepoId) => Effect.Effect<Repo, DbQueryFailed | DbRowInvalid | RepoNotFound>;
@@ -354,14 +355,14 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
               )
               .where(sql`${repos.id} = owners.id`),
           ),
-    dueIcons: ({ after, limit, checkedBefore }) =>
+    dueIcons: ({ after, limit, checkedBefore, keyVersion }) =>
       run("repos.dueIcons", (db) =>
         db
           .select({ id: repos.id, nodeId: repos.nodeId })
           .from(repos)
           .where(
             and(
-              sql`(${repos.iconCheckedAt} is null or ${repos.iconCheckedAt} < ${timeParam(checkedBefore)})`,
+              sql`(${repos.iconCheckedAt} is null or ${repos.iconCheckedAt} < ${timeParam(checkedBefore)} or ${repos.iconKey} not like ${`${keyVersion}/%`})`,
               isNotNull(repos.nodeId),
               gt(repos.id, after),
             ),

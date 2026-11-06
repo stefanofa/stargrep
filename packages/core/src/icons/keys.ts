@@ -1,6 +1,7 @@
 // Icons are served as immutable, so a change to the normalized output must also change every key. A stored key is
 // also reused without normalizing again, so a change to what the normalizer rejects must change every key too.
-// Bump this when either changes.
+// Bump this when either changes. The backfill counts a row whose key has another version as due, so its next run picks
+// every icon again, with no migration.
 export const outputVersion = "v2";
 
 export const gitKey = (oid: string) => `${outputVersion}/git/${oid}.webp`;
