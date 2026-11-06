@@ -172,3 +172,21 @@ describe("readGitHubToken", () => {
     }),
   );
 });
+
+describe("GitHubTokens.bounded", () => {
+  it.effect("returns a timed-out read at once, while the connection it held still waits to close", () =>
+    Effect.gen(function* () {
+      const closed = { done: false };
+      const stalled = Effect.acquireRelease(Effect.void, () =>
+        Effect.andThen(
+          Effect.never,
+          Effect.sync(() => void (closed.done = true)),
+        ),
+      ).pipe(Effect.andThen(Effect.never), Effect.scoped);
+      const fiber = yield* Effect.forkChild(Effect.flip(Tokens.bounded(stalled)));
+      yield* TestClock.adjust("10 seconds");
+      expect(yield* Fiber.join(fiber)).toMatchObject({ _tag: "AuthFailed", operation: "token" });
+      expect(closed.done).toBe(false);
+    }),
+  );
+});

@@ -50,7 +50,7 @@ export class Auth extends Context.Service<
   }
 >()("@stargrep/auth/auth") {}
 
-const tokenReadTimeout = Duration.seconds(10);
+export const tokenReadTimeout = Duration.seconds(10);
 
 interface TokenSource {
   readonly $context: Promise<{
