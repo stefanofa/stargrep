@@ -254,39 +254,15 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests line", (it) => {
     ),
   );
 
-  it.effect("lets a signed-in import take over a signed-out request queued while it looked the login up", () =>
-    admitting(
-      ({ sent }) =>
-        Effect.gen(function* () {
-          expect(yield* request("octocat", signedIn())).toMatchObject({ state: "queued", requestedAt: at(start) });
-          expect(sent).toEqual([
-            { login: "octocat" as Login, mode: "incremental", requestedAt: at(start), reserved: 0, userId: memberId },
-          ]);
-        }),
-      {
-        hooks: {
-          duringLookup: (db) =>
-            Effect.gen(function* () {
-              const login = "octocat" as Login;
-              const claim = { login, at: at(start), cooldown: Duration.minutes(10), overtakesWaiting: false } as const;
-              yield* db.syncRequests.claim({ ...claim, outcome: "claimed" });
-              yield* db.syncRequests.schedule(login, at(start), at(start + 60 * minute));
-            }).pipe(Effect.orDie),
-        },
-      },
-    ),
-  );
-
-  it.effect("keeps a waiting request when its network refuses a signed-in takeover's first read", () =>
+  it.effect("charges a signed-in takeover no first read, because the waiting request's network already paid it", () =>
     admitting(({ sent }) =>
       Effect.gen(function* () {
         yield* fill(4_000);
         expect(yield* request("octocat")).toMatchObject({ state: "waiting" });
         yield* fillNetwork(150, "caller-b");
-        expect((yield* Effect.flip(request("octocat", signedIn("caller-b"))))._tag).toBe("NewAccountLimited");
-        expect(yield* status("octocat")).toMatchObject({ state: "waiting" });
+        expect(yield* request("octocat", signedIn("caller-b"))).toMatchObject({ state: "queued" });
         expect(yield* networkUnits("caller-b")).toBe(151);
-        expect(sent).toHaveLength(1);
+        expect(sent.map((each) => each.userId ?? null)).toEqual([null, memberId]);
       }),
     ),
   );

@@ -279,7 +279,7 @@ A request that loses the claim answers from the winner's row, so every trigger f
 
 The owner skips the lookup and the network line, never waits, and reserves nothing in the `all` line, because their sync runs on their own token. A held row answers its status. The owner's claim takes over a request still waiting in line, and its sync is a full read when one is due. So a visitor who signs in from "is this you? skip the wait" gets their sync queued at once, on their token.
 
-A signed-in request for another login follows the signed-out order without the `all` line. It skips the line's wait, keeps its network's charges for the lookup and a first read, and starts now. Like the owner's, its claim takes over a signed-out request still waiting in line. The lookup still runs on the server's token and pays its unit into the `all` line.
+A signed-in request for another login follows the signed-out order without the `all` line. It skips the line's wait, keeps its network's charges for the lookup and a first read, and starts now. Like the owner's, its claim takes over a signed-out request it read as waiting in line, and that takeover charges no first read, which the waiting request's network already paid. A signed-out request that claims the login while a signed-in request looks it up wins, and the signed-in request answers from its row. The lookup still runs on the server's token and pays its unit into the `all` line.
 
 #### The lines
 

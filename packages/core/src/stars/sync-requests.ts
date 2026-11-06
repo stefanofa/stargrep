@@ -428,11 +428,9 @@ const make = Effect.fnUntraced(function* (share: BudgetShare) {
     if (current.state === "done" && within(anyoneCooldown, now)(current.syncedAt)) {
       return { _tag: "Deduped", status: current };
     }
-    // A signed-in requester never waits, so a request still waiting in line does not hold the login for them, including
-    // one queued between this read and the claim.
-    const overtakes = userId !== undefined;
-    const held =
-      overtakes && current.state === "waiting" ? Option.none() : Option.filter(stored, holds(anyoneCooldown, now));
+    // A signed-in requester never waits, so a request still waiting in line does not hold the login for them.
+    const overtakes = userId !== undefined && current.state === "waiting";
+    const held = overtakes ? Option.none() : Option.filter(stored, holds(anyoneCooldown, now));
     if (Option.isSome(held)) {
       return held.value.outcome === "missing" ? { _tag: "NotFound", cost: 0 } : { _tag: "Deduped", status: current };
     }
@@ -459,19 +457,7 @@ const make = Effect.fnUntraced(function* (share: BudgetShare) {
     const owner = found.success.value;
     yield* db.accounts.upsertLooked(owner);
     const looked: Looked = { starredTotal: owner.starredTotal, accountType: owner.account.type };
-    const syncedAt = syncedAtOf(current);
-    const work = costOf(yield* starRead(login, syncedAt === null, owner.starredTotal));
-    // A first read goes on its network's line too, refused once the network owes its burst, so a network starts one
-    // huge import and not several at once. The charge comes before the claim, so a refused one leaves any request
-    // already waiting for the login in place.
-    const networkWork = syncedAt === null && owner.account.type !== "org" ? work : 0;
-    if (networkWork > 0 && Option.isNone(yield* charge(networkWork))) return { _tag: "CallerLimit" };
-    const refund =
-      networkWork > 0 ? db.rateLines.adjust(network, now, unitsOf(networkRate, -networkWork)) : Effect.void;
-    if (!(yield* claim("claimed"))) {
-      yield* refund;
-      return yield* fromWinner(login, now);
-    }
+    if (!(yield* claim("claimed"))) return yield* fromWinner(login, now);
 
     if (owner.account.type === "org") {
       // The facts were written just above, so the account row exists.
@@ -483,6 +469,16 @@ const make = Effect.fnUntraced(function* (share: BudgetShare) {
       return { _tag: "Org", status: { state: "done", syncedAt: now, ...looked } };
     }
 
+    const syncedAt = syncedAtOf(current);
+    const work = costOf(yield* starRead(login, syncedAt === null, owner.starredTotal));
+    // A first read goes on its network's line too, refused once the network owes its burst, so a network starts one
+    // huge import and not several at once. A takeover runs the import a waiting request's network already paid for, so
+    // it pays no first read again, and a takeover is never refused after it replaced the waiting request.
+    const networkWork = syncedAt === null && !overtakes ? work : 0;
+    if (networkWork > 0 && Option.isNone(yield* charge(networkWork))) {
+      yield* db.syncRequests.settle(login, now, "released");
+      return { _tag: "CallerLimit" };
+    }
     if (userId !== undefined) {
       return yield* start(
         login,
@@ -494,7 +490,7 @@ const make = Effect.fnUntraced(function* (share: BudgetShare) {
     const startsAt = yield* reserve(db, line, now, work, false);
     if (Option.isNone(startsAt)) {
       yield* db.syncRequests.settle(login, now, "released");
-      yield* refund;
+      if (networkWork > 0) yield* db.rateLines.adjust(network, now, unitsOf(networkRate, -networkWork));
       return { _tag: "LineFull", cost: lookupCost, wait: line.maxWait };
     }
     return yield* start(
