@@ -24,7 +24,7 @@ export const loadPage = (request: PageRequest, session: Session | undefined): Pr
 
 const titled = (data: PageData, query: string | undefined) => {
   const whose = theirs(whoseOf(data));
-  const title = query ? `"${query}" in ${whose} · Stargrep` : `${whose} · Stargrep`;
+  const title = query ? `"${query}" in ${whose} · stargrep` : `${whose} · stargrep`;
   const description = data.own
     ? []
     : [{ name: "description", content: `Search @${data.owner}'s GitHub stars in plain words.` }];
