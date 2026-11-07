@@ -46,16 +46,8 @@ export function StarsPage({ data, error }: { data: PageData; error?: string | un
       header={
         <>
           <Wordmark pose={error === undefined ? pose : "scared"} />
-          {data.viewer === null ? (
-            <SignInButton
-              label={
-                <>
-                  <span className="sm:hidden">Sign in</span>
-                  <span className="max-sm:hidden">Sign in with GitHub</span>
-                </>
-              }
-            />
-          ) : (
+          {/* A visitor signs in from the butter tile in the hero, so the header doesn't ask twice. */}
+          {data.viewer !== null && (
             <Suspense fallback={<Skeleton className="size-11 shrink-0" />}>
               <HeaderControls viewer={data.viewer} />
             </Suspense>

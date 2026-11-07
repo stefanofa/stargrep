@@ -66,7 +66,7 @@ function Ring({ progress }: { progress: number }) {
           strokeWidth="8"
           strokeLinecap="round"
           strokeDasharray={`${length} ${circumference}`}
-          className="transition-[stroke-dasharray] duration-500 ease-out"
+          className="transition-[stroke-dasharray] duration-500 ease-out motion-reduce:transition-none"
         />
       )}
     </svg>

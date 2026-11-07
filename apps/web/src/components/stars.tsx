@@ -111,11 +111,21 @@ function useControls(searching: boolean, roomForSort: boolean) {
   return { view, sort, controls };
 }
 
-function Waiting({ view, searching, arriving }: { view: View; searching: boolean; arriving: Arriving | undefined }) {
+function Waiting({
+  view,
+  searching,
+  arriving,
+  visitor,
+}: {
+  view: View;
+  searching: boolean;
+  arriving: Arriving | undefined;
+  visitor: boolean;
+}) {
   return searching ? (
-    <Results view={view} groups={[{ key: "all", results: [], pending: 4 }]} />
+    <Results view={view} groups={[{ key: "all", results: [], pending: 4 }]} hero={visitor ? "card" : "butter"} />
   ) : (
-    <LibraryPlaceholder view={view} arriving={arriving} />
+    <LibraryPlaceholder view={view} arriving={arriving} butter={!visitor} />
   );
 }
 
@@ -317,11 +327,12 @@ function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Li
             language={params.lang}
             arriving={stage.name === "importing" ? { total: stage.total } : undefined}
             pose={pose}
+            butter={!visitor}
             onOpen={open}
           />
         );
       case "results":
-        return <Results view={view} groups={current.groups} onOpen={open} />;
+        return <Results view={view} groups={current.groups} hero={visitor ? "card" : "butter"} onOpen={open} />;
       case "empty-reading":
         return <EmptyTile pose={pose} ring={current.ring} {...current.copy} />;
       case "empty":
@@ -404,13 +415,14 @@ function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Li
             view={view}
             searching={terms.length > 0}
             arriving={stage.name === "importing" ? { total: stage.total } : undefined}
+            visitor={visitor}
           />
         ) : (
           body(state.body)
         )}
       </div>
       <RepoPanel
-        repo={opened && toDetail(opened, at)}
+        repo={opened && toDetail(opened, at, data.own ? undefined : owner)}
         open={opened !== undefined}
         onOpenChange={(next) => {
           if (!next) navigate({ to: ".", search: (previous) => ({ ...previous, repo: undefined }) });

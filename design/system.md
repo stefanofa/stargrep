@@ -11,7 +11,7 @@ The four experience principles from `docs/product.md` turn into these rules.
 - **Fast enough to feel local.** Keyword results render on each keystroke from the local library. Semantic results only append tiles after the ones already on screen. They never reorder a tile the user can see. The loading state is a skeleton in the final grid, shown for milliseconds, never a spinner.
 - **Show only what helps the next decision.** A result tile shows the repo, the reason it matched with the matched words marked, whether it is alive, stars, when you starred it, and who you follow starred it. Everything else lives in the repo detail panel.
 - **Crafted, not busy.** One butter tile per page. The star mark sits in the header and at most once more per screen. No taglines, helper text, or captions. Copy exists only where a string has to exist.
-- **No login wall.** Every page in the inventory works signed out except Library and Network. Signed out, the top bar shows "Sign in with GitHub" and network lines are hidden, not replaced with a prompt.
+- **No login wall.** Every page in the inventory works signed out except Library and Network. Signed out, the butter tile at the top of the page holds "Sign in with GitHub", the top bar shows only the wordmark, and network lines are hidden, not replaced with a prompt.
 
 ## Tokens
 
@@ -30,7 +30,7 @@ Names follow Tailwind v4 theme variables, so they drop into `@theme` in `package
 | `--color-border` | #E4DDFA | #2C2840 | Rare outlines: archived and sponsored tiles |
 | `--color-primary` | #1E1B2E | #F2F0FA | Primary buttons (Follow, go, Claim) |
 | `--color-primary-foreground` | #FFFFFF | #1E1B2E | Text on primary |
-| `--color-accent` | #A78BFA | #B9A3FF | Active scope, active toggle, focus ring |
+| `--color-accent` | #A78BFA | #B9A3FF | Active scope, active toggle |
 | `--color-accent-soft` | #E9E2FF | #2E2847 | Chips, secondary buttons, avatar fills |
 | `--color-accent-strong` | #5B3FCC | #C8B6FF | Matched words, links |
 | `--color-highlight` | #FFD84D | #FFD84D | The one hero tile per page, the mascot |
@@ -38,6 +38,7 @@ Names follow Tailwind v4 theme variables, so they drop into `@theme` in `package
 | `--color-success` | #2BB673 | #3CCB86 | Alive dot |
 | `--color-warning` | #E8A317 | #F0B43A | Syncing, stale |
 | `--color-destructive` | #E5484D | #FF6B70 | Errors only |
+| `--color-ring` | #5B3FCC | #B9A3FF | Focus ring |
 
 Text on the butter tile always uses the light-mode ink (#1E1B2E) and light-mode `accent-strong` (#5B3FCC) for matches, in both themes. Light `accent-strong` on butter has enough contrast; the dark value does not.
 
@@ -173,7 +174,7 @@ These rules keep one structure for people, crawlers, and agents.
 - **The UI and MCP share one shape.** Each result's fields (repo, reason, alive, stars, starred_at, network) are the fields `search_stars` returns, so the web and MCP share one shape.
 - **SEO pages add structured data.** "Best X" pages add `ItemList` JSON-LD. Profiles add `ProfilePage`.
 - **Color never carries meaning alone.** Archived, deprecated, sponsored, and alive always have a text label.
-- **Focus is always visible.** A 2px `accent` ring with a 2px offset on every focusable element.
+- **Focus is always visible.** A 2px `ring` outline with a 2px offset on every focusable element. In light mode the ring is `accent-strong`, since `accent` falls under 3:1 on white, lilac and butter. On the butter tile it is light-mode `accent-strong` in both themes.
 
 ## Screen inventory
 

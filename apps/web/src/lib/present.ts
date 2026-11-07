@@ -3,7 +3,7 @@ import * as DateTime from "effect/DateTime";
 import { highlights } from "./keyword.ts";
 import type { LibraryEntry } from "./library-collection.ts";
 import { repoVisual } from "./repo-visual.ts";
-import { factsPending } from "./search-state.ts";
+import { factsPending, type Whose } from "./search-state.ts";
 
 const day = 86_400_000;
 const relative = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
@@ -83,14 +83,14 @@ export const toResult = (
   };
 };
 
-export const toDetail = (repo: LibraryEntry, at: number): RepoDetail => ({
+export const toDetail = (repo: LibraryEntry, at: number, whose: Whose): RepoDetail => ({
   owner: repo.owner,
   name: repo.name,
   ...(repo.language === null ? {} : { language: repo.language }),
   description: repo.description ?? "",
   ...(repo.summary === null || repo.summary === repo.description ? {} : { summary: repo.summary }),
   stars: repo.stars,
-  starred: starredOn(repo.starredAt),
+  starred: { by: whose === undefined ? "you" : `@${whose}`, on: starredOn(repo.starredAt) },
   activity: activity(repo, at),
   ...(repo.license === null ? {} : { license: repo.license }),
   network: [],

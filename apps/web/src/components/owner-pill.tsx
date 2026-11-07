@@ -66,7 +66,7 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
           index={0}
           className="size-7 border-0 bg-highlight sm:size-8"
         />
-        <span className="truncate">@{owner}</span>
+        <span className="truncate max-[399px]:sr-only">@{owner}</span>
         <Chevron />
       </Popover.Trigger>
       <Popover.Portal>
@@ -79,7 +79,7 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
               <label htmlFor={field} className="text-sm text-muted-foreground">
                 search anyone's stars
               </label>
-              <div className="flex items-center gap-2 rounded-full bg-muted pr-1 pl-3.5 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent">
+              <div className="flex items-center gap-2 rounded-full bg-muted pr-1 pl-3.5 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ring">
                 <span aria-hidden className="text-muted-foreground">
                   @
                 </span>

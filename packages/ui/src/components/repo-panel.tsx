@@ -19,7 +19,7 @@ export type RepoDetail = {
   readonly description: string;
   readonly summary?: string;
   readonly stars: number | null;
-  readonly starred?: string;
+  readonly starred?: { readonly by: string; readonly on: string };
   readonly activity: Activity;
   readonly release?: string;
   readonly license?: string;
@@ -98,7 +98,7 @@ export function RepoPanel({
                   {repo.starred && (
                     <p className="mb-2 flex h-8 items-center gap-[7px] rounded-full bg-accent-soft pr-[13px] pl-[11px] font-sans text-sm font-semibold text-accent-strong">
                       <StarIcon className="size-[13px]" />
-                      you starred it {repo.starred}
+                      {repo.starred.by} starred it {repo.starred.on}
                     </p>
                   )}
                 </div>

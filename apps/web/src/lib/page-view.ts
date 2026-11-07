@@ -45,7 +45,13 @@ export const pageView = (inputs: PageInputs): SearchView => {
   });
   return searchView({
     stage,
-    search: { terms, ...merged, pending: inputs.semantic.pending, failed: inputs.semantic.failed },
+    search: {
+      terms,
+      ...merged,
+      pending: inputs.semantic.pending,
+      failed: inputs.semantic.failed,
+      hasMatches: (words) => inputs.entries.some((entry) => words.every((word) => entry.text.includes(word))),
+    },
     synced: inputs.sync?.syncedAt ? syncedAgo(inputs.sync.syncedAt, inputs.at) : undefined,
     timeLeft: inputs.timeLeft,
     whose: inputs.whose,

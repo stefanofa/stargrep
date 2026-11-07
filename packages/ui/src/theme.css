@@ -25,6 +25,7 @@
   --color-success: light-dark(#2bb673, #3ccb86);
   --color-warning: light-dark(#e8a317, #f0b43a);
   --color-destructive: light-dark(#e5484d, #ff6b70);
+  --color-ring: light-dark(#5b3fcc, #b9a3ff);
   --color-ink: #1e1b2e;
   --color-ink-secondary: #3a3550;
   --color-ink-accent: #5b3fcc;
@@ -163,6 +164,7 @@
   --color-secondary-foreground: var(--color-ink-secondary);
   --color-muted-foreground: var(--color-ink-secondary);
   --color-accent-strong: var(--color-ink-accent);
+  --color-ring: var(--color-ink-accent);
   --color-card: var(--color-highlight);
   background-color: var(--color-highlight);
   color: var(--color-foreground);
@@ -203,7 +205,7 @@
   }
 
   :focus-visible {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--color-ring);
     outline-offset: 2px;
   }
 

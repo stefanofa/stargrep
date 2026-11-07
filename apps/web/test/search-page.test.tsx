@@ -464,8 +464,10 @@ describe("the search page in each state", () => {
     expect(strip()).toContain("all 6 stars read");
     await waitFor(() => expect(mark()).toBe("sad"));
     expect(page().queryByText(/everyone/)).toBeNull();
-    await user.click(page().getByRole("button", { name: "terminal sessions" }));
-    expect(page().getByRole<HTMLInputElement>("searchbox").value).toBe("terminal sessions");
+    const chips = within(page().getByRole("list", { name: "Try other words" })).getAllByRole("button");
+    expect(chips.map((chip) => chip.textContent)).toEqual(["terminal"]);
+    await user.click(page().getByRole("button", { name: "terminal" }));
+    expect(page().getByRole<HTMLInputElement>("searchbox").value).toBe("terminal");
   });
 
   test("the sort menu and view toggle stay inside the search tile in every state", async () => {

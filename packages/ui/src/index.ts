@@ -11,6 +11,7 @@ export {
   type Activity,
   formatStars,
   GroupHeading,
+  type Hero,
   highlight,
   type Match,
   type OpenResult,
