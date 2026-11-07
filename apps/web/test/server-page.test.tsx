@@ -184,6 +184,20 @@ describe("a stars page from the Worker to the browser", () => {
     expect(page.html).not.toContain(secret);
   }, 60_000);
 
+  test("a page whose own loader fails shows the styled error page, with no word of the error", async () => {
+    const secret = "secret detail from the page loader";
+    const page = await renderOnServer("/octosync", undefined, {
+      NODE_ENV: "production",
+      STARGREP_PAGE_FAILURE: secret,
+    });
+    expect(page.status).toBe(500);
+    expect(page.html).toContain("stargrep tripped");
+    expect(page.html).toContain(">Reload</button>");
+    expect(page.html).not.toContain("Something went wrong!");
+    expect(page.html).toContain("$_TSR");
+    expect(page.html).not.toContain(secret);
+  }, 60_000);
+
   test("a login named like a stargrep path lives at /@login, which any login can use", async () => {
     const redirected = await renderOnServer("/api?q=rust");
     expect(redirected.status).toBeGreaterThanOrEqual(300);

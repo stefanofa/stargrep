@@ -1,5 +1,6 @@
 import { isGitHubLogin } from "@stargrep/github/login";
 import { notFound, redirect } from "@tanstack/react-router";
+import { Failure } from "../components/problem-page.tsx";
 import { StarsRoute } from "../components/stars-page.tsx";
 import { loadPage, pageHead } from "./load-page.ts";
 import type { Session } from "./page-data.ts";
@@ -33,4 +34,6 @@ export const starsRoute = {
     loadPage({ login }, (await parentMatchPromise).loaderData),
   head: pageHead,
   component: StarsRoute,
+  // A route without its own error component falls back to TanStack's, not the root's, so every stars page names it.
+  errorComponent: Failure,
 };

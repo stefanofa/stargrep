@@ -1,7 +1,8 @@
 // Renders one request the way the Worker renders a page: the real route tree, the server loaders handed over with
 // provideServerLoads, the in-process API client and TanStack's SSR handler, with fake services behind the API. A test
 // runs this in its own process with SSR set, so the server's module state never leaks into the hydrating browser. With
-// STARGREP_API_FAILURE set, the API's config call fails with that message.
+// STARGREP_API_FAILURE set, the API's config call fails with that message, so the session loader fails. With
+// STARGREP_PAGE_FAILURE set, the page loader fails with that message after the session loaded.
 //   SSR=1 bun test/render-server.tsx /path [cookie]
 import { mock } from "bun:test";
 
@@ -19,7 +20,15 @@ const answer = (incoming: Request) =>
     : serveApi(incoming);
 mock.module("../src/server/app.ts", () => ({ serveApi: answer }));
 // TanStack Start hands the request to server code through its own context, which this script stands in for.
-mock.module("@tanstack/react-start/server", () => ({ getRequest: () => request }));
+const pageFailure = process.env.STARGREP_PAGE_FAILURE;
+let reads = 0;
+mock.module("@tanstack/react-start/server", () => ({
+  getRequest: () => {
+    reads += 1;
+    if (pageFailure !== undefined && reads > 1) throw new Error(pageFailure);
+    return request;
+  },
+}));
 
 const { provideServerLoads } = await import("../src/lib/load-page.ts");
 const { serverLoads } = await import("../src/server/page-data.ts");
