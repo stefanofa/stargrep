@@ -790,7 +790,7 @@ Other things the docs argue against:
 
 1. **Services are `Context.Service` classes with the interface inline.** `make` yields its dependencies from the environment, `layer = Layer.effect(Foo, make)`, and a platform implementation is `layer<Platform>`.
 2. **Transports stay thin.** An oRPC procedure, queue consumer, or cron handler decodes input, calls one service method, and maps errors. Logic in a handler is invisible to MCP and to the other transports.
-3. **Errors are `Schema.TaggedError` classes with bounded, structured fields.** The message comes from the fields, uncredentialed failures may retain `cause`. Credentialed requests keep bounded reasons and no cause.
+3. **Errors are `Schema.TaggedError` classes with bounded, structured fields.** The message comes from the fields. Uncredentialed failures may keep `cause`, while credentialed requests keep bounded reasons and no cause.
 4. **Map domain errors to wire errors only at the transport, with a stable `code` and a `traceId`.** Catch known tags with an exhaustive `Effect.catchTags`.
 5. **Decode every external input at the boundary with a decoder hoisted to module scope.** That covers GitHub, queue bodies, model output, and `jsonb` columns. Inside, trust the types.
 6. **Brand every id.** GitHub numeric ids get `GitHubAccountId` and `RepoId`. Logins and repo names get their own brands.

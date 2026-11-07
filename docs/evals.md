@@ -50,7 +50,7 @@ The winner rule differs by port, in `evals/rank.ts`.
 - **Embedding models must fit a latency budget, then win on recall.** Query embedding is on the search path. The plan's budget is a 250 ms median from a Worker, which the perf lane measures. The bakeoff runs on a laptop, which adds network distance to every model, so it screens with the plan's 600 ms p95 ceiling applied to the laptop median. Models over it are dropped before ranking, and the rest are ordered by recall.
 - **Summary models win on recall, with ties broken by cost.** Two runs of the same setup differ by up to 0.009 for one model, about one query, so models within 1/129 of the best recall are tied. Summaries run in the background, so the cheapest tied model wins.
 
-The AI SDK retries transient model requests up to three times within the port timeout. The Gateway batch adapter retries batch API requests itself. Callers do not add another model retry loop.
+The AI SDK retries transient model requests up to three times within the port timeout, except the planner, which does not retry. The Gateway batch adapter retries batch API requests itself. Callers do not add another model retry loop.
 
 Every embedding candidate is asked for 1,024 dimensions. One size keeps the comparison fair and fixes the database column at `halfvec(1024)`.
 

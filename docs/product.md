@@ -28,4 +28,4 @@ Search sends its query in an API POST body. Shared page links can contain `?q=`,
 
 ## Planned features
 
-Network and global search, follows, collections, taste profiles, digests, discovery pages, reranking, and private repos are not implemented. Schema tables and design mockups for some of these features are reserved for later work.
+Network and global search, follows, collections, taste profiles, digests, discovery pages, reranking, and private repos are not implemented. Schema tables and design mockups for some of these features are reserved for later work. Private repo data, when added, stays scoped to its user and never enters the shared repo index. Comments, likes, and direct messages are out of scope.

@@ -85,7 +85,7 @@ For other editors, run `bunx effect-tsgo setup --help` to see the setup for Neov
 
 ## API
 
-The web Worker serves the API from one oRPC contract in `packages/api`. Search needs a synced login. A missing login answers `ACCOUNT_NOT_SYNCED`. Without a model key, search can fall back to full-text matching. Replace the URL with a stage's `Web` URL from its pull request comment to call a deployed stage.
+The web Worker serves the API from one oRPC contract in `packages/api`. Search needs a synced login. A missing login answers `ACCOUNT_NOT_SYNCED`. Without `AI_GATEWAY_API_KEY`, search answers `SERVICE_UNAVAILABLE`, except for a demo answer already in the cache. Replace the URL with a stage's `Web` URL from its pull request comment to call a deployed stage.
 
 ```sh
 WEB=http://localhost:1340
@@ -96,7 +96,7 @@ curl "$WEB/api/repos/1300192"
 curl "$WEB/openapi.json"
 ```
 
-The search API takes its query in a JSON body. Shared page links can contain `?q=`, so those URLs can appear in request logs. `triggerSync` can answer `waiting`, `queued`, or `done` for an empty org sync. An unknown GitHub login answers `LOGIN_NOT_FOUND`. `syncStatus` reports `unknown`, `waiting`, `queued`, `failed`, or `done`. Triggers for a login already requested in the last 10 minutes answer with that request and queue nothing. Each caller may trigger about 5 syncs a minute, a soft limit that Cloudflare counts per location. Every REST error body has a `code` and a `traceId` in `data`, including a validation error and a body that is not JSON, and every response has an `x-trace-id` header. Each response's `Server-Timing` header gives the handler's total time and the procedure's time, in milliseconds.
+The search API takes its query in a JSON body. Shared page links can contain `?q=`, so those URLs can appear in request logs. `triggerSync` answers `waiting`, `queued`, `failed`, or `done`, or fails with `LOGIN_NOT_FOUND`, `SYNC_BUSY`, or `TOO_MANY_REQUESTS`. `syncStatus` reports `unknown`, `waiting`, `queued`, `failed`, or `done`. Triggers for a login already requested in the last 10 minutes answer with that request and queue nothing. Each caller may trigger about 5 syncs a minute, a soft limit that Cloudflare counts per location. Every REST error body has a `code` and a `traceId` in `data`, including a validation error and a body that is not JSON, and every response has an `x-trace-id` header. Each response's `Server-Timing` header gives the handler's total time and the procedure's time, in milliseconds.
 
 To search from Claude Code, add the stage's MCP endpoint and ask it to search a synced login's stars:
 

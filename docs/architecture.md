@@ -35,7 +35,7 @@ Versions were checked on 2026-11-03. Pin exact versions in `package.json`.
 | Jobs | Cloudflare Queues and cron triggers. Durable Objects for the per-token GitHub budget |
 | Blob storage | Cloudflare R2 |
 | Cache | Cloudflare KV and the Workers cache |
-| UI | shadcn components on Base UI |
+| UI | Custom components on Base UI, in `packages/ui` |
 | Lint and format | Biome, plus the `@effect/language-service` TypeScript plugin for Effect rules |
 
 Production code runs on the Workers runtime, not Bun. Code in `apps/` and every package they import must avoid Bun-only APIs. Bun runs installs, scripts, and tests.
@@ -63,6 +63,8 @@ packages/
     src/repos/      enrichment, summaries, embeddings
     src/stars/      sync, diffing, unstar detection
     src/search/     query parsing, hybrid search, ranking
+    src/icons/      icon discovery and normalization
+    src/limits/     rate lines and admission costs
   api/              oRPC contracts and router
   db/               Drizzle schema, migrations, query functions
   github/           GitHub client, reply classification, token budget
@@ -89,7 +91,7 @@ Better Auth owns `user`, `session`, `account`, and `verification`, declared in `
 | `github_accounts` | GitHub account ID | type (`user` or `org`), login, name, avatar, followers, public repos, total stars across owned repos, how many repos it has starred on GitHub as of the latest lookup, sign-in, or full read, `claimed_by` user, star sync state, including the time of the latest full star snapshot |
 | `repos` | GitHub repo ID | owner, name, GitHub node ID, description, topics, language, license, homepage, kind (`app`, `library`, `cli`, `framework`, `list`, and so on), created time, `pushed_at`, archived, README object ID from the latest facts fetch, summary with the README object ID it describes and the summary recipe that made it, keywords, `embedding halfvec`, embedding model, whether the embedding describes an older summary of the same README, full-text column, how many times enrichment failed since the repo was last read and when it last failed |
 | `repo_metrics` | GitHub repo ID | current totals and 30-day and 90-day changes for stars, forks, commits, active contributors, new contributors, merged pull requests, closed issues, and releases. Enrichment writes star and fork totals. Growth and activity rollups have no producer yet |
-| `stars` | account ID and repo ID | `starred_at`, `unstarred_at`, the time of the latest observation, source (`gharchive` or `api`). Every star event carries the time it was observed: an API sync's start, or an archive event's own time. An event or snapshot observed at or before the row's latest observation, or at or before the account's latest full snapshot, changes nothing |
+| `stars` | account ID and repo ID | `starred_at`, `unstarred_at`, the time of the latest observation, source (`gharchive` or `api`). Only `api` is written today. Archive star events are planned, see "Planned ingestion". Every star event carries the time it was observed: an API sync's start, or an archive event's own time. An event or snapshot observed at or before the row's latest observation, or at or before the account's latest full snapshot, changes nothing |
 | `follows` | follower ID and followee ID | source (`github` or `stargrep`), created time |
 | `collections` | ID | owner, slug, title, description, kind (`user` or `editorial`) |
 | `collection_items` | collection ID and repo ID | note, position |
@@ -111,7 +113,7 @@ GitHub limits each user token to 5,000 requests per hour. That budget is shared 
 
 A user's token is used only for work that user started. Stargrep never pools user tokens to crawl other accounts, and never uses one for a sweep or a cron. The token never leaves the server. The main Worker reads it from Better Auth by user ID when a job sends its first GitHub request, and queue messages carry only the user ID.
 
-`packages/github` sends requests one after another per token through a Durable Object. The object tracks remaining budget from response headers across Worker isolates. `packages/github/src/rate-limit.ts` classifies HTTP and GraphQL replies for the client, fallback gate, and installation-token mint. `packages/github/src/errors.ts` shares permanent-failure classification between enrichment and queue settlement.
+`packages/github` sends requests one after another per token through a Durable Object. GitHub's best practices ask for serial requests per token, which keeps Stargrep under the secondary limit of 100 concurrent requests. An in-memory lock cannot enforce this across isolates. The sync reads the REST star list, which is faster per page than GraphQL `starredRepositories`. The object tracks remaining budget from response headers across Worker isolates. `packages/github/src/rate-limit.ts` classifies HTTP and GraphQL replies for the client, fallback gate, and installation-token mint. `packages/github/src/errors.ts` shares permanent-failure classification between enrichment and queue settlement.
 
 ## Ingestion pipeline
 
@@ -152,13 +154,13 @@ The main Worker has three crons in `apps/worker/src/crons.ts`. `*/10 * * * *` sw
 
 ## Search
 
-Search normally combines full text and vectors. If query embedding fails or its allowance refuses the call, it uses full text alone. Full-text search and vector search run in one SQL query, and reciprocal rank fusion merges the two lists. Full text matches the words the user typed. The vector side embeds the planner's description of a matching repo, or the query itself when the planner is skipped. It keeps only repos within the embedding model's `maxMatchDistance` of the query, a cosine distance of 0.36 for `voyage/voyage-4` in `packages/ai/src/models.ts`, before the lists merge. Search reads the value from the model it runs, so the fake hash model in tests uses its own. Every query has nearest neighbors, so without that floor gibberish such as "dfsfgdsrg" came back with 20 results. `docs/evals.md` calibrates the floor. A repo whose name or `owner/name` equals a keyword query ranks first.
+Search normally combines full text and vectors. If the model allowance refuses the query embedding, it uses full text alone. Any other embedding failure fails the search with `SERVICE_UNAVAILABLE`. Full-text search and vector search run in one SQL query, and reciprocal rank fusion merges the two lists. Full text matches the words the user typed. The vector side embeds the planner's description of a matching repo, or the query itself when the planner is skipped. It keeps only repos within the embedding model's `maxMatchDistance` of the query, a cosine distance of 0.36 for `voyage/voyage-4` in `packages/ai/src/models.ts`, before the lists merge. Search reads the value from the model it runs, so the fake hash model in tests uses its own. Every query has nearest neighbors, so without that floor gibberish such as "dfsfgdsrg" came back with 20 results. `docs/evals.md` calibrates the floor. A repo whose name or `owner/name` equals a keyword query ranks first.
 
 - **Your stars.** The candidate set is one account's stars, at most tens of thousands of rows. An exact vector scan over that set takes milliseconds, so this path uses no vector index.
 
 ### Query plans
 
-A query such as "open source apps like Wispr Flow with growing contributors" needs filters and a ranking, not only text matching. The planner turns each natural-language query into a typed `QueryPlan`.
+A query such as "open source apps like Wispr Flow with growing contributors" needs filters and a ranking, not only text matching. The planner turns each natural-language query into a typed `QueryPlan`. Growth and activity metrics parse today but match nothing until a rollup producer fills `repo_metrics`.
 
 - **Scope.** The public API accepts only `{ kind: "stars", login }`. Core rejects other scopes with `SearchScopeUnavailable`. The caller sets the scope, never the model.
 - **Semantic text.** The text to embed. "Like Wispr Flow" becomes a description of what Wispr Flow does, because the product has no repo to compare against.
