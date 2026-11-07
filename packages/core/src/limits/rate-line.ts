@@ -54,8 +54,8 @@ const tolerance = (rate: Rate) => durationOf(rate, rate.burst - 1);
 
 type RateLines = Db.Db["Service"]["rateLines"];
 
-// When a reservation of this many units starts, or none when it would wait past maxWait. A forced reservation never
-// refuses, for work that pays into the line whatever happens.
+// The line's receipt for a reservation of this many units, or none when it would wait past maxWait. A forced
+// reservation never refuses, for work that pays into the line whatever happens.
 export const reserve = (lines: RateLines, line: Line, at: DateTime.Utc, units: number, force = false) =>
   lines.reserve({
     line: line.key,
