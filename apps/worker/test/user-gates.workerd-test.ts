@@ -172,7 +172,7 @@ describe("user gates", () => {
       await Effect.runPromise(
         gate.execute("list-stars", HttpClientRequest.get("https://api.github.com/users/octocat/starred")),
       ),
-    ).toEqual(reply);
+    ).toMatchObject(reply);
     expect(reads.count).toBe(0);
     expect(calls).toEqual([]);
   });
@@ -205,7 +205,6 @@ describe("enrich-repo consumer for signed-in users", () => {
           const server = yield* TokenGate.TokenGate;
           const gate: UserGate.JobGate = {
             ...(paidBy === undefined ? server : TokenGate.TokenGate.of({ execute: () => Effect.succeed(reply) })),
-            token: Effect.succeed(paidBy ?? "server"),
             defer: (error) => Effect.succeed(error),
           };
           if (paidBy !== undefined) owners.set(gate, paidBy);

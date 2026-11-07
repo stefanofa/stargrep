@@ -137,6 +137,10 @@ const make = Effect.gen(function* () {
             onFailure: Effect.fail,
             onSuccess: (body) => interpret(body, reply, endpoint, now),
           }),
+        ).pipe(
+          Effect.tapError((failure) =>
+            failure._tag === "RateLimited" ? Effect.sync(() => reply.onRateLimited?.(failure)) : Effect.void,
+          ),
         ),
       ),
       Effect.catchTags({

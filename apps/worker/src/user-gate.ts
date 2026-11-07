@@ -16,7 +16,6 @@ import type { UserGitHubGate } from "./github-gate.ts";
 import { inRuntime } from "./layers.ts";
 
 export type JobGate = TokenGate.TokenGate["Service"] & {
-  readonly token: Effect.Effect<string>;
   readonly defer: (error: RateLimited | TokenBudgetExhausted) => Effect.Effect<RateLimited | TokenBudgetExhausted>;
 };
 
@@ -35,13 +34,30 @@ export class UserGates extends Context.Service<
 // Deferrals live for one invocation. A job that falls back consults the server's wait before sending another request.
 const makeJobs = (userOf: (userId: UserId) => Effect.Effect<TokenGate.TokenGate["Service"] | undefined>) => {
   const deferred = new Map<string, RateLimited | TokenBudgetExhausted>();
+  // A later request can fall back after an earlier reply hit the user's own limit.
+  const limitedBy = new WeakMap<RateLimited | TokenBudgetExhausted, string>();
   const cached = (key: string, gate: TokenGate.TokenGate["Service"]) =>
     TokenGate.TokenGate.of({
       execute: Effect.fn("UserGates.cached")((operation, request) =>
         Effect.suspend(() => {
           const wait = deferred.get(key);
-          return wait === undefined ? gate.execute(operation, request) : Effect.fail(wait);
-        }),
+          return wait === undefined
+            ? Effect.map(gate.execute(operation, request), (reply) => ({
+                ...reply,
+                onRateLimited: (failure: RateLimited) => {
+                  limitedBy.set(failure, key);
+                },
+              }))
+            : Effect.fail(wait);
+        }).pipe(
+          Effect.tapError((failure) =>
+            failure._tag === "RateLimited" || failure._tag === "TokenBudgetExhausted"
+              ? Effect.sync(() => {
+                  limitedBy.set(failure, key);
+                })
+              : Effect.void,
+          ),
+        ),
       ),
     });
   return UserGates.of({
@@ -59,10 +75,9 @@ const makeJobs = (userOf: (userId: UserId) => Effect.Effect<TokenGate.TokenGate[
           ? Effect.succeed("server")
           : Effect.map(preferred.token, (token) => (token === "server" ? "server" : `user/${paidBy}`));
       return {
-        ...(preferred ?? serverGate),
-        token,
+        execute: (preferred ?? serverGate).execute,
         defer: Effect.fn("UserGates.defer")(function* (error: RateLimited | TokenBudgetExhausted) {
-          const key = yield* token;
+          const key = limitedBy.get(error) ?? (yield* token);
           const known = deferred.get(key);
           if (known !== undefined) return known;
           const wait =

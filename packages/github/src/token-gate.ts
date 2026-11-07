@@ -56,6 +56,8 @@ export interface Reply {
   readonly headers: Headers.Headers;
   readonly body: Option.Option<string>;
   readonly rateLimit: RateLimitHeaders;
+  // The local client calls this when it turns the reply into a rate-limit failure.
+  readonly onRateLimited?: (failure: RateLimited) => void;
 }
 
 export class TokenGate extends Context.Service<
