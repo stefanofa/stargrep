@@ -16,7 +16,7 @@ import type * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import { GitHubRequestFailed, GitHubTokenMissing, Operation, TokenBudgetExhausted } from "./errors.ts";
+import { GitHubRequestFailed, GitHubTokenMissing, Operation, RateLimited, TokenBudgetExhausted } from "./errors.ts";
 import { type BudgetShare, IntFromString } from "./schemas.ts";
 import * as TokenBudget from "./token-budget.ts";
 
@@ -56,6 +56,8 @@ export interface Reply {
   readonly headers: Headers.Headers;
   readonly body: Option.Option<string>;
   readonly rateLimit: RateLimitHeaders;
+  // The local client calls this when it turns the reply into a rate-limit failure.
+  readonly onRateLimited?: (failure: RateLimited) => void;
 }
 
 export class TokenGate extends Context.Service<
@@ -64,7 +66,7 @@ export class TokenGate extends Context.Service<
     readonly execute: (
       operation: Operation,
       request: HttpClientRequest.HttpClientRequest,
-    ) => Effect.Effect<Reply, GitHubRequestFailed | TokenBudgetExhausted | GitHubTokenMissing>;
+    ) => Effect.Effect<Reply, GitHubRequestFailed | TokenBudgetExhausted | GitHubTokenMissing | RateLimited>;
   }
 >()("@stargrep/github/token-gate/TokenGate") {}
 
@@ -217,6 +219,7 @@ const RemoteResult = Schema.Union([
   GitHubRequestFailed,
   TokenBudgetExhausted,
   GitHubTokenMissing,
+  RateLimited,
 ]);
 type RemoteResult = typeof RemoteResult.Type;
 

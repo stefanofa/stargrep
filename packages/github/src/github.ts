@@ -44,7 +44,8 @@ const retrySchedule = Schedule.exponential("1 second").pipe(
 );
 
 const isRetryable = (error: GitHubError) => {
-  if (error._tag === "RateLimited") return error.retryAfterMillis <= Duration.toMillis(MAX_RETRY_WAIT);
+  if (error._tag === "RateLimited")
+    return error.deferredUntil === undefined && error.retryAfterMillis <= Duration.toMillis(MAX_RETRY_WAIT);
   if (error._tag !== "GitHubRequestFailed") return false;
   switch (error.reason) {
     case "transport":
@@ -137,6 +138,10 @@ const make = Effect.gen(function* () {
             onFailure: Effect.fail,
             onSuccess: (body) => interpret(body, reply, endpoint, now),
           }),
+        ).pipe(
+          Effect.tapError((failure) =>
+            failure._tag === "RateLimited" ? Effect.sync(() => reply.onRateLimited?.(failure)) : Effect.void,
+          ),
         ),
       ),
       Effect.catchTags({

@@ -36,14 +36,17 @@ const userGates = (own: number) => {
   const layer = Layer.succeed(
     UserGate.UserGates,
     UserGate.UserGates.of({
-      gate: Effect.fn("UserGates.gate")(function* (paidBy: UserId | undefined, server: TokenGate.TokenGate["Service"]) {
-        if (paidBy === undefined) return server;
-        asked.push(paidBy);
-        const left = { count: own };
-        return TokenGate.TokenGate.of({
+      forJob: Effect.fn("UserGates.forJob")(function* ({ paidBy, sent }) {
+        const source = yield* TokenGate.TokenGate;
+        const server = sent === undefined ? source : TokenGate.counting(source, sent);
+        if (paidBy !== undefined) asked.push(paidBy);
+        const left = { count: paidBy === undefined ? 0 : own };
+        return {
           execute: (operation, request) =>
             left.count-- > 0 ? Effect.succeed(reply) : server.execute(operation, request),
-        });
+          token: Effect.succeed(paidBy ?? "server"),
+          defer: (error) => Effect.succeed(error),
+        };
       }),
     }),
   );
@@ -111,7 +114,9 @@ describe("user gates", () => {
 
   const twoRequests = (server: TokenGate.TokenGate["Service"]) =>
     Effect.gen(function* () {
-      const gate = yield* (yield* UserGate.UserGates).gate(UserId.make("user-ada"), server);
+      const gate = yield* (yield* UserGate.UserGates)
+        .forJob({ paidBy: UserId.make("user-ada") })
+        .pipe(Effect.provideService(TokenGate.TokenGate, server));
       const request = HttpClientRequest.get("https://api.github.com/users/octocat/starred");
       return yield* Effect.all([gate.execute("list-stars", request), gate.execute("list-stars", request)]);
     });
@@ -159,9 +164,15 @@ describe("user gates", () => {
     const { reads, calls, layer } = wired(Effect.succeed(Redacted.make("gho_ada")));
     const server = TokenGate.TokenGate.of({ execute: () => Effect.succeed(reply) });
     const gate = await Effect.runPromise(
-      UserGate.UserGates.use((users) => users.gate(undefined, server)).pipe(Effect.provide(layer)),
+      UserGate.UserGates.use((users) => users.forJob({}).pipe(Effect.provideService(TokenGate.TokenGate, server))).pipe(
+        Effect.provide(layer),
+      ),
     );
-    expect(gate).toBe(server);
+    expect(
+      await Effect.runPromise(
+        gate.execute("list-stars", HttpClientRequest.get("https://api.github.com/users/octocat/starred")),
+      ),
+    ).toMatchObject(reply);
     expect(reads.count).toBe(0);
     expect(calls).toEqual([]);
   });
@@ -190,13 +201,13 @@ describe("enrich-repo consumer for signed-in users", () => {
     const users = Layer.succeed(
       UserGate.UserGates,
       UserGate.UserGates.of({
-        gate: Effect.fn("UserGates.gate")(function* (
-          paidBy: UserId | undefined,
-          server: TokenGate.TokenGate["Service"],
-        ) {
-          if (paidBy === undefined) return server;
-          const gate = TokenGate.TokenGate.of({ execute: () => Effect.succeed(reply) });
-          owners.set(gate, paidBy);
+        forJob: Effect.fn("UserGates.forJob")(function* ({ paidBy }) {
+          const server = yield* TokenGate.TokenGate;
+          const gate: UserGate.JobGate = {
+            ...(paidBy === undefined ? server : TokenGate.TokenGate.of({ execute: () => Effect.succeed(reply) })),
+            defer: (error) => Effect.succeed(error),
+          };
+          if (paidBy !== undefined) owners.set(gate, paidBy);
           return gate;
         }),
       }),

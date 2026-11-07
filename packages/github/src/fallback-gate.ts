@@ -69,6 +69,7 @@ export const prefer = Effect.fn("FallbackGate.prefer")(function* (
           return yield* fallBack("budget", operation, request);
         case "GitHubTokenMissing":
           return yield* fallBack("token-unavailable", operation, request);
+        case "RateLimited":
         case "GitHubRequestFailed":
           return yield* sent.failure;
       }
@@ -77,5 +78,8 @@ export const prefer = Effect.fn("FallbackGate.prefer")(function* (
     return Option.isSome(reason) ? yield* fallBack(reason.value, operation, request) : sent.success;
   });
 
-  return TokenGate.TokenGate.of({ execute });
+  return {
+    ...TokenGate.TokenGate.of({ execute }),
+    token: Ref.get(movedToServer).pipe(Effect.map((server) => (server ? ("server" as const) : ("user" as const)))),
+  };
 });
