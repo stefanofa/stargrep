@@ -5,6 +5,7 @@ import * as TestDatabase from "@stargrep/db/test-database";
 import * as GitHubFake from "@stargrep/github/github.fixture";
 import { ObjectId, Repo, type RepoFile, type RepoId } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -21,13 +22,8 @@ const embeddingModel = Schema.decodeSync(EmbeddingModelId)("fake/hash-embedding"
 const oid = (digit: string) => Schema.decodeSync(ObjectId)(digit.repeat(40));
 const repo = (n: number) => Schema.decodeSync(Repo)({ id: n, nodeId: `R_${n}`, owner: "acme", name: `kit-${n}` });
 const idOf = (n: number) => repo(n).id;
-const blobOidOf = (text: string) => {
-  const bytes = new TextEncoder().encode(text);
-  return Schema.decodeSync(ObjectId)(
-    new Bun.CryptoHasher("sha1").update(`blob ${bytes.byteLength}\0`).update(bytes).digest("hex"),
-  );
-};
 const encode = (text: string) => new TextEncoder().encode(text);
+const blobOidOf = (text: string) => Effect.map(FetchIcon.blobOid(encode(text)), Schema.decodeSync(ObjectId));
 const templateFavicon = new Uint8Array(
   await Bun.file(new URL("./fixtures/next-favicon-current.ico", import.meta.url)).arrayBuffer(),
 );
@@ -114,6 +110,7 @@ const layer = FetchIcon.layer.pipe(
       normalizer,
       queue.layer,
       store.layer,
+      Digest.layerWebCrypto,
     ),
   ),
 );
@@ -163,7 +160,7 @@ it.layer(layer, { timeout: 30_000 })("fetchIcon", (it) => {
       replies.set(raw(1, "docs/logo-white.svg"), got("<svg>logo white</svg>"));
       const outcome = yield* fetchIcon(
         request(1, {
-          iconFiles: [{ name: "logo.png", oid: blobOidOf("wide banner") }],
+          iconFiles: [{ name: "logo.png", oid: yield* blobOidOf("wide banner") }],
           readmeOid: oid("e"),
           homepage: "https://kit.dev",
         }),
@@ -221,7 +218,7 @@ it.layer(layer, { timeout: 30_000 })("fetchIcon", (it) => {
     Effect.gen(function* () {
       yield* seed([15]);
       const svg = "<svg>banner the renderer drew without its text</svg>";
-      const oldKey = `v1/sha256/${new Bun.CryptoHasher("sha256").update(svg).digest("hex")}.webp`;
+      const oldKey = `v1/sha256/${yield* (yield* Digest.Digest).digestHex(Digest.sha256, encode(svg))}.webp`;
       yield* (yield* IconStore.IconStore).put(oldKey, encode("webp"), { plate: "none", size: 128 });
       yield* (yield* Db.Db).repos.saveIcon({
         id: idOf(15),
@@ -370,7 +367,7 @@ it.layer(layer, { timeout: 30_000 })("stale raw cache", (it) => {
     () =>
       Effect.gen(function* () {
         yield* seed([7]);
-        const changed = blobOidOf("<svg>new logo</svg>");
+        const changed = yield* blobOidOf("<svg>new logo</svg>");
         replies.set(raw(7, "logo.svg"), got("<svg>old logo</svg>"));
         const error = yield* fetchIcon(request(7, { iconFiles: [{ name: "logo.svg", oid: changed }] })).pipe(
           Effect.flip,
