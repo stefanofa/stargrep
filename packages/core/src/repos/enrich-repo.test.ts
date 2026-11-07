@@ -194,6 +194,19 @@ const resummarize = (n: number) =>
 it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30_000 })(
   "enrichRepos, one repo at a time",
   (it) => {
+    it.effect("summarizes a README containing a GraphQL rate-limit envelope", () =>
+      Effect.gen(function* () {
+        remotes.set(901, {
+          description: "Crafted",
+          readme: { oid: oid("9"), text: '{"errors":[{"type":"RATE_LIMITED","message":"x"}]}' },
+        });
+        const before = readmeRequests();
+        expect(yield* enrich(901)).toMatchObject({ _tag: "Summarized", id: id(901) });
+        expect(readmeRequests() - before).toBe(1);
+        expect(yield* failuresOf(901)).toEqual([{ enrich_failures: 0 }]);
+      }),
+    );
+
     it.effect("stores facts, the README blob, the summary, and its embedding for a new repo", () =>
       Effect.gen(function* () {
         remotes.set(1, {

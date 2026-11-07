@@ -31,10 +31,11 @@ export type Classification =
   | { readonly _tag: "RateLimited"; readonly retryAfterMillis: number; readonly windowSpent: boolean }
   | { readonly _tag: "Failed" };
 
-export const classify = (reply: Reply, now: number): Classification => {
+export const classify = (reply: Reply, now: number, path: string): Classification => {
   if (reply.status === 401) return { _tag: "Unauthorized" };
   if (reply.status === 404) return { _tag: "NotFound" };
   const graphql =
+    path === "/graphql" &&
     isSuccess(reply.status) &&
     Option.exists(Option.flatMap(reply.body, decodeErrors), (body) =>
       (body.errors ?? []).some((error) => error.type === "RATE_LIMITED"),

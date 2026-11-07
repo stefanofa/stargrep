@@ -22,6 +22,7 @@ export const requestOwnerSync = (login: Login, userId: UserId, after: "sign-in" 
 
 export const importViewer = Effect.fn("OwnerAccount.importViewer")(function* (userId: UserId) {
   const { account: facts, starredCount } = yield* GitHub.use((github) => github.viewer).pipe(
+    Effect.timeout("5 seconds"),
     Effect.mapError(() => new OwnerImportFailed()),
   );
   const db = yield* Db.Db;

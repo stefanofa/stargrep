@@ -78,7 +78,7 @@ export class GitHub extends Context.Service<
 type Endpoint = TokenGate.Endpoint;
 
 const classify = (endpoint: Endpoint, reply: TokenGate.Reply, now: number): Result.Result<string, GitHubError> => {
-  const meaning = RateLimit.classify(reply, now);
+  const meaning = RateLimit.classify(reply, now, endpoint.path);
   switch (meaning._tag) {
     case "Ok":
       return Option.match(reply.body, {

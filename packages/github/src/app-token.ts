@@ -113,7 +113,7 @@ export const makeInstallationTokens = Effect.fn("AppToken.makeInstallationTokens
       ),
     );
     const now = yield* Clock.currentTimeMillis;
-    const meaning = RateLimit.classify(reply, now);
+    const meaning = RateLimit.classify(reply, now, endpoint.path);
     if (meaning._tag === "Unauthorized") return yield* new AppTokenRefused({ reason: "jwt-rejected" });
     if (meaning._tag === "NotFound") return yield* new AppTokenRefused({ reason: "not-found" });
     if (meaning._tag === "RateLimited") {

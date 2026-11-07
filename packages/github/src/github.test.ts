@@ -17,7 +17,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Fake from "./github.fixture.ts";
 import * as GitHub from "./github.ts";
-import type { BudgetShare, Login, ObjectId, RepoName, RepoNodeId } from "./schemas.ts";
+import { type BudgetShare, Login, ObjectId, RepoName, type RepoNodeId } from "./schemas.ts";
 
 const login = "octocat" as Login;
 
@@ -527,6 +527,22 @@ describe("repoFacts", () => {
 });
 
 describe("readme", () => {
+  effect("returns GraphQL rate-limit envelope text as an ordinary README", () => {
+    const text = '{"errors":[{"type":"RATE_LIMITED","message":"x"}]}';
+    const fake = Fake.layer(() => ({ body: text }));
+    return Effect.gen(function* () {
+      const github = yield* GitHub.GitHub;
+      expect(
+        yield* github.readme({
+          owner: Login.make("owner"),
+          name: RepoName.make("repo"),
+          oid: ObjectId.make("a".repeat(40)),
+        }),
+      ).toBe(text);
+      expect(fake.sent).toHaveLength(1);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
   effect("fetches the blob by object id as raw text, with no conditional header", () => {
     const oid = "a".repeat(40) as ObjectId;
     const fake = Fake.layer(() => ({ body: "# Hello", headers: { ...Fake.rateLimitHeaders(3999), etag: `"blob"` } }));
