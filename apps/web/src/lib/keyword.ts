@@ -73,9 +73,13 @@ export const score = (repo: Searchable, terms: ReadonlyArray<string>) => {
   return terms.reduce((total, term) => total + termScore(term, name, owner, topics), exact);
 };
 
-const wordChar = /[\p{L}\p{N}]/u;
+// A letter outside the Basic Multilingual Plane spans two UTF-16 units, and a combining mark belongs to the letter
+// before it, so both continue a word.
+const endsWord = /[\p{L}\p{M}\p{N}]$/u;
+const startsWord = /^[\p{L}\p{M}\p{N}]/u;
 
-const edge = (text: string, at: number) => !wordChar.test(text.charAt(at));
+const wordBefore = (text: string, at: number) => endsWord.test(text.slice(Math.max(0, at - 2), at));
+const wordAfter = (text: string, at: number) => startsWord.test(text.slice(at, at + 2));
 
 // A mark explains the match, so it starts a word: "ai" in "jailbreaking" would read as noise. A term of two letters or
 // fewer also has to end the word, or "ai" would mark "aims".
@@ -83,11 +87,11 @@ export const highlights = (text: string, terms: ReadonlyArray<string>): Array<Ma
   const lower = text.toLowerCase();
   return terms.flatMap((term) => {
     const found: Array<Match> = [];
-    const whole = term.length <= 2;
+    const whole = [...term].length <= 2;
     for (let at = lower.indexOf(term); at >= 0 && term !== ""; at = lower.indexOf(term, at + 1)) {
       const end = at + term.length;
-      if (!edge(term, 0) && !edge(lower, at - 1)) continue;
-      if (whole && !edge(lower, end)) continue;
+      if (wordAfter(term, 0) && wordBefore(lower, at)) continue;
+      if (whole && wordAfter(lower, end)) continue;
       found.push([at, end]);
       at = end - 1;
     }

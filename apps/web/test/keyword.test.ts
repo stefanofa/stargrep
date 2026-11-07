@@ -90,6 +90,24 @@ describe("highlights", () => {
     ]);
   });
 
+  test("reads a letter outside the Basic Multilingual Plane as part of a word", () => {
+    expect(highlights("\u{10428}rust rust", ["rust"])).toEqual([[7, 11]]);
+    expect(highlights("rust\u{20000} rust", ["rust"])).toEqual([
+      [0, 4],
+      [7, 11],
+    ]);
+  });
+
+  test("reads a combining mark as part of the letter before it", () => {
+    expect(highlights("cafe\u0301ai AI", ["ai"])).toEqual([[8, 10]]);
+  });
+
+  test("counts letters, not UTF-16 units, for the whole-word rule", () => {
+    expect(highlights("\u{20000}\u{20001} \u{20000}", ["\u{20000}"])).toEqual([[5, 7]]);
+    expect(highlights("\u{20000}\u{20001}\u{20002} x", ["\u{20000}\u{20001}"])).toEqual([]);
+    expect(highlights("\u{20000}\u{20001}\u{20002}\u{20003} x", ["\u{20000}\u{20001}\u{20002}"])).toEqual([[0, 6]]);
+  });
+
   test("marks a term that starts with punctuation wherever it appears", () => {
     expect(highlights("a dotnet .net port", [".net"])).toEqual([[9, 13]]);
   });
