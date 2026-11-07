@@ -348,7 +348,13 @@ describe("searching", () => {
 
   test("a search that failed with no keyword hits says so and offers to search again", () => {
     const state = view(ready, { terms: ["tui"], semantic: "failed" });
-    expect(state.status).toEqual({ icon: "failed", label: "search didn't answer", retry: "search", instant: true });
+    expect(state.status).toEqual({
+      icon: "failed",
+      label: "search didn't answer",
+      phoneLabel: "search failed",
+      retry: "search",
+      instant: true,
+    });
     expect(state.body).toEqual({
       kind: "failed",
       copy: { heading: "stargrep couldn't search that", body: "the search didn't answer. try again in a moment." },
@@ -372,8 +378,9 @@ describe("searching", () => {
     const state = view(reading, { terms: ["tui"], words: results("w", 2), semantic: "failed" });
     expect(state.status).toEqual({
       icon: "failed",
-      label: "found 2",
-      detail: "meaning search didn't answer",
+      label: "meaning search didn't answer",
+      phoneLabel: "meaning failed",
+      detail: "found 2",
       retry: "search",
       instant: true,
     });
@@ -394,8 +401,9 @@ describe("searching", () => {
     const beside = view(ready, { terms: ["tui"], words: results("w", 1), semantic: "limited" });
     expect(beside.status).toMatchObject({
       icon: "paused",
-      label: "found 1",
-      detail: "meaning search is taking a breather",
+      label: "meaning search is taking a breather",
+      phoneLabel: "taking a breather",
+      detail: "found 1",
     });
   });
 });

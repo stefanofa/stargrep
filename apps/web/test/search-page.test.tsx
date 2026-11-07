@@ -196,6 +196,14 @@ const open = async (path: string, label: string | RegExp = "Search your stars", 
 
 const strip = () => document.querySelector("[role=status]")?.closest("p")?.textContent ?? "";
 const announced = () => page().getByRole("status").textContent;
+// What one breakpoint shows of an element: its text without the parts that breakpoint hides.
+const shownAt = (element: Element, width: "phone" | "desktop") => {
+  const copy = element.cloneNode(true) as Element;
+  for (const hidden of copy.querySelectorAll(width === "phone" ? '[class~="max-sm:hidden"]' : '[class~="sm:hidden"]'))
+    hidden.remove();
+  return copy.textContent ?? "";
+};
+const statusLine = () => page().getByRole("status").closest("p")?.parentElement as HTMLElement;
 const tile = () => page().getByRole("searchbox").closest("[data-slot=tile]") as HTMLElement;
 const rail = () => page().queryByRole("progressbar");
 const mark = () => document.querySelector("header svg[data-pose]")?.getAttribute("data-pose");
@@ -457,7 +465,10 @@ describe("the search page in each state", () => {
       return [hit(server.repos[4] as Repo)];
     };
     await open("/?q=terminal");
-    await waitFor(() => expect(strip()).toContain("found 2 · meaning search didn't answer"));
+    await waitFor(() => expect(shownAt(page().getByRole("status"), "desktop")).toBe("meaning search didn't answer"));
+    expect(shownAt(page().getByRole("status"), "phone")).toBe("meaning failed");
+    expect(shownAt(statusLine(), "desktop")).toBe("meaning search didn't answer · found 2try again");
+    expect(shownAt(statusLine(), "phone")).toBe("meaning failedfound 2try again");
     await waitFor(() => expect(mark()).toBe("scared"));
     await user.click(within(tile()).getByRole("button", { name: "try again" }));
     await waitFor(() => expect(strip()).toContain("found 3 of 6"));
@@ -474,6 +485,20 @@ describe("the search page in each state", () => {
     );
     expect(strip()).toContain("taking a breather");
     expect(within(tile()).getByRole("button", { name: "try again" })).toBeTruthy();
+    await waitFor(() => expect(mark()).toBe("unsure"));
+  });
+
+  test("a breather beside keyword matches is announced, and phones show it with the count and a retry", async () => {
+    server.search = () => {
+      throw new ORPCError("TOO_MANY_REQUESTS");
+    };
+    await open("/?q=terminal");
+    await waitFor(() =>
+      expect(shownAt(page().getByRole("status"), "desktop")).toBe("meaning search is taking a breather"),
+    );
+    expect(shownAt(page().getByRole("status"), "phone")).toBe("taking a breather");
+    expect(shownAt(statusLine(), "phone")).toBe("taking a breatherfound 2try again");
+    expect(page().getAllByRole("link", { name: /ratatui|bottom/ }).length).toBe(2);
     await waitFor(() => expect(mark()).toBe("unsure"));
   });
 

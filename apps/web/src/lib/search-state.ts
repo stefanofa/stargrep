@@ -166,9 +166,11 @@ const answerOf = ({ terms, words, meaning, semantic }: Search): Answer => {
   return semantic === "pending" ? { kind: "searching" } : { kind: "none" };
 };
 
-const missedDetail: Record<Missed, string> = {
-  failed: "meaning search didn't answer",
-  limited: "meaning search is taking a breather",
+// What the status line says when the search by meaning gave no answer. It is the label, which screen readers hear, and
+// phones show a shorter one, since their strip leaves one short line for it.
+const missedStatus: Record<Missed, { readonly label: string; readonly phoneLabel: string }> = {
+  failed: { label: "meaning search didn't answer", phoneLabel: "meaning failed" },
+  limited: { label: "meaning search is taking a breather", phoneLabel: "taking a breather" },
 };
 
 const unreadDetail = (stage: Stage) => {
@@ -269,8 +271,8 @@ const answered = (stage: Stage, answer: Exclude<Answer, { kind: "browsing" }>, w
       if (answer.missed !== undefined)
         return {
           icon: answer.missed === "limited" ? "paused" : "failed",
-          label: `found ${n(answer.count)}`,
-          detail: missedDetail[answer.missed],
+          ...missedStatus[answer.missed],
+          detail: `found ${n(answer.count)}`,
           retry: "search",
         };
       return partial(stage)
@@ -296,7 +298,7 @@ const answered = (stage: Stage, answer: Exclude<Answer, { kind: "browsing" }>, w
     case "failed":
       return answer.missed === "limited"
         ? { ...breather, retry: "search" }
-        : { icon: "failed", label: "search didn't answer", retry: "search" };
+        : { icon: "failed", label: "search didn't answer", phoneLabel: "search failed", retry: "search" };
   }
 };
 

@@ -25,6 +25,24 @@ describe("search input", () => {
 describe("status line", () => {
   const label = () => page().getByRole("status").firstElementChild;
 
+  test("on phones an action shares the line under the label with the detail", () => {
+    const { container } = render(
+      <StatusLine
+        icon="failed"
+        label="meaning search didn't answer"
+        phoneLabel="meaning failed"
+        detail="found 2"
+        action={<button type="button">try again</button>}
+      />,
+    );
+    const phone = container.cloneNode(true) as Element;
+    for (const hidden of phone.querySelectorAll('[class~="max-sm:hidden"]')) hidden.remove();
+    const desktop = container.cloneNode(true) as Element;
+    for (const hidden of desktop.querySelectorAll('[class~="sm:hidden"]')) hidden.remove();
+    expect(phone.textContent).toBe("meaning failedfound 2try again");
+    expect(desktop.textContent).toBe("meaning search didn't answer · found 2try again");
+  });
+
   test("a new sync state settles its label in, once", () => {
     const { rerender } = render(<StatusLine icon="busy" label="loading your stars" />);
     expect(label()?.className).not.toContain("animate-settle");
