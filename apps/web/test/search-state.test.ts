@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import type { Result } from "@stargrep/ui";
-import { type Search, type Stage, searchView, stageOf } from "../src/lib/search-state.ts";
+import {
+  type PageInputs,
+  pageView,
+  type Search,
+  type SearchView,
+  type Stage,
+  searchView,
+  stageOf,
+} from "../src/lib/search-state.ts";
+import type { Trouble } from "../src/lib/trouble.ts";
 import { syncStatus } from "./sync-status.fixture.ts";
 
 const landed = { stars: 1200, pushedAt: "2026-11-01T00:00:00.000Z" };
@@ -48,16 +57,27 @@ const query = { terms: ["record", "terminal", "sessions", "gifs"] };
 
 describe("the stage", () => {
   test("a first sync imports, and an unknown star count leaves the total open", () => {
-    expect(importing).toEqual({ name: "importing", done: 1204, total: 1776, read: 0, line: null, starting: false });
+    expect(importing).toEqual({ name: "importing", done: 1204, total: 1776, read: 0, phase: { kind: "running" } });
     const unknown = stageOf({ sync: sync({ state: "queued", syncedAt: null }), entries: entries(40), starred: null });
     expect(unknown).toMatchObject({ name: "importing", total: null });
   });
 
   test("a login nobody asked to import yet is ready to import, with the importing layout", () => {
     const fresh = stageOf({ sync: sync({ state: "unknown", syncedAt: null }), entries: [], starred: null });
-    expect(fresh).toMatchObject({ name: "importing", starting: true, done: 0 });
+    expect(fresh).toMatchObject({ name: "importing", phase: { kind: "not-asked" }, done: 0 });
     expect(view(fresh, {}, undefined)).toMatchObject({
       status: { icon: "paused", label: "ready to import your stars" },
+    });
+  });
+
+  test("a first sync waiting for github budget is in line, with its place and start time", () => {
+    const waiting = { ahead: 3, startsAt: "2026-11-05T10:24:00.000Z" };
+    const inLine = stageOf({ sync: sync({ state: "waiting", syncedAt: null, waiting }), entries: [], starred: 412 });
+    expect(inLine).toMatchObject({ name: "importing", phase: { kind: "in-line", ...waiting } });
+    expect(view(inLine).status).toEqual({
+      icon: "busy",
+      label: "in line to import",
+      detail: "3 ahead · about 6 minutes left",
     });
   });
 
@@ -109,7 +129,7 @@ describe("browsing", () => {
       status: { icon: "synced", label: "1,776 stars", detail: "synced 2 min ago" },
       progress: undefined,
       pose: "idle",
-      body: { kind: "library" },
+      body: { kind: "library", arriving: undefined },
     });
   });
 
@@ -152,7 +172,7 @@ describe("browsing", () => {
     const checking = view({ name: "refreshing", total: 1776, arriving: 0 });
     expect(checking.status).toEqual({ icon: "busy", label: "checking for new stars" });
     expect(checking.progress).toBeUndefined();
-    expect(checking.body).toEqual({ kind: "library" });
+    expect(checking.body).toEqual({ kind: "library", arriving: undefined });
     expect(checking.pose).toBe("idle");
     expect(view({ name: "refreshing", total: 1778, arriving: 2 }).status).toEqual({
       icon: "busy",
@@ -167,7 +187,7 @@ describe("browsing", () => {
       icon: "failed",
       label: "sync didn't finish",
       detail: "40 stars so far",
-      retry: true,
+      retry: "sync",
     });
     expect(state.pose).toBe("scared");
   });
@@ -179,7 +199,7 @@ describe("browsing", () => {
       label: "couldn't check",
       detail: "for new stars",
       continues: true,
-      retry: true,
+      retry: "sync",
     });
   });
 });
@@ -329,5 +349,166 @@ describe("searching", () => {
       copy: { heading: "stargrep couldn't search that", body: "the search didn't answer. try again in a moment." },
     });
     expect(state.pose).toBe("scared");
+  });
+});
+
+const importingFor = (extra: Partial<Extract<Stage, { name: "importing" }>> = {}): Stage => ({
+  name: "importing",
+  done: 14,
+  total: 28,
+  read: 0,
+  phase: { kind: "running" },
+  ...extra,
+});
+
+const page = (extra: Partial<PageInputs> = {}) =>
+  pageView({
+    owner: "octo",
+    own: false,
+    visitor: true,
+    demoLogin: "stefanofa",
+    query: "",
+    stage: ready,
+    live: view(ready),
+    first: undefined,
+    library: { ready: true, whole: true },
+    trouble: undefined,
+    surprised: false,
+    ...extra,
+  });
+
+describe("what the page shows", () => {
+  const answered = view(ready, { terms: ["tui"], words: results("w", 2) });
+  const serverAnswer: SearchView = view(reading, { terms: ["terminal"], meaning: results("m", 1) });
+
+  test("trouble wins over any answer, with its own status, pose and try again", () => {
+    const troubled = page({ query: "tui", live: answered, trouble: "load-failed" });
+    expect(troubled.status).toEqual({ icon: "failed", label: "couldn't load" });
+    expect(troubled.pose).toBe("scared");
+    expect(troubled.body).toEqual({
+      kind: "trouble",
+      heading: "stargrep couldn't load @octo's stars",
+      detail: "the library didn't arrive. try again in a moment.",
+      retry: "library",
+    });
+  });
+
+  test("until the library loads, the page says so and holds placeholders in the final layout", () => {
+    const loading = page({ query: "tui", library: { ready: false, whole: false }, stage: importingFor() });
+    expect(loading.status).toEqual({ icon: "busy", label: "loading @octo's stars" });
+    expect(loading.body).toEqual({ kind: "loading", searching: true, arriving: { total: 28 } });
+    expect(loading.progress).toBeUndefined();
+    expect(loading.painted).toBe(false);
+    expect(page({ own: true, library: { ready: false, whole: false } }).status.label).toBe("loading your stars");
+  });
+
+  test("the server's answer holds until the library has every page, then the live view takes over", () => {
+    const first = { query: "Terminal  dashboard", view: serverAnswer };
+    const held = page({ query: "terminal dashboard", live: answered, first, library: { ready: true, whole: false } });
+    expect(held.painted).toBe(true);
+    expect(held.status).toEqual(serverAnswer.status);
+    expect(held.body).toEqual(serverAnswer.body);
+    expect(held.progress).toEqual(serverAnswer.progress);
+    expect(page({ query: "terminal dashboard", first, library: { ready: false, whole: false } }).painted).toBe(true);
+    const whole = page({ query: "terminal dashboard", live: answered, first });
+    expect(whole.painted).toBe(false);
+    expect(whole.status).toEqual(answered.status);
+  });
+
+  test("a query other than the server's never shows the server's answer", () => {
+    const first = { query: "terminal dashboard", view: serverAnswer };
+    const other = page({ query: "tui", live: answered, first, library: { ready: true, whole: false } });
+    expect(other.painted).toBe(false);
+    expect(other.status).toEqual(answered.status);
+    expect(page({ query: "tui", first, library: { ready: false, whole: false } }).body.kind).toBe("loading");
+  });
+
+  test("results by meaning surprise an idle mark for a moment, but never a troubled one", () => {
+    expect(page({ live: answered, surprised: true }).pose).toBe("surprised");
+    expect(page({ live: view(reading), surprised: true }).pose).toBe("thinking");
+    expect(page({ live: answered, surprised: true, trouble: "busy" }).pose).toBe("unsure");
+  });
+});
+
+const hero = (stage: Stage, extra: Partial<PageInputs> = {}) => page({ stage, ...extra }).hero;
+
+describe("the hero above a visitor's search", () => {
+  test("shows to visitors only", () => {
+    expect(hero(ready, { visitor: false })).toBeUndefined();
+  });
+
+  test("introduces the demo account, case aside", () => {
+    expect(hero(ready, { owner: "StefanoFA" })).toEqual({
+      subtitle: "live results from @StefanoFA, our demo account. try any username.",
+      butter: { kind: "join" },
+    });
+  });
+
+  test("names anyone else's stars", () => {
+    expect(hero(ready)?.subtitle).toBe("@octo's stars, searched in plain words. try any username.");
+  });
+
+  test("asks whether the visitor is the owner while their stars import, with the import's progress", () => {
+    expect(hero(importingFor())).toEqual({
+      subtitle: "@octo is new here. their stars are on the way from github, and search covers the ones that landed.",
+      butter: { kind: "claim", progress: 0.5 },
+    });
+  });
+
+  test("says a login nobody asked for yet is ready to import, as the status line does", () => {
+    expect(hero(importingFor({ done: 0, total: null, phase: { kind: "not-asked" } }))).toEqual({
+      subtitle: "@octo is new here. their stars are ready to import from github, and search covers them as they land.",
+      butter: { kind: "claim", progress: 0 },
+    });
+  });
+
+  test("says an import waits in line, and leaves its start time to the status line", () => {
+    const waiting = importingFor({ done: 0, phase: { kind: "in-line", ahead: 3, startsAt: "2026-11-06T12:00:00Z" } });
+    expect(hero(waiting)?.subtitle).toBe(
+      "@octo is new here and waits in line for github. search covers their stars as they land.",
+    );
+  });
+
+  test("points to another username when the page is in trouble", () => {
+    expect(hero(importingFor({ phase: { kind: "not-asked" } }), { trouble: "missing" })).toEqual({
+      subtitle: "try any username.",
+      butter: { kind: "join" },
+    });
+  });
+});
+
+const troubles: ReadonlyArray<Trouble> = ["missing", "busy", "limited", "unavailable", "load-limited", "load-failed"];
+
+const troubled = (trouble: Trouble, extra: Partial<PageInputs> = {}) => page({ trouble, ...extra });
+
+const troubleBody = (trouble: Trouble, extra: Partial<PageInputs> = {}) => {
+  const { body } = troubled(trouble, extra);
+  if (body.kind !== "trouble") throw new Error(`expected trouble, got ${body.kind}`);
+  return body;
+};
+
+describe("a page in trouble", () => {
+  test("never marks a refusal with a check, and one network limit reads the same wherever it hits", () => {
+    for (const trouble of troubles) expect(troubled(trouble).status.icon).not.toBe("done");
+    expect(troubled("busy").status.icon).toBe("paused");
+    expect(troubled("limited").status).toEqual(troubled("load-limited").status);
+    expect(troubleBody("limited").heading).toBe(troubleBody("load-limited").heading);
+  });
+
+  test("offers the right try again, and none for a login GitHub doesn't know", () => {
+    expect(troubles.map((trouble) => troubleBody(trouble).retry)).toEqual([
+      undefined,
+      "sync",
+      "sync",
+      "sync",
+      "library",
+      "library",
+    ]);
+  });
+
+  test("says whose stars, and your stars on the viewer's own page", () => {
+    expect(troubleBody("load-failed").heading).toBe("stargrep couldn't load @octo's stars");
+    expect(troubleBody("load-failed", { owner: "juno", own: true }).heading).toBe("stargrep couldn't load your stars");
+    expect(troubleBody("missing", { owner: "nobody-x" }).heading).toBe("github has no one called @nobody-x");
   });
 });

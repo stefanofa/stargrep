@@ -4,16 +4,13 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { useEffect, useState } from "react";
 import { api, type SyncStatus } from "./rpc.ts";
-import { readingIncomplete } from "./search-state.ts";
+import { firstImport, readingIncomplete } from "./sync-status.ts";
 import { forgetRefusal, type Refusal, refusalOf, rememberRefusal } from "./trouble.ts";
 
 const importing = Duration.seconds(2);
 const inLine = Duration.seconds(10);
 const reading = Duration.seconds(5);
 const idle = Duration.seconds(30);
-
-const firstImport = (status: SyncStatus) =>
-  (status.state === "queued" || status.state === "waiting") && status.syncedAt === null;
 
 const intervalOf = (status: SyncStatus | undefined) => {
   if (status?.state === "waiting") return inLine;

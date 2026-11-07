@@ -19,6 +19,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { LibraryEntry } from "../lib/library-collection.ts";
 import { libraryOrder } from "../lib/order.ts";
 import { formatCount, monthOf, stars, toResult } from "../lib/present.ts";
+import type { Arriving } from "../lib/search-state.ts";
 
 const pageSize = 48;
 
@@ -32,10 +33,6 @@ export const languageShares = (entries: ReadonlyArray<LibraryEntry>): ReadonlyAr
 };
 
 const columns = 4;
-
-export interface Arriving {
-  readonly total: number | null;
-}
 
 // A visitor's page already has the butter tile in its hero, so their count tile stays white.
 function CountTile({

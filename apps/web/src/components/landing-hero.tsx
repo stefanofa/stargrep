@@ -1,52 +1,6 @@
 import { Chip, cn, Pip, type PipPose, ProgressRing, Tile } from "@stargrep/ui";
-import type { Stage } from "../lib/search-state.ts";
+import type { Butter, HeroCopy } from "../lib/search-state.ts";
 import { SignInButton } from "./sign-in-button.tsx";
-
-// The butter tile asks a visitor to sign in. While someone's stars import, it asks whether the visitor is them, since
-// owners skip the line, and rings Pip with the import's progress.
-export type Butter = { readonly kind: "join" } | { readonly kind: "claim"; readonly progress: number };
-
-export interface HeroCopy {
-  readonly subtitle: string;
-  readonly butter: Butter;
-}
-
-// What the hero says above a visitor's search. While someone's stars import, the butter tile becomes the claim tile.
-// The status line under it carries the counts and times, so the subtitle stays put while they tick.
-export const heroCopy = ({
-  stage,
-  troubled,
-  owner,
-  demoLogin,
-}: {
-  stage: Stage;
-  troubled: boolean;
-  owner: string;
-  demoLogin: string;
-}): HeroCopy => {
-  if (troubled) return { subtitle: "try any username.", butter: { kind: "join" } };
-  if (stage.name === "importing") {
-    const butter = {
-      kind: "claim",
-      progress: stage.total === null ? 0 : stage.done / Math.max(1, stage.total),
-    } as const;
-    return {
-      subtitle: stage.starting
-        ? `@${owner} is new here. their stars are ready to import from github, and search covers them as they land.`
-        : stage.line === null
-          ? `@${owner} is new here. their stars are on the way from github, and search covers the ones that landed.`
-          : `@${owner} is new here and waits in line for github. search covers their stars as they land.`,
-      butter,
-    };
-  }
-  return {
-    subtitle:
-      owner.toLowerCase() === demoLogin.toLowerCase()
-        ? `live results from @${owner}, our demo account. try any username.`
-        : `@${owner}'s stars, searched in plain words. try any username.`,
-    butter: { kind: "join" },
-  };
-};
 
 function ButterTile({ butter, pose }: { butter: Butter; pose: PipPose }) {
   const claim = butter.kind === "claim";
@@ -98,7 +52,7 @@ function ButterTile({ butter, pose }: { butter: Butter; pose: PipPose }) {
   );
 }
 
-export function Hero({ subtitle, butter, pose }: { subtitle: string; butter: Butter; pose: PipPose }) {
+export function Hero({ subtitle, butter, pose }: HeroCopy & { pose: PipPose }) {
   return (
     <section className="flex flex-col gap-3.5 pt-1.5 sm:pt-5 lg:flex-row lg:gap-gap">
       <div className="flex min-w-0 flex-1 flex-col justify-end gap-3.5 lg:pb-1.5">
