@@ -16,20 +16,20 @@ import {
 } from "@stargrep/ui";
 import { and, ilike } from "@tanstack/db";
 import { useLiveQuery } from "@tanstack/react-db";
-import { useHydrated, useNavigate, useSearch } from "@tanstack/react-router";
+import { useHydrated, useNavigate, useRouter, useSearch } from "@tanstack/react-router";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { keywordTerms, normalize } from "../lib/keyword.ts";
-import { getLibrary, type Library, useRecoveries } from "../lib/library-collection.ts";
+import { getLibrary, type Library } from "../lib/library-collection.ts";
 import { type PageData, type PageRequest, pageOwner, type Session } from "../lib/page-data.ts";
 import { hitsOf, liveView } from "../lib/page-view.ts";
 import { now, startsIn, toDetail } from "../lib/present.ts";
 import { withReply } from "../lib/results.ts";
 import { useReveal } from "../lib/reveal.ts";
 import type { Viewer } from "../lib/rpc.ts";
-import { librarySorts, type Params, searchSorts } from "../lib/search-params.ts";
+import { librarySorts, type Params, searchSorts, validateParams } from "../lib/search-params.ts";
 import { type Arriving, type Body, pageView, type Retry, type Stage, stageOf } from "../lib/search-state.ts";
 import { useStoredView } from "../lib/stored-view.ts";
 import { nothingSynced } from "../lib/sync-status.ts";
@@ -43,8 +43,8 @@ import { OwnerPill } from "./owner-pill.tsx";
 
 // A navigation in the browser starts from the session the server loaded. The page reads the rest once it mounts.
 export const pageFor = (request: PageRequest, { viewer, config }: Session): PageData => {
-  const { owner, own, query } = pageOwner(viewer, config, request);
-  return { viewer, owner, own, config, query, first: null, sync: null, refusal: null };
+  const { owner, own, query, defaultQuery } = pageOwner(viewer, config, request);
+  return { viewer, owner, own, config, query, defaultQuery, first: null, sync: null, refusal: null };
 };
 
 const scopes = [{ value: "stars", label: "Your stars", href: "/" }];
@@ -61,8 +61,7 @@ export function HeaderControls({ viewer }: { viewer: Viewer }) {
 const dock =
   "max-sm:fixed max-sm:inset-x-3 max-sm:bottom-[max(16px,env(safe-area-inset-bottom))] max-sm:z-30 max-sm:[&_[data-slot=tile]]:shadow-dock";
 
-// With an owner pill in the phone strip there is no room for the sort trigger, so phones sort by the default there.
-function useControls(searching: boolean, roomForSort: boolean) {
+function useArrangement(searching: boolean) {
   const params: Params = useSearch({ strict: false });
   const navigate = useNavigate();
   const [storedView, storeView] = useStoredView();
@@ -74,15 +73,7 @@ function useControls(searching: boolean, roomForSort: boolean) {
   };
   const setSort = (next: Sort) =>
     navigate({ to: ".", search: (previous) => ({ ...previous, sort: next }), replace: true });
-  const controls = (
-    <>
-      <div className={roomForSort ? "contents" : "contents max-sm:hidden"}>
-        <SortMenu value={sort} onValueChange={setSort} options={searching ? searchSorts : librarySorts} />
-      </div>
-      <ViewToggle value={view} onValueChange={setView} />
-    </>
-  );
-  return { view, sort, controls };
+  return { view, sort, setView, setSort };
 }
 
 function Waiting({
@@ -117,24 +108,17 @@ const measured = (stage: Stage) => {
   return undefined;
 };
 
-function useTimeLeft(stage: Stage) {
-  const [stageStart, setStageStart] = useState<{
-    readonly stage: Stage["name"];
-    readonly at: number;
-    readonly done: number;
-  }>();
+// How long the import or the reading has left, at its pace since the stage started. The clock is when the sync status
+// was read, so the estimate moves with each poll and holds still between them.
+function useTimeLeft(stage: Stage, readAt: number | undefined) {
   const progress = measured(stage);
-  const done = progress?.done ?? 0;
-  const total = progress?.total ?? null;
-  const active = progress !== undefined;
-  useEffect(() => {
-    if (!active) setStageStart(undefined);
-    else setStageStart((current) => (current?.stage === stage.name ? current : { stage: stage.name, at: now(), done }));
-  }, [active, stage.name, done]);
-  if (!active || stageStart === undefined || total === null) return undefined;
-  const perSecond = (done - stageStart.done) / Math.max(1, (now() - stageStart.at) / 1000);
+  const mark = progress && readAt !== undefined ? { stage: stage.name, at: readAt, done: progress.done } : undefined;
+  const [start, setStart] = useState(mark);
+  if (mark?.stage !== start?.stage) setStart(mark);
+  if (mark === undefined || start === undefined || progress?.total == null) return undefined;
+  const perSecond = (mark.done - start.done) / Math.max(1, (mark.at - start.at) / 1000);
   if (perSecond <= 0) return undefined;
-  const seconds = Math.ceil((total - done) / perSecond);
+  const seconds = Math.ceil((progress.total - mark.done) / perSecond);
   if (seconds <= 5) return "almost done";
   return seconds < 90 ? `about ${seconds} seconds left` : `about ${Math.round(seconds / 60)} minutes left`;
 }
@@ -178,36 +162,30 @@ function useWhole(library: Library | undefined) {
   return whole;
 }
 
-interface StarsProps {
-  readonly data: PageData;
-  readonly onPose: (pose: PipPose) => void;
-}
-
 // The server and the hydrating browser render without the library, so both paint the same first answer. The library
-// loads once the page is hydrated.
-export function Stars({ data, onPose }: StarsProps) {
-  const hydrated = useHydrated();
-  const empty = nothingSynced(data.first?.sync ?? data.sync);
-  const library = hydrated ? getLibrary(data.owner, data.own, empty) : undefined;
-  const recoveries = useRecoveries(library);
-  return <OwnerStars key={recoveries} data={data} library={library} empty={empty} onPose={onPose} />;
-}
-
-// A login with nothing synced has an empty library, so the server already paints its state: ready to import, in line,
-// or the first stars on their way.
-function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Library | undefined; empty: boolean }) {
+// loads once the page is hydrated. A login with nothing synced has an empty library, so the server already paints its
+// state: ready to import, in line, or the first stars on their way.
+export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose) => void }) {
   const { owner, first } = data;
+  const hydrated = useHydrated();
+  const empty = nothingSynced(first?.sync ?? data.sync);
+  const library = hydrated ? getLibrary(owner, data.own, empty) : undefined;
   const collection = library?.collection;
-  const reloadRef = useRef(library?.reload);
-  reloadRef.current = library?.reload;
-  const reload = useCallback(() => {
-    reloadRef.current?.();
-  }, []);
   const [retrying, setRetrying] = useState(false);
   const [at] = useState(() => first?.at ?? now());
   const params: Params = useSearch({ strict: false });
   const navigate = useNavigate();
+  const router = useRouter();
   const [query, setQuery] = useState(params.q ?? data.query);
+  // Typing replaces ?q= as it goes, so only Back and Forward bring another query into the search box.
+  useEffect(
+    () =>
+      router.history.subscribe(({ location, action }) => {
+        if (action.type === "PUSH" || action.type === "REPLACE") return;
+        setQuery(validateParams(router.parseLocation(location).search).q ?? data.defaultQuery);
+      }),
+    [router, data.defaultQuery],
+  );
   const [opener, setOpener] = useState<HTMLElement | null>(null);
   const terms = useMemo(() => keywordTerms(query), [query]);
 
@@ -223,13 +201,21 @@ function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Li
       : q.from({ repo: collection }).where(({ repo }) => containsEvery(repo.text, [head, ...rest]));
   });
   const whole = useWhole(library);
-  const { watch, retry } = useSync(owner, reload, first?.sync ?? data.sync ?? undefined, data.refusal ?? undefined);
+  const { watch, retry } = useSync(
+    owner,
+    () => library?.reload(),
+    first?.sync ?? data.sync ?? undefined,
+    data.refusal ?? undefined,
+  );
   const sync = watch.kind === "watching" ? watch.status : undefined;
+  const readAt = watch.kind === "watching" ? watch.at : undefined;
   const starred = data.own ? (data.viewer?.starredCount ?? null) : (sync?.starredTotal ?? null);
   const stage = stageOf({ sync, entries, starred });
-  const estimate = useTimeLeft(stage);
+  const estimate = useTimeLeft(stage, readAt);
   const timeLeft =
-    stage.name === "importing" && stage.phase.kind === "in-line" ? startsIn(stage.phase.startsAt, now()) : estimate;
+    stage.name === "importing" && stage.phase.kind === "in-line"
+      ? startsIn(stage.phase.startsAt, readAt ?? at)
+      : estimate;
   const { semantic, retry: retrySearch } = useSemanticSearch(owner, query, {
     read: sync?.enrichment.read,
     settled: stage.name === "ready",
@@ -238,7 +224,7 @@ function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Li
 
   const hits = hitsOf(semantic);
   const searching = terms.length > 0 || semantic.kind === "pending" || hits.length > 0;
-  const { view, sort, controls } = useControls(searching, data.own);
+  const { view, sort, setView, setSort } = useArrangement(searching);
   const trouble: Trouble | undefined =
     watch.kind !== "watching" ? watch.kind : isLoadingError ? libraryTrouble(library?.failure()) : undefined;
   const surprised = useSurprise(query, semantic.kind === "answered" && hits.length > 0);
@@ -281,7 +267,11 @@ function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Li
   const tryAgain: Record<Retry, () => void> = { sync: retry, library: retryLibrary, search: retrySearch };
   const search = (next: string) => {
     setQuery(next);
-    navigate({ to: ".", search: (previous) => ({ ...previous, q: next === "" ? undefined : next }), replace: true });
+    navigate({
+      to: ".",
+      search: (previous) => ({ ...previous, q: next === data.defaultQuery ? undefined : next }),
+      replace: true,
+    });
   };
   const open: OpenResult = (result, link) => {
     setOpener(link);
@@ -372,7 +362,16 @@ function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Li
               }
             />
           }
-          controls={controls}
+          controls={
+            <>
+              {/* With an owner pill in the phone strip there is no room for the sort trigger, so phones sort by the
+                  default there. */}
+              <div className={data.own ? "contents" : "contents max-sm:hidden"}>
+                <SortMenu value={sort} onValueChange={setSort} options={searching ? searchSorts : librarySorts} />
+              </div>
+              <ViewToggle value={view} onValueChange={setView} />
+            </>
+          }
         />
       </div>
       {visitor && (

@@ -1,15 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { ORPCError } from "@orpc/client";
+import { createORPCErrorFromJson, ORPCError } from "@orpc/client";
+import type { WireCode } from "@stargrep/api/errors";
 import { libraryTrouble, refusalOf, rememberedRefusal } from "../src/lib/trouble.ts";
+
+// The API marks every error its contract defines.
+const answered = (code: WireCode) => createORPCErrorFromJson({ defined: true, code, message: code, data: undefined });
 
 describe("why a stars page can't show stars", () => {
   test("maps wire codes to one trouble each, and anything else to unavailable", () => {
-    expect(refusalOf(new ORPCError("LOGIN_NOT_FOUND"))).toBe("missing");
-    expect(refusalOf(new ORPCError("SYNC_BUSY"))).toBe("busy");
-    expect(refusalOf(new ORPCError("TOO_MANY_REQUESTS"))).toBe("limited");
-    expect(refusalOf(new ORPCError("SERVICE_UNAVAILABLE"))).toBe("unavailable");
+    expect(refusalOf(answered("LOGIN_NOT_FOUND"))).toBe("missing");
+    expect(refusalOf(answered("SYNC_BUSY"))).toBe("busy");
+    expect(refusalOf(answered("TOO_MANY_REQUESTS"))).toBe("limited");
+    expect(refusalOf(answered("SERVICE_UNAVAILABLE"))).toBe("unavailable");
     expect(refusalOf(new Error("offline"))).toBe("unavailable");
-    expect(libraryTrouble(new ORPCError("TOO_MANY_REQUESTS"))).toBe("load-limited");
+    expect(refusalOf(new ORPCError("TOO_MANY_REQUESTS"))).toBe("unavailable");
+    expect(libraryTrouble(answered("TOO_MANY_REQUESTS"))).toBe("load-limited");
     expect(libraryTrouble(new Error("offline"))).toBe("load-failed");
   });
 

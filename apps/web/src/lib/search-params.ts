@@ -2,6 +2,7 @@ import { loginKey } from "@stargrep/github/login";
 import type { Sort, View } from "@stargrep/ui";
 
 export interface Params {
+  // An empty q is a search someone cleared, which differs from no q on a page with a default query.
   readonly q?: string | undefined;
   readonly view?: View | undefined;
   readonly sort?: Sort | undefined;
@@ -20,7 +21,8 @@ export const librarySorts = searchSorts.filter((sort) => sort !== "best");
 const isSort = (value: unknown): value is Sort => searchSorts.some((sort) => sort === value);
 
 export const validateParams = (search: Record<string, unknown>): Params => {
-  const [q, lang, repo, error] = [text(search.q), text(search.lang), text(search.repo), text(search.error)];
+  const q = typeof search.q === "string" ? search.q : undefined;
+  const [lang, repo, error] = [text(search.lang), text(search.repo), text(search.error)];
   return {
     ...(q === undefined ? {} : { q }),
     ...(search.view === "list" || search.view === "tiles" ? { view: search.view } : {}),

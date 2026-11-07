@@ -97,10 +97,10 @@ export const loadPage = async ({ login }: PageRequest, { viewer, config }: Sessi
   const request = getRequest();
   const client = inProcess(request);
   const { q, sort } = validateParams(Object.fromEntries(new URL(request.url).searchParams));
-  const { owner, own, query, showcase } = pageOwner(viewer, config, { login, q });
+  const { owner, own, query, defaultQuery, showcase } = pageOwner(viewer, config, { login, q });
   const first =
     showcase && query === config.demoQuery ? await firstAnswer(client, owner, query, sort).catch(() => null) : null;
   const { sync, refusal } =
     first === null ? await syncOf(client, owner, request.headers.get("cookie")) : { sync: first.sync, refusal: null };
-  return { viewer, owner, own, config, query, first, sync, refusal };
+  return { viewer, owner, own, config, query, defaultQuery, first, sync, refusal };
 };
