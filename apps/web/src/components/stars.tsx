@@ -34,6 +34,7 @@ import { nothingSynced } from "../lib/sync-status.ts";
 import { libraryTrouble, type Trouble } from "../lib/trouble.ts";
 import { useSemanticSearch } from "../lib/use-semantic.ts";
 import { useSync } from "../lib/use-sync.ts";
+import { theirs, whoseOf } from "../lib/whose.ts";
 import { AccountMenu } from "./account-menu.tsx";
 import { Hero, TryChips } from "./landing-hero.tsx";
 import { LibraryPlaceholder, LibraryView } from "./library-view.tsx";
@@ -164,6 +165,7 @@ function useWhole(library: Library | undefined) {
 // state: ready to import, in line, or the first stars on their way.
 export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose) => void }) {
   const { owner, first } = data;
+  const whose = whoseOf(data);
   const hydrated = useHydrated();
   const empty = nothingSynced(first?.sync ?? data.sync);
   const library = hydrated ? getLibrary(owner, data.own, empty) : undefined;
@@ -243,7 +245,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
       sort,
       at,
       timeLeft,
-      whose: data.own ? undefined : owner,
+      whose,
     }),
     first: first ?? undefined,
     // A login with nothing synced has nothing to load, so its page shows its import before the library loads.
@@ -346,7 +348,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
         <SearchTile
           query={reveal.typed ?? query}
           onQueryChange={search}
-          label={data.own ? "Search your stars" : `Search @${owner}'s stars`}
+          label={`Search ${theirs(whose)}`}
           placeholder={page.placeholder}
           className={dock}
           owner={data.own ? undefined : <OwnerPill owner={owner} viewer={data.viewer} config={data.config} />}
@@ -390,7 +392,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
         {body(page.body)}
       </div>
       <RepoPanel
-        repo={opened && toDetail(opened, at, data.own ? undefined : owner)}
+        repo={opened && toDetail(opened, at, whose)}
         open={params.repo !== undefined && opened !== undefined}
         onOpenChange={(next) => {
           if (!next) navigate({ to: ".", search: (previous) => ({ ...previous, repo: undefined }) });

@@ -5,21 +5,17 @@ import { highlights } from "./keyword.ts";
 import type { LibraryEntry } from "./library-collection.ts";
 import { repoVisual } from "./repo-visual.ts";
 import type { Params } from "./search-params.ts";
-import { factsPending, type Whose } from "./search-state.ts";
+import { factsPending } from "./search-state.ts";
+import type { Whose } from "./whose.ts";
 
 const day = 86_400_000;
 const relative = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 const dateFormat = new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 const monthFormat = new Intl.DateTimeFormat("en", { month: "long", year: "numeric", timeZone: "UTC" });
-const count = new Intl.NumberFormat("en");
 
 const millis = (iso: string) => DateTime.toEpochMillis(DateTime.makeUnsafe(iso));
 
 export const now = () => DateTime.toEpochMillis(DateTime.nowUnsafe());
-
-export const formatCount = (value: number) => count.format(value);
-
-export const stars = (value: number) => `${count.format(value)} ${value === 1 ? "star" : "stars"}`;
 
 const since = (iso: string, at: number) => {
   const days = Math.max(0, Math.floor((at - millis(iso)) / day));
@@ -104,7 +100,7 @@ export const toDetail = (repo: LibraryEntry, at: number, whose: Whose): RepoDeta
   description: repo.description ?? "",
   ...(repo.summary === null || repo.summary === repo.description ? {} : { summary: repo.summary }),
   stars: repo.stars,
-  starred: { by: whose === undefined ? "you" : `@${whose}`, on: starredOn(repo.starredAt) },
+  starred: { by: whose.own ? "you" : `@${whose.login}`, on: starredOn(repo.starredAt) },
   activity: activity(repo, at),
   ...(repo.license === null ? {} : { license: repo.license }),
   network: [],

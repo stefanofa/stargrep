@@ -1,3 +1,4 @@
+import { loginKey } from "@stargrep/github/login";
 import { type PipPose, Skeleton, Tile } from "@stargrep/ui";
 import { useLoaderData, useSearch } from "@tanstack/react-router";
 import { Suspense, useState } from "react";
@@ -57,7 +58,7 @@ export function StarsPage({ data, error }: { data: PageData; error?: string | un
     >
       {error !== undefined && <SignInProblem error={error} />}
       <Suspense fallback={null}>
-        <Stars key={data.owner.toLowerCase()} data={data} onPose={setPose} />
+        <Stars key={loginKey(data.owner)} data={data} onPose={setPose} />
       </Suspense>
     </Page>
   );

@@ -70,7 +70,7 @@ const firstAnswer = async (client: Client, login: string, query: string, sort: A
     sort: sort ?? "best",
     at,
     timeLeft: undefined,
-    whose: login,
+    whose: { own: false, login },
   });
   return { query, at, sync, hits, view } satisfies FirstAnswer;
 };

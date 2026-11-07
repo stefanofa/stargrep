@@ -1,10 +1,11 @@
 import { Popover } from "@base-ui/react/popover";
-import { isGitHubLogin, loginKey } from "@stargrep/github/login";
+import { isGitHubLogin } from "@stargrep/github/login";
 import { Avatar, cn, popupSurface } from "@stargrep/ui";
 import { useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
 import type { PublicConfig, Viewer } from "../lib/rpc.ts";
 import { reservedLogin } from "../lib/search-params.ts";
+import { sameLogin } from "../lib/whose.ts";
 
 const avatarOf = (login: string) => `https://github.com/${login}.png?size=64`;
 
@@ -22,8 +23,6 @@ function Chevron() {
   );
 }
 
-const same = (a: string, b: string) => loginKey(a) === loginKey(b);
-
 export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Viewer | null; config: PublicConfig }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -33,14 +32,14 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
   const login = typed.trim().replace(/^@/, "");
   const valid = isGitHubLogin(login);
   const people = [...(viewer === null ? [] : [viewer.login]), ...config.featured].filter(
-    (person, index, all) => all.findIndex((other) => same(other, person)) === index,
+    (person, index, all) => all.findIndex((other) => sameLogin(other, person)) === index,
   );
 
   const go = (next: string) => {
     setOpen(false);
     setTyped("");
-    if (same(next, owner)) return;
-    const home = viewer === null ? same(next, config.demoLogin) : same(next, viewer.login);
+    if (sameLogin(next, owner)) return;
+    const home = viewer === null ? sameLogin(next, config.demoLogin) : sameLogin(next, viewer.login);
     const moved = home
       ? navigate({ to: "/" })
       : reservedLogin(next)
@@ -106,7 +105,7 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
                   <button
                     type="button"
                     onClick={() => go(person)}
-                    aria-current={same(person, owner) || undefined}
+                    aria-current={sameLogin(person, owner) || undefined}
                     className="flex h-11 w-full items-center gap-2.5 rounded-item px-2 text-left hover:bg-accent-soft aria-[current]:bg-accent-soft"
                   >
                     <Avatar
@@ -115,7 +114,7 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
                       className="size-7 border-0"
                     />
                     <span className="flex-1 truncate">@{person}</span>
-                    {viewer !== null && same(person, viewer.login) && (
+                    {viewer !== null && sameLogin(person, viewer.login) && (
                       <span className="text-sm text-muted-foreground">you</span>
                     )}
                   </button>

@@ -34,27 +34,30 @@ const at = Date.parse("2026-11-05T00:00:00.000Z");
 
 describe("the repo panel's detail", () => {
   test("a summary that says something new gets its own section", () => {
-    expect(toDetail(entry("Widgets for charts.", "A TUI library with charts and tables."), at, undefined).summary).toBe(
-      "A TUI library with charts and tables.",
-    );
+    expect(
+      toDetail(entry("Widgets for charts.", "A TUI library with charts and tables."), at, { own: true }).summary,
+    ).toBe("A TUI library with charts and tables.");
   });
 
   test("a summary that repeats the description, or no summary at all, shows nothing twice", () => {
-    expect(toDetail(entry("Widgets for charts.", "Widgets for charts."), at, undefined).summary).toBeUndefined();
-    expect(toDetail(entry("Widgets for charts.", null), at, undefined).summary).toBeUndefined();
+    expect(toDetail(entry("Widgets for charts.", "Widgets for charts."), at, { own: true }).summary).toBeUndefined();
+    expect(toDetail(entry("Widgets for charts.", null), at, { own: true }).summary).toBeUndefined();
   });
 });
 
 test("the panel says who starred the repo: the viewer on their own page, the owner on anyone else's", () => {
   const repo = entry("Widgets for charts.", null);
-  expect(toDetail(repo, at, undefined).starred).toEqual({ by: "you", on: "Jan 1, 2026" });
-  expect(toDetail(repo, at, "stefanofa").starred).toEqual({ by: "@stefanofa", on: "Jan 1, 2026" });
+  expect(toDetail(repo, at, { own: true }).starred).toEqual({ by: "you", on: "Jan 1, 2026" });
+  expect(toDetail(repo, at, { own: false, login: "stefanofa" }).starred).toEqual({
+    by: "@stefanofa",
+    on: "Jan 1, 2026",
+  });
 });
 
 test("the panel shows the same repo visual as the card", () => {
   const repo = entry("Widgets for charts.", null);
-  expect(toDetail(repo, at, undefined).visual).toEqual(toResult(repo, at).visual);
-  expect(toDetail(repo, at, undefined).visual).toMatchObject({ kind: "avatar", letters: "ra" });
+  expect(toDetail(repo, at, { own: true }).visual).toEqual(toResult(repo, at).visual);
+  expect(toDetail(repo, at, { own: true }).visual).toMatchObject({ kind: "avatar", letters: "ra" });
 });
 
 test("a result's link opens the repo over the same query, view and sort, and drops a sign-in error", () => {

@@ -1,5 +1,6 @@
 import type { WireCode } from "@stargrep/api/errors";
 import { wireCode } from "./rpc.ts";
+import { sameLogin } from "./whose.ts";
 
 export type Refusal = "missing" | "busy" | "limited" | "unavailable";
 
@@ -35,7 +36,7 @@ export const rememberedRefusal = (cookies: string | null, login: string): Refusa
   const value = cookies?.match(new RegExp(`(?:^|;\\s*)${remembered}=([^;]*)`))?.[1];
   if (value === undefined) return undefined;
   const [who, refusal] = decodeURIComponent(value).split(":");
-  return who?.toLowerCase() === login.toLowerCase() && refusal !== undefined && isRefusal(refusal)
+  return who !== undefined && sameLogin(who, login) && refusal !== undefined && isRefusal(refusal)
     ? refusal
     : undefined;
 };

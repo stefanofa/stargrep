@@ -5,7 +5,8 @@ import { orders } from "./order.ts";
 import { syncedAgo } from "./present.ts";
 import { mergeResults } from "./results.ts";
 import type { SearchResult, SyncStatus } from "./rpc.ts";
-import { type SearchView, type Stage, searchView, type Whose } from "./search-state.ts";
+import { type SearchView, type Stage, searchView } from "./search-state.ts";
+import type { Whose } from "./whose.ts";
 
 // Where the search by meaning stands for the query on screen. A pending search keeps an earlier query's results, which
 // stay on screen until its own answer lands.

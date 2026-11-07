@@ -50,7 +50,7 @@ const search = (extra: Partial<Search> = {}): Search => ({
 });
 
 const view = (stage: Stage, extra: Partial<Search> = {}, synced?: string) =>
-  searchView({ stage, search: search(extra), synced, timeLeft: "about 6 minutes left" });
+  searchView({ stage, search: search(extra), synced, timeLeft: "about 6 minutes left", whose: { own: true } });
 
 const query = { terms: ["record", "terminal", "sessions", "gifs"] };
 
@@ -295,7 +295,13 @@ describe("searching", () => {
       entries: entries(6),
       starred: 6,
     });
-    const state = searchView({ stage: fresh, search: search(query), synced: undefined, timeLeft: undefined });
+    const state = searchView({
+      stage: fresh,
+      search: search(query),
+      synced: undefined,
+      timeLeft: undefined,
+      whose: { own: true },
+    });
     expect(state.body.kind === "empty-reading" && state.body.copy).toEqual({
       heading: "i haven't read your stars yet",
       body: "names and descriptions already match. the rest can match once i've read them.",

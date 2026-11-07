@@ -18,9 +18,10 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { LibraryEntry } from "../lib/library-collection.ts";
 import { libraryOrder } from "../lib/order.ts";
-import { formatCount, monthOf, stars, toResult } from "../lib/present.ts";
+import { monthOf, toResult } from "../lib/present.ts";
 import type { Params } from "../lib/search-params.ts";
 import type { Arriving } from "../lib/search-state.ts";
+import { formatCount, starCount } from "../lib/whose.ts";
 
 const pageSize = 48;
 
@@ -129,7 +130,7 @@ function MonthHeading({ heading, size, arriving }: { heading: string; size: numb
     <h2 className="flex items-baseline gap-2.5 pl-1.5">
       <span className="font-display text-2xl font-semibold tracking-snug">{heading}</span>
       <span className="font-sans text-base text-muted-foreground tabular-nums">
-        {stars(size)}
+        {starCount(size)}
         {/* Phones leave "so far" to the status line, so the heading keeps one line when the import finishes. */}
         {arriving && <span className="max-sm:hidden"> so far</span>}
       </span>

@@ -2,6 +2,7 @@ import { loadEngine } from "./engine.ts";
 import type { PageData, PageRequest, Session } from "./page-data.ts";
 import { revealScript } from "./reveal-script.ts";
 import type { Params } from "./search-params.ts";
+import { theirs, whoseOf } from "./whose.ts";
 
 export interface ServerLoads {
   readonly session: () => Promise<Session>;
@@ -38,7 +39,7 @@ export const loadPage = async (request: PageRequest, session: Session | undefine
 };
 
 const titled = (data: PageData, query: string | undefined) => {
-  const whose = data.own ? "your stars" : `@${data.owner}'s stars`;
+  const whose = theirs(whoseOf(data));
   const title = query ? `"${query}" in ${whose} · Stargrep` : `${whose} · Stargrep`;
   const description = data.own
     ? []
