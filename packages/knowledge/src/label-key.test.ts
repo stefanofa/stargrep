@@ -37,8 +37,26 @@ describe("labelKey", () => {
     );
   });
 
+  test("trims whole emoji clusters, with their variation selectors, joiners, skin tones, and keycaps", () => {
+    const terms = ["❤️ love", "love ❤️", "Rocket ✨️", "👨‍💻 coder", "coder 👨‍💻", "👍🏽 Rocket", "1️⃣ love", "tag #️⃣"];
+    expect(terms.map(labelKey)).toEqual(["love", "love", "rocket", "coder", "coder", "rocket", "love", "tag"]);
+  });
+
+  test("keeps marks that belong to letters", () => {
+    expect(["हिंदी", "ไทย", "Ñandú"].map(labelKey)).toEqual(["हिंदी", "ไทย", "ñandú"]);
+  });
+
   test("gives no key to a term with no letter or digit", () => {
-    expect(["", "   ", "---", "...", "🚀", "#"].map(labelKey)).toEqual([null, null, null, null, null, null]);
+    expect(["", "   ", "---", "...", "🚀", "#", "❤️", "👨‍💻"].map(labelKey)).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+    ]);
   });
 
   test("gives no key past 80 characters, including one NFKC lengthens", () => {
