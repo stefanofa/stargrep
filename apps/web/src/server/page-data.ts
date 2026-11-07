@@ -3,7 +3,7 @@ import { RPCLink } from "@orpc/client/fetch";
 import { isNotFound, isRedirect } from "@tanstack/react-router";
 import { getRequest } from "@tanstack/react-start/server";
 import * as Effect from "effect/Effect";
-import { keywordTerms, searchText } from "../lib/keyword.ts";
+import { searchText } from "../lib/keyword.ts";
 import type { ServerLoads } from "../lib/load-page.ts";
 import {
   type Asked,
@@ -13,7 +13,7 @@ import {
   pageOwner,
   type Session,
 } from "../lib/page-data.ts";
-import { liveView, matchesEvery } from "../lib/page-view.ts";
+import { liveView } from "../lib/page-view.ts";
 import { now } from "../lib/present.ts";
 import type { Client, Viewer } from "../lib/rpc.ts";
 import { validateParams } from "../lib/search-params.ts";
@@ -64,7 +64,6 @@ const firstAnswer = async (client: Client, login: string, query: string, sort: A
     query,
     stage: stageOf({ sync, entries, starred: sync.starredTotal }),
     entries,
-    matched: matchesEvery(entries, keywordTerms(query)),
     find: (id) => byId.get(id),
     sync,
     semantic: { kind: "answered", results: hits },

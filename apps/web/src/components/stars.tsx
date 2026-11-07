@@ -13,13 +13,12 @@ import {
   type View,
   ViewToggle,
 } from "@stargrep/ui";
-import { and, ilike } from "@tanstack/db";
 import { useLiveQuery } from "@tanstack/react-db";
 import { Link, useHydrated, useNavigate, useRouter, useSearch } from "@tanstack/react-router";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { keywordTerms, normalize } from "../lib/keyword.ts";
 import { getLibrary, type Library } from "../lib/library-collection.ts";
 import { type PageData, type PageRequest, pageOwner, type Session } from "../lib/page-data.ts";
@@ -99,14 +98,6 @@ function Waiting({
     <LibraryPlaceholder view={view} arriving={arriving} butter={!visitor} />
   );
 }
-
-type Text = Parameters<typeof ilike>[0];
-
-const containsEvery = (text: Text, [first, ...rest]: readonly [string, ...Array<string>]) => {
-  const [second, ...others] = rest.map((term) => ilike(text, `%${term}%`));
-  const head = ilike(text, `%${first}%`);
-  return second === undefined ? head : and(head, second, ...others);
-};
 
 const measured = (stage: Stage) => {
   if (stage.name === "importing") return { done: stage.done, total: stage.total };
@@ -193,19 +184,12 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     [router, data.defaultQuery],
   );
   const [opener, setOpener] = useState<HTMLElement | null>(null);
-  const terms = useMemo(() => keywordTerms(query), [query]);
 
   const {
     data: entries = [],
     isReady: queried,
     isLoadingError,
   } = useLiveQuery((q) => (collection === undefined ? undefined : q.from({ repo: collection })));
-  const { data: matched = [] } = useLiveQuery((q) => {
-    const [head, ...rest] = terms;
-    return head === undefined || collection === undefined
-      ? undefined
-      : q.from({ repo: collection }).where(({ repo }) => containsEvery(repo.text, [head, ...rest]));
-  });
   const whole = useWhole(library);
   const { watch, retry } = useSync(
     owner,
@@ -229,7 +213,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   });
 
   const hits = hitsOf(semantic);
-  const searching = terms.length > 0 || semantic.kind === "pending" || hits.length > 0;
+  const searching = keywordTerms(query).length > 0 || semantic.kind === "pending" || hits.length > 0;
   const { view, sort, setView, setSort } = useArrangement(searching);
   // A result's link carries what the page shows, including a view this browser saved, so it opens the same way
   // anywhere. The default view and sort stay out, so a link doesn't override the opener's own choice.
@@ -253,7 +237,6 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
       query,
       stage,
       entries,
-      matched,
       find: (id) => collection?.get(id),
       sync,
       semantic,

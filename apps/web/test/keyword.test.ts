@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { highlights, keywordTerms, type Searchable, score, searchText } from "../src/lib/keyword.ts";
+import { highlights, keywordTerms, matchesEvery, type Searchable, score, searchText } from "../src/lib/keyword.ts";
 
 const repo = (owner: string, name: string, topics: ReadonlyArray<string> = []): Searchable => ({
   owner,
@@ -17,8 +17,32 @@ describe("keywordTerms", () => {
     expect(keywordTerms("in")).toEqual(["in"]);
   });
 
-  test("drops stopwords, wildcards, and extra spaces from a phrase", () => {
-    expect(keywordTerms("  The Rust library for  50%_tui ")).toEqual(["rust", "library", "50tui"]);
+  test("drops stopwords and extra spaces from a phrase", () => {
+    expect(keywordTerms("  The Rust library for  50%_tui ")).toEqual(["rust", "library", "50%_tui"]);
+  });
+});
+
+describe("matchesEvery", () => {
+  const entries = [
+    { name: "bottom", text: "a system monitor dashboard for the terminal" },
+    { name: "console", text: "terminal dashboard for async rust tasks" },
+    { name: "ratatui", text: "widgets for terminal apps" },
+    { name: "sweep", text: "deletes node_modules folders" },
+    { name: "nodemodules", text: "nodemodules helper" },
+  ];
+  const names = (query: string) => matchesEvery(entries, keywordTerms(query)).map((entry) => entry.name);
+
+  test("keeps the entries that contain every term, in any case", () => {
+    expect(names("Terminal Dashboard")).toEqual(["bottom", "console"]);
+  });
+
+  test("reads a percent sign or an underscore as itself", () => {
+    expect(names("node_modules")).toEqual(["sweep"]);
+    expect(names("50%")).toEqual([]);
+  });
+
+  test("matches nothing for an empty query", () => {
+    expect(names("  ")).toEqual([]);
   });
 });
 

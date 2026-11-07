@@ -25,10 +25,20 @@ export const normalize = (query: string) => query.trim().replace(/\s+/g, " ").to
 export const keywordTerms = (query: string) => {
   const words = normalize(query)
     .split(" ")
-    .map((word) => word.replace(/[%_\\]/g, ""))
     .filter((word) => word !== "");
   return words.length > 1 ? words.filter((word) => !stopwords.has(word)) : words;
 };
+
+const containsAll = (terms: ReadonlyArray<string>) => (entry: { readonly text: string }) =>
+  terms.every((term) => entry.text.includes(term));
+
+export const matchesEvery = <E extends { readonly text: string }>(
+  entries: ReadonlyArray<E>,
+  terms: ReadonlyArray<string>,
+) => (terms.length === 0 ? [] : entries.filter(containsAll(terms)));
+
+export const anyMatches = (entries: ReadonlyArray<{ readonly text: string }>, terms: ReadonlyArray<string>) =>
+  entries.some(containsAll(terms));
 
 export interface Searchable {
   readonly owner: string;
