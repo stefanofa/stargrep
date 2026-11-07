@@ -1,7 +1,7 @@
 import { isGitHubLogin } from "@stargrep/github/login";
 import { notFound, redirect } from "@tanstack/react-router";
 import { StarsRoute } from "../components/stars-page.tsx";
-import { loadPage, revealHead } from "./load-page.ts";
+import { loadPage, pageHead } from "./load-page.ts";
 import type { Session } from "./page-data.ts";
 import { type Params, reservedLogin, validateParams } from "./search-params.ts";
 
@@ -31,6 +31,6 @@ export const starsRoute = {
   },
   loader: async ({ params: { login }, parentMatchPromise }: Load) =>
     loadPage({ login }, (await parentMatchPromise).loaderData),
-  head: revealHead,
+  head: pageHead,
   component: StarsRoute,
 };
