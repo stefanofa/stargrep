@@ -1,6 +1,5 @@
 import { describe, expect } from "bun:test";
 import * as it from "@stargrep/testing";
-import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -77,9 +76,8 @@ describe("TextGeneration.make", () => {
     }),
   );
 
-  it.effect("retries a model that is briefly unavailable", () =>
+  it.effect("calls the adapter once, so retries stay with the adapter that knows the provider's retry-after", () =>
     Effect.gen(function* () {
-      const attempted = yield* Deferred.make<void>();
       let attempts = 0;
       const generation = TextGeneration.make({
         provider: "test",
@@ -88,20 +86,13 @@ describe("TextGeneration.make", () => {
         run: () =>
           Effect.suspend(() => {
             attempts++;
-            return attempts === 1
-              ? Deferred.succeed(attempted, undefined).pipe(
-                  Effect.andThen(
-                    Effect.fail(new AiUnavailable({ operation: "generate", model: "seam/model", detail: "503" })),
-                  ),
-                )
-              : Effect.succeed({ output: { answer: 1 }, usage });
+            return Effect.fail(new AiUnavailable({ operation: "generate", model: "seam/model", detail: "503" }));
           }),
       });
-      const fiber = yield* Effect.forkChild(generation.generate({ schema: Answer, system: "s", prompt: "p" }));
-      yield* Deferred.await(attempted);
-      yield* TestClock.adjust("10 seconds");
-      expect(yield* Fiber.join(fiber)).toEqual({ answer: 1 });
-      expect(attempts).toBe(2);
+      expect((yield* Effect.flip(generation.generate({ schema: Answer, system: "s", prompt: "p" })))._tag).toBe(
+        "AiUnavailable",
+      );
+      expect(attempts).toBe(1);
     }),
   );
 

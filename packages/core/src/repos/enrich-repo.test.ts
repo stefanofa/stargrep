@@ -775,31 +775,19 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
     }),
   );
 
-  it.effect("retries an item that is briefly unavailable when the model has no batch API", () =>
+  it.effect("leaves a repo pending without counting a failure when the model is unavailable", () =>
     Effect.gen(function* () {
       remotes.set(36, { description: "Photo app", readme: { oid: oid("6"), text: "# Photos" } });
-      const attempted = yield* Deferred.make<void>();
-      let attempts = 0;
-      const flaky = textGeneration((request) =>
-        Effect.suspend(() => {
-          attempts++;
-          return attempts === 1
-            ? Deferred.succeed(attempted, undefined).pipe(
-                Effect.andThen(
-                  Effect.fail(new AiUnavailable({ operation: "generate", model: "test/text", detail: "503" })),
-                ),
-              )
-            : Effect.succeed({ output: SummarizeFake.respond(request.prompt), usage });
-        }),
+      const unavailable = textGeneration(() =>
+        Effect.fail(new AiUnavailable({ operation: "generate", model: "test/text", detail: "503" })),
       );
       const ids = yield* store([36]);
-      const fiber = yield* Effect.forkChild(
-        Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) => enricher.enrichRepos(ids)).pipe(using(flaky)),
-      );
-      yield* Deferred.await(attempted);
-      yield* TestClock.adjust("10 seconds");
-      expect((yield* Fiber.join(fiber)).map((outcome) => outcome._tag)).toEqual(["Summarized"]);
-      expect(attempts).toBe(2);
+      const enrichAll = Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) => enricher.enrichRepos(ids));
+      expect(yield* enrichAll.pipe(using(unavailable))).toMatchObject([
+        { _tag: "Failed", error: { _tag: "AiUnavailable" } },
+      ]);
+      expect(yield* failuresOf(36)).toEqual([{ enrich_failures: 0 }]);
+      expect(yield* enrichAll).toMatchObject([{ _tag: "Summarized" }]);
     }),
   );
   it.effect("reads up to four READMEs from the blob store at once while it plans", () =>

@@ -7,6 +7,7 @@ import {
   NoObjectGeneratedError,
   NoOutputGeneratedError,
   Output,
+  RetryError,
   type EmbeddingModel as SdkEmbeddingModel,
   type LanguageModel as SdkLanguageModel,
 } from "ai";
@@ -30,7 +31,6 @@ import {
   type Operation,
 } from "./errors.ts";
 import * as Models from "./models.ts";
-import { noRetry, type Retry, unavailableRetry } from "./port.ts";
 import * as TextGeneration from "./text-generation.ts";
 
 type BatchApi = ReturnType<GatewayProvider["experimental_batch"]>;
@@ -49,6 +49,14 @@ const textTimeout = Duration.seconds(60);
 const embedTimeout = Duration.seconds(30);
 const batchTimeout = Duration.hours(24);
 const batchPollInterval = Duration.seconds(10);
+// The SDK retries a model request that the provider marks retryable, inside the port's timeout. It waits as long as a
+// retry-after under a minute asks. The batch API has no SDK retries, so its calls retry here as many times.
+const retries = 3;
+const batchCallRetry = {
+  schedule: Schedule.exponential("1 second").pipe(Schedule.jittered),
+  times: retries,
+  while: (error: AiError) => error._tag === "AiUnavailable",
+};
 
 const silenceSdkWarnings = () => {
   globalThis.AI_SDK_LOG_WARNINGS = false;
@@ -63,12 +71,14 @@ const detailOf = (cause: unknown) => {
 const isRetryable = (cause: unknown) =>
   (APICallError.isInstance(cause) || GatewayError.isInstance(cause)) && cause.isRetryable;
 
-const fromSdkError = (operation: Operation, model: string) => (cause: unknown) => {
+const fromSdkError = (operation: Operation, model: string) => (thrown: unknown) => {
+  const cause = RetryError.isInstance(thrown) ? thrown.lastError : thrown;
+  const attempts = RetryError.isInstance(thrown) ? ` after ${thrown.errors.length} attempts` : "";
   if (GatewayModelNotFoundError.isInstance(cause)) return new AiModelNotFound({ model });
   if (NoObjectGeneratedError.isInstance(cause))
     return new AiOutputInvalid({ operation, model, detail: "the model did not return a JSON object" });
-  if (isRetryable(cause)) return new AiUnavailable({ operation, model, detail: detailOf(cause) });
-  return new AiRequestFailed({ operation, model, detail: detailOf(cause) });
+  if (isRetryable(cause)) return new AiUnavailable({ operation, model, detail: `${detailOf(cause)}${attempts}` });
+  return new AiRequestFailed({ operation, model, detail: `${detailOf(cause)}${attempts}` });
 };
 
 const Json = Schema.fromJsonString(Schema.Unknown);
@@ -123,7 +133,7 @@ const runBatch = (provider: AiProvider["Service"], model: string) =>
   Effect.fn("Gateway.runBatch")(function* (request: TextGeneration.RunBatchRequest) {
     const api = provider.experimental_batch();
     const call = <A>(run: (abortSignal: AbortSignal) => PromiseLike<A>) =>
-      Effect.tryPromise({ try: run, catch: fromSdkError("generate", model) }).pipe(Effect.retry(unavailableRetry));
+      Effect.tryPromise({ try: run, catch: fromSdkError("generate", model) }).pipe(Effect.retry(batchCallRetry));
     const key = yield* idempotencyKey(model, request);
     const started = yield* call((abortSignal) =>
       api.doStartBatch({
@@ -184,19 +194,19 @@ const runBatch = (provider: AiProvider["Service"], model: string) =>
 export interface TextOptions {
   readonly reasoning: "none" | "provider-default";
   readonly timeout: Duration.Duration;
-  readonly retry: Retry;
+  readonly maxRetries: number;
   readonly batch: boolean;
 }
 
 const defaultTextOptions: TextOptions = {
   reasoning: "provider-default",
   timeout: textTimeout,
-  retry: unavailableRetry,
+  maxRetries: retries,
   batch: true,
 };
 
 export const layerTextGeneration = (model: string, options: Partial<TextOptions> = {}) => {
-  const { reasoning, timeout, retry, batch } = { ...defaultTextOptions, ...options };
+  const { reasoning, timeout, maxRetries, batch } = { ...defaultTextOptions, ...options };
   return Layer.effect(
     TextGeneration.TextGeneration,
     Effect.andThen(
@@ -206,7 +216,6 @@ export const layerTextGeneration = (model: string, options: Partial<TextOptions>
           provider: "gateway",
           model,
           timeout,
-          retry,
           run: (request) =>
             Effect.tryPromise({
               try: (abortSignal) =>
@@ -215,7 +224,7 @@ export const layerTextGeneration = (model: string, options: Partial<TextOptions>
                   output: Output.object({ schema: jsonSchema(request.jsonSchema) }),
                   system: request.system,
                   prompt: request.prompt,
-                  maxRetries: 0,
+                  maxRetries,
                   abortSignal,
                   reasoning,
                 }),
@@ -263,7 +272,7 @@ export const layerEmbeddings = (model: Models.EmbeddingModel) =>
                   model: provider.embeddingModel(model.id),
                   values: [...values],
                   dimensions: model.dimensions,
-                  maxRetries: 0,
+                  maxRetries: retries,
                   abortSignal,
                 }),
               catch: fromSdkError("embed", model.id),
@@ -316,7 +325,7 @@ export const layerProviderConfig = Layer.unwrap(
 export const layerPlanner = layerTextGeneration(Models.plannerModel, {
   reasoning: "none",
   timeout: Duration.seconds(4),
-  retry: noRetry,
+  maxRetries: 0,
 });
 
 export const layerPlannerTextGeneration = layerPlanner.pipe(Layer.provide(layerProviderConfig));
