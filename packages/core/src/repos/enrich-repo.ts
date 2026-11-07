@@ -1,5 +1,6 @@
 import * as Embeddings from "@stargrep/ai/embeddings";
 import type { AiError } from "@stargrep/ai/errors";
+import * as Models from "@stargrep/ai/models";
 import * as Summarize from "@stargrep/ai/summarize";
 import * as TextGeneration from "@stargrep/ai/text-generation";
 import * as Db from "@stargrep/db";
@@ -117,8 +118,8 @@ const decodeEmbedding = Schema.decodeUnknownEffect(Embedding);
 
 const readmeOidOf = (facts: RepoFacts) => facts.readme?.oid ?? null;
 
-const summaryOf = (row: Db.Repo, readmeOid: ObjectId | null): Option.Option<Summary> =>
-  row.summary !== null && row.summaryReadmeOid === readmeOid
+const summaryOf = (row: Db.StoredRepo, readmeOid: ObjectId | null): Option.Option<Summary> =>
+  row.summary !== null && row.summaryReadmeOid === readmeOid && row.summaryRecipe === Models.summaryRecipe
     ? Option.some({ summary: row.summary, keywords: row.keywords, kind: row.kind })
     : Option.none();
 
