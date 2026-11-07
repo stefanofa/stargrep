@@ -46,6 +46,23 @@ const embedSummarized = (db: Db.Db["Service"], id: RepoId, vector: Embedding) =>
     .pipe(Effect.andThen(db.repos.saveEmbedding({ id, embedding: vector, summary: summaryOf(id), readmeOid: null })));
 
 const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | TestDatabase.TestDatabase> }) => {
+  test.effect("reads stored account logins and repo owners without applying signup syntax", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const id = accountId(90001);
+      const repo = repoId(90001);
+      yield* db.accounts.upsert(account(id));
+      yield* db.repos.upsertRefs([ref(repo)]);
+      for (const legacy of ["Nek-", "john--", "foo--bar", "managed_user"]) {
+        yield* database.query("update github_accounts set login = $1 where id = $2", [legacy, id]);
+        yield* database.query("update repos set owner = $1 where id = $2", [legacy, repo]);
+        expect(Option.getOrThrow(yield* db.accounts.get(id))).toMatchObject({ login: legacy });
+        expect(yield* db.repos.require(repo)).toMatchObject({ owner: legacy });
+      }
+    }),
+  );
+
   test.effect("upserts an account and reads the latest facts back", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;

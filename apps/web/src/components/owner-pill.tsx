@@ -1,9 +1,10 @@
 import { Popover } from "@base-ui/react/popover";
+import { isGitHubLogin, loginKey } from "@stargrep/github/login";
 import { Avatar, cn, popupSurface } from "@stargrep/ui";
 import { useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
 import type { PublicConfig, Viewer } from "../lib/rpc.ts";
-import { githubLogin, reservedLogin } from "../lib/search-params.ts";
+import { reservedLogin } from "../lib/search-params.ts";
 
 const avatarOf = (login: string) => `https://github.com/${login}.png?size=64`;
 
@@ -21,7 +22,7 @@ function Chevron() {
   );
 }
 
-const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+const same = (a: string, b: string) => loginKey(a) === loginKey(b);
 
 export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Viewer | null; config: PublicConfig }) {
   const navigate = useNavigate();
@@ -30,7 +31,7 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
   const field = useId();
 
   const login = typed.trim().replace(/^@/, "");
-  const valid = githubLogin.test(login);
+  const valid = isGitHubLogin(login);
   const people = [...(viewer === null ? [] : [viewer.login]), ...config.featured].filter(
     (person, index, all) => all.findIndex((other) => same(other, person)) === index,
   );

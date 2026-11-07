@@ -7,6 +7,7 @@ import type { contract } from "@stargrep/api/contract";
 import type { ApiServices } from "@stargrep/api/services";
 import { SearchCache } from "@stargrep/core/search";
 import { DbQueryFailed } from "@stargrep/db/errors";
+import { githubLogin } from "@stargrep/github/login";
 import { BudgetShare } from "@stargrep/github/schemas";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -74,7 +75,7 @@ const sendTo =
 
 const searchRest = (input: object) => rest("/search", post(input));
 
-const terminalDashboards = { login: "ada", q: "terminal dashboards" };
+const terminalDashboards = { scope: { kind: "stars" as const, login: "ada" }, q: "terminal dashboards" };
 
 const traceId = expect.stringMatching(/^[0-9a-f]{32}$/);
 
@@ -99,8 +100,8 @@ describe("search", () => {
 
   it("answers the same over typed RPC and as the MCP tool's structured content", async () => {
     const { body } = await searchRest(terminalDashboards);
-    expect(await rpc.search({ login: "ada", q: "terminal dashboards" })).toEqual(body);
-    const result = await tool("search", { login: "ada", q: "terminal dashboards" });
+    expect(await rpc.search({ scope: { kind: "stars", login: "ada" }, q: "terminal dashboards" })).toEqual(body);
+    const result = await tool("search", { scope: { kind: "stars", login: "ada" }, q: "terminal dashboards" });
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toEqual(body);
   });
@@ -110,22 +111,22 @@ describe("search", () => {
   });
 
   it("rejects an empty query with 400 and a trace ID over REST, RPC, and MCP", async () => {
-    const { status, body } = await searchRest({ login: "ada", q: "" });
+    const { status, body } = await searchRest({ scope: { kind: "stars", login: "ada" }, q: "" });
     expect([status, body.code]).toEqual([400, "BAD_REQUEST"]);
     expect(body.data).toEqual({ issues: [expect.objectContaining({ path: ["q"] })], traceId });
 
-    const viaRpc = await rpcFailure(rpc.search({ login: "ada", q: "" }));
+    const viaRpc = await rpcFailure(rpc.search({ scope: { kind: "stars", login: "ada" }, q: "" }));
     expect([viaRpc.code, viaRpc.data.traceId]).toEqual(["BAD_REQUEST", traceId]);
-    const rawRpc = await call("/rpc/search", post({ json: { login: "ada", q: "" } }));
+    const rawRpc = await call("/rpc/search", post({ json: { scope: { kind: "stars", login: "ada" }, q: "" } }));
     expect(rawRpc.status).toBe(400);
 
-    const result = await tool("search", { login: "ada", q: "" });
+    const result = await tool("search", { scope: { kind: "stars", login: "ada" }, q: "" });
     expect(result.isError).toBe(true);
     expect(JSON.parse(result.content[0].text)).toMatchObject({ code: "BAD_REQUEST", data: { traceId } });
   });
 
   it("maps domain errors to a stable code and a trace ID, without internal detail", async () => {
-    const unsynced = await searchRest({ login: "grace", q: "dashboards" });
+    const unsynced = await searchRest({ scope: { kind: "stars", login: "grace" }, q: "dashboards" });
     expect(unsynced.status).toBe(404);
     expect(unsynced.body).toEqual({
       defined: true,
@@ -134,14 +135,17 @@ describe("search", () => {
       data: { traceId },
     });
 
-    const network = await searchRest({ login: "ada", q: "dashboards", scope: "network" });
-    expect([network.status, network.body.code]).toEqual([422, "SCOPE_UNAVAILABLE"]);
+    const network = await searchRest({
+      q: "dashboards",
+      scope: { kind: "network" },
+    });
+    expect([network.status, network.body.code]).toEqual([400, "BAD_REQUEST"]);
 
-    const down = await searchRest({ login: "ada", q: "database down" });
+    const down = await searchRest({ scope: { kind: "stars", login: "ada" }, q: "database down" });
     expect([down.status, down.body.code]).toEqual([503, "SERVICE_UNAVAILABLE"]);
     expect(JSON.stringify(down.body)).not.toContain("search.hybrid");
 
-    const result = await tool("search", { login: "grace", q: "dashboards" });
+    const result = await tool("search", { scope: { kind: "stars", login: "grace" }, q: "dashboards" });
     expect(result.isError).toBe(true);
     expect(JSON.parse(result.content[0].text)).toMatchObject({
       code: "ACCOUNT_NOT_SYNCED",
@@ -157,8 +161,8 @@ describe("when the services cannot start", () => {
   const send = sendTo(testServer(() => failing));
 
   it("still validates input and lists tools, and fails a search with service unavailable", async () => {
-    expect((await send("/api/search", post({ login: "ada", q: "" }))).status).toBe(400);
-    const down = await send("/api/search", post({ login: "ada", q: "dashboards" }));
+    expect((await send("/api/search", post({ scope: { kind: "stars", login: "ada" }, q: "" }))).status).toBe(400);
+    const down = await send("/api/search", post({ scope: { kind: "stars", login: "ada" }, q: "dashboards" }));
     expect([down.status, down.body.code]).toEqual([503, "SERVICE_UNAVAILABLE"]);
     expect(down.body.data.traceId).toEqual(traceId);
     expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(6);
@@ -173,11 +177,14 @@ describe("when the server fails outside the API", () => {
   );
 
   it("answers 500 in each transport's error shape with the request's trace ID", async () => {
-    const viaRest = await send("/api/search", post({ login: "ada", q: "dashboards" }));
+    const viaRest = await send("/api/search", post({ scope: { kind: "stars", login: "ada" }, q: "dashboards" }));
     expect(viaRest).toMatchObject({ status: 500, traceHeader: traceId, body: { code: "INTERNAL_SERVER_ERROR" } });
     expect(viaRest.body.data.traceId).toBe(viaRest.traceHeader);
 
-    const viaRpc = await send("/rpc/search", post({ json: { login: "ada", q: "dashboards" } }));
+    const viaRpc = await send(
+      "/rpc/search",
+      post({ json: { scope: { kind: "stars", login: "ada" }, q: "dashboards" } }),
+    );
     expect(viaRpc.body.json).toMatchObject({ code: "INTERNAL_SERVER_ERROR", data: { traceId: viaRpc.traceHeader } });
 
     const viaMcp = await send("/mcp", mcpCall("tools/list", {}));
@@ -213,14 +220,17 @@ describe("when the database is unreachable", () => {
   });
 
   it("answers service unavailable with a trace ID on every transport, and still lists tools", async () => {
-    const viaRest = await send("/api/search", post({ login: "ada", q: "dashboards" }));
+    const viaRest = await send("/api/search", post({ scope: { kind: "stars", login: "ada" }, q: "dashboards" }));
     expect([viaRest.status, viaRest.body.code, viaRest.body.data.traceId]).toEqual([
       503,
       "SERVICE_UNAVAILABLE",
       traceId,
     ]);
 
-    const viaRpc = await send("/rpc/search", post({ json: { login: "ada", q: "dashboards" } }));
+    const viaRpc = await send(
+      "/rpc/search",
+      post({ json: { scope: { kind: "stars", login: "ada" }, q: "dashboards" } }),
+    );
     expect([viaRpc.status, viaRpc.body.json.code, viaRpc.body.json.data.traceId]).toEqual([
       503,
       "SERVICE_UNAVAILABLE",
@@ -229,7 +239,7 @@ describe("when the database is unreachable", () => {
 
     const viaMcp = await send(
       "/mcp",
-      mcpCall("tools/call", { name: "search", arguments: { login: "ada", q: "dashboards" } }),
+      mcpCall("tools/call", { name: "search", arguments: { scope: { kind: "stars", login: "ada" }, q: "dashboards" } }),
     );
     expect(viaMcp.body.result.isError).toBe(true);
     expect(JSON.parse(viaMcp.body.result.content[0].text)).toMatchObject({
@@ -254,7 +264,7 @@ describe("mcp", () => {
       "triggerSync",
     ]);
     const searchTool = tools.find((each: { name: string }) => each.name === "search");
-    expect(searchTool.inputSchema.required).toEqual(["login", "q"]);
+    expect(searchTool.inputSchema.required).toEqual(["q", "scope"]);
     expect(searchTool.annotations).toMatchObject({ readOnlyHint: true });
   });
 });
@@ -372,6 +382,35 @@ describe("getRepo and the spec", () => {
     ]);
     expect(text).not.toMatch(/Infinity|NaN/);
     expect(JSON.parse(text).security).toEqual([]);
+  });
+
+  it("documents only the available search scope and the fields guaranteed by each sync state", async () => {
+    const document: Json = await (await call("/openapi.json")).json();
+    const search = document.paths["/search"].post.requestBody.content["application/json"].schema;
+    expect(search.required).toEqual(["q", "scope"]);
+    expect(search.properties.scope.properties.kind.enum).toEqual(["stars"]);
+    expect(search.properties.scope.required).toEqual(["kind", "login"]);
+    expect(search.properties.scope.properties.login.pattern).toBe(githubLogin.source);
+    expect(JSON.stringify(document.paths["/search"].post.responses)).not.toMatch(
+      /"(?:SIGN_IN_UNAVAILABLE|NOT_FOUND|REPO_NOT_FOUND|UNAUTHORIZED|SCOPE_UNAVAILABLE)"/,
+    );
+    expect(JSON.stringify(document.paths["/config"].get.responses)).not.toMatch(
+      /"(?:SERVICE_UNAVAILABLE|TOO_MANY_REQUESTS|ACCOUNT_NOT_SYNCED)"/,
+    );
+    const status = document.paths["/sync/{login}"].get.responses["200"].content["application/json"].schema;
+    expect(status.anyOf.map((variant: Json) => variant.properties.state.enum[0])).toEqual([
+      "unknown",
+      "waiting",
+      "queued",
+      "failed",
+      "done",
+    ]);
+    expect(
+      status.anyOf.find((variant: Json) => variant.properties.state.enum[0] === "done").properties.syncedAt.type,
+    ).toBe("string");
+    expect(
+      status.anyOf.find((variant: Json) => variant.properties.state.enum[0] === "unknown").properties.syncedAt.type,
+    ).toBe("null");
   });
 
   it("documents the stars cursor as the string a page's nextCursor gives, in and out", async () => {

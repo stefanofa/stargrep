@@ -1,0 +1,6 @@
+language js
+
+`$builder.effect($handler)` where {
+  not $handler <: `function* ($params): ApiResult<$output> { $_ }`,
+  register_diagnostic(span=$handler, message="API Effect handlers must return ApiResult<Output> so every domain failure is checked against the wire map.")
+}

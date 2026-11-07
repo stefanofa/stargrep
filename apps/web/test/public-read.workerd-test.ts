@@ -93,12 +93,16 @@ describe("the demo answer cache on the Cache API", () => {
     };
   };
 
-  const demo = { login: "ada", q: "terminal dashboards" };
+  const demo = { scope: { kind: "stars", login: "ada" }, q: "terminal dashboards" };
   const url = answerUrl("http://web", "search/ada/stars/20/terminal dashboards");
 
   it("stores a demo answer and serves it without building services", async () => {
     expect(await ask(demo)).toEqual({ status: 200, cache: "miss", stars: 1 });
-    expect(await ask({ login: "Ada", q: "Terminal  dashboards" })).toEqual({ status: 200, cache: "hit", stars: 1 });
+    expect(await ask({ scope: { kind: "stars", login: "Ada" }, q: "Terminal  dashboards" })).toEqual({
+      status: 200,
+      cache: "hit",
+      stars: 1,
+    });
     expect(counts).toEqual({ builds: 1, released: 1, searches: 1 });
     const stored = await (await cache()).match(url);
     expect(stored?.headers.get("cache-control")).toBe("s-maxage=86700");
@@ -121,8 +125,8 @@ describe("the demo answer cache on the Cache API", () => {
   });
 
   it("never caches another login's search", async () => {
-    expect((await ask({ login: "grace", q: "terminal dashboards" })).cache).toBeNull();
-    expect((await ask({ login: "grace", q: "terminal dashboards" })).cache).toBeNull();
+    expect((await ask({ scope: { kind: "stars", login: "grace" }, q: "terminal dashboards" })).cache).toBeNull();
+    expect((await ask({ scope: { kind: "stars", login: "grace" }, q: "terminal dashboards" })).cache).toBeNull();
   });
 });
 
@@ -146,7 +150,9 @@ describe("browser caching", () => {
 describe("the search limit", () => {
   it("answers the 121st search in a minute from one network with 429, and still answers another network", async () => {
     const search = (ip: string) =>
-      exports.default.fetch(new Request("http://web/api/search", post({ login: "ada", q: "dashboards" }, ip)));
+      exports.default.fetch(
+        new Request("http://web/api/search", post({ scope: { kind: "stars", login: "ada" }, q: "dashboards" }, ip)),
+      );
     const statuses: Array<number> = [];
     for (let attempt = 0; attempt < 121; attempt++) statuses.push((await search("192.0.2.121")).status);
     expect(statuses.slice(0, 120).every((status) => status === 200)).toBe(true);

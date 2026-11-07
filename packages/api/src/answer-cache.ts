@@ -1,10 +1,10 @@
+import { middlewareGen } from "@orpc/effect";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { type ApiServices, type BuildServices, withServices } from "./services.ts";
 
 export interface StoredAnswer {
   readonly storedAt: number;
@@ -41,9 +41,8 @@ export const memory = () => {
 // What a cached procedure needs from its request.
 export interface AnswerContext {
   readonly answerCache: AnswerCache;
-  readonly services: BuildServices;
-  // Runs after the response, with services of its own, because the request's services close when it returns.
-  readonly background: (run: Effect.Effect<void, never, ApiServices>) => Effect.Effect<void>;
+  readonly execution: "request" | "refresh";
+  readonly background: (run: Effect.Effect<void>) => Effect.Effect<void>;
   // oRPC's ResponseHeadersHandlerPlugin sets this on the HTTP transports.
   readonly resHeaders?: Headers | undefined;
 }
@@ -75,9 +74,7 @@ const served = (
 // When each key's latest refresh in this isolate started, oldest first. A refresh that stores its answer frees its key.
 // One that stores nothing, such as an answer the planner could not plan, keeps it, so a stale answer starts at most one
 // refresh per fresh window however its refreshes end.
-const refreshStarts = new Map<string, number>();
-
-const claimRefresh = (key: string, now: number, every: Duration.Duration) => {
+const claimRefresh = (refreshStarts: Map<string, number>, key: string, now: number, every: Duration.Duration) => {
   for (const [started, at] of refreshStarts) {
     if (now - at < Duration.toMillis(every)) break;
     refreshStarts.delete(started);
@@ -87,57 +84,78 @@ const claimRefresh = (key: string, now: number, every: Duration.Duration) => {
   return true;
 };
 
-// Serves a stored answer while it is fresh, and while it is stale too as a refresh runs in the background. A miss
-// builds the request's services, admits the call, and computes the answer.
-export const cachedAnswer = Effect.fnUntraced(function* <A, E extends { readonly _tag: string }, F>(
-  context: AnswerContext,
+export const answerCache = <I, A, C extends AnswerContext>(
   policy: AnswerPolicy<A>,
-  key: string,
-  compute: Effect.Effect<A, E, ApiServices>,
-  admit: Effect.Effect<void, F, ApiServices>,
-) {
+  keyOf: (input: I, context: C) => Option.Option<string>,
+) => {
+  const refreshStarts = new Map<string, number>();
+  // Refreshes outlive the request signal. middlewareGen still joins the background fiber's interruption signal.
+  const refreshSignal = new AbortController().signal;
+  const decode = Schema.decodeEffect(policy.json);
+  const encode = Schema.encodeEffect(policy.json);
   const keepFor = Duration.sum(policy.fresh, policy.stale);
-  const store = (answer: A) =>
-    Schema.encodeEffect(policy.json)(answer).pipe(
-      Effect.flatMap((body) => context.answerCache.set(key, body, keepFor)),
-      Effect.catchTags({
-        SchemaError: () => Effect.logWarning("Answer does not encode", { procedure: policy.procedure }),
-      }),
-    );
+  const refreshContext = { execution: "refresh", resHeaders: undefined } satisfies Pick<
+    AnswerContext,
+    "execution" | "resHeaders"
+  >;
+  return middlewareGen<C, object, I, A>(function* ({ context, next }, input, done) {
+    const keyOption = keyOf(input, context);
+    // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC erases downstream failures to unknown.
+    if (Option.isNone(keyOption)) return yield* next();
+    const key = keyOption.value;
+    const store = (answer: A) =>
+      encode(answer).pipe(
+        Effect.flatMap((body) => context.answerCache.set(key, body, keepFor)),
+        Effect.catchTags({
+          SchemaError: () => Effect.logWarning("Answer does not encode", { procedure: policy.procedure }),
+        }),
+      );
 
-  const stored = yield* context.answerCache.get(key);
-  if (Option.isSome(stored)) {
-    const now = yield* Clock.currentTimeMillis;
-    const answer = yield* Effect.option(Schema.decodeEffect(policy.json)(stored.value.body));
-    const age = Duration.millis(Math.max(0, now - stored.value.storedAt));
-    if (Option.isSome(answer) && Duration.isLessThan(age, keepFor)) {
-      if (Duration.isLessThan(age, policy.fresh)) {
-        yield* served(context, policy.procedure, "hit");
-        return answer.value;
-      }
-      if (claimRefresh(key, now, policy.fresh)) {
-        yield* context.background(
-          compute.pipe(
-            Effect.flatMap((fresh) =>
-              policy.keep(fresh)
-                ? Effect.andThen(
-                    store(fresh),
-                    Effect.sync(() => refreshStarts.delete(key)),
-                  )
-                : Effect.void,
+    const stored = yield* context.answerCache.get(key);
+    if (Option.isSome(stored)) {
+      const now = yield* Clock.currentTimeMillis;
+      const answer = yield* Effect.option(decode(stored.value.body));
+      const age = Duration.millis(Math.max(0, now - stored.value.storedAt));
+      if (Option.isSome(answer) && Duration.isLessThan(age, keepFor)) {
+        if (Duration.isLessThan(age, policy.fresh)) {
+          yield* served(context, policy.procedure, "hit");
+          return done({ output: answer.value });
+        }
+        if (claimRefresh(refreshStarts, key, now, policy.fresh)) {
+          yield* context.background(
+            Effect.gen(function* () {
+              // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC erases downstream failures to unknown.
+              const fresh = yield* next({
+                context: refreshContext,
+                signal: refreshSignal,
+              });
+              return fresh.output;
+            }).pipe(
+              Effect.flatMap((fresh) =>
+                policy.keep(fresh)
+                  ? Effect.andThen(
+                      store(fresh),
+                      Effect.sync(() => refreshStarts.delete(key)),
+                    )
+                  : Effect.void,
+              ),
+              Effect.catch((error) =>
+                Effect.logWarning("Answer refresh failed", {
+                  procedure: policy.procedure,
+                  error: error instanceof Error ? error.name : typeof error,
+                }),
+              ),
             ),
-            Effect.catch((error) =>
-              Effect.logWarning("Answer refresh failed", { procedure: policy.procedure, error: error._tag }),
-            ),
-          ),
-        );
+          );
+        }
+        yield* served(context, policy.procedure, "stale");
+        return done({ output: answer.value });
       }
-      yield* served(context, policy.procedure, "stale");
-      return answer.value;
     }
-  }
-  const answer = yield* withServices(context.services, Effect.andThen(admit, compute));
-  if (policy.keep(answer)) yield* store(answer);
-  yield* served(context, policy.procedure, "miss");
-  return answer;
-});
+    // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC erases downstream failures to unknown.
+    const result = yield* next();
+    if (policy.keep(result.output)) yield* store(result.output);
+    yield* served(context, policy.procedure, "miss");
+    return result;
+  });
+};

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Result } from "@stargrep/ui";
-import type { SyncStatus } from "../src/lib/rpc.ts";
 import { type Search, type Stage, searchView, stageOf } from "../src/lib/search-state.ts";
+import { syncStatus } from "./sync-status.fixture.ts";
 
 const landed = { stars: 1200, pushedAt: "2026-11-01T00:00:00.000Z" };
 const pending = { stars: null, pushedAt: null };
@@ -9,17 +9,7 @@ const pending = { stars: null, pushedAt: null };
 const entries = (count: number, arriving = 0) =>
   Array.from({ length: count }, (_, index) => (index < arriving ? pending : landed));
 
-const sync = (extra: Partial<SyncStatus>): SyncStatus => ({
-  login: "junodev",
-  state: "done",
-  requestedAt: "2026-11-05T10:00:00.000Z",
-  syncedAt: "2026-11-05T10:00:00.000Z",
-  waiting: null,
-  starredTotal: null,
-  accountType: null,
-  enrichment: { total: 1776, read: 1776, failed: 0 },
-  ...extra,
-});
+const sync = syncStatus;
 
 const importing = stageOf({
   sync: sync({ state: "queued", syncedAt: null, enrichment: { total: 1204, read: 0, failed: 0 } }),

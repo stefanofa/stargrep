@@ -1,8 +1,9 @@
+import { isGitHubLogin } from "@stargrep/github/login";
 import { notFound, redirect } from "@tanstack/react-router";
 import { StarsRoute } from "../components/stars-page.tsx";
 import { loadPage, revealHead } from "./load-page.ts";
 import type { Session } from "./page-data.ts";
-import { githubLogin, type Params, reservedLogin, validateParams } from "./search-params.ts";
+import { type Params, reservedLogin, validateParams } from "./search-params.ts";
 
 interface Load {
   readonly params: { readonly login?: string };
@@ -24,7 +25,7 @@ export const starsRoute = {
     location: { pathname: string };
   }) => {
     if (login === undefined) return;
-    if (!githubLogin.test(login)) throw notFound();
+    if (!isGitHubLogin(login)) throw notFound();
     if (reservedLogin(login) && !location.pathname.startsWith("/@"))
       throw redirect({ to: "/@{$login}", params: { login }, search, replace: true });
   },

@@ -1,30 +1,51 @@
 import "@orpc/effect/extensions/schema";
 import "@orpc/openapi/extensions/route";
-import { oc } from "@orpc/contract";
+import { type AnyContractProcedure, oc } from "@orpc/contract";
 import { mcp } from "@orpc/mcp";
-import { MetricRegistry, QueryPlanner, Search } from "@stargrep/core/search";
-import { SyncRequests } from "@stargrep/core/stars";
-import * as Db from "@stargrep/db";
-import { Login, RepoId } from "@stargrep/github/schemas";
+import { githubLogin, isGitHubLogin } from "@stargrep/github/login";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
+import * as Struct from "effect/Struct";
 import { errors } from "./errors.ts";
 
-export const GitHubLogin = Login.check(Schema.isPattern(/^[a-z\d][a-z\d-]{0,38}$/i)).annotate({
-  description: "A GitHub login, such as octocat.",
-});
+export const GitHubLogin = Schema.String.check(
+  Schema.makeFilter(isGitHubLogin, {
+    expected: "a GitHub login",
+    toJsonSchema: () => ({ pattern: githubLogin.source }),
+  }),
+)
+  .pipe(Schema.brand("Login"))
+  .annotate({
+    description: "A GitHub login, such as octocat.",
+  });
 
 const Timestamp = Schema.String.annotate({ description: "An ISO 8601 time in UTC." });
 
+export const RepoId = Schema.Int.check(Schema.isGreaterThan(0)).pipe(Schema.brand("RepoId"));
+export const OwnerType = Schema.Literals(["user", "org"]);
+export const IconPlate = Schema.Literals(["light", "dark", "none"]);
+export const maxIconSize = 128;
+export const PlanSource = Schema.Literals(["keyword", "cache", "model", "fallback"]);
+const MetricFamily = Schema.Literals([
+  "stars",
+  "forks",
+  "commits",
+  "active_contributors",
+  "new_contributors",
+  "merged_pull_requests",
+  "closed_issues",
+  "releases",
+]);
+export const MetricId = Schema.TemplateLiteral([MetricFamily, Schema.Literals(["", "_30d", "_90d", "_growth_90d"])]);
+
 export const SearchInput = Schema.Struct({
-  login: GitHubLogin,
   q: Schema.String.check(Schema.isPattern(/\S/), Schema.isMaxLength(500)).annotate({
     description: "What to look for, in plain language, such as 'rust library for terminal dashboards'.",
   }),
-  scope: Search.ScopeKind.annotate({
+  scope: Schema.Struct({ kind: Schema.Literal("stars"), login: GitHubLogin }).annotate({
     description: "Whose stars to search. Only stars, the login's own stars, is available now.",
-  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed("stars" as const))),
+  }),
   limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))
     .annotate({ description: "How many repos to return, at most. 20 when left out." })
     .pipe(Schema.withDecodingDefaultKey(Effect.succeed(20))),
@@ -48,16 +69,16 @@ export const RepoFields = Schema.Struct({
       url: Schema.String.annotate({
         description: "A square WebP on this API's origin, served as immutable, so the URL never shows other bytes.",
       }),
-      plate: Db.IconPlate.annotate({
+      plate: IconPlate.annotate({
         description:
           "The tile to draw behind the icon. dark for white ink on transparent, light for black ink on transparent.",
       }),
-      size: Db.RepoIcon.fields.size.annotate({
-        description: `The icon's width and height in pixels, at most ${Db.maxIconSize}. Smaller when the source was smaller.`,
+      size: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: maxIconSize })).annotate({
+        description: `The icon's width and height in pixels, at most ${maxIconSize}. Smaller when the source was smaller.`,
       }),
     }),
   ).annotate({ description: "The repo's own icon, or null when Stargrep found none or has not looked yet." }),
-  ownerType: Schema.NullOr(Db.OwnerType).annotate({
+  ownerType: Schema.NullOr(OwnerType).annotate({
     description: "Whether a user or an org owns the repo, or null before Stargrep has read it.",
   }),
   ownerAvatarUrl: Schema.NullOr(Schema.String).annotate({
@@ -73,11 +94,11 @@ export const SearchResult = Schema.Struct({
   rankedBy: Schema.Array(Schema.String).annotate({
     description: "The values that ranked the repo, such as '+38% contributors in 90 days'.",
   }),
-  metrics: Schema.Array(Schema.Struct({ metric: MetricRegistry.MetricId, value: Schema.NullOr(Schema.Finite) })),
+  metrics: Schema.Array(Schema.Struct({ metric: MetricId, value: Schema.NullOr(Schema.Finite) })),
 });
 
 export const SearchOutput = Schema.Struct({
-  planSource: QueryPlanner.PlanSource.annotate({
+  planSource: PlanSource.annotate({
     description:
       "How the query was read. keyword searched the words as typed, cache and model used a query plan, and fallback searched the words as typed because the planner failed or the network's model allowance ran out.",
   }),
@@ -101,28 +122,60 @@ export const EnrichmentProgress = Schema.Struct({
     "How far reading the login's stars has got. Reading is finished when state is not queued and read plus failed equals total. Right after triggerSync the total is still 0, so poll while state is queued or read plus failed is less than total, and reload the library when read changes.",
 });
 
-export const SyncStatus = Schema.Struct({
+const syncFields = {
   login: Schema.String,
-  state: SyncRequests.SyncState.annotate({
-    description:
-      "unknown means Stargrep never synced the login, waiting means the sync waits in line for GitHub budget until waiting.startsAt, queued means a sync is about to run or running, failed means the last requested sync could not finish, and done means the stars are synced.",
-  }),
-  requestedAt: Schema.NullOr(Timestamp),
-  syncedAt: Schema.NullOr(Timestamp),
-  waiting: Schema.NullOr(
-    Schema.Struct({
-      ahead: Schema.Int.annotate({ description: "How many syncs waiting in line start before this one." }),
-      startsAt: Timestamp.annotate({ description: "When this sync is due to start. An estimate that can move later." }),
-    }),
-  ).annotate({ description: "Where the sync stands in line. Set exactly when state is waiting, and null otherwise." }),
   starredTotal: Schema.NullOr(Schema.Int).annotate({
     description:
       "How many repos the login has starred on GitHub, as of Stargrep's latest look. Null until Stargrep has looked. 0 for an org.",
   }),
-  accountType: Schema.NullOr(Db.OwnerType).annotate({
+  accountType: Schema.NullOr(OwnerType).annotate({
     description: "Whether the login is a user or an org, or null until Stargrep has looked. An org cannot star repos.",
   }),
   enrichment: EnrichmentProgress,
+};
+
+export const SyncStatus = Schema.Union([
+  Schema.Struct({
+    ...syncFields,
+    state: Schema.Literal("unknown"),
+    requestedAt: Schema.Null,
+    syncedAt: Schema.Null,
+    waiting: Schema.Null,
+  }),
+  Schema.Struct({
+    ...syncFields,
+    state: Schema.Literal("waiting"),
+    requestedAt: Timestamp,
+    syncedAt: Schema.NullOr(Timestamp),
+    waiting: Schema.Struct({
+      ahead: Schema.Int.annotate({ description: "How many syncs waiting in line start before this one." }),
+      startsAt: Timestamp.annotate({ description: "When this sync is due to start. An estimate that can move later." }),
+    }),
+  }),
+  Schema.Struct({
+    ...syncFields,
+    state: Schema.Literal("queued"),
+    requestedAt: Timestamp,
+    syncedAt: Schema.NullOr(Timestamp),
+    waiting: Schema.Null,
+  }),
+  Schema.Struct({
+    ...syncFields,
+    state: Schema.Literal("failed"),
+    requestedAt: Timestamp,
+    syncedAt: Schema.NullOr(Timestamp),
+    waiting: Schema.Null,
+  }),
+  Schema.Struct({
+    ...syncFields,
+    state: Schema.Literal("done"),
+    requestedAt: Schema.Null,
+    syncedAt: Timestamp,
+    waiting: Schema.Null,
+  }),
+]).annotate({
+  description:
+    "unknown has never synced, waiting has a place in line, queued is about to run or running, failed could not finish, and done has a sync time.",
 });
 
 export const RepoInput = Schema.Struct({ id: RepoId.annotate({ description: "The GitHub repo ID." }) });
@@ -203,13 +256,21 @@ export const PublicConfig = Schema.Struct({
 });
 export type PublicConfig = typeof PublicConfig.Type;
 
-export const signedIn = new Set(["viewer", "library"]);
+const sessionRequired = {
+  name: "session",
+  init: (meta: object) => ({ ...meta, session: "required" }),
+};
 
-const procedure = oc.errors(errors);
+export const requiresSession = (procedure: AnyContractProcedure) => procedure["~orpc"].meta.session === "required";
+export const anyoneCanCall = (procedure: AnyContractProcedure) => !requiresSession(procedure);
+
+const procedure = oc.errors(Struct.pick(errors, ["BAD_REQUEST", "INTERNAL_SERVER_ERROR"]));
+const withServices = procedure.errors(Struct.pick(errors, ["SERVICE_UNAVAILABLE"]));
 
 export const contract = {
   // The query goes in the body, so it never lands in a URL, a request log, or the platform's request span.
-  search: procedure
+  search: withServices
+    .errors(Struct.pick(errors, ["ACCOUNT_NOT_SYNCED", "TOO_MANY_REQUESTS"]))
     .route({
       method: "POST",
       path: "/search",
@@ -221,7 +282,8 @@ export const contract = {
     .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
     .input(SearchInput)
     .output(SearchOutput),
-  triggerSync: procedure
+  triggerSync: withServices
+    .errors(Struct.pick(errors, ["LOGIN_NOT_FOUND", "TOO_MANY_REQUESTS", "SYNC_BUSY"]))
     .route({
       method: "POST",
       path: "/sync/{login}",
@@ -233,7 +295,7 @@ export const contract = {
     })
     .input(SyncInput)
     .output(SyncStatus),
-  syncStatus: procedure
+  syncStatus: withServices
     .route({
       method: "GET",
       path: "/sync/{login}",
@@ -244,7 +306,8 @@ export const contract = {
     })
     .input(SyncInput)
     .output(SyncStatus),
-  getRepo: procedure
+  getRepo: withServices
+    .errors(Struct.pick(errors, ["REPO_NOT_FOUND"]))
     .route({
       method: "GET",
       path: "/repos/{id}",
@@ -254,7 +317,9 @@ export const contract = {
     })
     .input(RepoInput)
     .output(RepoDetail),
-  viewer: procedure
+  viewer: withServices
+    .errors(Struct.pick(errors, ["UNAUTHORIZED"]))
+    .meta(sessionRequired)
     .route({
       method: "GET",
       path: "/viewer",
@@ -263,7 +328,9 @@ export const contract = {
       description: "Returns the GitHub account of the person signed in with the session cookie.",
     })
     .output(Viewer),
-  library: procedure
+  library: withServices
+    .errors(Struct.pick(errors, ["UNAUTHORIZED"]))
+    .meta(sessionRequired)
     .route({
       method: "GET",
       path: "/library",
@@ -272,7 +339,8 @@ export const contract = {
       description: "Returns every repo the signed-in account starred, newest star first.",
     })
     .output(Library),
-  stars: procedure
+  stars: withServices
+    .errors(Struct.pick(errors, ["ACCOUNT_NOT_SYNCED", "TOO_MANY_REQUESTS"]))
     .route({
       method: "GET",
       path: "/stars/{login}",

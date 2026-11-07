@@ -34,7 +34,7 @@ import { IconHost } from "./icon-host.ts";
 import type { Transport } from "./middleware/instrumentation.ts";
 import { RateLimited, RateLimiter, RateLimiterUnavailable, type RateLimitKind } from "./rate-limiter.ts";
 import { type ApiContext, router } from "./router.ts";
-import { type ApiServices, ApiServicesUnavailable, withServices } from "./services.ts";
+import { type ApiServices, ApiServicesUnavailable } from "./services.ts";
 import { NotSignedIn, type Viewer, type ViewerError, Viewers, ViewerUnavailable } from "./viewers.ts";
 
 const canary = "PRIVATE_QUERY_CANARY";
@@ -181,26 +181,21 @@ const publicConfig: PublicConfig = {
 };
 
 // Runs a background refresh before it returns, with services of its own, so a TestClock test sees what it stored.
-const runNow =
-  (servicesEffect: ApiContext["services"], started?: Array<"refresh">): ApiContext["background"] =>
-  (run) =>
-    Effect.sync(() => started?.push("refresh")).pipe(
-      Effect.andThen(withServices(servicesEffect, run)),
-      Effect.catch((error) => Effect.logWarning("Refresh could not start", { error: error._tag })),
-    );
+const runNow: ApiContext["background"] = (run) => run;
 
 const contextFor = (
   transport: Transport,
-  servicesEffect: ApiContext["services"],
+  servicesEffect: Effect.Effect<Context.Context<ApiServices>, ApiServicesUnavailable>,
   tracer: Tracer.Tracer = Tracer.make({ span: (options) => new Tracer.NativeSpan(options) }),
 ): ApiContext => ({
   "effect/context": Context.make(Tracer.Tracer, tracer),
   transport,
   publicConfig,
   procedureTime: Ref.makeUnsafe(Option.none()),
-  services: servicesEffect,
+  serviceLayer: Layer.unwrap(Effect.map(servicesEffect, Layer.succeedContext)),
+  execution: "request",
   answerCache: AnswerCache.disabled,
-  background: runNow(servicesEffect),
+  background: runNow,
 });
 
 const client = (fakes: Fakes = {}, transport: Transport = "rpc") => {
@@ -225,7 +220,7 @@ const traceData = { traceId: expect.stringMatching(/^[0-9a-f]{32}$/) };
 describe("search", () => {
   test("returns ranked repos with reason lines and ISO times, and records the call's time", async () => {
     const { api, context } = client();
-    expect(await api.search({ login: "ada", q: "terminal dashboards" })).toEqual({
+    expect(await api.search({ scope: { kind: "stars", login: "ada" }, q: "terminal dashboards" })).toEqual({
       planSource: "fallback",
       results: [
         {
@@ -263,7 +258,7 @@ describe("search", () => {
           return searchOutcome(request);
         }),
     });
-    await api.search({ login: "ada", q: "terminal dashboards" });
+    await api.search({ scope: { kind: "stars", login: "ada" }, q: "terminal dashboards" });
     expect(requests).toEqual([
       { scope: { _tag: "stars", login: "ada" as Login }, query: "terminal dashboards", limit: 20 },
     ]);
@@ -271,39 +266,39 @@ describe("search", () => {
 
   test("rejects an empty query and a login GitHub would not issue, with the issues and a trace ID", async () => {
     const { api } = client();
-    for (const [input, field] of [
-      [{ login: "ada", q: "   " }, "q"],
-      [{ login: "ada/../../repos", q: "dashboards" }, "login"],
-      [{ login: "ada", q: "dashboards", limit: 500 }, "limit"],
+    for (const [input, ...path] of [
+      [{ scope: { kind: "stars", login: "ada" }, q: "   " }, "q"],
+      [{ scope: { kind: "stars", login: "ada/../../repos" }, q: "dashboards" }, "scope", "login"],
+      [{ scope: { kind: "stars", login: "ada" }, q: "dashboards", limit: 500 }, "limit"],
     ] as const) {
       const error = await failure(api.search(input));
       expect(error.code).toBe("BAD_REQUEST");
-      expect(error.data).toEqual({ issues: [expect.objectContaining({ path: [field] })], ...traceData });
+      expect(error.data).toEqual({ issues: [expect.objectContaining({ path })], ...traceData });
     }
   });
 
   test("maps every search failure through the error table with a trace ID and no detail", async () => {
     const { api } = client();
-    expect((await failure(api.search({ login: "grace", q: "dashboards" }))).toJSON()).toEqual({
-      defined: true,
-      code: "ACCOUNT_NOT_SYNCED",
-      message: "Stargrep has not synced this login's stars yet. Trigger a sync first.",
-      data: traceData,
-    });
-    expect((await failure(api.search({ login: "ada", q: "x", scope: "network" }))).code).toBe("SCOPE_UNAVAILABLE");
-    expect((await failure(api.search({ login: "ada", q: "x", scope: "global" }))).code).toBe("SCOPE_UNAVAILABLE");
+    expect((await failure(api.search({ scope: { kind: "stars", login: "grace" }, q: "dashboards" }))).toJSON()).toEqual(
+      {
+        defined: true,
+        code: "ACCOUNT_NOT_SYNCED",
+        message: "Stargrep has not synced this login's stars yet. Trigger a sync first.",
+        data: traceData,
+      },
+    );
 
     const broken = client({
       search: () => Effect.fail(new DbQueryFailed({ operation: "search.hybrid", reason: "transport", sqlState: null })),
     });
-    const error = await failure(broken.api.search({ login: "ada", q: "x" }));
+    const error = await failure(broken.api.search({ scope: { kind: "stars", login: "ada" }, q: "x" }));
     expect(error.toJSON()).toMatchObject({ defined: true, code: "SERVICE_UNAVAILABLE", data: traceData });
     expect(JSON.stringify(error.toJSON())).not.toContain("search.hybrid");
   });
 
   test("turns a defect into an internal error with the call's trace ID", async () => {
     const { api, collected } = client({ search: () => Effect.die(new Error(`boom ${canary}`)) });
-    const error = await failure(api.search({ login: "ada", q: "x" }));
+    const error = await failure(api.search({ scope: { kind: "stars", login: "ada" }, q: "x" }));
     expect(error.code).toBe("INTERNAL_SERVER_ERROR");
     expect(JSON.stringify(error.toJSON())).not.toContain(canary);
     expect(error.data).toEqual({ traceId: collected.named("Api.search")?.traceId });
@@ -311,7 +306,7 @@ describe("search", () => {
 
   test("opens one span per call, with no query text or result in any span", async () => {
     const { api, collected } = client({}, "mcp");
-    await api.search({ login: "ada", q: `dashboards ${canary}` });
+    await api.search({ scope: { kind: "stars", login: "ada" }, q: `dashboards ${canary}` });
     expect(collected.spans.map((each) => each.name)).toEqual(["Api.search", "Search.search"]);
     const span = collected.named("Api.search");
     expect(span?.attributes.get("api.transport")).toBe("mcp");
@@ -323,6 +318,13 @@ describe("search", () => {
 });
 
 describe("sync", () => {
+  test("accepts real legacy GitHub logins at the API input boundary", async () => {
+    const { api } = client();
+    for (const login of ["Nek-", "john--", "foo--bar"]) {
+      expect(await api.syncStatus({ login })).toMatchObject({ login, state: "failed" });
+    }
+  });
+
   test("queues a signed-in import as that user's work, and a broken session as a signed-out one", async () => {
     const sent: Array<readonly [Login, SyncRequests.Requester]> = [];
     const caller = Db.CallerKey.make("caller-test");
@@ -471,6 +473,13 @@ describe("getRepo", () => {
 });
 
 describe("signed-in procedures", () => {
+  test("enforces session metadata even when the procedure has another path", async () => {
+    const { context } = client();
+    const api = createRouterClient({ renamed: router.library, viewer: router.config }, { context });
+    expect((await failure(api.renamed())).code).toBe("UNAUTHORIZED");
+    expect(await api.viewer()).toEqual(publicConfig);
+  });
+
   test("refuse a caller with no session", async () => {
     const { api } = client();
     for (const call of [api.viewer(), api.library()]) {
@@ -620,9 +629,9 @@ test("validates input without starting the services, and maps a failed start to 
       }),
     ),
   });
-  expect((await failure(api.search({ login: "ada", q: " " }))).code).toBe("BAD_REQUEST");
+  expect((await failure(api.search({ scope: { kind: "stars", login: "ada" }, q: " " }))).code).toBe("BAD_REQUEST");
   expect(starts).toBe(0);
-  const error = await failure(api.search({ login: "ada", q: "dashboards" }));
+  const error = await failure(api.search({ scope: { kind: "stars", login: "ada" }, q: "dashboards" }));
   expect(error.toJSON()).toMatchObject({ code: "SERVICE_UNAVAILABLE", data: traceData });
   expect(starts).toBe(1);
 });
@@ -651,8 +660,8 @@ const demoSearch = (planSource: Search.SearchOutcome["planSource"] = "model") =>
   });
   const memory = AnswerCache.memory();
   const call = (
-    input: { readonly login: string; readonly q: string; readonly scope?: "stars" | "network" },
-    servicesEffect: ApiContext["services"] = built,
+    input: { readonly scope: { readonly kind: "stars"; readonly login: string }; readonly q: string },
+    servicesEffect: Effect.Effect<Context.Context<ApiServices>, ApiServicesUnavailable> = built,
   ) =>
     Effect.gen(function* () {
       const resHeaders = new Headers();
@@ -674,8 +683,13 @@ describe("the demo answer cache", () => {
   it.effect("computes a demo search once, then serves it with no services, whatever the login's case and spacing", () =>
     Effect.gen(function* () {
       const demo = demoSearch();
-      expect(yield* demo.call({ login: "ada", q: "terminal dashboards" })).toMatchObject({ cache: "miss", stars: 1 });
-      expect(yield* demo.call({ login: "ADA", q: "  Terminal   dashboards " }, noServices)).toMatchObject({
+      expect(yield* demo.call({ scope: { kind: "stars", login: "ada" }, q: "terminal dashboards" })).toMatchObject({
+        cache: "miss",
+        stars: 1,
+      });
+      expect(
+        yield* demo.call({ scope: { kind: "stars", login: "ADA" }, q: "  Terminal   dashboards " }, noServices),
+      ).toMatchObject({
         cache: "hit",
         stars: 1,
       });
@@ -687,24 +701,20 @@ describe("the demo answer cache", () => {
   it.effect("never stores an answer the planner could not plan", () =>
     Effect.gen(function* () {
       const demo = demoSearch("fallback");
-      const query = { login: "ada", q: "terminal dashboards" };
+      const query = { scope: { kind: "stars" as const, login: "ada" }, q: "terminal dashboards" };
       expect((yield* demo.call(query)).cache).toBe("miss");
       expect((yield* demo.call(query)).cache).toBe("miss");
       expect([demo.searched.length, demo.memory.entries.size]).toEqual([2, 0]);
     }),
   );
 
-  it.effect("never caches another login's search or another scope", () =>
+  it.effect("never caches another login's search", () =>
     Effect.gen(function* () {
       const demo = demoSearch();
-      for (const query of [
-        { login: "grace", q: "terminal dashboards" },
-        { login: "ada", q: "terminal dashboards", scope: "network" as const },
-      ]) {
-        expect((yield* demo.call(query)).cache).toBeNull();
-        expect((yield* demo.call(query)).cache).toBeNull();
-      }
-      expect([demo.searched.length, demo.memory.entries.size]).toEqual([4, 0]);
+      const query = { scope: { kind: "stars" as const, login: "grace" }, q: "terminal dashboards" };
+      expect((yield* demo.call(query)).cache).toBeNull();
+      expect((yield* demo.call(query)).cache).toBeNull();
+      expect([demo.searched.length, demo.memory.entries.size]).toEqual([2, 0]);
     }),
   );
 
@@ -721,12 +731,14 @@ describe("the demo answer cache", () => {
       const planned = (request: Search.SearchRequest) =>
         Effect.succeed({ ...searchOutcome(request), planSource: "model" as const });
       const limited = Effect.succeed(services({ search: planned, limiter }));
-      yield* demo.call({ login: "ada", q: "terminal dashboards" }, limited);
+      yield* demo.call({ scope: { kind: "stars", login: "ada" }, q: "terminal dashboards" }, limited);
       refuse = true;
-      expect((yield* demo.call({ login: "ada", q: "terminal dashboards" }, limited)).cache).toBe("hit");
+      expect(
+        (yield* demo.call({ scope: { kind: "stars", login: "ada" }, q: "terminal dashboards" }, limited)).cache,
+      ).toBe("hit");
       expect(acquired).toEqual(["search"]);
       const error = yield* Effect.promise(() =>
-        failure(client({ limiter }).api.search({ login: "ada", q: "other words" })),
+        failure(client({ limiter }).api.search({ scope: { kind: "stars", login: "ada" }, q: "other words" })),
       );
       expect([error.code, acquired]).toEqual(["TOO_MANY_REQUESTS", ["search", "search"]]);
     }),
@@ -736,7 +748,7 @@ describe("the demo answer cache", () => {
 describe("rate limits", () => {
   test("answer a refusal with 429 and a limiter outage with 503, for every limited procedure", async () => {
     const calls = (api: ReturnType<typeof client>["api"]) => [
-      api.search({ login: "grace", q: "x" }),
+      api.search({ scope: { kind: "stars", login: "grace" }, q: "x" }),
       api.triggerSync({ login: "octocat" }),
       api.stars({ login: "grace" }),
     ];
