@@ -151,6 +151,8 @@ export type RepoSummary = typeof RepoSummary.Type;
 
 export interface RepoEmbedding {
   readonly id: RepoId;
+  readonly owner: Repo["owner"];
+  readonly name: Repo["name"];
   readonly embedding: Embedding;
   readonly summary: string;
   readonly keywords: ReadonlyArray<string>;
@@ -354,6 +356,8 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
               .where(
                 and(
                   eq(repos.id, input.id),
+                  sql`${repos.owner} is not distinct from ${input.owner}`,
+                  sql`${repos.name} is not distinct from ${input.name}`,
                   sql`${repos.summary} is not distinct from ${input.summary}`,
                   eq(repos.keywords, [...input.keywords]),
                   sql`${repos.description} is not distinct from ${input.description}`,

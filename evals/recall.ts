@@ -113,6 +113,8 @@ const loadAccount = Effect.fn("Recall.loadAccount")(function* (repos: ReadonlyAr
         const embedding = yield* decodeEmbedding({ model: embeddingModelId, vector: repo.vector }).pipe(Effect.orDie);
         yield* db.repos.saveEmbedding({
           id: ref.id,
+          owner: ref.owner,
+          name: ref.name,
           embedding,
           summary: repo.summary,
           keywords: repo.keywords,

@@ -44,6 +44,8 @@ const seed = Effect.fn("seed")(function* (owner: GitHubAccountId, repos: Readonl
     });
     yield* db.repos.saveEmbedding({
       id: repo.id,
+      owner: ref(repo.id, repo.name).owner,
+      name: ref(repo.id, repo.name).name,
       keywords: [],
       description: null,
       embedding: embedding(repo.weights ?? { 5: 1 }),

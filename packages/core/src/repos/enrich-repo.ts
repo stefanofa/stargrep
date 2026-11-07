@@ -277,6 +277,8 @@ const make = Effect.gen(function* () {
       job.id,
       db.repos.saveEmbedding({
         id: job.id,
+        owner: job.facts.owner,
+        name: job.facts.name,
         embedding: vector.success,
         summary: summary.summary,
         keywords: summary.keywords,
