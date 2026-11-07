@@ -2,7 +2,7 @@
 
 # Stargrep
 
-Search GitHub stars in plain language, yours, your network's, or anyone's.
+Search any GitHub account's public stars in plain language.
 
 - [Product spec](docs/product.md)
 - [Architecture](docs/architecture.md)

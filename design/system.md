@@ -2,20 +2,20 @@
 
 Stargrep's look is a soft lilac page with white rounded tiles, Fredoka for numbers and headings, Inter for text, one butter-yellow tile per page, and a small yellow star mascot.
 
-This doc is the source of truth for every token below. Renders of each key screen are in `design/renders/stargrep/`.
+`packages/ui/src/theme.css` defines the implemented tokens. This doc records their use and the design mockups in `design/renders/stargrep/`. Mockups include screens that the app does not implement.
 
 ## Principles in practice
 
-The four experience principles from `docs/product.md` turn into these rules.
+The current search screens follow these rules.
 
-- **Fast enough to feel local.** Keyword results render on each keystroke from the local library. Semantic results only append tiles after the ones already on screen. They never reorder a tile the user can see. The loading state is a skeleton in the final grid, shown for milliseconds, never a spinner.
-- **Show only what helps the next decision.** A result tile shows the repo, the reason it matched with the matched words marked, whether it is alive, stars, when you starred it, and who you follow starred it. Everything else lives in the repo detail panel.
+- **Fast enough to feel local.** Keyword results render on each keystroke from the local library. Semantic results only append tiles after the ones already on screen. They never reorder a tile the user can see. The loading state is a skeleton in the final grid.
+- **Show only what helps the next decision.** A result tile shows the repo, the reason it matched with the matched words marked, whether it is alive, stars, and when you starred it. Everything else lives in the repo detail panel.
 - **Crafted, not busy.** One butter tile per page. The star mark sits in the header and at most once more per screen. No taglines, helper text, or captions. Copy exists only where a string has to exist.
-- **No login wall.** Every page in the inventory works signed out except Library and Network. Signed out, the butter tile at the top of the page holds "Sign in with GitHub", the top bar shows only the wordmark, and network lines are hidden, not replaced with a prompt.
+- **No login wall.** Public stars pages work signed out. The current app has no network page.
 
 ## Tokens
 
-Names follow Tailwind v4 theme variables, so they drop into `@theme` in `packages/ui` and line up with shadcn's semantic names (`background`, `foreground`, `card`, `primary`, `muted`, `accent`, `destructive`, `border`). Stargrep adds `accent-soft`, `accent-strong`, `highlight`, `highlight-edge`, `success`, and `warning`.
+Names follow Tailwind v4 theme variables, so they drop into `@theme` in `packages/ui` and use semantic names (`background`, `foreground`, `card`, `primary`, `muted`, `accent`, `destructive`, `border`). Stargrep adds `accent-soft`, `accent-strong`, `highlight`, `highlight-edge`, `success`, and `warning`.
 
 ### Color
 
@@ -27,7 +27,7 @@ Names follow Tailwind v4 theme variables, so they drop into `@theme` in `package
 | `--color-secondary-foreground` | #3A3550 | #C9C4DC | Reason lines and body text in tiles |
 | `--color-muted-foreground` | #6E6985 | #9D97B5 | Dates, counts, labels |
 | `--color-muted` | #EFEBFA | #2C2840 | Hairlines in tiles, bar tracks, skeletons |
-| `--color-border` | #E4DDFA | #2C2840 | Rare outlines: archived and sponsored tiles |
+| `--color-border` | #E4DDFA | #2C2840 | Rare outlines: archived tiles |
 | `--color-primary` | #1E1B2E | #F2F0FA | Primary buttons (Follow, go, Claim) |
 | `--color-primary-foreground` | #FFFFFF | #1E1B2E | Text on primary |
 | `--color-accent` | #A78BFA | #B9A3FF | Active scope, active toggle |
@@ -67,7 +67,7 @@ The butter tile maps the semantic tokens onto these, so a component inside it ne
 | `--font-display` | Fredoka 600 | Numbers, headings, wordmark, repo names in tiles |
 | `--font-sans` | Inter 400, 500, 600 | Everything else |
 | `--font-mono` | JetBrains Mono | Code, CLI snippets, API keys. Not used in the main screens |
-| `--text-label` | 11px, uppercase, `--tracking-caps` 0.08em | Small labels (STARRED, ARCHIVED, SPONSORED) |
+| `--text-label` | 11px, uppercase, letter spacing 0.08em | Small labels (STARRED, ARCHIVED) |
 | `--text-sm` | 13px / 16px | Meta lines in small tiles and list rows |
 | `--text-meta` | 14px / `--leading-sm` 18px | Owner lines in small tiles, meta lines in the hero tile, chips, tabs, buttons |
 | `--text-base` | 15px / `--leading-base` 22px | Reason lines in small tiles, body |
@@ -117,31 +117,30 @@ Tiles have no borders and no shadows. Separation comes from the lilac ground sho
 
 ## Components
 
-Every component is a stock shadcn component on Base UI, restyled with the tokens above. Nothing below needs a new primitive. The custom pieces are the mascot, the language bar, and the starred-by-week grid.
+Components live in `packages/ui/src/components`. Interactive controls use Base UI. Tiles, result layouts, the mascot, language bars, and the starred-by-week grid are custom components. Some controls exist only in the gallery.
 
 | Stargrep piece | Built from | Notes |
 |---|---|---|
-| Tile | shadcn `Card` | Variants: `default` (card), `highlight` (butter, one per page), `quiet` (border, transparent, for sponsored), `archived` (no border, muted text, `--opacity-archived` on the star and the alive dot, so text keeps its contrast). Radius `--radius-tile`. No shadow. |
-| Search tile | `Card` + `Input` | The input is borderless, `--text-xl`, inside a white tile. `/` focuses it from anywhere. The query lives in the URL. |
-| Filter chip | `Badge` + `Button` (icon, size xs) | `accent-soft` fill. The x button removes the filter. Backspace in an empty input removes the last chip. |
-| Scope switch | Base UI `Tabs` | Your stars, Network, Everyone. A white pill track, the active tab on `accent`. Each tab is a link, so the scope is in the URL. |
-| View toggle | Base UI `ToggleGroup` | Two icon toggles, tiles and list, `aria-label` on each. The choice persists per user (a cookie the server reads when signed out, profile setting signed in) and in `?view=`, so the first paint already shows it. |
-| Deep search | Base UI `Switch` | Off by default. It adds about a second. When on, the mark in the header thinks until results rerank. |
-| Result tile | `Card` | The icon slot left of the repo name, an `h3` link, with "owner · language" under it, the reason line with `<mark>`, clamped to four lines with an ellipsis (three in the wide hero tile, whose text is larger, so its row is no taller than a full small tile), then the footer: stars (Fredoka), starred date, alive dot and text, network avatars and "N you follow". In search results, a repo not read yet shows its GitHub description under a "not read yet" chip. A repo whose facts have not arrived yet, with no stars and no push date, shows "reading…" and skeleton text instead of "no pushes yet", and fills in place when they land. |
-| Result row (list view) | `Card` with `--radius-md` | The same data in one row. The reason line is clamped to two lines. The icon slot has its own lane, so text starts at the same x in every row, and alive, stars and starred date have fixed lanes. |
+| Tile | Custom `Tile` | Variants: `default` (card), `highlight` (butter, one per page), `quiet` (border, transparent), `archived` (no border, muted text, `--opacity-archived` on the star and the alive dot, so text keeps its contrast). Radius `--radius-tile`. No shadow. |
+| Search tile | Custom `SearchTile` | The input is borderless, `--text-xl`, inside a white tile. `/` focuses it from anywhere. The query lives in the URL. |
+| Filter chip | Custom `Chip` | `accent-soft` fill. Language chips select a language. Removable planner filter chips are planned. |
+| Scope switch | Base UI `Tabs` | The gallery shows Your stars, Network, and Everyone. The app currently shows one link to the viewer's stars. |
+| View toggle | Base UI `ToggleGroup` | Two icon toggles, tiles and list, `aria-label` on each. The `stargrep-view` cookie stores the choice for signed-in and signed-out visitors. `?view=` overrides it for a shared link and the first server paint. |
+| Deep search | Base UI `Switch` | Gallery only. The app does not rerank results. |
+| Result tile | Custom `ResultItem` in `results.tsx` | The icon slot left of the repo name, an `h3` link, with "owner · language" under it, the reason line with `<mark>`, clamped to four lines with an ellipsis (three in the wide hero tile, whose text is larger, so its row is no taller than a full small tile), then the footer: stars (Fredoka), starred date, alive dot and text, optional network fields in the gallery. In search results, a repo not read yet shows its GitHub description under a "not read yet" chip. A repo whose facts have not arrived yet, with no stars and no push date, shows "reading…" and skeleton text instead of "no pushes yet", and fills in place when they land. |
+| Result row (list view) | `ResultItem` with `--radius-md` | The same data in one row. The reason line is clamped to two lines. The icon slot has its own lane, so text starts at the same x in every row, and alive, stars and starred date have fixed lanes. |
 | Repo icon slot | Custom | 44px in tiles, 36px in rows, 56px in the repo detail panel, a squircle with `--radius-sm` and a 1.5px `border` edge. One policy function in `apps/web/src/lib/repo-visual.ts` picks what fills it: the repo's own icon on its plate, then the owner's GitHub avatar, for orgs and people alike, then a monogram of two lowercase owner letters in Fredoka on #DCD0FF as the last fallback. In tiles and the panel the slot aligns to the top of the repo name. An image under 64px is never upscaled; it sits at its own size, at most 24px, on a `muted` tile. An image that fails shows the monogram. |
 | Matched words | `<mark>` | Styled as `accent-strong`, weight 600, no background. Screen readers and agents get the same spans. |
-| Network avatars | shadcn `Avatar`, stacked with -6px overlap | At most four, then "N you follow". `Tooltip` on hover lists handles. Never "friends". |
+| Network avatars | Base UI `Avatar`, stacked with -6px overlap | Gallery only. Network is planned. At most four, then "N you follow". `Tooltip` on hover lists handles. Never "friends". |
 | Alive | Text with an 8px dot | `success` dot for pushed in the last 30 days, `muted-foreground` dot after that. Archived and deprecated get a label instead. |
-| Repo detail panel | shadcn `Sheet` (Base UI `Dialog`), side right, 520px | Opens on tile click, with its own URL (`?repo=ratatui/ratatui`). Escape closes it. The header puts the repo icon slot left of the name. Contents: the full summary, unclamped, one big star count, alive, release, license, who you follow starred it, three "also starred", Open on GitHub, Add to collection. |
+| Repo detail panel | Base UI `Dialog`, side right, 520px | Opens on tile click, with its own URL (`?repo=ratatui/ratatui`). Escape closes it. The header puts the repo icon slot left of the name. The app shows the full summary, star count, activity, license, and Open on GitHub. Collection and network actions in mockups are planned. |
 | Search tile strip | Custom, inside the search tile | One status line on the left, sort and the view toggle on the right, 64px tall, the same in every state, so the controls never move. A 3px rail along the tile's bottom edge shows real progress: stars imported on the first sync, then stars read. The rail is a `progressbar` with the counts as its value text, and only the status label is a live region, so screen readers hear a state change, not every poll. A later sync only says "checking for new stars", and a few new stars read as "2 new stars · reading…" with no rail. On phones the tile docks at the bottom with the strip above the input and one line of detail, and the rail runs along the tile's top edge, inset 32px from each side so the squircle never clips its ends. |
-| Sort | Base UI `Menu` (shadcn `DropdownMenu`) | Recently starred, most stars, recently pushed, and best match while searching. |
-| Buttons | shadcn `Button` | `primary` (ink), `secondary` (accent-soft), `ghost` (white pill). Heights 36 and 44. Always `--radius-full`. |
+| Sort | Base UI `Menu` | Recently starred, most stars, recently pushed, and best match while searching. |
+| Buttons | Custom `Button` | `primary` (ink), `secondary` (accent-soft), `ghost` (white pill). Heights 36 and 44. Always `--radius-full`. |
 | Skeleton | skullet | skullet measures the real card with a sample repo and draws one bar per text line, so a placeholder is the size of the card that replaces it. The bars pulse between `muted` and `accent-soft` and hold still under reduced motion. |
 | Language bar | Custom, divs in a flex row | Segments in ink, `accent`, `highlight`, then `muted` for the rest. A text legend under it, so color is never the only carrier. |
 | Starred-by-week grid | Custom, an SVG or CSS grid | 52 columns by 7 rows, five steps from `muted` to `accent-strong`, with one ink step for the busiest weeks. `role="img"` with a text summary, and the counts available as a hidden table. |
 | Mark | Custom React component, inline SVG | `<Pip pose="idle" size={…} />`. See below. `aria-hidden`. |
-| Sponsored | `Card` variant `quiet` + `Badge` "sponsored" | Never butter, never first, one per page at most. Never in API or MCP results. |
 
 ## The mascot
 
@@ -175,7 +174,7 @@ Proper nouns keep their case inside lowercase copy (Rust, TypeScript, GitHub in 
 
 ## Motion
 
-- Library tiles enter with opacity and a 6px rise, 200ms, ease-out, when they first appear.
+- Library tiles enter with opacity and a 4px rise, 200ms, ease-out, when they first appear.
 - Search results do not replay an entrance per query. While the next answer is pending the previous results stay, and a result new to the set fades in over 150ms with no stagger. Tiles already on screen never move.
 - Loading frames have the final layout: an avatar-sized placeholder in the header, the strip with its controls, and the count, languages and month tiles at their final size, so a reload moves nothing.
 - The repo panel slides in from the right in 220ms over a 160ms scrim fade.
@@ -186,16 +185,15 @@ Proper nouns keep their case inside lowercase copy (Rust, TypeScript, GitHub in 
 
 These rules keep one structure for people, crawlers, and agents.
 
-- **Everything lives in the URL.** The query, the scope, the filters, the view, and the open repo: `/junodev?q=rust+library+for+terminal+dashboards&lang=rust&starred=2025&topic=tui&view=tiles&repo=ratatui/ratatui`. Agents and shared links land on the exact state.
+- **Everything lives in the URL.** The login, query, language, sort, view, and open repo: `/junodev?q=rust+library+for+terminal+dashboards&lang=Rust&sort=starred&view=tiles&repo=ratatui/ratatui`. Agents and shared links land on the exact state.
 - **Results are an ordered list.** Use `<ol>` of `<article>`, each with an `h3` repo link, the reason in a `p` with `<mark>`, and the meta in a `dl`. The tile and list views change CSS only, not markup.
-- **The UI and MCP share one shape.** Each result's fields (repo, reason, alive, stars, starred_at, network) are the fields `search_stars` returns, so the web and MCP share one shape.
-- **SEO pages add structured data.** "Best X" pages add `ItemList` JSON-LD. Profiles add `ProfilePage`.
-- **Color never carries meaning alone.** Archived, deprecated, sponsored, and alive always have a text label.
+- **The UI derives presentation from the API.** `packages/api/src/contract.ts` defines wire fields. The web app derives its tiles and rows from those fields. The MCP tool is named `search`.
+- **Color never carries meaning alone.** Archived, deprecated, and alive always have a text label.
 - **Focus is always visible.** A 2px `ring` outline with a 2px offset on every focusable element. In light mode the ring is `accent-strong`, since `accent` falls under 3:1 on white, lilac and butter. On the butter tile it is light-mode `accent-strong` in both themes.
 
-## Screen inventory
+## Mockup inventory
 
-PNGs are in `design/renders/stargrep/`.
+These are design references, not a list of shipped routes. Network, profiles with taste cards, collections, and discovery pages are planned. PNGs are in `design/renders/stargrep/`.
 
 | Artboard | What it shows |
 |---|---|
@@ -209,7 +207,7 @@ PNGs are in `design/renders/stargrep/`.
 | 08 Profile · claimed | @junodev seen by a signed-in visitor |
 | 09 Profile · unclaimed | @mira-lab, built from public data, with the claim tile |
 | 10 Collection | "my rust tui stack", notes first |
-| 11 Best X page | "best rust tui libraries", ranked, with one quiet sponsored slot |
+| 11 Best X page | "best rust tui libraries", ranked |
 | 12 Taste card · OG 1200×630 | The link preview image |
 | 13 Taste card · story 1080×1920 | The vertical share card |
 | 14 State · empty | No results, with the filter that hid them |
@@ -223,5 +221,5 @@ PNGs are in `design/renders/stargrep/`.
 
 - **The mascot's name.** "Pip" collides with Python's pip, so copy avoids naming it for now.
 - **Invented numbers in the mocks.** Follower counts, collection counts on the "best X" page, weekly star counts, the "212 more in Everyone" count, and some star counts (fzf, uv) are placeholders. The repos, owners, and descriptions are real.
-- **The view toggle default.** The mocks default to tiles. Data on how far people scroll should decide whether list becomes the default past a number of results.
+- **The view toggle default.** Tiles are the default when neither the URL nor the view cookie chooses a view.
 - **A dark mode Paper pass.** Only artboard 04 is in dark mode. The dark tokens above cover every component, but the profile and taste cards have not been checked in dark mode.
