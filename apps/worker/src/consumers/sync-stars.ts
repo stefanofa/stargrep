@@ -19,13 +19,7 @@ const encodeBody = Schema.encodeSync(Body);
 const markFailed = Effect.fn("SyncStarsConsumer.markFailed")(function* (body: Body) {
   if ("accountId" in body || body.requestedAt === undefined) return;
   const db = yield* Db.Db;
-  yield* db.syncRequests
-    .settle(body.login, body.requestedAt, "failed")
-    .pipe(
-      Effect.catchTag("DbQueryFailed", (error) =>
-        Effect.logWarning("Could not mark a dead-lettered sync as failed", { reason: error.reason }),
-      ),
-    );
+  yield* db.syncRequests.settle(body.login, body.requestedAt, "failed");
 });
 
 // A message's first delivery spends the units admission reserved for it. A later delivery, a deferred message sent

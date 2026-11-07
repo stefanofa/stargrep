@@ -47,8 +47,10 @@ const consume = Effect.fn("Queues.consume")(function* <A, R, D, E>(
       yield* Settle.processBatch(pipeline, bound, yield* Stream.runCollect(stream));
     }).pipe(Effect.provide(runtime)),
   );
-  yield* Cloudflare.Queues.consumeQueueMessages(deadLetters, { batchSize: 10, maxWaitTime: "1 second" }, (stream) =>
-    Settle.handleDeadLetters(name, pipeline)(stream).pipe(Effect.provide(runtime)),
+  yield* Cloudflare.Queues.consumeQueueMessages(
+    deadLetters,
+    { batchSize: 10, maxWaitTime: "1 second", ...retries },
+    (stream) => Settle.handleDeadLetters(name, pipeline, retries.maxRetries)(stream).pipe(Effect.provide(runtime)),
   );
 });
 

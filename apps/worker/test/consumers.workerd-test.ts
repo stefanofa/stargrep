@@ -882,29 +882,38 @@ describe("production layers", () => {
 });
 
 describe("dead letters", () => {
-  const recordingDb = () => {
+  const dropped = new DbQueryFailed({ operation: "syncRequests.settle", reason: "transport", sqlState: null });
+
+  const recordingDb = (fail = false) => {
     const failed: Array<[string, number]> = [];
     const layer = Layer.succeed(
       Db.Db,
       Db.Db.of({
         syncRequests: {
           settle: (login: string, requestedAt: DateTime.Utc) =>
-            Effect.sync(() => void failed.push([login, DateTime.toEpochMillis(requestedAt)])),
+            fail
+              ? Effect.fail(dropped)
+              : Effect.sync(() => void failed.push([login, DateTime.toEpochMillis(requestedAt)])),
         },
       } as unknown as Db.Db["Service"]),
     );
     return { failed, layer };
   };
 
-  const handle = (bodies: ReadonlyArray<unknown>, layer: Layer.Layer<Db.Db>, logs: Array<unknown> = []) =>
-    Effect.runPromise(
+  const handleBatch = (batch: MessageBatch, layer: Layer.Layer<Db.Db>, logs: Array<unknown> = []) =>
+    run(
       Settle.handleDeadLetters(
         "sync-stars",
         SyncStarsConsumer.pipeline(allLine, Layer.mock(StarSync.StarSync, {})),
-      )(Stream.fromIterable(batchOf("sync-stars-dead-letters", bodies).messages)).pipe(
+        5,
+      )(Stream.fromIterable(batch.messages)).pipe(
         Effect.provide(Layer.merge(layer, Logger.layer([Logger.make(({ message }) => logs.push(message))]))),
       ),
+      batch,
     );
+
+  const handle = (bodies: ReadonlyArray<unknown>, layer: Layer.Layer<Db.Db>, logs: Array<unknown> = []) =>
+    handleBatch(batchOf("sync-stars-dead-letters", bodies), layer, logs);
 
   it("logs the ids of a body it decodes and only the type of one it cannot", async () => {
     const logs: Array<unknown> = [];
@@ -923,6 +932,7 @@ describe("dead letters", () => {
       Settle.handleDeadLetters(
         "enrich-repo",
         EnrichRepoConsumer.pipeline(Layer.mock(EnrichRepo.EnrichRepo, {})),
+        5,
       )(Stream.fromIterable(batchOf("enrich-repo-dead-letters", [{ repoId: 11 }]).messages)).pipe(
         Effect.provide(Layer.merge(touched, Logger.layer([Logger.make(({ message }) => logs.push(message))]))),
       ),
@@ -942,5 +952,36 @@ describe("dead letters", () => {
       db.layer,
     );
     expect(db.failed).toEqual([["No-Such-Login", requestedAt]]);
+  });
+
+  it("retries a dead letter whose failed mark does not land, and acks it once the mark lands", async () => {
+    const requestedAt = Date.parse("2026-11-04T12:00:00Z");
+    const body = { login: "octocat", mode: "incremental", requestedAt };
+    const logs: Array<unknown> = [];
+    const first = await handleBatch(batchOf("sync-stars-dead-letters", [body]), recordingDb(true).layer, logs);
+    expect(first.retryMessages).toEqual([{ msgId: "m0" }]);
+    expect(first.explicitAcks).toEqual([]);
+    expect(logs).toContainEqual([
+      "Dead letter not recorded, retrying",
+      { queue: "sync-stars", messageId: "m0", attempts: 1, error: "DbQueryFailed" },
+    ]);
+
+    const db = recordingDb();
+    const second = await handleBatch(batchOf("sync-stars-dead-letters", [body], 2), db.layer);
+    expect(second.explicitAcks).toEqual(["m0"]);
+    expect(second.retryMessages).toEqual([]);
+    expect(db.failed).toEqual([["octocat", requestedAt]]);
+  });
+
+  it("logs and acks a dead letter still unrecorded after its last retry, since nothing would retry it again", async () => {
+    const body = { login: "octocat", mode: "incremental", requestedAt: Date.parse("2026-11-04T12:00:00Z") };
+    const logs: Array<unknown> = [];
+    const last = await handleBatch(batchOf("sync-stars-dead-letters", [body], 6), recordingDb(true).layer, logs);
+    expect(last.explicitAcks).toEqual(["m0"]);
+    expect(last.retryMessages).toEqual([]);
+    expect(logs).toContainEqual([
+      "Dead letter dropped unrecorded",
+      { queue: "sync-stars", messageId: "m0", attempts: 6, error: "DbQueryFailed" },
+    ]);
   });
 });
