@@ -4,8 +4,9 @@ import * as FallbackGate from "@stargrep/github/fallback-gate";
 import type { BudgetShare } from "@stargrep/github/schemas";
 import * as TokenBudget from "@stargrep/github/token-budget";
 import * as TokenGate from "@stargrep/github/token-gate";
-import { type ServerToken, serverTokenConfig } from "@stargrep/runtime/server-token";
+import { type ServerToken, serverToken, serverTokenConfig, serverTokenKind } from "@stargrep/runtime/server-token";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
@@ -16,17 +17,14 @@ import { inRuntime } from "./layers.ts";
 
 const windowsKey = "windows";
 
-const configuredToken = Effect.map(Effect.orDie(serverTokenConfig), ({ credential }) => credential);
+const configuredToken = Effect.orDie(Config.flatMap(serverTokenKind, serverToken));
 
 // The App's installation token is minted and refreshed in a scope that lives as long as the object.
 const serverSource = Effect.fn("GitHubGate.serverSource")(function* (credential: Option.Option<ServerToken>) {
-  const server = yield* Effect.flatMap(
-    Effect.succeed(credential),
-    Option.match({
-      onNone: () => Effect.die("GitHubGate is bound only when the server has a GitHub token"),
-      onSome: Effect.succeed,
-    }),
-  );
+  const server = yield* Option.match(credential, {
+    onNone: () => Effect.die("GitHubGate is bound only when the server has a GitHub token"),
+    onSome: Effect.succeed,
+  });
   if (server._tag === "Pat") return TokenGate.fixed(server.token);
   return yield* AppToken.makeInstallationTokens({ credentials: server.credentials }).pipe(
     Effect.provide(FetchHttpClient.layer),

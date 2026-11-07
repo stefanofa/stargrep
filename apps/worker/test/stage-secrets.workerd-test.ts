@@ -1,9 +1,7 @@
 import * as Embeddings from "@stargrep/ai/embeddings";
 import * as Summarize from "@stargrep/ai/summarize";
 import { aiGatewayKey } from "@stargrep/runtime/ai-key";
-import * as Share from "@stargrep/runtime/server-token";
-import * as Secrets from "@stargrep/runtime/server-token";
-import { serverTokenKind } from "@stargrep/runtime/server-token";
+import * as ServerToken from "@stargrep/runtime/server-token";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -23,7 +21,7 @@ const pat = { STARGREP_GITHUB_TOKEN: "token", AI_GATEWAY_API_KEY: "key" };
 describe("stage secrets", () => {
   it("treats an empty secret as missing", async () => {
     const read = await Effect.runPromise(
-      Effect.all([Secrets.githubToken, aiGatewayKey]).pipe(
+      Effect.all([ServerToken.githubToken, aiGatewayKey]).pipe(
         withEnv({ STARGREP_GITHUB_TOKEN: "", AI_GATEWAY_API_KEY: "" }),
       ),
     );
@@ -37,11 +35,11 @@ describe("stage secrets", () => {
         { STARGREP_GITHUB_SERVER_TOKEN: "" },
         { STARGREP_GITHUB_SERVER_TOKEN: "app" },
         { STARGREP_GITHUB_SERVER_TOKEN: "pat" },
-      ].map((env) => Effect.runPromise(Effect.all([serverTokenKind]).pipe(withEnv(env)))),
+      ].map((env) => Effect.runPromise(Effect.all([ServerToken.serverTokenKind]).pipe(withEnv(env)))),
     );
     expect(kinds.flat()).toEqual(["pat", "pat", "app", "pat"]);
     const refused = await Effect.runPromiseExit(
-      Effect.all([serverTokenKind]).pipe(withEnv({ STARGREP_GITHUB_SERVER_TOKEN: "apps" })),
+      Effect.all([ServerToken.serverTokenKind]).pipe(withEnv({ STARGREP_GITHUB_SERVER_TOKEN: "apps" })),
     );
     expect(Exit.isFailure(refused)).toBe(true);
   });
@@ -49,13 +47,13 @@ describe("stage secrets", () => {
   it("fails a prod deploy that lacks the credential its kind reads with, so prod can go back to the personal token", async () => {
     const outcomes = await Promise.all(
       [
-        Secrets.requireStageSecrets("prod", "app").pipe(withEnv({})),
-        Secrets.requireStageSecrets("prod", "app").pipe(withEnv(pat)),
-        Secrets.requireStageSecrets("prod", "app").pipe(withEnv({ ...app, STARGREP_GITHUB_APP_CLIENT_ID: "" })),
-        Secrets.requireStageSecrets("prod", "app").pipe(withEnv({ ...app, AI_GATEWAY_API_KEY: "" })),
-        Secrets.requireStageSecrets("prod", "app").pipe(withEnv(app)),
-        Secrets.requireStageSecrets("prod", "pat").pipe(withEnv(app)),
-        Secrets.requireStageSecrets("prod", "pat").pipe(withEnv({ ...app, ...pat })),
+        ServerToken.requireStageSecrets("prod", "app").pipe(withEnv({})),
+        ServerToken.requireStageSecrets("prod", "app").pipe(withEnv(pat)),
+        ServerToken.requireStageSecrets("prod", "app").pipe(withEnv({ ...app, STARGREP_GITHUB_APP_CLIENT_ID: "" })),
+        ServerToken.requireStageSecrets("prod", "app").pipe(withEnv({ ...app, AI_GATEWAY_API_KEY: "" })),
+        ServerToken.requireStageSecrets("prod", "app").pipe(withEnv(app)),
+        ServerToken.requireStageSecrets("prod", "pat").pipe(withEnv(app)),
+        ServerToken.requireStageSecrets("prod", "pat").pipe(withEnv({ ...app, ...pat })),
       ].map((check) => Effect.runPromiseExit(check)),
     );
     expect(outcomes.map(Exit.isSuccess)).toEqual([false, false, false, false, true, false, true]);
@@ -64,10 +62,10 @@ describe("stage secrets", () => {
   it("fails any other stage that can read the App's key, and deploys one with a personal token or none", async () => {
     const outcomes = await Promise.all(
       [
-        Secrets.requireStageSecrets("pr-18", "pat").pipe(withEnv({})),
-        Secrets.requireStageSecrets("pr-18", "pat").pipe(withEnv(pat)),
-        Secrets.requireStageSecrets("pr-18", "pat").pipe(withEnv(app)),
-        Secrets.requireStageSecrets("dev_stefano", "pat").pipe(withEnv(app)),
+        ServerToken.requireStageSecrets("pr-18", "pat").pipe(withEnv({})),
+        ServerToken.requireStageSecrets("pr-18", "pat").pipe(withEnv(pat)),
+        ServerToken.requireStageSecrets("pr-18", "pat").pipe(withEnv(app)),
+        ServerToken.requireStageSecrets("dev_stefano", "pat").pipe(withEnv(app)),
       ].map((check) => Effect.runPromiseExit(check)),
     );
     expect(outcomes.map(Exit.isSuccess)).toEqual([true, true, false, false]);
@@ -77,7 +75,7 @@ describe("stage secrets", () => {
   it("reads only the credential its kind uses", async () => {
     const read = (kind: "app" | "pat", env: Record<string, string>) =>
       Effect.runPromiseExit(
-        Effect.all([Secrets.serverToken(kind)]).pipe(
+        Effect.all([ServerToken.serverToken(kind)]).pipe(
           Effect.map(([token]) => token),
           withEnv(env),
         ),
@@ -98,7 +96,7 @@ describe("stage secrets", () => {
   });
 
   const share = (stage: string, kind: "app" | "pat", env: Record<string, string>) =>
-    Effect.runPromiseExit(Share.stageBudgetShare(stage, kind).pipe(withEnv(env)));
+    Effect.runPromiseExit(ServerToken.stageBudgetShare(stage, kind).pipe(withEnv(env)));
 
   it("gives the App token 0.9 of its budget and a personal token 0.5, and lets a preview set a number in (0, 1]", async () => {
     const outcomes = await Promise.all([

@@ -26,17 +26,18 @@ const CallerKey = Alchemy.makeRandom("CallerKey");
 
 const signInBindings = Effect.gen(function* () {
   const { stage, production } = yield* settings;
-  const signIn = yield* githubSignIn;
-  if (production) {
-    const github = Option.filter(signIn, (config) => config._tag === "direct" && Option.isSome(config.proxySecret));
-    if (Option.isNone(github)) {
+  const configured = yield* githubSignIn;
+  const signIn = production
+    ? Option.filter(configured, (config) => config._tag === "direct" && Option.isSome(config.proxySecret))
+    : configured;
+  if (Option.isNone(signIn)) {
+    if (production) {
       return yield* Effect.die(
         `prod signs in directly and forwards previews' sign-ins, so it needs ${names.clientId}, ${names.proxySecret}, and no ${names.proxyOrigin}`,
       );
     }
-    return { ...previewHostBinding, ...bindings(github.value), [names.secret]: yield* betterAuthSecret(stage) };
+    return {};
   }
-  if (Option.isNone(signIn)) return {};
   return { ...previewHostBinding, ...bindings(signIn.value), [names.secret]: yield* betterAuthSecret(stage) };
 });
 

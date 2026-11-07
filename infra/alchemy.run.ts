@@ -18,15 +18,16 @@ export default Alchemy.Stack(
   stackName,
   { providers: Layer.mergeAll(Cloudflare.providers(), Neon.providers(), GitHub.providers()), state },
   Effect.gen(function* () {
-    const { stage, debug: hasDebug } = yield* settings;
+    const { stage, production, debug: hasDebug } = yield* settings;
     const worker = yield* Worker;
     const web = yield* Website;
     // In prod a zone route serves the web Worker on the main Worker's hostname, so it has no URL of its own. Previews
     // have no zone, so only prod declares the zone's rate limit.
-    if (!hasDebug) {
+    if (production) {
       yield* ZoneRateLimit;
       return { url: worker.url, webUrl: worker.url };
     }
+    if (!hasDebug) return { url: worker.url, webUrl: web.url };
 
     const debug = yield* DebugWorker;
     const github = yield* GitHub.GitHubEnv;

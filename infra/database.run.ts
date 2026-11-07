@@ -1,5 +1,5 @@
 import * as Neon from "@alchemy.run/neon";
-import { stageSettings } from "@stargrep/runtime/stage";
+import { databases } from "@stargrep/runtime/stage";
 import * as Alchemy from "alchemy";
 import * as RemovalPolicy from "alchemy/RemovalPolicy";
 import * as Effect from "effect/Effect";
@@ -13,8 +13,7 @@ export default Alchemy.Stack(
     if (stage !== "shared") {
       return yield* Effect.die(new Error(`Deploy the database stack only to stage "shared", not "${stage}"`));
     }
-    const production = stageSettings("prod").database;
-    const previews = stageSettings("pr-0").database;
+    const { production, previews } = databases;
     const usEast = yield* Neon.Project(production.logicalId, {
       name: production.name,
       region: production.region,

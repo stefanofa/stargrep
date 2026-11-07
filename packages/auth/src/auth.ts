@@ -63,6 +63,8 @@ export class Auth extends Context.Service<
 >()("@stargrep/auth/auth") {}
 
 export const tokenReadTimeout = Duration.seconds(10);
+export const tokenReadTimedOut = () =>
+  new AuthFailed({ operation: "token", cause: "Reading the GitHub token timed out" });
 
 export const baseOptions = (database: BetterAuthOptions["database"], config: TokenConfig) =>
   ({
@@ -82,7 +84,11 @@ export const baseOptions = (database: BetterAuthOptions["database"], config: Tok
 
 type TokenAuth = ReturnType<typeof betterAuth<ReturnType<typeof baseOptions>>>;
 type TokenSource = {
-  readonly api: Pick<TokenAuth["api"], "getAccessToken">;
+  readonly api: {
+    readonly getAccessToken: (
+      ...args: Parameters<TokenAuth["api"]["getAccessToken"]>
+    ) => ReturnType<TokenAuth["api"]["getAccessToken"]>;
+  };
   readonly $context: Promise<{
     readonly internalAdapter: Pick<Awaited<TokenAuth["$context"]>["internalAdapter"], "findAccounts">;
   }>;
@@ -108,6 +114,11 @@ export const readGitHubToken = (auth: TokenSource, userId: UserId) =>
           : Effect.succeed(Redacted.make(accessToken)),
       ),
     ),
+  );
+
+export const readGitHubTokenWithin = (auth: TokenSource, userId: UserId) =>
+  readGitHubToken(auth, userId).pipe(
+    Effect.timeoutOrElse({ duration: tokenReadTimeout, orElse: () => Effect.fail(tokenReadTimedOut()) }),
   );
 
 export interface SignIn {
@@ -176,12 +187,7 @@ export const make = (pool: pg.Pool, options: Options) => {
   const tokenOf: (userId: UserId) => Effect.Effect<Redacted.Redacted<string>, AuthFailed> = Effect.fn(
     "Auth.githubToken",
   )(function* (userId: UserId) {
-    return yield* readGitHubToken(auth, userId).pipe(
-      Effect.timeoutOrElse({
-        duration: tokenReadTimeout,
-        orElse: () => Effect.fail(new AuthFailed({ operation: "token", cause: "Reading the GitHub token timed out" })),
-      }),
-    );
+    return yield* readGitHubTokenWithin(auth, userId);
   });
   return { handler: auth.handler, getSession: auth.api.getSession, tokenOf };
 };

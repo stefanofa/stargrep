@@ -14,14 +14,16 @@ export const serverTokenName = "STARGREP_GITHUB_SERVER_TOKEN";
 export const ServerTokenKind = Schema.Literals(["app", "pat"]);
 export type ServerTokenKind = typeof ServerTokenKind.Type;
 
-export const serverTokenKindFor = (stage: string): Config.Config<ServerTokenKind> =>
+const serverTokenKindOr = (fallback: ServerTokenKind): Config.Config<ServerTokenKind> =>
   Config.schema(Schema.Literals(["app", "pat", ""]), serverTokenName).pipe(
     Config.withDefault(""),
-    Config.map((kind) => (kind === "" ? stageSettings(stage).defaultServerToken : kind)),
+    Config.map((kind) => (kind === "" ? fallback : kind)),
   );
 
+export const serverTokenKindFor = (stage: string) => serverTokenKindOr(stageSettings(stage).defaultServerToken);
+
 // Runtime bindings always carry the kind selected at deploy.
-export const serverTokenKind = serverTokenKindFor("");
+export const serverTokenKind = serverTokenKindOr("pat");
 
 export const budgetShareName = "GITHUB_BUDGET_SHARE";
 

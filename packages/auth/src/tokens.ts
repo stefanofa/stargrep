@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import { AuthFailed, baseOptions, readGitHubToken, tokenReadTimeout } from "./auth.ts";
+import { type AuthFailed, baseOptions, readGitHubToken, tokenReadTimedOut, tokenReadTimeout } from "./auth.ts";
 import type { TokenConfig } from "./config.ts";
 
 // Reads a signed-in user's GitHub token where no request carries their session, such as a queue consumer running work
@@ -34,11 +34,7 @@ export const bounded = Effect.fnUntraced(function* <A>(read: Effect.Effect<A, Au
   return yield* Fiber.join(fiber).pipe(
     Effect.timeoutOrElse({
       duration: tokenReadTimeout,
-      orElse: () =>
-        Effect.andThen(
-          Effect.forkDetach(Fiber.interrupt(fiber)),
-          Effect.fail(new AuthFailed({ operation: "token", cause: "Reading the GitHub token timed out" })),
-        ),
+      orElse: () => Effect.andThen(Effect.forkDetach(Fiber.interrupt(fiber)), Effect.fail(tokenReadTimedOut())),
     }),
   );
 });
