@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import * as it from "@stargrep/testing";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Fake from "../fake.ts";
+import * as Models from "../models.ts";
+import { toAiSchema } from "../schema-bridge.ts";
 import * as SummarizeFake from "./summarize.fake.ts";
 import * as Summarize from "./summarize.ts";
 
@@ -13,6 +16,60 @@ const repo: Summarize.RepoFacts = {
   language: "Rust",
   readme: "# Ratatui\n\nRatatui builds rich terminal user interfaces and dashboards.",
 };
+
+// Every tag name the README cleaner strips, so dropping one from its list changes the digest.
+const htmlTags = (
+  "a abbr b blockquote br center code dd del details div dl dt em figcaption figure font g h1 h2 h3 h4 h5 h6 hr i img " +
+  "ins kbd li ol p path picture pre s section small source span strong sub summary sup svg table tbody td tfoot th " +
+  "thead tr tt u ul video"
+).split(" ");
+
+describe("summary recipe", () => {
+  // A summary made by another model, prompt, or output schema is stale, and only a recipe bump makes it due again. Bump
+  // summaryRecipe in models.ts with the migration it needs, then record the new digest. A change that leaves summaries
+  // as good as before may keep the recipe and only record the digest.
+  it.effect("pins the recipe to the model, prompt, and output schema that make a summary", () =>
+    Effect.gen(function* () {
+      const digest = yield* Digest.Digest;
+      const made = JSON.stringify([
+        Models.summaryModel,
+        Summarize.system,
+        Summarize.prompt({
+          ...repo,
+          readme: [
+            repo.readme,
+            "<!-- badges -->",
+            '![logo](logo.png) <p align="center"><img src="x.png"></p> [](empty) <me@example.com>',
+            '```html\n<p align="center"><img src="shot.png"></p>\n![shot](shot.png)\n```',
+            "[docs]: https://ratatui.rs",
+            "Write `<br>` for a line break.\uFFFD",
+            "Ratatui widgets. ".repeat(2_000),
+          ].join("\n\n"),
+        }),
+        Summarize.prompt({ ...repo, readme: `${"Mostly text. ".repeat(10)}${"\uFFFD".repeat(5)}` }),
+        Summarize.prompt({
+          ...repo,
+          readme: [
+            htmlTags.map((tag) => `<${tag} class="x">${tag}</${tag}>`).join(" "),
+            '~~~\n<img src="tilde.png">\n~~~',
+            '   ```\n<img src="indented.png">\n   ```',
+            '```\n```js\n<img src="inner.png">\n```',
+            "![logo][logo]",
+            "Line with trailing spaces   \nNext line",
+            "<!-- never closed\nStill here",
+          ].join("\n\n"),
+        }),
+        Summarize.prompt({ ...repo, readme: "# Tool\n\nUse it.\u0000" }),
+        Summarize.prompt({ ...repo, readme: '<img src="x">\n\n---' }),
+        toAiSchema(Summarize.RepoSummary).jsonSchema,
+      ]);
+      expect({
+        recipe: Models.summaryRecipe,
+        digest: yield* digest.digestHex(Digest.sha256, new TextEncoder().encode(made)),
+      }).toEqual({ recipe: 1, digest: "7f676052dae2ac19afc2b65a8ee32cb08904999bb4f5ff80a3d164ed1d4744eb" });
+    }).pipe(Effect.provide(Digest.layerWebCrypto)),
+  );
+});
 
 describe("summarize", () => {
   it.effect("trims a long README before the call", () => {

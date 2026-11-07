@@ -22,6 +22,7 @@
   "dependencies": {
     "@electric-sql/pglite": "0.5.11",
     "@electric-sql/pglite-pgvector": "0.0.12",
+    "@stargrep/ai": "workspace:*",
     "@stargrep/github": "workspace:*",
     "drizzle-orm": "1.0.0-rc.5",
     "effect": "catalog:",

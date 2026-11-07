@@ -1,3 +1,4 @@
+import { summaryRecipe } from "@stargrep/ai/models";
 import { Repo as GitHubRepo, Login, ObjectId, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
 import { and, asc, eq, getColumns, gt, isNotNull, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
@@ -21,6 +22,7 @@ import {
   repoMetrics,
   repos,
   retryableEnrichment,
+  unreadEnrichment,
 } from "../schema.ts";
 
 const RepoRow = createSelectSchema(repos, {
@@ -58,8 +60,16 @@ export const RepoIcon = Schema.Struct({
 });
 export type RepoIcon = typeof RepoIcon.Type;
 
-// Columns the pipeline reads but a Repo leaves out: the vector, the full-text column, and the retry state.
-const internalColumns = ["embedding", "search", "enrichFailures", "enrichRetryAt"] as const;
+// Columns the pipeline reads but a Repo leaves out: the vector, the full-text column, the retry state, and the recipe
+// that made the summary.
+const internalColumns = [
+  "embedding",
+  "search",
+  "enrichFailures",
+  "enrichRetryAt",
+  "summaryRecipe",
+  "embeddingStale",
+] as const;
 
 const rowFields = Struct.omit(RepoRow.fields, internalColumns);
 const iconColumns = ["iconKey", "iconSource", "iconPlate", "iconSize"] as const;
@@ -160,11 +170,11 @@ export interface RepoOwner {
 const DueIcon = Schema.Struct({ id: RepoId, nodeId: RepoNodeId });
 export type DueIcon = typeof DueIcon.Type;
 
-const retryFields = Struct.pick(RepoRow.fields, ["enrichFailures", "enrichRetryAt"]);
+const enrichFields = Struct.pick(RepoRow.fields, ["enrichFailures", "enrichRetryAt", "summaryRecipe"]);
 
-const StoredRepo = Schema.Struct({ ...rowFields, ...retryFields, pending: Schema.Boolean }).pipe(
+const StoredRepo = Schema.Struct({ ...rowFields, ...enrichFields, pending: Schema.Boolean }).pipe(
   Schema.decodeTo(
-    Schema.toType(Schema.Struct({ ...RepoFields.fields, ...retryFields, pending: Schema.Boolean })),
+    Schema.toType(Schema.Struct({ ...RepoFields.fields, ...enrichFields, pending: Schema.Boolean })),
     SchemaTransformation.transform({
       decode: ({ iconKey, iconSource, iconPlate, iconSize, ...rest }) => ({
         ...rest,
@@ -224,6 +234,7 @@ const decodePending = rowsDecoder(Schema.Struct({ pending: Schema.Boolean }));
 const decodeDue = rowsDecoder(DueIcon);
 
 const needsEnrichment = pendingEnrichment(repos);
+const keepsEmbedding = sql<boolean>`not ${unreadEnrichment(repos)}`;
 const encodeRefs = writeEncoder(Schema.Array(RepoRef));
 const encodeFacts = writeEncoder(RepoFacts);
 const encodeSummary = writeEncoder(RepoSummary);
@@ -309,7 +320,16 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           run("repos.saveSummary", (db) =>
             db
               .update(repos)
-              .set({ ...values, summaryReadmeOid: readmeOid, embedding: null, embeddingModel: null })
+              // A new summary of the README a read repo's summary describes keeps the old embedding, marked stale, so
+              // the repo stays read and searchable until the new embedding replaces it. Any other clears it.
+              .set({
+                ...values,
+                summaryReadmeOid: readmeOid,
+                summaryRecipe,
+                embedding: sql`case when ${keepsEmbedding} then ${repos.embedding} end`,
+                embeddingModel: sql`case when ${keepsEmbedding} then ${repos.embeddingModel} end`,
+                embeddingStale: keepsEmbedding,
+              })
               .where(and(eq(repos.id, id), sql`${repos.readmeOid} is not distinct from ${readmeOid}`))
               .returning({ id: repos.id }),
           ),
@@ -322,7 +342,13 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           run("repos.saveEmbedding", (db) =>
             db
               .update(repos)
-              .set({ embedding: [...vector], embeddingModel: configuredModel, enrichFailures: 0, enrichRetryAt: null })
+              .set({
+                embedding: [...vector],
+                embeddingModel: configuredModel,
+                embeddingStale: false,
+                enrichFailures: 0,
+                enrichRetryAt: null,
+              })
               .where(
                 and(
                   eq(repos.id, input.id),
@@ -390,6 +416,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
             pending: needsEnrichment,
             enrichFailures: repos.enrichFailures,
             enrichRetryAt: repos.enrichRetryAt,
+            summaryRecipe: repos.summaryRecipe,
           })
           .from(repos)
           .where(sql`${repos.id} = any(${sql.param([...ids])}::bigint[])`),

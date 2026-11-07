@@ -12,7 +12,7 @@ import * as Struct from "effect/Struct";
 import { AccountNotFound, type DbQueryFailed, type DbRowInvalid } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
 import { excluded, NullableTime, requireRow, rowsDecoder, writeEncoder } from "../rows.ts";
-import { enrichFailureCap, githubAccounts, pendingEnrichment, repoMetrics, repos, stars } from "../schema.ts";
+import { enrichFailureCap, githubAccounts, repoMetrics, repos, stars, unreadEnrichment } from "../schema.ts";
 import { Repo, repoColumns } from "./repos.ts";
 
 export const Star = createSelectSchema(stars, {
@@ -107,7 +107,7 @@ const column = (target: PgColumn) => sql.identifier(target.name);
 
 const noChanges: SnapshotChanges = { starred: [], unstarred: [] };
 
-const needsEnrichment = pendingEnrichment(repos);
+const unread = unreadEnrichment(repos);
 
 const writeStarsReturningVisibleChanges = (accountId: GitHubAccountId, events: string, filter: SQL) => sql`
   prior as (
@@ -152,7 +152,7 @@ const libraryEntries = (
       repo: repoColumns,
       starredAt: stars.starredAt,
       stars: repoMetrics.stars,
-      read: sql<boolean>`not ${needsEnrichment}`,
+      read: sql<boolean>`not ${unread}`,
     })
     .from(stars)
     .innerJoin(repos, eq(repos.id, stars.repoId))
@@ -289,8 +289,8 @@ export const make = Effect.gen(function* () {
         db
           .select({
             total: sql<number>`count(*)::int`,
-            read: sql<number>`(count(*) filter (where not ${needsEnrichment}))::int`,
-            failed: sql<number>`(count(*) filter (where ${needsEnrichment} and ${repos.enrichFailures} >= ${enrichFailureCap}))::int`,
+            read: sql<number>`(count(*) filter (where not ${unread}))::int`,
+            failed: sql<number>`(count(*) filter (where ${unread} and ${repos.enrichFailures} >= ${enrichFailureCap}))::int`,
           })
           .from(stars)
           .innerJoin(repos, eq(repos.id, stars.repoId))

@@ -1,4 +1,5 @@
 import { expect } from "bun:test";
+import { summaryRecipe } from "@stargrep/ai/models";
 import { type RepoId, RepoNodeId } from "@stargrep/github/schemas";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
@@ -226,6 +227,110 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
 
       yield* embedSummarized(db, pending, embedding({ 1: 1 }));
       expect((yield* stored())[0]).toEqual({ id: pending, enrich_failures: 0, retry_at: null });
+    }),
+  );
+
+  test.effect("keeps a repo read while an older recipe's summary is due again, until a new summary replaces it", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const reader = accountId(114);
+      const [current, older] = [repoId(2541), repoId(2542)];
+      yield* db.accounts.upsert(account(reader, { login: login("recipe-reader") }));
+      yield* db.repos.upsertRefs([current, older].map((id) => ref(id)));
+      yield* embedSummarized(db, current, embedding({ 0: 1 }));
+      yield* embedSummarized(db, older, embedding({ 1: 1 }));
+      yield* database.query("update repos set summary_recipe = $1 where id = $2", [summaryRecipe - 1, older]);
+      yield* db.stars.upsert({
+        accountId: reader,
+        stars: [current, older].map((id) => starred(id, "2025-02-01T00:00:00Z")),
+      });
+
+      expect(yield* db.stars.enrichment(login("recipe-reader"))).toEqual({ total: 2, read: 2, failed: 0 });
+      expect(yield* db.repos.pendingEnrichment([current, older])).toEqual([older]);
+      const swept = yield* db.repos.sweepable({ now: at("2026-05-01T00:00:00Z"), limit: 1000 });
+      expect([swept.includes(current), swept.includes(older)]).toEqual([false, true]);
+      expect(yield* db.repos.getMany([older])).toEqual([
+        expect.objectContaining({ pending: true, summary: summaryOf(older), summaryRecipe: summaryRecipe - 1 }),
+      ]);
+
+      yield* embedSummarized(db, older, embedding({ 1: 1 }));
+      expect(yield* db.repos.getMany([older])).toEqual([expect.objectContaining({ pending: false, summaryRecipe })]);
+    }),
+  );
+
+  test.effect(
+    "keeps a read repo's embedding, marked stale, while a new summary of the same README waits for its own",
+    () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const database = yield* TestDatabase.TestDatabase;
+        const reader = accountId(115);
+        const id = repoId(2543);
+        const better = { id, readmeOid: null, summary: "a better summary", keywords: ["better"], kind: "library" };
+        yield* db.accounts.upsert(account(reader, { login: login("stale-reader") }));
+        yield* db.repos.upsertRefs([ref(id)]);
+        yield* db.stars.upsert({ accountId: reader, stars: [starred(id, "2025-02-01T00:00:00Z")] });
+        yield* embedSummarized(db, id, embedding({ 0: 1 }));
+
+        yield* db.repos.saveSummary(better);
+        expect(yield* db.repos.getMany([id])).toEqual([
+          expect.objectContaining({
+            summary: "a better summary",
+            embeddingModel: model,
+            pending: true,
+          }),
+        ]);
+        expect(yield* db.stars.enrichment(login("stale-reader"))).toEqual({ total: 1, read: 1, failed: 0 });
+        expect(yield* db.repos.pendingEnrichment([id])).toEqual([id]);
+
+        yield* db.repos.saveEmbedding({ id, embedding: embedding({ 1: 1 }), summary: better.summary, readmeOid: null });
+        expect(yield* db.repos.getMany([id])).toEqual([expect.objectContaining({ pending: false })]);
+
+        const changed = readme("c");
+        yield* database.query("update repos set readme_oid = $1 where id = $2", [changed, id]);
+        yield* db.repos.saveSummary({ ...better, readmeOid: changed });
+        expect(yield* db.repos.getMany([id])).toEqual([
+          expect.objectContaining({ embeddingModel: null, pending: true }),
+        ]);
+        expect(yield* db.stars.enrichment(login("stale-reader"))).toEqual({ total: 1, read: 0, failed: 0 });
+      }),
+  );
+
+  // A recipe bump needs a migration that rebuilds this index, or the sweep can no longer use it.
+  test.effect("migrates the column default and the partial enrichment index to the current summary recipe", () =>
+    Effect.gen(function* () {
+      const database = yield* TestDatabase.TestDatabase;
+      expect(
+        yield* database.query(
+          "select column_default from information_schema.columns where table_name = 'repos' and column_name = 'summary_recipe'",
+        ),
+      ).toEqual([{ column_default: String(summaryRecipe) }]);
+      const indexes = yield* database.query(
+        "select pg_get_expr(indpred, indrelid) as predicate from pg_index where indexrelid = 'repos_retryable_enrichment_idx'::regclass",
+      );
+      expect(indexes).toEqual([
+        { predicate: expect.stringContaining(`summary_recipe IS DISTINCT FROM ${summaryRecipe}`) },
+      ]);
+    }),
+  );
+
+  // A Worker deployed before recipes keeps running until the new one replaces it, and its queries name no recipe.
+  test.effect("counts a summary saved without naming a recipe as the current recipe", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const id = repoId(2544);
+      yield* db.repos.upsertRefs([ref(id)]);
+      expect(yield* db.repos.pendingEnrichment([id])).toEqual([id]);
+      yield* database.query(
+        `update repos set summary = 'summarized before recipes', summary_readme_oid = readme_oid, embedding_model = $2,
+         embedding = ('[' || array_to_string(array_fill(0.5::float4, array[1024]), ',') || ']')::halfvec
+         where id = $1`,
+        [id, model],
+      );
+      expect(yield* db.repos.pendingEnrichment([id])).toEqual([]);
+      expect(yield* db.repos.getMany([id])).toEqual([expect.objectContaining({ summaryRecipe, pending: false })]);
     }),
   );
 
@@ -679,30 +784,6 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       });
       expect(iso(stored.createdAt)).toBe("2020-01-02T03:04:05.000Z");
       expect(Option.isNone(yield* db.repos.get(repoId(2199)))).toBe(true);
-    }),
-  );
-
-  test.effect("clears the embedding when a new summary lands", () =>
-    Effect.gen(function* () {
-      const db = yield* Db.Db;
-      const id = repoId(2201);
-      yield* db.repos.upsertRefs([ref(id)]);
-      yield* embedSummarized(db, id, embedding({ 0: 1 }));
-      expect(Option.getOrThrow(yield* db.repos.get(id)).embeddingModel).toBe(model);
-
-      yield* db.repos.saveSummary({
-        id,
-        readmeOid: null,
-        summary: "Draws dashboards in the terminal",
-        keywords: ["tui"],
-        kind: "library",
-      });
-      expect(Option.getOrThrow(yield* db.repos.get(id))).toMatchObject({
-        summary: "Draws dashboards in the terminal",
-        keywords: ["tui"],
-        kind: "library",
-        embeddingModel: null,
-      });
     }),
   );
 

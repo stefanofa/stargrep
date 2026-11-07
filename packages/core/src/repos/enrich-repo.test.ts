@@ -345,6 +345,44 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       }),
     );
 
+    it.effect("summarizes a read repo again once its summary's recipe is older than the current one", () =>
+      Effect.gen(function* () {
+        const database = yield* TestDatabase.TestDatabase;
+        remotes.set(290, { description: "Recipe book", readme: { oid: wideOid(290), text: "# Recipe book" } });
+        expect(yield* enrich(290)).toMatchObject({ _tag: "Summarized" });
+        yield* database.query("update repos set summary_recipe = summary_recipe - 1 where id = $1", [290]);
+
+        const calls = prompts.length;
+        expect(yield* enrich(290)).toMatchObject({ _tag: "Summarized" });
+        expect(prompts.length).toBe(calls + 1);
+        expect(yield* enrich(290)).toEqual({ _tag: "Unchanged", id: id(290) });
+      }),
+    );
+
+    it.effect("saves a read repo's new summary at once and keeps the repo read until the new embedding lands", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const database = yield* TestDatabase.TestDatabase;
+        remotes.set(291, { description: "Cookbook", readme: { oid: wideOid(291), text: "# Cookbook" } });
+        yield* enrich(291);
+        yield* database.query("update repos set summary_recipe = summary_recipe - 1 where id = $1", [291]);
+        const calls = prompts.length;
+
+        expect(yield* enrich(291).pipe(using(failingEmbeddings))).toMatchObject({
+          _tag: "Failed",
+          error: { _tag: "AiRequestFailed" },
+        });
+        expect(prompts.length).toBe(calls + 1);
+        expect(yield* db.repos.getMany([id(291)])).toEqual([
+          expect.objectContaining({ embeddingModel, pending: true }),
+        ]);
+
+        expect(yield* enrich(291)).toMatchObject({ _tag: "Embedded" });
+        expect(prompts.length).toBe(calls + 1);
+        expect(yield* db.repos.pendingEnrichment([id(291)])).toEqual([]);
+      }),
+    );
+
     it.effect("embeds a stored summary again without a model call when its embedding is missing", () =>
       Effect.gen(function* () {
         remotes.set(7, { description: "HTTP client", readme: { oid: oid("1"), text: "# Client" } });
@@ -533,7 +571,7 @@ for (const [adapter, database] of adapters) {
           db.repos.saveFacts({ ...row, readmeOid: oid("7") }).pipe(Effect.orDie, Effect.as(vectors(values))),
         );
         expect(yield* enrich(21).pipe(using(moving))).toEqual({ _tag: "Stale", id: id(21) });
-        expect((yield* get(21)).embeddingModel).toBeNull();
+        expect(yield* db.repos.pendingEnrichment([id(21)])).toEqual([id(21)]);
       }),
     );
 

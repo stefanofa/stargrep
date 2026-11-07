@@ -1,3 +1,4 @@
+import { summaryRecipe } from "@stargrep/ai/models";
 import { type SQL, sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
@@ -71,13 +72,21 @@ interface EnrichmentColumns {
   readonly summary: AnyPgColumn;
   readonly summaryReadmeOid: AnyPgColumn;
   readonly readmeOid: AnyPgColumn;
+  readonly summaryRecipe: AnyPgColumn;
   readonly embeddingModel: AnyPgColumn;
+  readonly embeddingStale: AnyPgColumn;
   readonly enrichFailures: AnyPgColumn;
 }
 
 // A repo is read once it has a summary of its current README and an embedding of that summary.
-export const pendingEnrichment = (table: EnrichmentColumns) =>
+export const unreadEnrichment = (table: EnrichmentColumns) =>
   sql<boolean>`(${table.summary} is null or ${table.summaryReadmeOid} is distinct from ${table.readmeOid} or ${table.embeddingModel} is null)`;
+
+// Enrichment is due for an unread repo, for a read one whose summary an older recipe made, and for a read one whose
+// embedding describes the summary its new one replaced. Such a repo stays read, and search keeps using it. The recipe
+// is a literal so the partial index can match this predicate.
+export const pendingEnrichment = (table: EnrichmentColumns) =>
+  sql<boolean>`(${unreadEnrichment(table)} or ${table.embeddingStale} or ${table.summaryRecipe} is distinct from ${sql.raw(String(summaryRecipe))})`;
 
 // The cap is a literal, not a parameter, so Postgres can match a query to the partial index on this predicate.
 export const retryableEnrichment = (table: EnrichmentColumns) =>
@@ -102,9 +111,13 @@ export const repos = pgTable(
     readmeOid: text("readme_oid"),
     summary: text("summary"),
     summaryReadmeOid: text("summary_readme_oid"),
+    // The current recipe by default, so a summary that a Worker without recipes saves during a rollout counts as
+    // current. A recipe bump changes this default in the migration that rebuilds the partial enrichment index.
+    summaryRecipe: integer("summary_recipe").notNull().default(summaryRecipe),
     keywords: jsonb("keywords").notNull().default([]),
     embedding: halfvec("embedding", { dimensions: embeddingDimensions }),
     embeddingModel: text("embedding_model"),
+    embeddingStale: boolean("embedding_stale").notNull().default(false),
     enrichFailures: integer("enrich_failures").notNull().default(0),
     enrichRetryAt: time("enrich_retry_at"),
     iconKey: text("icon_key"),

@@ -1,0 +1,111 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "27102634-4e65-499b-a77b-4df3b2378342",
+  "prevIds": [
+    "78d18c52-4809-4c78-aa0d-73e0d0aea9ee"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "summary_recipe"
+      ],
+      "writes": [
+        "s|col|public.repos.summary_recipe",
+        "n|col|public.repos.summary_recipe",
+        "e|col|public.repos.summary_recipe"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "embedding_stale"
+      ],
+      "writes": [
+        "s|col|public.repos.embedding_stale",
+        "n|col|public.repos.embedding_stale",
+        "e|col|public.repos.embedding_stale"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "recreate_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repos",
+        "repos_retryable_enrichment_idx"
+      ],
+      "writes": [
+        "s|idx|public.repos_retryable_enrichment_idx",
+        "n|idx|public.repos_retryable_enrichment_idx",
+        "e|idx|public.repos_retryable_enrichment_idx",
+        "n|rel|public.repos_retryable_enrichment_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.repos.enrich_retry_at",
+        "n|col|public.repos.id"
+      ],
+      "sharedWrites": [],
+      "sqlHash": "4a1b77c2d7a448fc"
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "summary_recipe",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "1",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "embedding_stale",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "false",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "alter",
+      "key": "indexes\u0000[\"public\",\"repos_retryable_enrichment_idx\"]",
+      "set": {
+        "where": "((\"summary\" is null or \"summary_readme_oid\" is distinct from \"readme_oid\" or \"embedding_model\" is null) or \"embedding_stale\" or \"summary_recipe\" is distinct from 1) and \"enrich_failures\" < 3"
+      }
+    }
+  ]
+}
