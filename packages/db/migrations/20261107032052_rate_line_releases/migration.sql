@@ -1,0 +1,1 @@
+ALTER TABLE "rate_lines" ADD COLUMN "released_ms" double precision DEFAULT 0 NOT NULL;

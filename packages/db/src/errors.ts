@@ -44,6 +44,7 @@ export const Operation = Schema.Literals([
   "rateLines.wait",
   "rateLines.reserve",
   "rateLines.adjust",
+  "rateLines.release",
   "rateLines.prune",
   "usage.increment",
   "usage.get",

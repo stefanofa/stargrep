@@ -404,8 +404,9 @@ const make = Effect.fnUntraced(function* (share: BudgetShare) {
       ),
     );
 
-  // A charge after the claim goes back to its line when the request stops before its sync goes out. A refused charge
-  // stops the request with the decision it gives.
+  // When the request stops before its sync goes out, a charge after the claim gives back what its line still owes for
+  // it when the stop lands, so a late stop never credits work charged after it. A refused charge stops the request
+  // with the decision it gives.
   const charge = (line: RateLine.Line, now: DateTime.Utc, units: number, refused: Admission, stopped: Stopped) =>
     Effect.acquireRelease(
       RateLine.reserve(db.rateLines, line, now, units).pipe(
@@ -416,9 +417,14 @@ const make = Effect.fnUntraced(function* (share: BudgetShare) {
           }),
         ),
       ),
-      (_, exit) =>
+      (reserved, exit) =>
         Effect.flatMap(stopped(exit), (stop) =>
-          stop ? RateLine.bill(db.rateLines, line, now, -units).pipe(Effect.ignore) : Effect.void,
+          stop
+            ? DateTime.now.pipe(
+                Effect.flatMap((at) => db.rateLines.release(reserved, at)),
+                Effect.ignore,
+              )
+            : Effect.void,
         ),
     );
 
@@ -446,7 +452,8 @@ const make = Effect.fnUntraced(function* (share: BudgetShare) {
         : 0;
     if (firstReadOn !== null) yield* charge(firstReadOn, now, work, { _tag: "CallerLimit" }, stopped);
     const startsAt = waitsInLine
-      ? yield* charge(all, now, work, { _tag: "LineFull", cost: lookupCost, wait: all.rate.maxWait }, stopped)
+      ? (yield* charge(all, now, work, { _tag: "LineFull", cost: lookupCost, wait: all.rate.maxWait }, stopped))
+          .startsAt
       : now;
     const reserved = waitsInLine ? work : 0;
     const fullReadDue =

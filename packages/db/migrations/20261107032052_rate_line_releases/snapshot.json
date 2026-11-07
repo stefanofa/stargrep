@@ -1,0 +1,47 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "2a0aadd7-d1cb-4b03-8fa3-e214e31d2301",
+  "prevIds": [
+    "a57abf0a-6c9c-4082-9106-cff375df11ae"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "rate_lines",
+        "released_ms"
+      ],
+      "writes": [
+        "s|col|public.rate_lines.released_ms",
+        "n|col|public.rate_lines.released_ms",
+        "e|col|public.rate_lines.released_ms"
+      ],
+      "reads": [
+        "n|tbl|public.rate_lines",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "rate_lines",
+        "name": "released_ms",
+        "type": "double precision",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "0",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

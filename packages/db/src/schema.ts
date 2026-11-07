@@ -7,6 +7,7 @@ import {
   check,
   customType,
   date,
+  doublePrecision,
   halfvec,
   index,
   integer,
@@ -269,6 +270,10 @@ export const syncRequests = pgTable(
 export const rateLines = pgTable("rate_lines", {
   key: text("key").primaryKey(),
   busyUntil: time("busy_until").notNull(),
+  // Milliseconds given back from the line in all, so a release can tell how far its reservation may have moved.
+  releasedMs: doublePrecision("released_ms").notNull().default(0),
+  // New each time the row is created, so a receipt from a line the prune deleted never releases into its successor.
+  generation: bigint("generation", { mode: "number" }).notNull().generatedAlwaysAsIdentity(),
 });
 
 export const searchEvents = pgTable("search_events", {

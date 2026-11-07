@@ -490,6 +490,126 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests with a failing queue", (it) 
 });
 
 it.layer(memory, { timeout: 30_000 })("SyncRequests stopped after a claim", (it) => {
+  // The first send waits until the test lets the queue refuse it. Every later send goes through.
+  const lateRefusal = Effect.gen(function* () {
+    const sending = yield* Deferred.make<void>();
+    const refuse = yield* Deferred.make<void>();
+    const sent: Array<LoginSyncRequest> = [];
+    let first = true;
+    const layer = Layer.succeed(
+      SyncQueue.SyncQueue,
+      SyncQueue.SyncQueue.of({
+        send: (message) =>
+          Effect.suspend(() => {
+            if (!first) return Effect.sync(() => void sent.push(message));
+            first = false;
+            return Deferred.succeed(sending, undefined).pipe(
+              Effect.andThen(Deferred.await(refuse)),
+              Effect.andThen(Effect.fail(new SyncQueue.SyncQueueFailed({ cause: "refused late" }))),
+            );
+          }),
+      }),
+    );
+    return { sending, refuse, sent, layer };
+  });
+
+  it.effect("gives back nothing the lines have paid out when the queue refuses a sync late", () =>
+    Effect.gen(function* () {
+      const queue = yield* lateRefusal;
+      yield* admitting(
+        () =>
+          Effect.gen(function* () {
+            const refused = yield* Effect.forkChild(Effect.exit(request("octocat")));
+            yield* Deferred.await(queue.sending);
+            yield* TestClock.adjust("121 seconds");
+            expect(yield* request("hubot")).toMatchObject({ state: "queued" });
+            yield* Deferred.succeed(queue.refuse, undefined);
+            yield* Fiber.join(refused);
+            expect(yield* networkUnits()).toBe(5);
+            expect(yield* lineUnits()).toBe(5);
+            expect(yield* row("octocat")).toMatchObject(Option.some({ outcome: "failed" }));
+            expect(queue.sent.map((message) => message.login)).toEqual(["hubot" as Login]);
+          }),
+        { sender: queue.layer },
+      );
+    }),
+  );
+
+  it.effect("gives back only what is left of a sync an earlier refusal moved, and keeps later work's charges", () =>
+    Effect.gen(function* () {
+      const held = new Map<
+        string,
+        { readonly sending: Deferred.Deferred<void>; readonly refuse: Deferred.Deferred<void> }
+      >();
+      for (const login of ["octocat", "hubot"]) {
+        held.set(login, { sending: yield* Deferred.make<void>(), refuse: yield* Deferred.make<void>() });
+      }
+      const hold = (login: string) => {
+        const found = held.get(login);
+        if (found === undefined) throw new Error(`no hold for ${login}`);
+        return found;
+      };
+      const sent: Array<Login> = [];
+      // The queue holds the syncs of octocat and hubot until the test refuses them, and takes every other one.
+      const holding = Layer.succeed(
+        SyncQueue.SyncQueue,
+        SyncQueue.SyncQueue.of({
+          send: (message) =>
+            Effect.suspend(() => {
+              const found = held.get(message.login);
+              if (found === undefined) return Effect.sync(() => void sent.push(message.login));
+              return Deferred.succeed(found.sending, undefined).pipe(
+                Effect.andThen(Deferred.await(found.refuse)),
+                Effect.andThen(Effect.fail(new SyncQueue.SyncQueueFailed({ cause: "refused" }))),
+              );
+            }),
+        }),
+      );
+      yield* admitting(
+        () =>
+          Effect.gen(function* () {
+            const first = yield* Effect.forkChild(Effect.exit(request("octocat")));
+            yield* Deferred.await(hold("octocat").sending);
+            const second = yield* Effect.forkChild(Effect.exit(request("hubot")));
+            yield* Deferred.await(hold("hubot").sending);
+            expect(yield* request("grace")).toMatchObject({ state: "queued" });
+            yield* Deferred.succeed(hold("octocat").refuse, undefined);
+            yield* Fiber.join(first);
+            yield* TestClock.adjust("9 seconds");
+            yield* Deferred.succeed(hold("hubot").refuse, undefined);
+            yield* Fiber.join(second);
+            expect(yield* lineUnits()).toBe(5);
+            expect(yield* networkUnits()).toBe(5 + 1 + 1 - 9 / 24);
+            expect(sent).toEqual(["grace" as Login]);
+          }),
+        { sender: holding },
+      );
+    }),
+  );
+
+  it.effect("keeps a newer claim and its charges when the queue refuses the older request late", () =>
+    Effect.gen(function* () {
+      const queue = yield* lateRefusal;
+      yield* admitting(
+        () =>
+          Effect.gen(function* () {
+            const refused = yield* Effect.forkChild(Effect.exit(request("octocat")));
+            yield* Deferred.await(queue.sending);
+            yield* TestClock.adjust("11 minutes");
+            expect(yield* request("octocat")).toMatchObject({ state: "queued", requestedAt: at(start + 11 * minute) });
+            yield* Deferred.succeed(queue.refuse, undefined);
+            yield* Fiber.join(refused);
+            expect(yield* networkUnits()).toBe(5);
+            expect(yield* lineUnits()).toBe(5);
+            expect(yield* row("octocat")).toMatchObject(
+              Option.some({ outcome: "pending", requestedAt: at(start + 11 * minute) }),
+            );
+          }),
+        { sender: queue.layer },
+      );
+    }),
+  );
+
   const lineDown = new DbQueryFailed({ operation: "rateLines.reserve", reason: "transport", sqlState: null });
 
   // Fails the turn a sync takes in the line all, after its claim and its network's first read.
