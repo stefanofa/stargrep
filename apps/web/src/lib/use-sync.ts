@@ -2,7 +2,8 @@ import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
+import { now } from "./present.ts";
 import { api, type SyncStatus } from "./rpc.ts";
 import { firstImport, readingIncomplete } from "./sync-status.ts";
 import { forgetRefusal, type Refusal, refusalOf, rememberRefusal } from "./trouble.ts";
@@ -45,8 +46,9 @@ const readFailure = (cause: unknown) => new SyncFailed({ cause });
 
 const triggerFailure = (cause: unknown) => new SyncRefused({ refusal: refusalOf(cause) });
 
+// A status the page read carries when it read it. The server's status carries no time.
 export type SyncWatch =
-  | { readonly kind: "watching"; readonly status: SyncStatus | undefined }
+  | { readonly kind: "watching"; readonly status: SyncStatus | undefined; readonly at: number | undefined }
   | { readonly kind: Refusal };
 
 // Rendering a page never starts an import, since crawlers and link previews render pages too. The browser asks once the
@@ -54,9 +56,10 @@ export type SyncWatch =
 // until the visitor tries again, so the page never asks twice on its own.
 export function useSync(login: string, onProgress: () => void, initial?: SyncStatus, refused?: Refusal) {
   const [watch, setWatch] = useState<SyncWatch>(
-    refused === undefined ? { kind: "watching", status: initial } : { kind: refused },
+    refused === undefined ? { kind: "watching", status: initial, at: undefined } : { kind: refused },
   );
   const [round, setRound] = useState(0);
+  const progressed = useEffectEvent(onProgress);
 
   useEffect(() => {
     if (round === 0 && refused !== undefined) return;
@@ -75,8 +78,8 @@ export function useSync(login: string, onProgress: () => void, initial?: SyncSta
       ask.pipe(
         Effect.tap((current) =>
           Effect.sync(() => {
-            setWatch({ kind: "watching", status: current });
-            if (libraryMoved(before, current)) onProgress();
+            setWatch({ kind: "watching", status: current, at: now() });
+            if (libraryMoved(before, current)) progressed();
           }),
         ),
         Effect.catchTags({
@@ -103,7 +106,7 @@ export function useSync(login: string, onProgress: () => void, initial?: SyncSta
     return () => {
       Effect.runFork(Fiber.interrupt(fiber));
     };
-  }, [login, onProgress, round, initial, refused]);
+  }, [login, round, initial, refused]);
 
   return { watch, retry: () => setRound((value) => value + 1) };
 }

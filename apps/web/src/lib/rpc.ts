@@ -2,6 +2,7 @@ import { createORPCClient, ORPCError } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { ContractRouterClient, InferContractRouterOutputs } from "@orpc/contract";
 import type { contract } from "@stargrep/api/contract";
+import type { WireCode } from "@stargrep/api/errors";
 
 type Outputs = InferContractRouterOutputs<typeof contract>;
 export type Viewer = Outputs["viewer"];
@@ -20,6 +21,7 @@ export const api = () => {
   return client;
 };
 
-export const wireCode = (error: unknown): string | undefined => (error instanceof ORPCError ? error.code : undefined);
-
-export const signedOut = (error: unknown) => wireCode(error) === "UNAUTHORIZED";
+// The contract's code for a failure the API answered, or undefined for any other failure, such as a dropped connection.
+// Only an error the contract defines arrives marked as defined.
+export const wireCode = (error: unknown): WireCode | undefined =>
+  error instanceof ORPCError && error.defined ? (error.code as WireCode) : undefined;

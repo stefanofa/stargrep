@@ -8,7 +8,7 @@ export async function* starsPages(client: Pick<Client, "stars">, login: string) 
       if (cursor === undefined && wireCode(error) === "ACCOUNT_NOT_SYNCED") return { repos: [], nextCursor: null };
       throw error;
     });
-    yield page.repos as ReadonlyArray<LibraryRepo>;
+    yield page.repos;
     cursor = page.nextCursor ?? undefined;
   } while (cursor !== undefined);
 }

@@ -1,5 +1,4 @@
 import { createCollection } from "@tanstack/db";
-import { useEffect, useState } from "react";
 import { searchText } from "./keyword.ts";
 import { api, type LibraryRepo } from "./rpc.ts";
 import { starsPages } from "./stars-pages.ts";
@@ -68,6 +67,13 @@ export const makeLibrary = (load: () => Pages, id = "library") => {
     },
   });
 
+  // A live query keeps the error of a failed load after the library recovers, so the library reloads its live queries
+  // when it does.
+  collection.on("status:change", ({ previousStatus, status }) => {
+    if (previousStatus !== "error" || status !== "ready") return;
+    for (const dependent of collection.subscribers) void dependent.collection?.reload();
+  });
+
   // The collection hands its reload in flight to a later caller, and that run may have read the library before the
   // caller's stars landed. So a call during a run gets a new run after it, which every call until then shares.
   let running: Promise<void> | undefined;
@@ -113,18 +119,3 @@ export const getLibrary = (login: string, own: boolean, empty: boolean) => {
   libraries.set(key, library);
   return library;
 };
-
-// A live query that saw the library fail keeps the error after the library reloads. A view keyed on this count
-// remounts with new live queries once the library recovers.
-export function useRecoveries(library: Library | undefined) {
-  const collection = library?.collection;
-  const [recoveries, setRecoveries] = useState(0);
-  useEffect(
-    () =>
-      collection?.on("status:change", ({ previousStatus, status }) => {
-        if (previousStatus === "error" && status === "ready") setRecoveries((count) => count + 1);
-      }),
-    [collection],
-  );
-  return recoveries;
-}

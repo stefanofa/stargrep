@@ -1,20 +1,26 @@
+import type { WireCode } from "@stargrep/api/errors";
 import { wireCode } from "./rpc.ts";
 
-// What triggerSync refuses with, and what the page then shows instead of progress.
-const refusals = { LOGIN_NOT_FOUND: "missing", SYNC_BUSY: "busy", TOO_MANY_REQUESTS: "limited" } as const;
+export type Refusal = "missing" | "busy" | "limited" | "unavailable";
 
-// Any other failure to start a sync, such as GitHub being out of reach, is shown as unavailable and offered again.
-export type Refusal = (typeof refusals)[keyof typeof refusals] | "unavailable";
+// What triggerSync refuses with, and what the page then shows instead of progress. Any other failure to start a sync,
+// such as GitHub being out of reach, is shown as unavailable and offered again.
+const refusals: Partial<Record<WireCode, Refusal>> = {
+  LOGIN_NOT_FOUND: "missing",
+  SYNC_BUSY: "busy",
+  TOO_MANY_REQUESTS: "limited",
+};
+
+const allRefusals: ReadonlyArray<Refusal> = ["missing", "busy", "limited", "unavailable"];
 
 // Everything that keeps a stars page from showing progress or stars: a refused import, or a library that didn't load.
 export type Trouble = Refusal | "load-limited" | "load-failed";
 
-const isRefusal = (value: string): value is Refusal =>
-  value === "unavailable" || Object.values(refusals).some((refusal) => refusal === value);
+const isRefusal = (value: string): value is Refusal => allRefusals.some((refusal) => refusal === value);
 
 export const refusalOf = (cause: unknown): Refusal => {
   const code = wireCode(cause);
-  return code !== undefined && code in refusals ? refusals[code as keyof typeof refusals] : "unavailable";
+  return (code === undefined ? undefined : refusals[code]) ?? "unavailable";
 };
 
 export const libraryTrouble = (failure: unknown): Trouble =>

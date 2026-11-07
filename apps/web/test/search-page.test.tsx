@@ -1,6 +1,7 @@
 import "./register.ts";
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { ORPCError } from "@orpc/client";
+import { createORPCErrorFromJson } from "@orpc/client";
+import type { WireCode } from "@stargrep/api/errors";
 import {
   type AnyRoute,
   createMemoryHistory,
@@ -32,6 +33,9 @@ interface Server {
 
 let server: Server;
 
+// The API marks every error its contract defines.
+const answered = (code: WireCode) => createORPCErrorFromJson({ defined: true, code, message: code, data: undefined });
+
 const page = () => within(document.body);
 
 const entrances = () => {
@@ -60,7 +64,7 @@ const api = () => ({
   },
   triggerSync: async ({ login }: { login: string }) => {
     const refusal = server.refusals[login];
-    if (refusal !== undefined) throw new ORPCError(refusal);
+    if (refusal !== undefined) throw answered(refusal);
     return server.status;
   },
   stars: async ({ login }: { login: string }) => ({ login, repos: server.repos, nextCursor: null }),
@@ -81,7 +85,7 @@ let library: real.Library;
 configure({ asyncUtilTimeout: 4000 });
 
 const rpc = await import("../src/lib/rpc.ts");
-mock.module("../src/lib/rpc.ts", () => ({ ...rpc, api, signedOut: () => false }));
+mock.module("../src/lib/rpc.ts", () => ({ ...rpc, api }));
 mock.module("../src/lib/library-collection.ts", () => ({ ...real, getLibrary: () => library }));
 
 const { Route: HomeRoute } = await import("../src/routes/index.tsx");
@@ -192,6 +196,7 @@ const open = async (path: string, label: string | RegExp = "Search your stars", 
   render(<RouterProvider router={router} />);
   await page().findByRole("searchbox", { name: label });
   if (settle) await waitFor(() => expect(strip()).not.toContain("loading"));
+  return router;
 };
 
 const strip = () => document.querySelector("[role=status]")?.closest("p")?.textContent ?? "";
@@ -461,7 +466,7 @@ describe("the search page in each state", () => {
     const user = userEvent.setup();
     let failures = 1;
     server.search = () => {
-      if (failures-- > 0) throw new ORPCError("SERVICE_UNAVAILABLE");
+      if (failures-- > 0) throw answered("SERVICE_UNAVAILABLE");
       return [hit(server.repos[4] as Repo)];
     };
     await open("/?q=terminal");
@@ -477,7 +482,7 @@ describe("the search page in each state", () => {
 
   test("a network that searched too often is asked for a breather, with a way to search again", async () => {
     server.search = () => {
-      throw new ORPCError("TOO_MANY_REQUESTS");
+      throw answered("TOO_MANY_REQUESTS");
     };
     await open("/?q=record%20terminal%20sessions%20as%20gifs");
     await waitFor(() =>
@@ -490,7 +495,7 @@ describe("the search page in each state", () => {
 
   test("a breather beside keyword matches is announced, and phones show it with the count and a retry", async () => {
     server.search = () => {
-      throw new ORPCError("TOO_MANY_REQUESTS");
+      throw answered("TOO_MANY_REQUESTS");
     };
     await open("/?q=terminal");
     await waitFor(() =>
@@ -686,7 +691,7 @@ describe("the search page in each state", () => {
   });
 
   test("a network that read too many stars is told to wait a minute", async () => {
-    library = real.makeLibrary(() => real.onePage(Promise.reject(new ORPCError("TOO_MANY_REQUESTS"))));
+    library = real.makeLibrary(() => real.onePage(Promise.reject(answered("TOO_MANY_REQUESTS"))));
     await open("/", "Search your stars", false);
     await waitFor(() =>
       expect(page().getByRole("heading", { name: "lots of requests from your network" })).toBeTruthy(),

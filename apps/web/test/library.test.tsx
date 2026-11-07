@@ -2,7 +2,7 @@ import "./register.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { useLiveQuery } from "@tanstack/react-db";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
-import { type Library, makeLibrary, onePage, useRecoveries } from "../src/lib/library-collection.ts";
+import { type Library, makeLibrary, onePage } from "../src/lib/library-collection.ts";
 import type { LibraryRepo } from "../src/lib/rpc.ts";
 
 afterEach(cleanup);
@@ -57,13 +57,9 @@ describe("the stars view after a failed library load", () => {
     return <p>{isReady ? `${data.length} stars` : "loading"}</p>;
   }
 
-  function Page({ library }: { library: Library }) {
-    return <Stars key={useRecoveries(library)} library={library} />;
-  }
-
   test("shows the library once Try again loads it", async () => {
     const library = makeLibrary(server([repo(1)], 1).load);
-    const { container, getByRole } = render(<Page library={library} />);
+    const { container, getByRole } = render(<Stars library={library} />);
     await settle();
     expect(container.textContent).toBe("Try again");
 
@@ -74,7 +70,7 @@ describe("the stars view after a failed library load", () => {
 
   test("shows the library once any reload brings it back", async () => {
     const library = makeLibrary(server([repo(1), repo(2)], 1).load);
-    const { container } = render(<Page library={library} />);
+    const { container } = render(<Stars library={library} />);
     await settle();
     expect(container.textContent).toBe("Try again");
 
