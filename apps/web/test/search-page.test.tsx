@@ -24,7 +24,7 @@ interface Server {
   signedIn: boolean;
   repos: Array<Repo>;
   status: SyncStatus;
-  search: (q: string) => Array<SearchResult>;
+  search: (q: string) => Array<SearchResult> | Promise<Array<SearchResult>>;
   searches: Array<string>;
   refusals: Record<string, "LOGIN_NOT_FOUND" | "SYNC_BUSY" | "TOO_MANY_REQUESTS" | "SERVICE_UNAVAILABLE">;
   calls: { library: number; syncStatus: number };
@@ -72,7 +72,7 @@ const api = () => ({
   }),
   search: async ({ q }: { q: string }) => {
     server.searches.push(q);
-    return { results: server.search(q) };
+    return { results: await server.search(q) };
   },
 });
 
@@ -427,6 +427,55 @@ describe("the search page in each state", () => {
     const flinches = poses.filter((pose, index) => pose === "surprised" && poses[index - 1] !== "surprised");
     expect(flinches.length).toBe(1);
   }, 10_000);
+
+  test("a new query says searching, not the last answer's count, until its own answer lands", async () => {
+    const user = userEvent.setup();
+    let land: (results: Array<SearchResult>) => void = () => {};
+    server.search = (q) =>
+      q === "terminal"
+        ? [hit(server.repos[4] as Repo)]
+        : new Promise((resolve) => {
+            land = resolve;
+          });
+    await open("/?q=terminal");
+    await waitFor(() => expect(strip()).toContain("found 3 of 6"));
+    const box = page().getByRole("searchbox");
+    await user.clear(box);
+    await user.type(box, "qzxvbnm");
+    await waitFor(() => expect(server.searches.at(-1)).toBe("qzxvbnm"));
+    expect(strip()).toContain("searching");
+    expect(page().getByRole("link", { name: "tui-rs" })).toBeTruthy();
+    await act(async () => land([]));
+    await waitFor(() => expect(strip()).toContain("nothing found"));
+  });
+
+  test("a meaning search that failed beside keyword matches says so, and try again asks again", async () => {
+    const user = userEvent.setup();
+    let failures = 1;
+    server.search = () => {
+      if (failures-- > 0) throw new ORPCError("SERVICE_UNAVAILABLE");
+      return [hit(server.repos[4] as Repo)];
+    };
+    await open("/?q=terminal");
+    await waitFor(() => expect(strip()).toContain("found 2 · meaning search didn't answer"));
+    await waitFor(() => expect(mark()).toBe("scared"));
+    await user.click(within(tile()).getByRole("button", { name: "try again" }));
+    await waitFor(() => expect(strip()).toContain("found 3 of 6"));
+    expect(server.searches).toEqual(["terminal", "terminal"]);
+  });
+
+  test("a network that searched too often is asked for a breather, with a way to search again", async () => {
+    server.search = () => {
+      throw new ORPCError("TOO_MANY_REQUESTS");
+    };
+    await open("/?q=record%20terminal%20sessions%20as%20gifs");
+    await waitFor(() =>
+      expect(page().getByRole("heading", { name: "lots of searches from your network" })).toBeTruthy(),
+    );
+    expect(strip()).toContain("taking a breather");
+    expect(within(tile()).getByRole("button", { name: "try again" })).toBeTruthy();
+    await waitFor(() => expect(mark()).toBe("unsure"));
+  });
 
   test("results once everything is read: one list, a plain count, no rail", async () => {
     server.search = () => [hit(server.repos[4] as Repo)];

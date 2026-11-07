@@ -84,14 +84,17 @@ export const stageOf = ({
   return { name: "ready", total: entries.length, failed: enrichment?.failed ?? 0, lastSync };
 };
 
+// Why the search by meaning gave no answer: it failed, or the network asked too often.
+type Missed = "failed" | "limited";
+
 type Answer =
   | { readonly kind: "browsing" }
   | { readonly kind: "searching" }
-  | { readonly kind: "found"; readonly count: number }
+  | { readonly kind: "found"; readonly count: number; readonly missed: Missed | undefined }
   | { readonly kind: "none" }
-  | { readonly kind: "failed" };
+  | { readonly kind: "failed"; readonly missed: Missed };
 
-export type Retry = "sync" | "library";
+export type Retry = "sync" | "library" | "search";
 
 export interface Status {
   readonly icon: StatusIcon;
@@ -134,9 +137,9 @@ export interface SearchView {
 export interface Search {
   readonly terms: ReadonlyArray<string>;
   readonly words: ReadonlyArray<Result>;
+  // While the search by meaning is pending, these are an earlier query's results.
   readonly meaning: ReadonlyArray<Result>;
-  readonly pending: boolean;
-  readonly failed: boolean;
+  readonly semantic: "none" | "pending" | "answered" | Missed;
   // Whether any star matches all of these words, so a suggestion never searches for words that find nothing.
   readonly hasMatches: (terms: ReadonlyArray<string>) => boolean;
 }
@@ -150,12 +153,22 @@ type Underway = Extract<Stage, { name: "importing" | "reading" }>;
 
 const partial = (stage: Stage): stage is Underway => stage.name === "importing" || stage.name === "reading";
 
-const answerOf = ({ terms, words, meaning, pending, failed }: Search): Answer => {
+const answerOf = ({ terms, words, meaning, semantic }: Search): Answer => {
+  if (terms.length === 0 && semantic !== "pending" && meaning.length === 0) return { kind: "browsing" };
+  // An earlier query's results stay on screen, but they don't answer this one.
+  if (semantic === "pending" && meaning.length > 0) return { kind: "searching" };
+  if (semantic === "failed" || semantic === "limited")
+    return words.length > 0
+      ? { kind: "found", count: words.length, missed: semantic }
+      : { kind: "failed", missed: semantic };
   const found = words.length + meaning.length;
-  if (terms.length === 0 && !pending && meaning.length === 0) return { kind: "browsing" };
-  if (found > 0) return { kind: "found", count: found };
-  if (pending) return { kind: "searching" };
-  return failed ? { kind: "failed" } : { kind: "none" };
+  if (found > 0) return { kind: "found", count: found, missed: undefined };
+  return semantic === "pending" ? { kind: "searching" } : { kind: "none" };
+};
+
+const missedDetail: Record<Missed, string> = {
+  failed: "meaning search didn't answer",
+  limited: "meaning search is taking a breather",
 };
 
 const unreadDetail = (stage: Stage) => {
@@ -253,6 +266,13 @@ const answered = (stage: Stage, answer: Exclude<Answer, { kind: "browsing" }>, w
     case "searching":
       return { icon: "busy", label: "searching", ...rest };
     case "found":
+      if (answer.missed !== undefined)
+        return {
+          icon: answer.missed === "limited" ? "paused" : "failed",
+          label: `found ${n(answer.count)}`,
+          detail: missedDetail[answer.missed],
+          retry: "search",
+        };
       return partial(stage)
         ? { icon: "busy", label: `found ${n(answer.count)} so far`, ...rest }
         : whose === undefined
@@ -274,12 +294,15 @@ const answered = (stage: Stage, answer: Exclude<Answer, { kind: "browsing" }>, w
             : `all ${stars(stage.total)} read`,
       };
     case "failed":
-      return { icon: "failed", label: "search didn't answer", detail: "try again in a moment" };
+      return answer.missed === "limited"
+        ? { ...breather, retry: "search" }
+        : { icon: "failed", label: "search didn't answer", retry: "search" };
   }
 };
 
 const poseOf = (stage: Stage, answer: Answer): PipPose => {
-  if (answer.kind === "failed") return "scared";
+  const missed = answer.kind === "failed" || answer.kind === "found" ? answer.missed : undefined;
+  if (missed !== undefined) return missed === "limited" ? "unsure" : "scared";
   if (answer.kind === "browsing" && stage.name === "ready" && stage.lastSync !== "done") return "scared";
   if (answer.kind === "searching") return "thinking";
   if (answer.kind === "none") return partial(stage) ? "unsure" : "sad";
@@ -289,9 +312,9 @@ const poseOf = (stage: Stage, answer: Answer): PipPose => {
   return "idle";
 };
 
-const groupsOf = (stage: Stage, { words, meaning, pending }: Search): ReadonlyArray<ResultGroup> => {
+const groupsOf = (stage: Stage, { words, meaning, semantic }: Search): ReadonlyArray<ResultGroup> => {
   const found = words.length + meaning.length;
-  const placeholders = pending ? (found === 0 ? placeholdersAlone : placeholdersAfter) : 0;
+  const placeholders = semantic === "pending" ? (found === 0 ? placeholdersAlone : placeholdersAfter) : 0;
   if (!partial(stage)) return [{ key: "all", results: [...words, ...meaning], pending: placeholders }];
   const wordsHeading = {
     label: "matching words",
@@ -355,9 +378,9 @@ const nothingCopy = (stage: Exclude<Stage, Underway>, rephrased: boolean, whose:
   };
 };
 
-const failedCopy: EmptyCopy = {
-  heading: "stargrep couldn't search that",
-  body: "the search didn't answer. try again in a moment.",
+const failedCopy: Record<Missed, EmptyCopy> = {
+  failed: { heading: "stargrep couldn't search that", body: "the search didn't answer. try again in a moment." },
+  limited: { heading: "lots of searches from your network", body: "give it a minute, then try again." },
 };
 
 const arrivingOf = (stage: Stage): Arriving | undefined =>
@@ -378,7 +401,7 @@ const bodyOf = (
     case "found":
       return { kind: "results", groups: groupsOf(stage, search) };
     case "failed":
-      return { kind: "failed", copy: failedCopy };
+      return { kind: "failed", copy: failedCopy[answer.missed] };
     case "none": {
       if (partial(stage))
         return {

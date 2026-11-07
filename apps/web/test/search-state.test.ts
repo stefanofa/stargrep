@@ -44,8 +44,7 @@ const search = (extra: Partial<Search> = {}): Search => ({
   terms: [],
   words: [],
   meaning: [],
-  pending: false,
-  failed: false,
+  semantic: "none",
   hasMatches: () => true,
   ...extra,
 });
@@ -206,7 +205,7 @@ describe("browsing", () => {
 
 describe("searching", () => {
   test("before any answer, placeholders hold the meaning group", () => {
-    const state = view(reading, { terms: ["tui"], pending: true });
+    const state = view(reading, { terms: ["tui"], semantic: "pending" });
     expect(state.status).toEqual({
       icon: "busy",
       label: "searching",
@@ -249,7 +248,12 @@ describe("searching", () => {
   });
 
   test("results once everything is read are one list with a plain count", () => {
-    const state = view(ready, { terms: ["tui"], words: results("w", 2), meaning: results("m", 4), pending: true });
+    const state = view(ready, {
+      terms: ["tui"],
+      words: results("w", 2),
+      meaning: results("m", 4),
+      semantic: "answered",
+    });
     expect(state.status).toEqual({
       icon: "found",
       label: "found 6",
@@ -261,7 +265,7 @@ describe("searching", () => {
     expect(state.pose).toBe("idle");
     expect(state.body).toEqual({
       kind: "results",
-      groups: [{ key: "all", results: [...results("w", 2), ...results("m", 4)], pending: 2 }],
+      groups: [{ key: "all", results: [...results("w", 2), ...results("m", 4)], pending: 0 }],
     });
   });
 
@@ -342,13 +346,57 @@ describe("searching", () => {
     expect(state.body.kind === "empty" && state.body.copy.body).toStartWith("i've read every one i could");
   });
 
-  test("a search that failed with no keyword hits says so", () => {
-    const state = view(ready, { terms: ["tui"], failed: true });
+  test("a search that failed with no keyword hits says so and offers to search again", () => {
+    const state = view(ready, { terms: ["tui"], semantic: "failed" });
+    expect(state.status).toEqual({ icon: "failed", label: "search didn't answer", retry: "search", instant: true });
     expect(state.body).toEqual({
       kind: "failed",
       copy: { heading: "stargrep couldn't search that", body: "the search didn't answer. try again in a moment." },
     });
     expect(state.pose).toBe("scared");
+  });
+
+  test("an earlier query's results stay on screen, and the status says the new query is still searching", () => {
+    const state = view(ready, { terms: ["qzxvbnm"], meaning: results("m", 20), semantic: "pending" });
+    expect(state.status).toEqual({ icon: "busy", label: "searching", instant: true });
+    expect(state.pose).toBe("thinking");
+    expect(state.body).toEqual({ kind: "results", groups: [{ key: "all", results: results("m", 20), pending: 2 }] });
+  });
+
+  test("keyword matches for the new query count while its meaning search is pending", () => {
+    const state = view(ready, { terms: ["tui"], words: results("w", 2), semantic: "pending" });
+    expect(state.status).toMatchObject({ icon: "found", label: "found 2" });
+  });
+
+  test("a meaning search that failed beside keyword matches keeps them, says so, and offers to search again", () => {
+    const state = view(reading, { terms: ["tui"], words: results("w", 2), semantic: "failed" });
+    expect(state.status).toEqual({
+      icon: "failed",
+      label: "found 2",
+      detail: "meaning search didn't answer",
+      retry: "search",
+      instant: true,
+    });
+    expect(state.pose).toBe("scared");
+    expect(state.body.kind === "results" && state.body.groups.flatMap((group) => group.results)).toEqual(
+      results("w", 2),
+    );
+  });
+
+  test("a network that searched too often is asked for a breather, not told the search broke", () => {
+    const alone = view(ready, { terms: ["tui"], semantic: "limited" });
+    expect(alone.status).toEqual({ icon: "paused", label: "taking a breather", retry: "search", instant: true });
+    expect(alone.body).toEqual({
+      kind: "failed",
+      copy: { heading: "lots of searches from your network", body: "give it a minute, then try again." },
+    });
+    expect(alone.pose).toBe("unsure");
+    const beside = view(ready, { terms: ["tui"], words: results("w", 1), semantic: "limited" });
+    expect(beside.status).toMatchObject({
+      icon: "paused",
+      label: "found 1",
+      detail: "meaning search is taking a breather",
+    });
   });
 });
 

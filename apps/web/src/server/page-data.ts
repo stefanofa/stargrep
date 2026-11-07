@@ -64,7 +64,7 @@ const firstAnswer = async (client: Client, login: string, query: string, sort: A
     matched: matchesEvery(entries, keywordTerms(query)),
     find: (id) => byId.get(id),
     sync,
-    semantic: { results: hits, pending: false, failed: false },
+    semantic: { kind: "answered", results: hits },
     sort: sort ?? "best",
     at,
     timeLeft: undefined,
