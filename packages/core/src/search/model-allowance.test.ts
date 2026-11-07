@@ -14,6 +14,7 @@ import * as Metric from "effect/Metric";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import * as RateLine from "../limits/rate-line.ts";
 import * as ModelAllowance from "./model-allowance.ts";
 import * as QueryPlan from "./query-plan.ts";
 import * as QueryPlanner from "./query-planner.ts";
@@ -170,7 +171,7 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
       yield* clearLines;
       yield* takeAll("network-d", 35);
       const now = yield* DateTime.now;
-      const busy = yield* Db.Db.use((db) => db.rateLines.wait("model/all", now, Duration.zero));
+      const busy = yield* Db.Db.use((db) => db.rateLines.wait(RateLine.modelAll.key, now, Duration.zero));
       expect(busy).toEqual(Duration.seconds(18));
     }),
   );

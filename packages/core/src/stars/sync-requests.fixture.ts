@@ -14,6 +14,7 @@ import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import type * as Result from "effect/Result";
 import * as TestClock from "effect/testing/TestClock";
+import * as RateLine from "../limits/rate-line.ts";
 import * as OwnerLookup from "./owner-lookup.ts";
 import type { LoginSyncRequest } from "./star-sync.ts";
 import * as SyncQueue from "./sync-queue.ts";
@@ -23,10 +24,13 @@ export const embeddingModel = "test/model" as EmbeddingModelId;
 export const memory = TestDatabase.layerMemory({ embeddingModel });
 export const start = Date.parse("2026-11-04T12:00:00Z");
 export const minute = 60_000;
-export const unitMillis = 1_800;
+export const share = BudgetShare.make(0.5);
+const all = RateLine.githubAll(share);
+const network = (caller: string) => RateLine.githubNetwork(Db.CallerKey.make(caller));
+export const unitMillis = Duration.toMillis(RateLine.durationOf(all.rate, 1));
 
 export const at = (millis: number) => DateTime.makeUnsafe(millis);
-export const units = (count: number) => Duration.millis(count * unitMillis);
+export const units = (count: number) => RateLine.durationOf(all.rate, count);
 
 export const user = (login: string, id: number, starredTotal: number): Owner => ({
   account: {
@@ -63,8 +67,6 @@ export interface Fakes {
   readonly lookups: ReadonlyArray<Login>;
   readonly owners: Map<string, Owner>;
 }
-
-export const share = BudgetShare.make(0.5);
 
 interface Options {
   readonly hooks?: Hooks;
@@ -198,28 +200,23 @@ export const claimInFlight = (login: string) =>
 export const markFailed = (login: string, requestedAt: number) =>
   Db.Db.use((db) => db.syncRequests.settle(login as Login, at(requestedAt), "failed"));
 
-// How many units a line holds past now.
-export const lineUnits = (line: Db.LineKey = "all") =>
+// How many units a line holds past now, in that line's own units.
+const unitsOn = (line: RateLine.Line) =>
   Effect.flatMap(DateTime.now, (now) =>
-    Db.Db.use((db) => db.rateLines.wait(line, now, Duration.zero)).pipe(
-      Effect.map((wait) => Duration.toMillis(wait) / unitMillis),
+    Db.Db.use((db) => db.rateLines.wait(line.key, now, Duration.zero)).pipe(
+      Effect.map((wait) => Duration.toMillis(wait) / Duration.toMillis(RateLine.durationOf(line.rate, 1))),
     ),
   );
 
-// A network's line pays out 150 units an hour.
-const networkUnitMillis = 24_000;
-const networkLine = (caller: string) => Db.callerLine(Db.CallerKey.make(caller));
+export const lineUnits = () => unitsOn(all);
 
-export const networkUnits = (caller = "caller-a") =>
-  Effect.map(lineUnits(networkLine(caller)), (count) => (count * unitMillis) / networkUnitMillis);
+export const networkUnits = (caller = "caller-a") => unitsOn(network(caller));
 
 export const fillNetwork = (count: number, caller = "caller-a") =>
-  Effect.flatMap(DateTime.now, (now) =>
-    Db.Db.use((db) => db.rateLines.adjust(networkLine(caller), now, Duration.millis(count * networkUnitMillis))),
-  );
+  Effect.flatMap(DateTime.now, (now) => Db.Db.use((db) => RateLine.bill(db.rateLines, network(caller), now, count)));
 
 export const reserveUnits = (db: Db.Db["Service"], count: number) =>
-  Effect.flatMap(DateTime.now, (now) => db.rateLines.adjust("all", now, units(count))).pipe(Effect.orDie);
+  Effect.flatMap(DateTime.now, (now) => RateLine.bill(db.rateLines, all, now, count)).pipe(Effect.orDie);
 
 export const fill = (count: number) => Db.Db.use((db) => reserveUnits(db, count));
 

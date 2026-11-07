@@ -264,8 +264,8 @@ export const syncRequests = pgTable(
   (table) => [index("sync_requests_requested_at_idx").on(table.requestedAt)],
 );
 
-// One row per rate line, such as the GitHub requests every signed-out sync reserves and each network's share of them.
-// A line is clear once the clock passes busy_until, the same as a line with no row.
+// One row per rate line that core meters. A line is clear once the clock passes busy_until, the same as a line with no
+// row.
 export const rateLines = pgTable("rate_lines", {
   key: text("key").primaryKey(),
   busyUntil: time("busy_until").notNull(),

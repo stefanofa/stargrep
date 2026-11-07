@@ -13,17 +13,17 @@ const units = (count: number) => Duration.times(unit, count);
 const tolerance = units(200);
 const maxWait = Duration.hours(2);
 const start = at("2026-11-06T09:00:00Z");
+const all = Db.LineKey.make("all");
 const later = (count: number) => DateTime.addDuration(start, units(count));
 
 const reserve = (time: DateTime.Utc, cost: number, force = false) =>
-  Db.Db.use((db) => db.rateLines.reserve({ line: "all", at: time, cost: units(cost), tolerance, maxWait, force }));
+  Db.Db.use((db) => db.rateLines.reserve({ line: all, at: time, cost: units(cost), tolerance, maxWait, force }));
 
-const busyFor = (time: DateTime.Utc, line: Db.LineKey = "all") =>
-  Db.Db.use((db) => db.rateLines.wait(line, time, Duration.zero));
+const busyFor = (time: DateTime.Utc, line = all) => Db.Db.use((db) => db.rateLines.wait(line, time, Duration.zero));
 
 // A caller's line: 4 new logins at once, then one every 15 minutes, and never a wait.
 const quarter = Duration.minutes(15);
-const caller = (name: string) => Db.callerLine(Db.CallerKey.make(name));
+const caller = (name: string) => Db.LineKey.make(`caller/${name}`);
 const reserveNew = (name: string, time: DateTime.Utc) =>
   Db.Db.use((db) =>
     db.rateLines.reserve({
@@ -36,7 +36,7 @@ const reserveNew = (name: string, time: DateTime.Utc) =>
     }),
   );
 
-const adjust = (time: DateTime.Utc, count: number) => Db.Db.use((db) => db.rateLines.adjust("all", time, units(count)));
+const adjust = (time: DateTime.Utc, count: number) => Db.Db.use((db) => db.rateLines.adjust(all, time, units(count)));
 
 const query = (text: string) => TestDatabase.TestDatabase.use((database) => database.query(text));
 
@@ -50,7 +50,7 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | Test
   test.effect("starts a reservation on an empty line now and moves the line by its cost", () =>
     Effect.gen(function* () {
       yield* clear;
-      expect(yield* Db.Db.use((db) => db.rateLines.wait("all", start, tolerance))).toEqual(Duration.zero);
+      expect(yield* Db.Db.use((db) => db.rateLines.wait(all, start, tolerance))).toEqual(Duration.zero);
       expect(yield* reserve(start, 27)).toEqual(Option.some(start));
       expect(yield* busyFor(start)).toEqual(units(27));
     }),
@@ -61,7 +61,7 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | Test
       yield* clear;
       for (let index = 0; index < 8; index++) expect(yield* reserve(start, 27)).toEqual(Option.some(start));
       expect(yield* reserve(start, 27)).toEqual(Option.some(later(8 * 27 - 200)));
-      expect(yield* Db.Db.use((db) => db.rateLines.wait("all", start, tolerance))).toEqual(units(9 * 27 - 200));
+      expect(yield* Db.Db.use((db) => db.rateLines.wait(all, start, tolerance))).toEqual(units(9 * 27 - 200));
     }),
   );
 
@@ -91,7 +91,7 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | Test
       yield* clear;
       yield* reserve(start, 4_000);
       const after = later(4_001);
-      expect(yield* Db.Db.use((db) => db.rateLines.wait("all", after, tolerance))).toEqual(Duration.zero);
+      expect(yield* Db.Db.use((db) => db.rateLines.wait(all, after, tolerance))).toEqual(Duration.zero);
       expect(yield* reserve(after, 27)).toEqual(Option.some(after));
       expect(yield* busyFor(after)).toEqual(units(27));
     }),

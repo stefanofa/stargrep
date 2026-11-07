@@ -1,5 +1,6 @@
 import { StarSync, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
+import type { BudgetShare } from "@stargrep/github/schemas";
 import * as TokenGate from "@stargrep/github/token-gate";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
@@ -7,7 +8,6 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import * as Struct from "effect/Struct";
 import { UserGates } from "../user-gate.ts";
 import * as Settle from "./settle.ts";
 
@@ -21,14 +21,10 @@ const markFailed = Effect.fn("SyncStarsConsumer.markFailed")(function* (body: Bo
   yield* db.syncRequests.settle(body.login, body.requestedAt, "failed");
 });
 
-// A message's first delivery spends the units admission reserved for it. A later delivery, a deferred message sent
-// again, and a message that reserved nothing pay for every request they make.
-const reservedFor = ({ body, attempts }: Settle.Delivery<Body>) => (attempts > 1 ? 0 : (body.reserved ?? 0));
-
-// The sync already ran, so a reconciliation that fails is logged and the message still settles. A retry would read
+// The sync already ran, so a bill that fails to write is logged and the message still settles. A retry would read
 // GitHub again.
-const reconcile = (line: SyncRequests.Rate, delivery: Settle.Delivery<Body>, counted: number) =>
-  SyncRequests.reconcileSync(line, reservedFor(delivery), counted).pipe(
+const bill = (share: BudgetShare, delivery: Settle.Delivery<Body>, counted: number) =>
+  SyncRequests.billDelivery(share, delivery, counted).pipe(
     Effect.catchTag("DbQueryFailed", (error) =>
       Effect.logWarning("Could not reconcile a sync with the line", { reason: error.reason }),
     ),
@@ -38,7 +34,7 @@ const reconcile = (line: SyncRequests.Rate, delivery: Settle.Delivery<Body>, cou
 // billed for what the sync spent there, failed and retried requests included. A sync a signed-in user started runs on
 // their token first. The messages of a batch run at once, so such a sync never waits behind the server's syncs.
 export const pipeline = <R>(
-  line: SyncRequests.Rate,
+  share: BudgetShare,
   syncs: Layer.Layer<StarSync.StarSync, never, TokenGate.TokenGate | R>,
 ) =>
   Settle.pipeline({
@@ -58,7 +54,7 @@ export const pipeline = <R>(
               Effect.provide(counted),
               Effect.result,
             );
-            yield* reconcile(line, delivery, yield* Ref.get(sent));
+            yield* bill(share, delivery, yield* Ref.get(sent));
             return Result.map(synced, () => Settle.Settlement.Done());
           }),
         { concurrency: "unbounded" },
@@ -66,6 +62,5 @@ export const pipeline = <R>(
     }),
     describe: (body) => ({ login: body.login, mode: body.mode }),
     onDeadLetter: markFailed,
-    resend: (body) =>
-      body.reserved === undefined ? Option.none() : Option.some(encodeBody(Struct.omit(body, ["reserved"]))),
+    resend: (body) => Option.map(SyncRequests.resent(body), encodeBody),
   });

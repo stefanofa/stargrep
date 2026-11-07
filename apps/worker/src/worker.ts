@@ -1,7 +1,6 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import { tokenConfig } from "@stargrep/auth/config";
 import * as Tokens from "@stargrep/auth/tokens";
-import { SyncRequests } from "@stargrep/core/stars";
 import * as GitHub from "@stargrep/github/github";
 import { budgetShare, budgetShareName, stageBudgetShare } from "@stargrep/runtime/budget-share";
 import { serverTokenKind, serverTokenName } from "@stargrep/runtime/server-token";
@@ -71,7 +70,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
       ai: yield* Effect.orDie(Layers.aiModels),
       adopted: yield* Ref.make(false),
     });
-    yield* Queues.consumeAll(runtime, SyncRequests.allRate(yield* Effect.orDie(budgetShare)));
+    yield* Queues.consumeAll(runtime, yield* Effect.orDie(budgetShare));
     yield* Crons.scheduleAll(runtime);
     return {
       fetch: Effect.gen(function* () {
