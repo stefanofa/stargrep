@@ -92,7 +92,7 @@ export const sending = (
         () => gate.execute("account", HttpClientRequest.get("https://api.github.com/users/octocat")),
         { discard: true },
       ).pipe(Effect.orDie, Effect.andThen(outcome));
-      return StarSync.StarSync.of({ sync: () => run, syncLogin: () => run });
+      return StarSync.StarSync.of({ syncLogin: () => run });
     }),
   );
 

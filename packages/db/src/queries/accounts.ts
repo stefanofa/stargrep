@@ -14,30 +14,28 @@ import * as Postgres from "../postgres.ts";
 import { NullableTime, requireRow, rowsDecoder, writeEncoder } from "../rows.ts";
 import { githubAccounts } from "../schema.ts";
 
-export const Account = createSelectSchema(githubAccounts, {
-  id: GitHubAccountId,
-  login: Login,
-  claimedBy: Schema.NullOr(UserId),
-  starsSyncedAt: NullableTime,
-  starsFullSyncedAt: NullableTime,
-});
+// stars_etag stays in the table until a cleanup migration drops it. Nothing reads or writes it.
+export const Account = Schema.Struct(
+  Struct.omit(
+    createSelectSchema(githubAccounts, {
+      id: GitHubAccountId,
+      login: Login,
+      claimedBy: Schema.NullOr(UserId),
+      starsSyncedAt: NullableTime,
+      starsFullSyncedAt: NullableTime,
+    }).fields,
+    ["starsEtag"],
+  ),
+);
 export type Account = typeof Account.Type;
 
 const AccountFacts = Schema.Struct(
-  Struct.omit(Account.fields, [
-    "claimedBy",
-    "starredCount",
-    "ownedRepoStars",
-    "starsEtag",
-    "starsSyncedAt",
-    "starsFullSyncedAt",
-  ]),
+  Struct.omit(Account.fields, ["claimedBy", "starredCount", "ownedRepoStars", "starsSyncedAt", "starsFullSyncedAt"]),
 );
 export type AccountFacts = typeof AccountFacts.Type;
 
 export interface StarSync {
   readonly accountId: GitHubAccountId;
-  readonly etag: string | null;
   readonly at: DateTime.Utc;
 }
 
@@ -152,10 +150,7 @@ export const make = Effect.gen(function* () {
           run("accounts.recordStarSync", (db) =>
             db
               .update(githubAccounts)
-              .set({
-                starsEtag: sql`case when ${githubAccounts.starsSyncedAt} > ${at}::timestamptz then ${githubAccounts.starsEtag} else ${sync.etag} end`,
-                starsSyncedAt: sql`greatest(${githubAccounts.starsSyncedAt}, ${at}::timestamptz)`,
-              })
+              .set({ starsSyncedAt: sql`greatest(${githubAccounts.starsSyncedAt}, ${at}::timestamptz)` })
               .where(eq(githubAccounts.id, sync.accountId))
               .returning({ id: githubAccounts.id }),
           ),
