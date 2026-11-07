@@ -6,6 +6,7 @@ import * as RemovalPolicy from "alchemy/RemovalPolicy";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import { settings } from "./stage.ts";
 
 const localPostgres = {
   scheme: "postgres",
@@ -20,25 +21,24 @@ const localPostgres = {
 const extensions = new URL("../sql/extensions.sql", import.meta.url).pathname;
 
 // Neon returns expires_at to the second and Alchemy compares it as a string, so drop the ".000".
-const twoWeeksFromToday = DateTime.now.pipe(
-  Effect.map((now) =>
-    DateTime.formatIso(DateTime.add(DateTime.startOf(now, "day"), { days: 14 })).replace(".000Z", "Z"),
-  ),
-);
+const expiresIn = (days: number) =>
+  DateTime.now.pipe(
+    Effect.map((now) => DateTime.formatIso(DateTime.add(DateTime.startOf(now, "day"), { days })).replace(".000Z", "Z")),
+  );
 
 const StageBranch = Effect.gen(function* () {
-  const { stage } = yield* Alchemy.Stack;
-  const project = yield* Neon.Project.ref(stage === "prod" ? "ProjectUsEast" : "ProjectPreviewsUsEast", {
+  const { database, retain } = yield* settings;
+  const project = yield* Neon.Project.ref(database.logicalId, {
     stack: "StargrepDatabase",
     stage: "shared",
   });
-  const expiry = stage === "prod" ? {} : { expiresAt: yield* twoWeeksFromToday };
+  const expiry = database.expiryDays === undefined ? {} : { expiresAt: yield* expiresIn(database.expiryDays) };
   return yield* Neon.Branch("Branch", {
     project,
     migrations: migrationsFolder,
     importFiles: [extensions],
     ...expiry,
-  }).pipe(RemovalPolicy.retain(stage === "prod"));
+  }).pipe(RemovalPolicy.retain(retain));
 });
 
 export const DatabaseMigrations = Effect.gen(function* () {

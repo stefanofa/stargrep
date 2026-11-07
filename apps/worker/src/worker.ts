@@ -3,10 +3,14 @@ import { tokenConfig } from "@stargrep/auth/config";
 import * as Tokens from "@stargrep/auth/tokens";
 import { SyncRequests } from "@stargrep/core/stars";
 import * as GitHub from "@stargrep/github/github";
-import { budgetShare, budgetShareName, stageBudgetShare } from "@stargrep/runtime/budget-share";
-import { serverTokenKind, serverTokenName } from "@stargrep/runtime/server-token";
+import {
+  budgetShare,
+  budgetShareName,
+  requireStageSecrets,
+  serverTokenName,
+  serverTokenPolicy,
+} from "@stargrep/runtime/server-token";
 import * as Tracing from "@stargrep/telemetry/cloudflare";
-import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -25,7 +29,7 @@ import * as Layers from "./layers.ts";
 import * as OwnerLookup from "./owner-lookup.ts";
 import * as Queues from "./queues.ts";
 import { Readmes } from "./readmes.ts";
-import { requireStageSecrets } from "./secrets.ts";
+import { settings } from "./stage.ts";
 import * as UserGate from "./user-gate.ts";
 
 export default class Worker extends Cloudflare.Worker<Worker>()(
@@ -34,20 +38,20 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
   // while the branch still migrates. Reading the applied migrations makes the deploy wait for them.
   // The placement region matches the Neon projects in infra/database.run.ts, so queries stay in one region.
   Effect.gen(function* () {
-    const { stage } = yield* Alchemy.Stack;
-    const kind = yield* serverTokenKind;
+    const { stage, production, placement } = yield* settings;
+    const { kind, share } = yield* serverTokenPolicy(stage);
     yield* requireStageSecrets(stage, kind);
     return {
       main: import.meta.url,
       env: {
         DATABASE_MIGRATIONS: yield* DatabaseMigrations,
-        [budgetShareName]: String(yield* stageBudgetShare(stage, kind)),
+        [budgetShareName]: String(share),
         [serverTokenName]: kind,
         ...(yield* tokenBindings(stage)),
       },
-      placement: { region: "aws:us-east-1" },
+      placement,
       observability: { enabled: true, logs: { enabled: true, invocationLogs: true }, traces: { enabled: true } },
-      ...(stage === "prod" ? prodWorkerHosting : {}),
+      ...(production ? prodWorkerHosting : {}),
     };
   }),
   Effect.gen(function* () {

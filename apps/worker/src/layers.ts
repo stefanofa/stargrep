@@ -6,7 +6,7 @@ import { FetchIcon, IconHttp, IconQueue, IconStore, Normalize } from "@stargrep/
 import { BlobStore, EnrichQueue } from "@stargrep/core/repos";
 import * as GitHub from "@stargrep/github/github";
 import type * as TokenGate from "@stargrep/github/token-gate";
-import { aiGatewayKey } from "@stargrep/runtime/config";
+import { aiGatewayKey } from "@stargrep/runtime/ai-key";
 import * as DbRuntime from "@stargrep/runtime/db";
 import { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Arr from "effect/Array";

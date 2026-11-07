@@ -25,7 +25,13 @@ const adopted = Ref.makeUnsafe(false);
 
 const connectionString = (env: WebEnv) => Redacted.make(env.DATABASE.connectionString);
 
-const layerStorage = (env: WebEnv, aiKey: Option.Option<Redacted.Redacted<string>>, budgetShare: BudgetShare) =>
+export interface RequestConfig {
+  readonly aiKey: Option.Option<Redacted.Redacted<string>>;
+  readonly budgetShare: BudgetShare;
+  readonly auth: Option.Option<AuthConfig>;
+}
+
+const layerStorage = (env: WebEnv, { aiKey, budgetShare }: Pick<RequestConfig, "aiKey" | "budgetShare">) =>
   Layer.mergeAll(SyncRequests.layer(budgetShare), FetchHttpClient.layer).pipe(
     Layer.provideMerge(Layer.merge(layerSyncQueue(env.SYNC_STARS), layerOwnerLookup(env.WORKER))),
     Layer.provideMerge(
@@ -34,33 +40,25 @@ const layerStorage = (env: WebEnv, aiKey: Option.Option<Redacted.Redacted<string
     Layer.provideMerge(Gateway.layerSearchForKey(aiKey)),
   );
 
-export const layerRequest = (
-  env: WebEnv,
-  aiKey: Option.Option<Redacted.Redacted<string>>,
-  budgetShare: BudgetShare,
-  auth: Option.Option<AuthConfig>,
-  request: Request,
-) =>
+export const layerRequest = (env: WebEnv, config: RequestConfig, request: Request) =>
   Layer.mergeAll(
     Search.layer,
     layerRateLimiter(env),
-    layerViewers(auth, request, connectionString(env)),
+    layerViewers(config.auth, request, connectionString(env)),
     Layer.succeed(IconHost, IconHost.of({ origin: new URL(request.url).origin })),
   ).pipe(
     Layer.provideMerge(QueryPlanner.layer),
     Layer.provideMerge(layerSearchCache(env.SEARCH_CACHE)),
     Layer.provideMerge(Layer.unwrap(Caller.use(({ key }) => Effect.succeed(ModelAllowance.layerMetered(key))))),
     Layer.provideMerge(layerCaller(env.CALLER_KEY, request)),
-    Layer.provideMerge(layerStorage(env, aiKey, budgetShare)),
+    Layer.provideMerge(layerStorage(env, config)),
   );
 
 export const layerAuthRequest = (
   env: WebEnv,
-  aiKey: Option.Option<Redacted.Redacted<string>>,
-  budgetShare: BudgetShare,
-  auth: AuthConfig,
+  config: Omit<RequestConfig, "auth"> & { readonly auth: AuthConfig },
   request: Request,
 ) =>
-  layerAuth(auth, new URL(request.url).origin, connectionString(env)).pipe(
-    Layer.provide(layerStorage(env, aiKey, budgetShare)),
+  layerAuth(config.auth, new URL(request.url).origin, connectionString(env)).pipe(
+    Layer.provide(layerStorage(env, config)),
   );

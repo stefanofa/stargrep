@@ -1,7 +1,7 @@
 import * as AuthSchema from "@stargrep/db/auth-schema";
 import { UserId } from "@stargrep/db/auth-schema";
 import { acquirePool } from "@stargrep/db/node-postgres";
-import { betterAuth } from "better-auth";
+import { type BetterAuthOptions, betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { refreshAccessToken } from "better-auth/oauth2";
 import { oAuthProxy } from "better-auth/plugins/oauth-proxy";
@@ -15,14 +15,10 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import type pg from "pg";
-import type { AuthConfig } from "./config.ts";
+import type { AuthConfig, TokenConfig } from "./config.ts";
 
 export const basePath = "/auth";
 export const providerId = "github";
-
-// The proxy secret sits in the preview environment, which every branch's workflow can read. So prod forwards a
-// preview's sign-in, which carries the user's GitHub token, only to a preview Worker of this account.
-export const previewHost = /^stargrep-web-pr-\d+-[a-z0-9]+\.rewebdotso\.workers\.dev$/;
 
 const tokenEndpoint = "https://github.com/login/oauth/access_token";
 
@@ -39,12 +35,12 @@ export const githubProvider = (clientId: string, clientSecret?: string) => ({
   },
 });
 
-export const redirectAllowed = (location: string, origin: string) => {
+export const redirectAllowed = (location: string, origin: string, previewHost?: RegExp) => {
   const target = URL.parse(location, origin);
   return (
     target !== null &&
     (target.origin === origin ||
-      (target.protocol === "https:" && target.port === "" && previewHost.test(target.hostname)))
+      (target.protocol === "https:" && target.port === "" && previewHost?.test(target.hostname) === true))
   );
 };
 
@@ -67,21 +63,36 @@ export class Auth extends Context.Service<
 >()("@stargrep/auth/auth") {}
 
 export const tokenReadTimeout = Duration.seconds(10);
+export const tokenReadTimedOut = () =>
+  new AuthFailed({ operation: "token", cause: "Reading the GitHub token timed out" });
 
-interface TokenSource {
-  readonly $context: Promise<{
-    readonly internalAdapter: {
-      readonly findAccounts: (
-        userId: string,
-      ) => Promise<ReadonlyArray<{ readonly id: string; readonly providerId: string }>>;
-    };
-  }>;
+export const baseOptions = (database: BetterAuthOptions["database"], config: TokenConfig) =>
+  ({
+    appName: "Stargrep",
+    secret: Redacted.value(config.secret),
+    database,
+    socialProviders: {
+      [providerId]: githubProvider(
+        config.clientId,
+        Option.getOrUndefined(Option.map(config.clientSecret, Redacted.value)),
+      ),
+    },
+    account: { encryptOAuthTokens: true },
+    telemetry: { enabled: false },
+    logger: { level: "error" },
+  }) satisfies BetterAuthOptions;
+
+type TokenAuth = ReturnType<typeof betterAuth<ReturnType<typeof baseOptions>>>;
+type TokenSource = {
   readonly api: {
-    readonly getAccessToken: (input: {
-      readonly body: { readonly accountId: string; readonly userId: string };
-    }) => Promise<{ readonly accessToken: string; readonly accessTokenExpiresAt?: Date | undefined }>;
+    readonly getAccessToken: (
+      ...args: Parameters<TokenAuth["api"]["getAccessToken"]>
+    ) => ReturnType<TokenAuth["api"]["getAccessToken"]>;
   };
-}
+  readonly $context: Promise<{
+    readonly internalAdapter: Pick<Awaited<TokenAuth["$context"]>["internalAdapter"], "findAccounts">;
+  }>;
+};
 
 // Better Auth decrypts the stored token, refreshes it when it is within five seconds of expiry, and stores the new one
 // encrypted. Better Auth fails a refresh only on an error status. GitHub can name the error in a 200 body instead, and
@@ -96,11 +107,6 @@ export const readGitHubToken = (auth: TokenSource, userId: UserId) =>
     },
     catch: (cause) => new AuthFailed({ operation: "token", cause }),
   }).pipe(
-    // A refresh waits on GitHub's token endpoint, and a job that waits on it holds its queue message.
-    Effect.timeoutOrElse({
-      duration: tokenReadTimeout,
-      orElse: () => Effect.fail(new AuthFailed({ operation: "token", cause: "Reading the GitHub token timed out" })),
-    }),
     Effect.flatMap(({ accessToken, accessTokenExpiresAt }) =>
       Effect.flatMap(Clock.currentTimeMillis, (now) =>
         accessTokenExpiresAt !== undefined && accessTokenExpiresAt.getTime() <= now
@@ -108,6 +114,11 @@ export const readGitHubToken = (auth: TokenSource, userId: UserId) =>
           : Effect.succeed(Redacted.make(accessToken)),
       ),
     ),
+  );
+
+export const readGitHubTokenWithin = (auth: TokenSource, userId: UserId) =>
+  readGitHubToken(auth, userId).pipe(
+    Effect.timeoutOrElse({ duration: tokenReadTimeout, orElse: () => Effect.fail(tokenReadTimedOut()) }),
   );
 
 export interface SignIn {
@@ -126,51 +137,41 @@ export interface LayerOptions<R> extends Omit<Options, "onSignIn"> {
   readonly onSignIn: (signIn: SignIn) => Effect.Effect<void, never, R>;
 }
 
-export const signInOptions = ({ config, origin }: Pick<Options, "config" | "origin">) => {
+const signInPlugins = ({ config, origin }: Pick<Options, "config" | "origin">) => {
   const signIn = config.github;
   if (signIn._tag === "proxied") {
-    return {
-      provider: githubProvider(signIn.clientId),
-      plugins: [
-        oAuthProxy({
-          productionURL: signIn.productionOrigin,
-          currentURL: origin,
-          secret: Redacted.value(signIn.proxySecret),
-        }),
-      ],
-    };
+    return [
+      oAuthProxy({
+        productionURL: signIn.productionOrigin,
+        currentURL: origin,
+        secret: Redacted.value(signIn.proxySecret),
+      }),
+    ];
   }
   // Prod only forwards previews' sign-ins, which the plugin's hooks do. Without its endpoints, prod has no route that
   // turns a profile encrypted with the proxy secret into a session.
-  return {
-    provider: githubProvider(signIn.clientId, Redacted.value(signIn.clientSecret)),
-    plugins: Option.match(signIn.proxySecret, {
-      onNone: () => [],
-      onSome: (secret) => [
-        {
-          ...oAuthProxy({ productionURL: origin, currentURL: origin, secret: Redacted.value(secret) }),
-          endpoints: {},
-        },
-      ],
-    }),
-  };
+  return Option.match(signIn.proxySecret, {
+    onNone: () => [],
+    onSome: (secret) => [
+      { ...oAuthProxy({ productionURL: origin, currentURL: origin, secret: Redacted.value(secret) }), endpoints: {} },
+    ],
+  });
 };
 
 export const make = (pool: pg.Pool, options: Options) => {
-  const { provider, plugins } = signInOptions(options);
+  const plugins = signInPlugins(options);
   const auth = betterAuth({
-    appName: "Stargrep",
+    ...baseOptions(drizzleAdapter(drizzle({ client: pool }), { provider: "pg", schema: AuthSchema }), {
+      secret: options.config.secret,
+      clientId: options.config.github.clientId,
+      clientSecret:
+        options.config.github._tag === "direct" ? Option.some(options.config.github.clientSecret) : Option.none(),
+    }),
     baseURL: options.origin,
     basePath,
-    secret: Redacted.value(options.config.secret),
     trustedOrigins: [options.origin],
-    database: drizzleAdapter(drizzle({ client: pool }), { provider: "pg", schema: AuthSchema }),
-    socialProviders: { [providerId]: provider },
-    account: { encryptOAuthTokens: true },
     session: { cookieCache: { enabled: true, maxAge: 5 * 60 } },
     advanced: { ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] }, database: { validateSchema: false } },
-    telemetry: { enabled: false },
-    logger: { level: "error" },
     plugins,
     databaseHooks: {
       session: {
@@ -186,7 +187,7 @@ export const make = (pool: pg.Pool, options: Options) => {
   const tokenOf: (userId: UserId) => Effect.Effect<Redacted.Redacted<string>, AuthFailed> = Effect.fn(
     "Auth.githubToken",
   )(function* (userId: UserId) {
-    return yield* readGitHubToken(auth, userId);
+    return yield* readGitHubTokenWithin(auth, userId);
   });
   return { handler: auth.handler, getSession: auth.api.getSession, tokenOf };
 };
@@ -210,7 +211,7 @@ export const layer = <R>(options: LayerOptions<R>) =>
           });
           const location = response.headers.get("location");
           const callback = new URL(request.url).pathname.startsWith(callbackPrefix);
-          return callback && location !== null && !redirectAllowed(location, options.origin)
+          return callback && location !== null && !redirectAllowed(location, options.origin, options.config.previewHost)
             ? refused(options.origin)
             : response;
         }),

@@ -29,13 +29,20 @@ const prodSecret = Redacted.make("client-secret-prod");
 const proxySecret = Redacted.make("proxy-secret");
 
 const stage = (origin: string, database: Hyperdrive, github: GitHubSignIn) => {
-  const config = { secret: Redacted.make(`auth-secret ${origin}`), github };
+  const config = {
+    secret: Redacted.make(`auth-secret ${origin}`),
+    github,
+    previewHost: /^stargrep-web-pr-\d+-[a-z0-9]+\.rewebdotso\.workers\.dev$/,
+  };
   const stageEnv = { ...env, DATABASE: database };
   const auth = makeAuthServer(
-    (request) => Option.some(layerAuthRequest(stageEnv, Option.none(), share, config, request)),
+    (request) =>
+      Option.some(layerAuthRequest(stageEnv, { aiKey: Option.none(), budgetShare: share, auth: config }, request)),
     Layer.empty,
   );
-  const api = testServer((request) => layerRequest(stageEnv, Option.none(), share, Option.some(config), request));
+  const api = testServer((request) =>
+    layerRequest(stageEnv, { aiKey: Option.none(), budgetShare: share, auth: Option.some(config) }, request),
+  );
   const cookies = new Map<string, string>();
   const send = async (path: string, init: RequestInit = {}) => {
     const headers = new Headers(init.headers);

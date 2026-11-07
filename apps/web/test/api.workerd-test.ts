@@ -198,7 +198,11 @@ describe("when the server fails outside the API", () => {
 });
 
 describe("when the database is unreachable", () => {
-  const send = sendTo(testServer((request) => layerRequest(env, Option.none(), share, Option.none(), request)));
+  const send = sendTo(
+    testServer((request) =>
+      layerRequest(env, { aiKey: Option.none(), budgetShare: share, auth: Option.none() }, request),
+    ),
+  );
 
   it("answers a body that is not JSON with 400 and the request's trace ID on every transport", async () => {
     const malformed: RequestInit = {
