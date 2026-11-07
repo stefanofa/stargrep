@@ -34,6 +34,7 @@ const interactions = ["keydown", "pointerdown", "focusin"] as const;
 export function useReveal(query: string, eligible: boolean) {
   const [typed, setTyped] = useState<string>();
   const [phase, setPhase] = useState<RevealPhase>("done");
+  const running = phase !== "done";
 
   useLayoutEffect(() => {
     if (root().dataset.reveal !== "pending") return;
@@ -53,7 +54,7 @@ export function useReveal(query: string, eligible: boolean) {
   }, [eligible]);
 
   useEffect(() => {
-    if (phase !== "typing") return;
+    if (!running) return;
     const play = playReveal(query, {
       typed: setTyped,
       settled: () => {
@@ -68,7 +69,7 @@ export function useReveal(query: string, eligible: boolean) {
     return () => {
       Effect.runFork(Fiber.interrupt(fiber));
     };
-  }, [phase, query]);
+  }, [running, query]);
 
   // Any key, click or focus on the page jumps to the end, and so does leaving the tab.
   useEffect(() => {

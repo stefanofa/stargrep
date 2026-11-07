@@ -1,6 +1,6 @@
 import "./register.ts";
 import { afterEach, describe, expect, test } from "bun:test";
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { useReveal } from "../src/lib/reveal.ts";
 import { revealedKey, revealScript } from "../src/lib/reveal-script.ts";
 
@@ -13,12 +13,16 @@ afterEach(() => {
 });
 
 describe("the staged reveal", () => {
-  test("wires the typing state and marks the visit as revealed", () => {
+  test("types once, settles, and reaches done without an interaction", async () => {
     root().dataset.reveal = "pending";
     const { result } = renderHook(() => useReveal("rust tui", true));
     expect(sessionStorage.getItem(revealedKey)).toBe("1");
     expect(result.current.typed).toBe("");
     expect(result.current.phase).toBe("typing");
+    await waitFor(() => expect(result.current.phase).toBe("settled"));
+    expect(result.current.typed).toBeUndefined();
+    expect(root().dataset.reveal).toBeUndefined();
+    await waitFor(() => expect(result.current.phase).toBe("done"));
   });
 
   test.each([
