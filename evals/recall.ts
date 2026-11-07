@@ -111,7 +111,16 @@ const loadAccount = Effect.fn("Recall.loadAccount")(function* (repos: ReadonlyAr
           kind: repo.kind,
         });
         const embedding = yield* decodeEmbedding({ model: embeddingModelId, vector: repo.vector }).pipe(Effect.orDie);
-        yield* db.repos.saveEmbedding({ id: ref.id, embedding, summary: repo.summary, readmeOid: null });
+        yield* db.repos.saveEmbedding({
+          id: ref.id,
+          owner: ref.owner,
+          name: ref.name,
+          embedding,
+          summary: repo.summary,
+          keywords: repo.keywords,
+          description: repo.description,
+          readmeOid: null,
+        });
       }),
     { concurrency: 8, discard: true },
   );

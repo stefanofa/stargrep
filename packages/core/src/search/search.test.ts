@@ -112,6 +112,10 @@ const seed = Effect.fn("seed")(function* (account: number, repos: ReadonlyArray<
     });
     const [vector] = yield* embeddings.embed([repo.summary]);
     yield* db.repos.saveEmbedding({
+      owner: ref.owner,
+      name: ref.name,
+      keywords: [],
+      description: null,
       id,
       embedding: yield* decodeEmbedding({ model, vector: vector?.vector }),
       summary: repo.summary,
