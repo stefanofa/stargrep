@@ -1,12 +1,20 @@
 import { expect } from "bun:test";
+import type * as Db from "@stargrep/db";
+import { DbQueryFailed } from "@stargrep/db/errors";
 import type { Login } from "@stargrep/github/schemas";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 import * as OwnerLookup from "./owner-lookup.ts";
+import type { LoginSyncRequest } from "./star-sync.ts";
+import * as SyncQueue from "./sync-queue.ts";
 import {
   admitted,
   admitting,
@@ -15,17 +23,20 @@ import {
   brokenQueue,
   claimInFlight,
   fill,
+  fillNetwork,
   fullSynced,
   lineUnits,
   markFailed,
   memory,
   minute,
+  networkUnits,
   octocat,
   org,
   owner,
   ownerId,
   request,
   row,
+  signedIn,
   signedUp,
   start,
   status,
@@ -448,6 +459,18 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests with a failing queue", (it) 
     ),
   );
 
+  it.effect("gives a new login's first read back to its network when the queue refuses its sync", () =>
+    admitting(
+      () =>
+        Effect.gen(function* () {
+          expect((yield* Effect.flip(request("octocat")))._tag).toBe("SyncQueueFailed");
+          expect(yield* networkUnits()).toBe(1);
+          expect(yield* lineUnits()).toBe(1);
+        }),
+      { sender: brokenQueue },
+    ),
+  );
+
   it.effect("settles a waiting request failed without a start, so it never holds the login past its cooldown", () =>
     admitting(
       () =>
@@ -462,6 +485,169 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests with a failing queue", (it) 
           expect(yield* Effect.flip(request("octocat", anyone("caller-b")))).toMatchObject({ _tag: "SyncQueueFailed" });
         }),
       { sender: brokenQueue },
+    ),
+  );
+});
+
+it.layer(memory, { timeout: 30_000 })("SyncRequests stopped after a claim", (it) => {
+  const lineDown = new DbQueryFailed({ operation: "rateLines.reserve", reason: "transport", sqlState: null });
+
+  // Fails the turn a sync takes in the line all, after its claim and its network's first read.
+  const turnFails = (db: Db.Db["Service"]): Db.Db["Service"] => ({
+    ...db,
+    rateLines: {
+      ...db.rateLines,
+      reserve: (reservation) =>
+        reservation.line === "all" && !reservation.force ? Effect.fail(lineDown) : db.rateLines.reserve(reservation),
+    },
+  });
+
+  // Someone's trigger claims the login as missing just before this request's claim lands.
+  const missingFirst = (db: Db.Db["Service"]): Db.Db["Service"] => ({
+    ...db,
+    syncRequests: {
+      ...db.syncRequests,
+      claim: (claim) =>
+        db.syncRequests
+          .claim({ ...claim, overtakesWaiting: false, outcome: "missing" })
+          .pipe(Effect.andThen(db.syncRequests.claim(claim))),
+    },
+  });
+
+  it.effect("releases the claim and gives back the first read when a query fails before the sync goes out", () =>
+    admitting(
+      ({ sent }) =>
+        Effect.gen(function* () {
+          expect(yield* Effect.flip(request("octocat"))).toMatchObject({ _tag: "DbQueryFailed" });
+          expect(yield* row("octocat")).toEqual(Option.none());
+          expect(yield* networkUnits()).toBe(1);
+          expect(yield* lineUnits()).toBe(1);
+          expect(sent).toEqual([]);
+        }),
+      { hooks: { queries: turnFails } },
+    ),
+  );
+
+  it.effect(
+    "releases the claim and gives back every charge when the request is interrupted before its sync goes out",
+    () =>
+      Effect.gen(function* () {
+        const reserving = yield* Deferred.make<void>();
+        const gate = yield* Deferred.make<void>();
+        // The turn in the line all waits at the gate, so the interruption lands while the request holds its charges.
+        const holdTurn = (db: Db.Db["Service"]): Db.Db["Service"] => ({
+          ...db,
+          rateLines: {
+            ...db.rateLines,
+            reserve: (reservation) =>
+              reservation.line === "all" && !reservation.force
+                ? Deferred.succeed(reserving, undefined).pipe(
+                    Effect.andThen(Deferred.await(gate)),
+                    Effect.andThen(db.rateLines.reserve(reservation)),
+                  )
+                : db.rateLines.reserve(reservation),
+          },
+        });
+        yield* admitting(
+          ({ sent }) =>
+            Effect.gen(function* () {
+              const requested = yield* Effect.forkChild(request("octocat"));
+              yield* Deferred.await(reserving);
+              expect(yield* row("octocat")).toMatchObject(Option.some({ outcome: "claimed" }));
+              expect(yield* networkUnits()).toBe(5);
+              const interrupting = yield* Effect.forkChild(Fiber.interrupt(requested));
+              yield* Effect.yieldNow;
+              yield* Deferred.succeed(gate, undefined);
+              yield* Fiber.join(interrupting);
+              expect(yield* row("octocat")).toEqual(Option.none());
+              expect(yield* networkUnits()).toBe(1);
+              expect(yield* lineUnits()).toBe(1);
+              expect(sent).toEqual([]);
+            }),
+          { hooks: { queries: holdTurn } },
+        );
+      }),
+  );
+
+  it.effect("keeps the claim and its charges when the request is interrupted while its message is being sent", () =>
+    Effect.gen(function* () {
+      const queued = yield* Deferred.make<void>();
+      const gate = yield* Deferred.make<void>();
+      const sent: Array<LoginSyncRequest> = [];
+      // The queue takes the message, then answers only once the gate opens.
+      const accepted = Layer.succeed(
+        SyncQueue.SyncQueue,
+        SyncQueue.SyncQueue.of({
+          send: (message) =>
+            Effect.sync(() => sent.push(message)).pipe(
+              Effect.andThen(Deferred.succeed(queued, undefined)),
+              Effect.andThen(Deferred.await(gate)),
+            ),
+        }),
+      );
+      yield* admitting(
+        () =>
+          Effect.gen(function* () {
+            const requested = yield* Effect.forkChild(request("octocat"));
+            yield* Deferred.await(queued);
+            const interrupting = yield* Effect.forkChild(Fiber.interrupt(requested));
+            yield* Effect.yieldNow;
+            yield* Deferred.succeed(gate, undefined);
+            yield* Fiber.join(interrupting);
+            expect(yield* row("octocat")).toMatchObject(Option.some({ outcome: "claimed" }));
+            expect(yield* networkUnits()).toBe(5);
+            expect(yield* lineUnits()).toBe(5);
+            expect(yield* status("octocat")).toMatchObject({ state: "queued" });
+            expect(sent).toHaveLength(1);
+          }),
+        { sender: accepted },
+      );
+    }),
+  );
+
+  // A signed-out request claims the login and starts waiting while the signed-in request looks it up.
+  const waitsDuringLookup = (db: Db.Db["Service"]) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const login = "octocat" as Login;
+      yield* db.syncRequests.claim({
+        login,
+        at: now,
+        cooldown: Duration.minutes(10),
+        overtakesWaiting: false,
+        outcome: "claimed",
+      });
+      yield* db.syncRequests.schedule(login, now, DateTime.addDuration(now, Duration.hours(1)));
+    }).pipe(Effect.orDie);
+
+  it.effect("answers a signed-in request from a signed-out one that started waiting during its lookup", () =>
+    admitting(
+      ({ sent }) =>
+        Effect.gen(function* () {
+          yield* fillNetwork(149);
+          expect(yield* request("octocat", signedIn())).toMatchObject({ state: "waiting", requestedAt: at(start) });
+          expect(yield* row("octocat")).toMatchObject(
+            Option.some({ outcome: "pending", startsAt: at(start + 60 * minute) }),
+          );
+          expect(yield* networkUnits()).toBe(150);
+          expect(sent).toEqual([]);
+        }),
+      { hooks: { duringLookup: waitsDuringLookup } },
+    ),
+  );
+
+  it.effect("records no lookup cost for an owner who loses the claim to a login GitHub does not have", () =>
+    admitting(
+      () =>
+        Effect.gen(function* () {
+          const collected = collectSpans();
+          const refused = yield* Effect.flip(request("octocat", owner).pipe(Effect.withTracer(collected.tracer)));
+          expect(refused).toMatchObject({ _tag: "LoginNotFound" });
+          const span = collected.named("SyncRequests.request");
+          expect(span?.attributes.get("sync.admission.decision")).toBe("not-found");
+          expect(span?.attributes.get("sync.admission.cost")).toBe(0);
+        }),
+      { hooks: { queries: missingFirst } },
     ),
   );
 });
