@@ -330,6 +330,8 @@ The repo is the source of truth. Each concern has one file or folder that define
 | Design tokens | `packages/ui` |
 | CI and deploys | GitHub Actions workflows. Only CI deploys to production |
 
+A deploy applies each migration in one transaction and sends its statements to Neon one round trip at a time, so a lock on a table the running Workers use lasts until the commit. From `20261107193409_knowledge` on, a migration takes those locks only in its last statement, which can be a `DO` block holding several commands, and `knowledge-migration.test.ts` checks it. On a branch of prod, that migration held `repos` for 3 round trips, 645 ms from a laptop about 200 ms from Neon.
+
 Some things stay outside the repo. Secret values live in Cloudflare secrets and GitHub Actions environment secrets, and the repo holds only their names. Only jobs on `main` can read the `production` environment's secrets. Previews read separate credentials from the `preview` environment. Account creation, billing plans, and domain registration are one-time manual steps, listed in `docs/setup.md`.
 
 ### Stages

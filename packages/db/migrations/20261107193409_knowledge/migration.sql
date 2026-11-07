@@ -112,11 +112,16 @@ language sql immutable parallel safe
 as $$ select array_position($1, null) is null $$;
 --> statement-breakpoint
 
-CREATE TYPE "batch_state" AS ENUM('prepared', 'submitted', 'captured', 'abandoned');--> statement-breakpoint
-CREATE TYPE "closure_via" AS ENUM('split', 'parent', 'expand');--> statement-breakpoint
-CREATE TYPE "decision_kind" AS ENUM('create', 'merge', 'split', 'rename', 'alias', 'parent', 'expand', 'keep_apart', 'status', 'link', 'correct', 'publish', 'retire', 'undo');--> statement-breakpoint
-CREATE TYPE "receipt_source" AS ENUM('model', 'stand-in', 'legacy');--> statement-breakpoint
-CREATE TYPE "subject_status" AS ENUM('candidate', 'accepted', 'rejected');--> statement-breakpoint
+CREATE TYPE "batch_state" AS ENUM('prepared', 'submitted', 'captured', 'abandoned');
+--> statement-breakpoint
+CREATE TYPE "closure_via" AS ENUM('split', 'parent', 'expand');
+--> statement-breakpoint
+CREATE TYPE "decision_kind" AS ENUM('create', 'merge', 'split', 'rename', 'alias', 'parent', 'expand', 'keep_apart', 'status', 'link', 'correct', 'publish', 'retire', 'undo');
+--> statement-breakpoint
+CREATE TYPE "receipt_source" AS ENUM('model', 'stand-in', 'legacy');
+--> statement-breakpoint
+CREATE TYPE "subject_status" AS ENUM('candidate', 'accepted', 'rejected');
+--> statement-breakpoint
 CREATE TABLE "decisions" (
 	"owner_id" text,
 	"namespace" text GENERATED ALWAYS AS (case when owner_id is null then 'public' else 'user:' || owner_id end) STORED,
@@ -271,68 +276,76 @@ CREATE TABLE "subjects" (
 	CONSTRAINT "subjects_private_unlinked" CHECK ("owner_id" is null or ("origin_receipt_id" is null and "repo_id" is null))
 );
 --> statement-breakpoint
-ALTER TABLE "repos" ADD COLUMN "input_hash" text;--> statement-breakpoint
-ALTER TABLE "repos" ADD COLUMN "summary_input_hash" text;--> statement-breakpoint
-ALTER TABLE "repos" ADD COLUMN "receipt_id" uuid;--> statement-breakpoint
-ALTER TABLE "repos" ADD COLUMN "gone_at" timestamp with time zone;--> statement-breakpoint
-ALTER TABLE "repos" ADD COLUMN "kinds" "knowledge_kind"[] DEFAULT '{}'::"knowledge_kind"[] NOT NULL;--> statement-breakpoint
-ALTER TABLE "repos" ADD COLUMN "statuses" "knowledge_status"[] DEFAULT '{}'::"knowledge_status"[] NOT NULL;--> statement-breakpoint
-ALTER TABLE "repos" ADD COLUMN "written_in" "knowledge_language"[] DEFAULT '{}'::"knowledge_language"[] NOT NULL;--> statement-breakpoint
-ALTER TABLE "repos" ADD COLUMN "runs_on" "knowledge_platform"[] DEFAULT '{}'::"knowledge_platform"[] NOT NULL;--> statement-breakpoint
-ALTER TABLE "repos" ADD COLUMN "for_languages" "knowledge_language"[] DEFAULT '{}'::"knowledge_language"[] NOT NULL;--> statement-breakpoint
-ALTER TABLE "repos" ADD COLUMN "for_platforms" "knowledge_platform"[] DEFAULT '{}'::"knowledge_platform"[] NOT NULL;--> statement-breakpoint
-ALTER TABLE "repos" ADD COLUMN "built_with_languages" "knowledge_language"[] DEFAULT '{}'::"knowledge_language"[] NOT NULL;--> statement-breakpoint
-ALTER TABLE "repos" ADD COLUMN "built_with_platforms" "knowledge_platform"[] DEFAULT '{}'::"knowledge_platform"[] NOT NULL;--> statement-breakpoint
-ALTER TABLE "repos" ADD COLUMN "licensed" "knowledge_license"[] DEFAULT '{}'::"knowledge_license"[] NOT NULL;--> statement-breakpoint
-ALTER TABLE "repos" ADD COLUMN "alt_languages" "knowledge_language"[] DEFAULT '{}'::"knowledge_language"[] NOT NULL;--> statement-breakpoint
-ALTER TABLE "repos" ADD COLUMN "alt_platforms" "knowledge_platform"[] DEFAULT '{}'::"knowledge_platform"[] NOT NULL;--> statement-breakpoint
-ALTER TABLE "repos" ADD COLUMN "replaced_by_languages" "knowledge_language"[] DEFAULT '{}'::"knowledge_language"[] NOT NULL;--> statement-breakpoint
-ALTER TABLE "repos" ADD COLUMN "replaced_by_platforms" "knowledge_platform"[] DEFAULT '{}'::"knowledge_platform"[] NOT NULL;--> statement-breakpoint
-CREATE INDEX "decisions_kind_idx" ON "decisions" ("namespace","kind","revision");--> statement-breakpoint
-CREATE INDEX "extraction_batches_open_idx" ON "extraction_batches" ("created_at") WHERE "state" in ('prepared', 'submitted');--> statement-breakpoint
-CREATE INDEX "receipts_repo_idx" ON "receipts" ("repo_id","captured_at" DESC);--> statement-breakpoint
-CREATE INDEX "receipts_batch_idx" ON "receipts" ("batch_id") WHERE "batch_id" is not null;--> statement-breakpoint
-CREATE INDEX "repo_facets_members_idx" ON "repo_facets" USING gin ("members");--> statement-breakpoint
-CREATE INDEX "repo_facets_built_with_idx" ON "repo_facets" USING gin ("built_with");--> statement-breakpoint
-CREATE INDEX "repo_facets_alternative_to_idx" ON "repo_facets" USING gin ("alternative_to");--> statement-breakpoint
-CREATE INDEX "repo_facets_replaced_by_idx" ON "repo_facets" USING gin ("replaced_by");--> statement-breakpoint
-CREATE INDEX "repo_facets_unresolved_keys_idx" ON "repo_facets" USING gin ("unresolved_keys");--> statement-breakpoint
-CREATE INDEX "repo_facets_stale_idx" ON "repo_facets" ("repo_id") WHERE "stale";--> statement-breakpoint
-CREATE INDEX "subject_canonical_canonical_idx" ON "subject_canonical" ("canonical_id","origin_id");--> statement-breakpoint
-CREATE INDEX "subject_closure_descendant_idx" ON "subject_closure" ("descendant_id","ancestor_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "subject_labels_decision_default_key" ON "subject_labels" ("namespace","key") WHERE "is_default" and "source" = 'decision';--> statement-breakpoint
-CREATE UNIQUE INDEX "subject_labels_minted_default_key" ON "subject_labels" ("namespace","key") WHERE "is_default" and "source" = 'minted';--> statement-breakpoint
-CREATE INDEX "subject_labels_subject_idx" ON "subject_labels" ("subject_id");--> statement-breakpoint
-CREATE INDEX "subject_labels_prefix_idx" ON "subject_labels" ("namespace","key" text_pattern_ops);--> statement-breakpoint
-CREATE INDEX "subject_matches_origin_idx" ON "subject_matches" ("origin_id","comparison","subject_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "subjects_repo_key" ON "subjects" ("repo_id") WHERE "repo_id" is not null;--> statement-breakpoint
-CREATE INDEX "subjects_status_idx" ON "subjects" ("status","id");--> statement-breakpoint
-ALTER TABLE "decisions" ADD CONSTRAINT "decisions_owner_id_user_id_fkey" FOREIGN KEY ("owner_id") REFERENCES "user"("id") ON DELETE CASCADE;--> statement-breakpoint
-ALTER TABLE "decisions" ADD CONSTRAINT "decisions_undoes_fk" FOREIGN KEY ("namespace","undoes") REFERENCES "decisions"("namespace","revision");--> statement-breakpoint
-ALTER TABLE "receipts" ADD CONSTRAINT "receipts_repo_id_repos_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "repos"("id") ON DELETE CASCADE;--> statement-breakpoint
-ALTER TABLE "receipts" ADD CONSTRAINT "receipts_batch_id_extraction_batches_id_fkey" FOREIGN KEY ("batch_id") REFERENCES "extraction_batches"("id") ON DELETE SET NULL;--> statement-breakpoint
-ALTER TABLE "receipts" ADD CONSTRAINT "receipts_carried_from_receipts_id_fkey" FOREIGN KEY ("carried_from") REFERENCES "receipts"("id") ON DELETE SET NULL;--> statement-breakpoint
-ALTER TABLE "repo_facets" ADD CONSTRAINT "repo_facets_repo_id_repos_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "repos"("id") ON DELETE CASCADE;--> statement-breakpoint
-ALTER TABLE "repo_facets" ADD CONSTRAINT "repo_facets_receipt_fk" FOREIGN KEY ("receipt_id","repo_id") REFERENCES "receipts"("id","repo_id");--> statement-breakpoint
-ALTER TABLE "repos" ADD CONSTRAINT "repos_receipt_fk" FOREIGN KEY ("receipt_id","id") REFERENCES "receipts"("id","repo_id");--> statement-breakpoint
-ALTER TABLE "subject_canonical" ADD CONSTRAINT "subject_canonical_origin_fk" FOREIGN KEY ("origin_id","namespace") REFERENCES "subjects"("id","namespace") ON DELETE CASCADE;--> statement-breakpoint
-ALTER TABLE "subject_canonical" ADD CONSTRAINT "subject_canonical_canonical_fk" FOREIGN KEY ("canonical_id","namespace") REFERENCES "subjects"("id","namespace") ON DELETE CASCADE;--> statement-breakpoint
-ALTER TABLE "subject_canonical" ADD CONSTRAINT "subject_canonical_revision_fk" FOREIGN KEY ("namespace","revision") REFERENCES "decisions"("namespace","revision") ON DELETE CASCADE;--> statement-breakpoint
-ALTER TABLE "subject_closure" ADD CONSTRAINT "subject_closure_ancestor_fk" FOREIGN KEY ("ancestor_id","namespace") REFERENCES "subjects"("id","namespace") ON DELETE CASCADE;--> statement-breakpoint
-ALTER TABLE "subject_closure" ADD CONSTRAINT "subject_closure_descendant_fk" FOREIGN KEY ("descendant_id","namespace") REFERENCES "subjects"("id","namespace") ON DELETE CASCADE;--> statement-breakpoint
-ALTER TABLE "subject_closure" ADD CONSTRAINT "subject_closure_revision_fk" FOREIGN KEY ("namespace","revision") REFERENCES "decisions"("namespace","revision") ON DELETE CASCADE;--> statement-breakpoint
-ALTER TABLE "subject_labels" ADD CONSTRAINT "subject_labels_subject_fk" FOREIGN KEY ("subject_id","namespace") REFERENCES "subjects"("id","namespace") ON DELETE CASCADE;--> statement-breakpoint
-ALTER TABLE "subject_labels" ADD CONSTRAINT "subject_labels_revision_fk" FOREIGN KEY ("namespace","revision") REFERENCES "decisions"("namespace","revision") ON DELETE CASCADE;--> statement-breakpoint
-ALTER TABLE "subject_matches" ADD CONSTRAINT "subject_matches_subject_id_subjects_id_fkey" FOREIGN KEY ("subject_id") REFERENCES "subjects"("id") ON DELETE CASCADE;--> statement-breakpoint
-ALTER TABLE "subject_matches" ADD CONSTRAINT "subject_matches_origin_id_subjects_id_fkey" FOREIGN KEY ("origin_id") REFERENCES "subjects"("id") ON DELETE CASCADE;--> statement-breakpoint
-ALTER TABLE "subjects" ADD CONSTRAINT "subjects_owner_id_user_id_fkey" FOREIGN KEY ("owner_id") REFERENCES "user"("id") ON DELETE CASCADE;--> statement-breakpoint
-ALTER TABLE "subjects" ADD CONSTRAINT "subjects_repo_id_repos_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "repos"("id") ON DELETE SET NULL;--> statement-breakpoint
-ALTER TABLE "subjects" ADD CONSTRAINT "subjects_origin_receipt_id_receipts_id_fkey" FOREIGN KEY ("origin_receipt_id") REFERENCES "receipts"("id") ON DELETE SET NULL;--> statement-breakpoint
-ALTER TABLE "subjects" ADD CONSTRAINT "subjects_origin_revision_fk" FOREIGN KEY ("namespace","origin_revision") REFERENCES "decisions"("namespace","revision") ON DELETE CASCADE;--> statement-breakpoint
-ALTER TABLE "repos" ADD CONSTRAINT "repos_input_hash_sha256" CHECK ("input_hash" ~ '^[0-9a-f]{64}$');--> statement-breakpoint
-ALTER TABLE "repos" ADD CONSTRAINT "repos_summary_input_hash_sha256" CHECK ("summary_input_hash" ~ '^[0-9a-f]{64}$');--> statement-breakpoint
-ALTER TABLE "repos" ADD CONSTRAINT "repos_closed_atom_limits" CHECK (cardinality("kinds") <= 2 and cardinality("statuses") <= 2 and cardinality("written_in") <= 4 and cardinality("runs_on") <= 8 and cardinality("for_languages") <= 8 and cardinality("for_platforms") <= 8 and cardinality("built_with_languages") <= 4 and cardinality("built_with_platforms") <= 4 and cardinality("licensed") <= 1 and cardinality("alt_languages") <= 6 and cardinality("alt_platforms") <= 6 and cardinality("replaced_by_languages") <= 2 and cardinality("replaced_by_platforms") <= 2);--> statement-breakpoint
-ALTER TABLE "repos" ADD CONSTRAINT "repos_closed_atom_no_nulls" CHECK (knowledge_no_nulls(kinds) and knowledge_no_nulls(statuses) and knowledge_no_nulls(written_in) and knowledge_no_nulls(runs_on) and knowledge_no_nulls(for_languages) and knowledge_no_nulls(for_platforms) and knowledge_no_nulls(built_with_languages) and knowledge_no_nulls(built_with_platforms) and knowledge_no_nulls(licensed) and knowledge_no_nulls(alt_languages) and knowledge_no_nulls(alt_platforms) and knowledge_no_nulls(replaced_by_languages) and knowledge_no_nulls(replaced_by_platforms));--> statement-breakpoint
+CREATE INDEX "decisions_kind_idx" ON "decisions" ("namespace","kind","revision");
+--> statement-breakpoint
+CREATE INDEX "extraction_batches_open_idx" ON "extraction_batches" ("created_at") WHERE "state" in ('prepared', 'submitted');
+--> statement-breakpoint
+CREATE INDEX "receipts_repo_idx" ON "receipts" ("repo_id","captured_at" DESC);
+--> statement-breakpoint
+CREATE INDEX "receipts_batch_idx" ON "receipts" ("batch_id") WHERE "batch_id" is not null;
+--> statement-breakpoint
+CREATE INDEX "repo_facets_members_idx" ON "repo_facets" USING gin ("members");
+--> statement-breakpoint
+CREATE INDEX "repo_facets_built_with_idx" ON "repo_facets" USING gin ("built_with");
+--> statement-breakpoint
+CREATE INDEX "repo_facets_alternative_to_idx" ON "repo_facets" USING gin ("alternative_to");
+--> statement-breakpoint
+CREATE INDEX "repo_facets_replaced_by_idx" ON "repo_facets" USING gin ("replaced_by");
+--> statement-breakpoint
+CREATE INDEX "repo_facets_unresolved_keys_idx" ON "repo_facets" USING gin ("unresolved_keys");
+--> statement-breakpoint
+CREATE INDEX "repo_facets_stale_idx" ON "repo_facets" ("repo_id") WHERE "stale";
+--> statement-breakpoint
+CREATE INDEX "subject_canonical_canonical_idx" ON "subject_canonical" ("canonical_id","origin_id");
+--> statement-breakpoint
+CREATE INDEX "subject_closure_descendant_idx" ON "subject_closure" ("descendant_id","ancestor_id");
+--> statement-breakpoint
+CREATE UNIQUE INDEX "subject_labels_decision_default_key" ON "subject_labels" ("namespace","key") WHERE "is_default" and "source" = 'decision';
+--> statement-breakpoint
+CREATE UNIQUE INDEX "subject_labels_minted_default_key" ON "subject_labels" ("namespace","key") WHERE "is_default" and "source" = 'minted';
+--> statement-breakpoint
+CREATE INDEX "subject_labels_subject_idx" ON "subject_labels" ("subject_id");
+--> statement-breakpoint
+CREATE INDEX "subject_labels_prefix_idx" ON "subject_labels" ("namespace","key" text_pattern_ops);
+--> statement-breakpoint
+CREATE INDEX "subject_matches_origin_idx" ON "subject_matches" ("origin_id","comparison","subject_id");
+--> statement-breakpoint
+CREATE UNIQUE INDEX "subjects_repo_key" ON "subjects" ("repo_id") WHERE "repo_id" is not null;
+--> statement-breakpoint
+CREATE INDEX "subjects_status_idx" ON "subjects" ("status","id");
+--> statement-breakpoint
+ALTER TABLE "decisions" ADD CONSTRAINT "decisions_undoes_fk" FOREIGN KEY ("namespace","undoes") REFERENCES "decisions"("namespace","revision");
+--> statement-breakpoint
+ALTER TABLE "receipts" ADD CONSTRAINT "receipts_batch_id_extraction_batches_id_fkey" FOREIGN KEY ("batch_id") REFERENCES "extraction_batches"("id") ON DELETE SET NULL;
+--> statement-breakpoint
+ALTER TABLE "receipts" ADD CONSTRAINT "receipts_carried_from_receipts_id_fkey" FOREIGN KEY ("carried_from") REFERENCES "receipts"("id") ON DELETE SET NULL;
+--> statement-breakpoint
+ALTER TABLE "repo_facets" ADD CONSTRAINT "repo_facets_receipt_fk" FOREIGN KEY ("receipt_id","repo_id") REFERENCES "receipts"("id","repo_id");
+--> statement-breakpoint
+ALTER TABLE "subject_canonical" ADD CONSTRAINT "subject_canonical_origin_fk" FOREIGN KEY ("origin_id","namespace") REFERENCES "subjects"("id","namespace") ON DELETE CASCADE;
+--> statement-breakpoint
+ALTER TABLE "subject_canonical" ADD CONSTRAINT "subject_canonical_canonical_fk" FOREIGN KEY ("canonical_id","namespace") REFERENCES "subjects"("id","namespace") ON DELETE CASCADE;
+--> statement-breakpoint
+ALTER TABLE "subject_canonical" ADD CONSTRAINT "subject_canonical_revision_fk" FOREIGN KEY ("namespace","revision") REFERENCES "decisions"("namespace","revision") ON DELETE CASCADE;
+--> statement-breakpoint
+ALTER TABLE "subject_closure" ADD CONSTRAINT "subject_closure_ancestor_fk" FOREIGN KEY ("ancestor_id","namespace") REFERENCES "subjects"("id","namespace") ON DELETE CASCADE;
+--> statement-breakpoint
+ALTER TABLE "subject_closure" ADD CONSTRAINT "subject_closure_descendant_fk" FOREIGN KEY ("descendant_id","namespace") REFERENCES "subjects"("id","namespace") ON DELETE CASCADE;
+--> statement-breakpoint
+ALTER TABLE "subject_closure" ADD CONSTRAINT "subject_closure_revision_fk" FOREIGN KEY ("namespace","revision") REFERENCES "decisions"("namespace","revision") ON DELETE CASCADE;
+--> statement-breakpoint
+ALTER TABLE "subject_labels" ADD CONSTRAINT "subject_labels_subject_fk" FOREIGN KEY ("subject_id","namespace") REFERENCES "subjects"("id","namespace") ON DELETE CASCADE;
+--> statement-breakpoint
+ALTER TABLE "subject_labels" ADD CONSTRAINT "subject_labels_revision_fk" FOREIGN KEY ("namespace","revision") REFERENCES "decisions"("namespace","revision") ON DELETE CASCADE;
+--> statement-breakpoint
+ALTER TABLE "subject_matches" ADD CONSTRAINT "subject_matches_subject_id_subjects_id_fkey" FOREIGN KEY ("subject_id") REFERENCES "subjects"("id") ON DELETE CASCADE;
+--> statement-breakpoint
+ALTER TABLE "subject_matches" ADD CONSTRAINT "subject_matches_origin_id_subjects_id_fkey" FOREIGN KEY ("origin_id") REFERENCES "subjects"("id") ON DELETE CASCADE;
+--> statement-breakpoint
+ALTER TABLE "subjects" ADD CONSTRAINT "subjects_origin_receipt_id_receipts_id_fkey" FOREIGN KEY ("origin_receipt_id") REFERENCES "receipts"("id") ON DELETE SET NULL;
+--> statement-breakpoint
+ALTER TABLE "subjects" ADD CONSTRAINT "subjects_origin_revision_fk" FOREIGN KEY ("namespace","origin_revision") REFERENCES "decisions"("namespace","revision") ON DELETE CASCADE;
+--> statement-breakpoint
 
 -- Below is what Drizzle cannot express: a deferrable key, the triggers, the views, the functions, and the backfill.
 -- A mint inserts labels before the subjects they name, in one transaction.
@@ -355,6 +368,7 @@ begin
   return new;
 end $$;
 --> statement-breakpoint
+
 create trigger receipts_immutable before update on receipts
 for each row execute function knowledge_receipt_immutable();
 --> statement-breakpoint
@@ -368,6 +382,7 @@ begin
   raise exception '% is append-only', tg_table_name using errcode = 'check_violation';
 end $$;
 --> statement-breakpoint
+
 create trigger decisions_append_only before update or delete on decisions
 for each row execute function knowledge_append_only();
 --> statement-breakpoint
@@ -389,6 +404,7 @@ begin
   return new;
 end $$;
 --> statement-breakpoint
+
 create trigger subjects_identity before insert or update on subjects
 for each row execute function knowledge_subject_identity();
 --> statement-breakpoint
@@ -490,19 +506,6 @@ begin
   return null;
 end $$;
 --> statement-breakpoint
-create trigger repos_knowledge_inserted after insert on repos
-for each row execute function knowledge_mark_stale();
---> statement-breakpoint
-create trigger repos_knowledge_inputs after update of receipt_id, language, license, topics, gone_at on repos
-for each row
-when (new.gone_at is null
-      and (old.receipt_id is distinct from new.receipt_id
-           or old.language is distinct from new.language
-           or old.license is distinct from new.license
-           or old.topics is distinct from new.topics
-           or old.gone_at is not null))
-execute function knowledge_mark_stale();
---> statement-breakpoint
 
 -- Marks stale every repo whose projection could read differently after a vocabulary change, and returns how many.
 -- Every mint and decision calls it under the namespace's exclusive lock, so it sees every committed projection.
@@ -521,6 +524,52 @@ as $$
   select count(*)::integer from marked
 $$;
 --> statement-breakpoint
+
+-- Everything that locks repos or "user" runs in this one statement. A deploy sends each statement of a migration in
+-- its own round trip inside one transaction, so those locks last for this statement, the bookkeeping insert, and
+-- the commit, not for every statement above.
+do $knowledge$
+begin
+ALTER TABLE "repos"
+  ADD COLUMN "input_hash" text,
+  ADD COLUMN "summary_input_hash" text,
+  ADD COLUMN "receipt_id" uuid,
+  ADD COLUMN "gone_at" timestamp with time zone,
+  ADD COLUMN "kinds" "knowledge_kind"[] DEFAULT '{}'::"knowledge_kind"[] NOT NULL,
+  ADD COLUMN "statuses" "knowledge_status"[] DEFAULT '{}'::"knowledge_status"[] NOT NULL,
+  ADD COLUMN "written_in" "knowledge_language"[] DEFAULT '{}'::"knowledge_language"[] NOT NULL,
+  ADD COLUMN "runs_on" "knowledge_platform"[] DEFAULT '{}'::"knowledge_platform"[] NOT NULL,
+  ADD COLUMN "for_languages" "knowledge_language"[] DEFAULT '{}'::"knowledge_language"[] NOT NULL,
+  ADD COLUMN "for_platforms" "knowledge_platform"[] DEFAULT '{}'::"knowledge_platform"[] NOT NULL,
+  ADD COLUMN "built_with_languages" "knowledge_language"[] DEFAULT '{}'::"knowledge_language"[] NOT NULL,
+  ADD COLUMN "built_with_platforms" "knowledge_platform"[] DEFAULT '{}'::"knowledge_platform"[] NOT NULL,
+  ADD COLUMN "licensed" "knowledge_license"[] DEFAULT '{}'::"knowledge_license"[] NOT NULL,
+  ADD COLUMN "alt_languages" "knowledge_language"[] DEFAULT '{}'::"knowledge_language"[] NOT NULL,
+  ADD COLUMN "alt_platforms" "knowledge_platform"[] DEFAULT '{}'::"knowledge_platform"[] NOT NULL,
+  ADD COLUMN "replaced_by_languages" "knowledge_language"[] DEFAULT '{}'::"knowledge_language"[] NOT NULL,
+  ADD COLUMN "replaced_by_platforms" "knowledge_platform"[] DEFAULT '{}'::"knowledge_platform"[] NOT NULL,
+  ADD CONSTRAINT "repos_receipt_fk" FOREIGN KEY ("receipt_id","id") REFERENCES "receipts"("id","repo_id"),
+  ADD CONSTRAINT "repos_input_hash_sha256" CHECK ("input_hash" ~ '^[0-9a-f]{64}$'),
+  ADD CONSTRAINT "repos_summary_input_hash_sha256" CHECK ("summary_input_hash" ~ '^[0-9a-f]{64}$'),
+  ADD CONSTRAINT "repos_closed_atom_limits" CHECK (cardinality("kinds") <= 2 and cardinality("statuses") <= 2 and cardinality("written_in") <= 4 and cardinality("runs_on") <= 8 and cardinality("for_languages") <= 8 and cardinality("for_platforms") <= 8 and cardinality("built_with_languages") <= 4 and cardinality("built_with_platforms") <= 4 and cardinality("licensed") <= 1 and cardinality("alt_languages") <= 6 and cardinality("alt_platforms") <= 6 and cardinality("replaced_by_languages") <= 2 and cardinality("replaced_by_platforms") <= 2),
+  ADD CONSTRAINT "repos_closed_atom_no_nulls" CHECK (knowledge_no_nulls(kinds) and knowledge_no_nulls(statuses) and knowledge_no_nulls(written_in) and knowledge_no_nulls(runs_on) and knowledge_no_nulls(for_languages) and knowledge_no_nulls(for_platforms) and knowledge_no_nulls(built_with_languages) and knowledge_no_nulls(built_with_platforms) and knowledge_no_nulls(licensed) and knowledge_no_nulls(alt_languages) and knowledge_no_nulls(alt_platforms) and knowledge_no_nulls(replaced_by_languages) and knowledge_no_nulls(replaced_by_platforms));
+ALTER TABLE "decisions" ADD CONSTRAINT "decisions_owner_id_user_id_fkey" FOREIGN KEY ("owner_id") REFERENCES "user"("id") ON DELETE CASCADE;
+ALTER TABLE "receipts" ADD CONSTRAINT "receipts_repo_id_repos_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "repos"("id") ON DELETE CASCADE;
+ALTER TABLE "repo_facets" ADD CONSTRAINT "repo_facets_repo_id_repos_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "repos"("id") ON DELETE CASCADE;
+ALTER TABLE "subjects" ADD CONSTRAINT "subjects_owner_id_user_id_fkey" FOREIGN KEY ("owner_id") REFERENCES "user"("id") ON DELETE CASCADE;
+ALTER TABLE "subjects" ADD CONSTRAINT "subjects_repo_id_repos_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "repos"("id") ON DELETE SET NULL;
+create trigger repos_knowledge_inserted after insert on repos
+for each row execute function knowledge_mark_stale();
+
+create trigger repos_knowledge_inputs after update of receipt_id, language, license, topics, gone_at on repos
+for each row
+when (new.gone_at is null
+      and (old.receipt_id is distinct from new.receipt_id
+           or old.language is distinct from new.language
+           or old.license is distinct from new.license
+           or old.topics is distinct from new.topics
+           or old.gone_at is not null))
+execute function knowledge_mark_stale();
 
 -- What a repo holds, for cards and the panel: closed atoms from its repos row, and subjects resolved to canonical IDs,
 -- with rejected subjects dropped and a comparison dropped when it names the repo's own project. A gone repo holds
@@ -562,7 +611,6 @@ left join subject_canonical c on c.origin_id = o.id
 join subject_matches m on m.origin_id = o.id and m.comparison = r.comparison and m.subject_id = coalesce(c.canonical_id, o.id)
 where not (r.comparison
            and exists (select 1 from knowledge_self_origins x where x.repo_id = f.repo_id and x.origin_id = o.id));
---> statement-breakpoint
 
 -- Every atom key whose filter matches the repo, for counts, chips, profiles, snapshots, and statistics: the key
 -- knowledge_atom_key gives, and the role-qualified key of a role bare atoms match. A TypeScript repo matches
@@ -607,7 +655,6 @@ from (
     and not (r.comparison
              and exists (select 1 from knowledge_self_origins x where x.repo_id = f.repo_id and x.origin_id = o.id))
 ) as m;
---> statement-breakpoint
 
 -- The nightly count behind listing: for every public subject, the distinct live repos whose bare, with:, or
 -- comparison key matching_atoms emits, so it follows merges, splits, parents, rejection, the self rule, and the
@@ -635,7 +682,8 @@ as $$
   )
   select count(*)::integer from changed
 $$;
---> statement-breakpoint
 
 -- Every existing repo starts stale, so the projection sweep reaches it once it runs.
 insert into repo_facets (repo_id) select id from repos where gone_at is null;
+end
+$knowledge$;
