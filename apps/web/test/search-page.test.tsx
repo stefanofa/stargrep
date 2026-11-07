@@ -585,6 +585,35 @@ describe("the search page in each state", () => {
     expect(router.history.canGoBack()).toBe(false);
   });
 
+  test("closing a panel reopened with Forward goes back over the same entry, so Back never shows it twice", async () => {
+    const user = userEvent.setup();
+    const router = await open("/?q=terminal");
+    await user.click(await page().findByRole("link", { name: "bottom" }));
+    await page().findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
+    await act(async () => router.history.forward());
+    await page().findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: "terminal" }));
+    expect(router.history.canGoBack()).toBe(false);
+  });
+
+  test("a panel opened by a click still closes back to its page after the page remounts", async () => {
+    const user = userEvent.setup();
+    const router = await open("/?q=terminal");
+    await user.click(await page().findByRole("link", { name: "bottom" }));
+    await page().findByRole("dialog");
+    cleanup();
+    render(<RouterProvider router={router} />);
+    await page().findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: "terminal" }));
+    expect(router.history.canGoBack()).toBe(false);
+  });
+
   test("closing a panel a shared link opened drops the repo from the address without a new entry", async () => {
     const user = userEvent.setup();
     const router = await open("/?q=terminal&repo=ClementTsang%2Fbottom");

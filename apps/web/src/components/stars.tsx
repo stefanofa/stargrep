@@ -23,6 +23,7 @@ import { keywordTerms, normalize, searchText } from "../lib/keyword.ts";
 import { getLibrary, type Library } from "../lib/library-collection.ts";
 import { type PageData, type PageRequest, pageOwner, type Session } from "../lib/page-data.ts";
 import { hitsOf, liveView } from "../lib/page-view.ts";
+import { closesBack } from "../lib/panel-history.ts";
 import { now, startsIn, toDetail, withLinks } from "../lib/present.ts";
 import { withReply } from "../lib/results.ts";
 import { useReveal } from "../lib/reveal.ts";
@@ -287,18 +288,19 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
       replace: true,
     });
   };
-  // Opening a repo from this page adds a history entry, so Back closes the panel. Closing it takes that entry back off,
-  // so Back never opens it again. A panel the address opened has no entry of its own, so closing it only drops ?repo=.
-  const pushed = useRef(false);
+  // Opening a repo adds a history entry that names the page it opened over, so Back closes the panel. The entry keeps
+  // that through Forward and reloads, which a component's own state would not.
   const open: OpenResult = (result, link) => {
     setOpener(link);
-    pushed.current = true;
-    navigate({ to: ".", search: (previous) => ({ ...previous, repo: `${result.owner}/${result.name}` }) });
+    navigate({
+      to: ".",
+      search: (previous) => ({ ...previous, repo: `${result.owner}/${result.name}` }),
+      state: { panelOver: router.state.location.state.__TSR_index },
+    });
   };
   const close = () => {
-    if (pushed.current) router.history.back();
+    if (closesBack(router.state.location.state)) router.history.back();
     else navigate({ to: ".", search: (previous) => ({ ...previous, repo: undefined }), replace: true });
-    pushed.current = false;
   };
   // The panel keeps the last repo it showed while it slides closed. Until the library loads, the repo a shared link
   // opens comes from the server.
