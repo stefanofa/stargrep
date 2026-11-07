@@ -321,7 +321,7 @@ The repo is the source of truth. Each concern has one file or folder that define
 | API, REST, and MCP | oRPC contracts in `packages/api`. The OpenAPI spec and MCP tool list are generated from them |
 | Environment variables | `packages/runtime/src/stage.ts` derives stage settings. Entry-point Effect `Config` definitions validate bindings and secrets |
 | Models and prompts | `packages/ai` |
-| Repo knowledge | `packages/knowledge/src/registry.ts` defines the dimensions, closed values, and roles. It generates `registry.sql` and the facets block of the summary prompt, and tests fail when a copy drifts. `docs/knowledge.md` explains the model |
+| Repo knowledge | `packages/knowledge/src/registry.ts` defines the dimensions, closed values, and roles. It generates `registry.sql` and the facets block the summary prompt will carry, and tests fail when a copy drifts. `docs/knowledge.md` explains the model |
 | Search metrics | `packages/core/src/search/metric-registry.ts` names each metric for the planner, and `packages/db/src/queries/search.ts` maps its family to `repo_metrics` columns. Both use `MetricFamily`, so the compiler keeps `MetricFamily`, `metricColumns`, and `nouns` in step |
 | Search quality | The query set and its expected results in the repo. CI runs the recorded recall fixture without model calls |
 | GitHub App | Its manifest in the repo. Creating the app from it takes one click in the browser |

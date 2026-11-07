@@ -2,7 +2,7 @@
 
 Stargrep keeps what it knows about a repo as a set of small typed facts. Search filters, topic pages, digests, and the API all read those facts the same way. This page explains the six ideas the model rests on and the registries in `packages/knowledge` that define its closed parts.
 
-`packages/knowledge` is a leaf package that depends only on `effect`. It holds the registries, the atom and selection codecs, `labelKey`, `evidenceText`, and `extractionLines`. `packages/ai`, `packages/db`, and `packages/core` import it. The tables, the extraction step, and the projection that use it are not built yet.
+`packages/knowledge` is a leaf package that depends only on `effect`. It holds the registries, the atom and selection codecs, `labelKey`, `evidenceText`, and `extractionLines`. `packages/ai` imports it today, and `packages/db` and `packages/core` will. The tables, the extraction step, and the projection that use it are not built yet.
 
 ## Six primitives
 
@@ -38,7 +38,7 @@ The summary model writes every role that has a prompt line. GitHub's license wri
 
 The `matches` field decides which filters reach a role:
 
-- `bare`: a bare atom such as `lang:rust` or `subject:4127` matches the role, and so do the values a curator puts under the filtered value. `lang:rust` matches both `written_in` and `for`.
+- `bare`: a bare atom such as `lang:rust` or `subject:4127` matches the role, and so do the values under it. Those are a subject's children and merged IDs, or a closed value's expansions, as TypeScript is under JavaScript. `lang:rust` matches both `written_in` and `for`.
 - `qualified`: only the role's own atom matches it. `built_with` is the only such role, so a bare filter on the subject React finds repos for React or about React, not every app built with React. React's `with:` atom finds those.
 - `comparison`: only the role's own atom matches it, and it never satisfies a bare filter. An alternative to Slack is not Slack.
 
@@ -70,13 +70,13 @@ Each closed value has an id, a label, aliases, `impliedBy` names, and expansions
 
 ## The registry generates its copies
 
-Two artifacts come from the registry, so the prompt, the database, and the decoder name the same values:
+Two artifacts come from the registry, so the prompt, the database, and the decoder will name the same values:
 
 - `packages/knowledge/src/registry.sql` holds the Postgres enums, the closed expansions, the reserved keys, and the functions that turn a stored atom into its key.
-- `extractionLines()` renders the facets block of the summary prompt. The kinds are the only list the prompt carries.
+- `extractionLines()` renders the facets block that the summary prompt will carry once the summary call extracts facets. Nothing reads it yet. The kinds are the only list the block carries.
 
-To change a closed value or a role, edit `registry.ts` and run `bun run --cwd packages/knowledge generate`. Review the diff to `registry.sql`, and ship that SQL in a migration. A change to a prompt line changes what every new summary says, so it ships with a `summaryRecipe` bump in `packages/ai/src/models.ts`. Tests fail when a generated copy drifts from the registry.
+To change a closed value or a role, edit `registry.ts` and run `bun run --cwd packages/knowledge generate`, then review the diff to `registry.sql`. The first migration carries `registry.sql` whole. A later change ships only the delta: `alter type knowledge_<dim> add value '<id>'` for a new id, and `create or replace function` for each function whose body changed. Postgres cannot drop an enum value. Once the summary call extracts facets, a change to a prompt line changes what every new summary says, so from then on it ships with a `summaryRecipe` bump in `packages/ai/src/models.ts`. Tests fail when a generated copy drifts from the registry.
 
-Two lists stay outside the registry on purpose. The query planner keeps its own frozen list of twelve kinds, because its schema is part of `PlannerPrompt.version`, which keys the plan and answer caches. The language table in `packages/core/src/search/vocabulary.ts` keeps today's search behavior until search filters read atoms.
+Search reads nothing from the registry yet. `packages/core/src/search/vocabulary.ts` keeps a frozen list of twelve kinds and its own language table until search filters read atoms. The planner's schema uses those kinds, and the schema is part of `PlannerPrompt.version`, which keys the plan and answer caches.
 
 `recipes` names the ways a page ranks a selection's members: `top` by stars, and `trending_7d` by stars gained over seven complete days.
