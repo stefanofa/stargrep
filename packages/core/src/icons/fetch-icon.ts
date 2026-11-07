@@ -4,6 +4,7 @@ import type { GitHubError } from "@stargrep/github/errors";
 import * as GitHub from "@stargrep/github/github";
 import type { ObjectId, RepoId } from "@stargrep/github/schemas";
 import * as Context from "effect/Context";
+import * as Digest from "effect/crypto/Digest";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -69,35 +70,42 @@ const pageLimit: IconHttp.Limit = { maxBytes: 256 * 1024, overflow: "truncate" }
 export const backfillPage = 100;
 export const refreshAfter = Duration.days(30);
 
-const hex = (buffer: ArrayBuffer) =>
-  [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-
-const digest = (algorithm: "SHA-1" | "SHA-256", bytes: Uint8Array<ArrayBuffer>) =>
-  Effect.promise(() => crypto.subtle.digest(algorithm, bytes)).pipe(Effect.map(hex));
-
-const blobOid = (bytes: Uint8Array<ArrayBuffer>) => {
+// The object ID git gives a blob, the SHA-1 of a header that names its size followed by its bytes.
+export const blobOid = Effect.fnUntraced(function* (bytes: Uint8Array) {
+  const digest = yield* Digest.Digest;
   const header = new TextEncoder().encode(`blob ${bytes.byteLength}\0`);
   const blob = new Uint8Array(header.byteLength + bytes.byteLength);
   blob.set(header);
   blob.set(bytes, header.byteLength);
-  return digest("SHA-1", blob);
-};
+  return yield* digest.digestHex(Digest.sha1, blob);
+});
 
 type Unavailable = Extract<IconHttp.Download, { readonly _tag: "Unavailable" }>;
 
-type Fetched = Data.TaggedEnum<{
-  Got: { readonly bytes: Uint8Array<ArrayBuffer> };
+// One try at a download or an icon. Gone says nothing is there, and Unreachable says the place could not be reached.
+type Attempt<A> = Data.TaggedEnum<{
+  Found: { readonly value: A };
   Gone: Record<never, never>;
   Unreachable: Record<never, never>;
 }>;
-const Fetched = Data.taggedEnum<Fetched>();
+interface AttemptDefinition extends Data.TaggedEnum.WithGenerics<1> {
+  readonly taggedEnum: Attempt<this["A"]>;
+}
+const Attempt = Data.taggedEnum<AttemptDefinition>();
 
-type Attempt = Data.TaggedEnum<{
-  Found: { readonly icon: Db.RepoIcon };
-  Gone: Record<never, never>;
-  Unreachable: Record<never, never>;
-}>;
-const Attempt = Data.taggedEnum<Attempt>();
+// Tries each item in turn and stops at the first found. With none found, one unreachable try makes the whole unreachable.
+const firstFound = Effect.fnUntraced(function* <I, A, E, R>(
+  items: Iterable<I>,
+  attempt: (item: I) => Effect.Effect<Attempt<A>, E, R>,
+) {
+  let unreachable = false;
+  for (const item of items) {
+    const tried = yield* attempt(item);
+    if (tried._tag === "Found") return tried;
+    unreachable ||= tried._tag === "Unreachable";
+  }
+  return unreachable ? Attempt.Unreachable() : Attempt.Gone();
+});
 
 // A homepage is a site Stargrep does not control. A dead one, or a bot challenge that names no time to come back,
 // fails the same way every time, so it is a miss. The periodic refresh checks it again.
@@ -120,16 +128,18 @@ const make = Effect.gen(function* () {
   const store = yield* IconStore;
   const normalizer = yield* IconNormalizer;
   const queue = yield* IconQueue;
+  const digest = yield* Digest.Digest;
+  const oidOf = (bytes: Uint8Array) => Effect.provideService(blobOid(bytes), Digest.Digest, digest);
 
   const download = (url: string, limit: IconHttp.Limit, source: Db.IconSource) =>
     Effect.flatMap(
       http.get(url, limit),
       IconHttp.Download.$match({
-        Got: ({ bytes }) => Effect.succeed(Fetched.Got({ bytes })),
-        Missing: () => Effect.succeed(Fetched.Gone()),
+        Got: ({ bytes }) => Effect.succeed(Attempt.Found({ value: bytes })),
+        Missing: () => Effect.succeed(Attempt.Gone()),
         Unavailable: (failure) =>
           source === "homepage" && homepageMiss(failure)
-            ? Effect.succeed(Fetched.Unreachable())
+            ? Effect.succeed(Attempt.Unreachable())
             : Effect.fail(fetchFailed(url, failure)),
       }),
     );
@@ -150,27 +160,27 @@ const make = Effect.gen(function* () {
     }
     const stored = { plate: normalized.plate, size: normalized.size };
     yield* store.put(key, normalized.webp, stored);
-    return Attempt.Found({ icon: { key, source, ...stored } });
+    return Attempt.Found({ value: { key, source, ...stored } });
   });
 
   const fromBytes = Effect.fn("FetchIcon.fromBytes")(function* (row: Db.Repo, url: string, source: Db.IconSource) {
     const fetched = yield* download(url, iconLimit, source);
-    if (fetched._tag !== "Got") return fetched._tag === "Gone" ? Attempt.Gone() : Attempt.Unreachable();
-    if (templateBlobs.has(yield* blobOid(fetched.bytes))) return Attempt.Gone();
-    const key = contentKey(yield* digest("SHA-256", fetched.bytes));
+    if (fetched._tag !== "Found") return fetched;
+    if (templateBlobs.has(yield* oidOf(fetched.value))) return Attempt.Gone();
+    const key = contentKey(yield* digest.digestHex(Digest.sha256, fetched.value));
     const reused = yield* reuse(row, key, source);
-    return Option.isSome(reused) ? Attempt.Found({ icon: reused.value }) : yield* keep(fetched.bytes, key, source);
+    return Option.isSome(reused) ? Attempt.Found({ value: reused.value }) : yield* keep(fetched.value, key, source);
   });
 
   const fromRepoFile = Effect.fn("FetchIcon.fromRepoFile")(function* (row: Db.Repo, url: string, oid: ObjectId) {
     const key = gitKey(oid);
     const reused = yield* reuse(row, key, "repo-file");
-    if (Option.isSome(reused)) return Attempt.Found({ icon: reused.value });
+    if (Option.isSome(reused)) return Attempt.Found({ value: reused.value });
     const fetched = yield* download(url, iconLimit, "repo-file");
-    if (fetched._tag !== "Got") return Attempt.Gone();
+    if (fetched._tag !== "Found") return fetched;
     // raw.githubusercontent.com caches HEAD for minutes, so right after a change it can serve the old file. The key
     // names the new blob forever, so the old bytes must not land there.
-    if ((yield* blobOid(fetched.bytes)) !== oid) {
+    if ((yield* oidOf(fetched.value)) !== oid) {
       return yield* new IconFetchFailed({
         host: new URL(url).hostname,
         reason: "stale",
@@ -178,7 +188,7 @@ const make = Effect.gen(function* () {
         retryAfterMillis: null,
       });
     }
-    return yield* keep(fetched.bytes, key, "repo-file");
+    return yield* keep(fetched.value, key, "repo-file");
   });
 
   const homepageIcons = (page: string) =>
@@ -196,13 +206,7 @@ const make = Effect.gen(function* () {
   const fromHomepage = Effect.fn("FetchIcon.fromHomepage")(function* (row: Db.Repo, page: string) {
     const urls = yield* homepageIcons(page);
     if (Option.isNone(urls)) return Attempt.Unreachable();
-    let unreachable = false;
-    for (const url of urls.value) {
-      const attempt = yield* fromBytes(row, url, "homepage");
-      if (attempt._tag === "Found") return attempt;
-      unreachable ||= attempt._tag === "Unreachable";
-    }
-    return unreachable ? Attempt.Unreachable() : Attempt.Gone();
+    return yield* firstFound(urls.value, (url) => fromBytes(row, url, "homepage"));
   });
 
   const attempt = (row: Db.Repo, candidate: IconCandidate) => {
@@ -223,17 +227,15 @@ const make = Effect.gen(function* () {
     const id = request.repoId;
     const row = yield* db.repos.get(id);
     if (Option.isNone(row)) return IconOutcome.NotFound({ id });
-    let unreachable = false;
-    for (const candidate of candidates({ ...request, readme: yield* readme(request.readmeOid) })) {
-      const tried = yield* attempt(row.value, candidate);
-      if (tried._tag === "Found") {
-        yield* db.repos.saveIcon({ id, icon: tried.icon });
-        return IconOutcome.Found({ id, icon: tried.icon });
-      }
-      unreachable ||= tried._tag === "Unreachable";
+    const tried = yield* firstFound(candidates({ ...request, readme: yield* readme(request.readmeOid) }), (candidate) =>
+      attempt(row.value, candidate),
+    );
+    if (tried._tag === "Found") {
+      yield* db.repos.saveIcon({ id, icon: tried.value });
+      return IconOutcome.Found({ id, icon: tried.value });
     }
     // A homepage that could not be reached says nothing about the icon found before, so a refresh keeps it.
-    const kept = unreachable ? row.value.icon : null;
+    const kept = tried._tag === "Unreachable" ? row.value.icon : null;
     yield* db.repos.saveIcon({ id, icon: kept });
     return kept === null ? IconOutcome.NoIcon({ id }) : IconOutcome.Kept({ id, icon: kept });
   });
@@ -263,4 +265,4 @@ const make = Effect.gen(function* () {
   return FetchIcon.of({ fetchIcon, backfill });
 });
 
-export const layer = Layer.effect(FetchIcon, make);
+export const layer = Layer.effect(FetchIcon, make).pipe(Layer.provide(Digest.layerWebCrypto));
