@@ -88,8 +88,7 @@ const rpc = await import("../src/lib/rpc.ts");
 mock.module("../src/lib/rpc.ts", () => ({ ...rpc, api }));
 mock.module("../src/lib/library-collection.ts", () => ({ ...real, getLibrary: () => library }));
 
-const { Route: HomeRoute } = await import("../src/routes/index.tsx");
-const { Route: LoginRoute } = await import("../src/routes/$login.tsx");
+const { Route: StarsRoute } = await import("../src/routes/{-$login}.tsx");
 
 const repo = (id: number, owner: string, name: string, description: string, extra: Partial<Repo> = {}): Repo => ({
   id: id as LibraryRepo["id"],
@@ -179,18 +178,13 @@ const open = async (path: string, label: string | RegExp = "Search your stars", 
     component: Outlet,
     loader: async () => ({ viewer: server.signedIn ? server.viewer : null, config: await api().config() }),
   });
-  const search = HomeRoute.update({
-    id: "/",
-    path: "/",
-    getParentRoute: () => root,
-  } as never) as unknown as AnyRoute;
-  const login = LoginRoute.update({
-    id: "/$login",
-    path: "/$login",
+  const stars = StarsRoute.update({
+    id: "/{-$login}",
+    path: "/{-$login}",
     getParentRoute: () => root,
   } as never) as unknown as AnyRoute;
   const router = createRouter({
-    routeTree: root.addChildren([search, login]),
+    routeTree: root.addChildren([stars]),
     history: createMemoryHistory({ initialEntries: [path] }),
   });
   render(<RouterProvider router={router} />);

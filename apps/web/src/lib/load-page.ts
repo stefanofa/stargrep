@@ -3,7 +3,6 @@ import { serverLoads } from "../server/page-data.ts";
 import { loadEngine } from "./engine.ts";
 import type { PageData, PageRequest, Session } from "./page-data.ts";
 import { revealScript } from "./reveal-script.ts";
-import type { Params } from "./search-params.ts";
 import { theirs, whoseOf } from "./whose.ts";
 
 // The root route loads the session once, on the server, and never reloads it. Signing in or out reloads the whole page.
@@ -36,18 +35,7 @@ const titled = (data: PageData, query: string | undefined) => {
 // page a visitor lands on keeps the site's own title. The reveal types the demo query once per visit, on a page the
 // server painted with its first answer. Its script runs in the head before the first paint, so it renders on that page
 // alone.
-export const pageHead = ({
-  loaderData,
-  params,
-  match,
-}: {
-  loaderData?: PageData | undefined;
-  params: { readonly login?: string };
-  match: { readonly search: Params };
-}) => ({
-  meta:
-    loaderData === undefined || (params.login === undefined && !loaderData.own)
-      ? []
-      : titled(loaderData, match.search.q),
+export const pageHead = (loaderData: PageData | undefined, home: boolean, query: string | undefined) => ({
+  meta: loaderData === undefined || (home && !loaderData.own) ? [] : titled(loaderData, query),
   scripts: loaderData?.first == null ? [] : [{ children: revealScript }],
 });

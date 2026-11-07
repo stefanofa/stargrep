@@ -41,10 +41,10 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
     if (sameLogin(next, owner)) return;
     const home = viewer === null ? sameLogin(next, config.demoLogin) : sameLogin(next, viewer.login);
     const moved = home
-      ? navigate({ to: "/" })
+      ? navigate({ to: "/{-$login}", params: { login: undefined } })
       : reservedLogin(next)
         ? navigate({ to: "/@{$login}", params: { login: next } })
-        : navigate({ to: "/$login", params: { login: next } });
+        : navigate({ to: "/{-$login}", params: { login: next } });
     // The switch remounts the page with a new pill, which takes focus where the old one had it. A page without a pill,
     // such as the viewer's own, leaves focus alone.
     moved.then(() => document.querySelector<HTMLElement>("[data-owner-pill]")?.focus());

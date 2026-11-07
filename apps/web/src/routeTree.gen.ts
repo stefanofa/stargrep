@@ -9,21 +9,10 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
-import { Route as LoginRouteImport } from './routes/$login'
 import { Route as AtChar123loginChar125RouteImport } from './routes/@{$login}'
 import { Route as SearchRouteImport } from './routes/search'
+import { Route as Char123LoginChar125RouteImport } from './routes/{-$login}'
 
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/$login',
-  path: '/$login',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AtChar123loginChar125Route = AtChar123loginChar125RouteImport.update({
   id: '/@{$login}',
   path: '/@{$login}',
@@ -34,57 +23,44 @@ const SearchRoute = SearchRouteImport.update({
   path: '/search',
   getParentRoute: () => rootRouteImport,
 } as any)
+const Char123LoginChar125Route = Char123LoginChar125RouteImport.update({
+  id: '/{-$login}',
+  path: '/{-$login}',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
-  '/$login': typeof LoginRoute
   '/@{$login}': typeof AtChar123loginChar125Route
   '/search': typeof SearchRoute
+  '/{-$login}': typeof Char123LoginChar125Route
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
-  '/$login': typeof LoginRoute
   '/@{$login}': typeof AtChar123loginChar125Route
   '/search': typeof SearchRoute
+  '/{-$login}': typeof Char123LoginChar125Route
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
-  '/$login': typeof LoginRoute
   '/@{$login}': typeof AtChar123loginChar125Route
   '/search': typeof SearchRoute
+  '/{-$login}': typeof Char123LoginChar125Route
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/$login' | '/@{$login}' | '/search'
+  fullPaths: '/@{$login}' | '/search' | '/{-$login}'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/$login' | '/@{$login}' | '/search'
-  id: '__root__' | '/' | '/$login' | '/@{$login}' | '/search'
+  to: '/@{$login}' | '/search' | '/{-$login}'
+  id: '__root__' | '/@{$login}' | '/search' | '/{-$login}'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
-  LoginRoute: typeof LoginRoute
   AtChar123loginChar125Route: typeof AtChar123loginChar125Route
   SearchRoute: typeof SearchRoute
+  Char123LoginChar125Route: typeof Char123LoginChar125Route
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/$login': {
-      id: '/$login'
-      path: '/$login'
-      fullPath: '/$login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/@{$login}': {
       id: '/@{$login}'
       path: '/@{$login}'
@@ -99,14 +75,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SearchRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/{-$login}': {
+      id: '/{-$login}'
+      path: '/{-$login}'
+      fullPath: '/{-$login}'
+      preLoaderRoute: typeof Char123LoginChar125RouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
-  LoginRoute: LoginRoute,
   AtChar123loginChar125Route: AtChar123loginChar125Route,
   SearchRoute: SearchRoute,
+  Char123LoginChar125Route: Char123LoginChar125Route,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

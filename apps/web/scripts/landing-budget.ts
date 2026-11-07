@@ -10,7 +10,7 @@ export const forbidden: ReadonlyArray<readonly [name: string, module: RegExp]> =
   ["oRPC client", /\/node_modules\/@orpc\//],
 ];
 
-const indexRoute = /\/src\/routes\/index\.tsx(\?|$)/;
+const indexRoute = /\/src\/routes\/\{-\$login\}\.tsx(\?|$)/;
 const engineModule = /\/src\/components\/stars\.tsx(\?|$)/;
 
 export interface Chunk {
@@ -31,7 +31,7 @@ export const landingChunks = (chunks: ReadonlyArray<Chunk>): ReadonlyArray<Chunk
   const entries = chunks.filter((chunk) => chunk.isEntry);
   if (entries.length !== 1) throw new Error(`expected one entry chunk, found ${entries.length}`);
   const routes = chunks.filter((chunk) => chunk.moduleIds.some((id) => indexRoute.test(id)));
-  if (routes.length === 0) throw new Error("no chunk holds src/routes/index.tsx, so the landing route moved");
+  if (routes.length === 0) throw new Error("no chunk holds src/routes/{-$login}.tsx, so the landing route moved");
   return dependencies(chunks, [...entries, ...routes]);
 };
 

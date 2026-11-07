@@ -52,7 +52,8 @@ export function HeaderControls({ viewer }: { viewer: Viewer }) {
     <>
       <nav aria-label="Scope" className="flex items-center rounded-full bg-card p-1 max-sm:hidden">
         <Link
-          to="/"
+          to="/{-$login}"
+          params={{ login: undefined }}
           activeOptions={{ exact: true, includeSearch: false }}
           className="flex h-9 items-center rounded-full px-[18px] font-sans text-meta font-medium text-muted-foreground transition-[color,background-color] duration-120 hover:text-foreground aria-[current=page]:bg-accent aria-[current=page]:font-semibold aria-[current=page]:text-ink"
         >

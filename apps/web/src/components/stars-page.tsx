@@ -1,10 +1,8 @@
 import { loginKey } from "@stargrep/github/login";
 import { type PipPose, Skeleton, Tile } from "@stargrep/ui";
-import { useLoaderData, useSearch } from "@tanstack/react-router";
 import { Suspense, useState } from "react";
 import { HeaderControls, Stars } from "../lib/engine.ts";
 import type { PageData } from "../lib/page-data.ts";
-import type { Params } from "../lib/search-params.ts";
 import { Page } from "./page.tsx";
 import { SignInButton } from "./sign-in-button.tsx";
 import { Wordmark } from "./wordmark.tsx";
@@ -29,13 +27,6 @@ function SignInProblem({ error }: { error: string }) {
       <SignInButton variant="primary" size="lg" label="Try again" />
     </Tile>
   );
-}
-
-// The component of every stars route, with that route's page data.
-export function StarsRoute() {
-  const data = useLoaderData({ strict: false }) as PageData;
-  const { error }: Params = useSearch({ strict: false });
-  return <StarsPage data={data} error={error} />;
 }
 
 // The light part of every stars page. Everything that searches renders inside the engine boundaries, which the server
