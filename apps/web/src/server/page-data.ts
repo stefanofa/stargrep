@@ -1,7 +1,10 @@
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
+import { isNotFound, isRedirect } from "@tanstack/react-router";
 import { getRequest } from "@tanstack/react-start/server";
+import * as Effect from "effect/Effect";
 import { keywordTerms, searchText } from "../lib/keyword.ts";
+import type { ServerLoads } from "../lib/load-page.ts";
 import {
   type Asked,
   type FirstAnswer,
@@ -104,3 +107,17 @@ export const loadPage = async ({ login }: PageRequest, { viewer, config }: Sessi
     first === null ? await syncOf(client, owner, request.headers.get("cookie")) : { sync: first.sync, refusal: null };
   return { viewer, owner, own, config, query, defaultQuery, first, sync, refusal };
 };
+
+// The router sends a failed loader's error to the browser in the page's hydration data. So the server logs an unexpected
+// error and hands the router one that says nothing. A redirect or a not-found passes through, since the router acts on it.
+const shielded =
+  <A extends ReadonlyArray<unknown>, B>(loader: string, load: (...args: A) => Promise<B>) =>
+  (...args: A): Promise<B> =>
+    load(...args).catch(async (error: unknown) => {
+      if (isRedirect(error) || isNotFound(error)) throw error;
+      await Effect.runPromise(Effect.logError("Page loader failed", { loader, error: String(error) }));
+      throw new Error("stargrep could not load this page");
+    });
+
+// The loaders the Worker hands to the router.
+export const serverLoads: ServerLoads = { session: shielded("session", loadSession), page: shielded("page", loadPage) };

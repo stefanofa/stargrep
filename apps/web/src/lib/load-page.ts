@@ -1,6 +1,7 @@
 import { loadEngine } from "./engine.ts";
 import type { PageData, PageRequest, Session } from "./page-data.ts";
 import { revealScript } from "./reveal-script.ts";
+import type { Params } from "./search-params.ts";
 
 export interface ServerLoads {
   readonly session: () => Promise<Session>;
@@ -36,8 +37,31 @@ export const loadPage = async (request: PageRequest, session: Session | undefine
   return (await loadEngine()).pageFor(request, session);
 };
 
-// The reveal types the demo query once per visit, on a page the server painted with its first answer. Its script runs in
-// the head before the first paint, so it renders on that page alone.
-export const revealHead = ({ loaderData }: { loaderData?: PageData | undefined }) => ({
+const titled = (data: PageData, query: string | undefined) => {
+  const whose = data.own ? "your stars" : `@${data.owner}'s stars`;
+  const title = query ? `"${query}" in ${whose} · Stargrep` : `${whose} · Stargrep`;
+  const description = data.own
+    ? []
+    : [{ name: "description", content: `Search @${data.owner}'s GitHub stars in plain words.` }];
+  return [{ title }, ...description];
+};
+
+// A stars page is titled by whose stars it shows and what it searches, so tabs and history tell pages apart. The home
+// page a visitor lands on keeps the site's own title. The reveal types the demo query once per visit, on a page the
+// server painted with its first answer. Its script runs in the head before the first paint, so it renders on that page
+// alone.
+export const pageHead = ({
+  loaderData,
+  params,
+  match,
+}: {
+  loaderData?: PageData | undefined;
+  params: { readonly login?: string };
+  match: { readonly search: Params };
+}) => ({
+  meta:
+    loaderData === undefined || (params.login === undefined && !loaderData.own)
+      ? []
+      : titled(loaderData, match.search.q),
   scripts: loaderData?.first == null ? [] : [{ children: revealScript }],
 });

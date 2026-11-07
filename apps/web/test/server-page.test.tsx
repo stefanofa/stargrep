@@ -20,10 +20,10 @@ interface Rendered {
   readonly requested: ReadonlyArray<string>;
 }
 
-const renderOnServer = async (path: string, cookie?: string): Promise<Rendered> => {
+const renderOnServer = async (path: string, cookie?: string, env: Record<string, string> = {}): Promise<Rendered> => {
   const child = Bun.spawn(["bun", "test/render-server.tsx", path, ...(cookie === undefined ? [] : [cookie])], {
     cwd: app,
-    env: { ...process.env, SSR: "1" },
+    env: { ...process.env, SSR: "1", ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -173,6 +173,29 @@ describe("a stars page from the Worker to the browser", () => {
     expect(document.querySelector("[role=status]")?.closest("p")?.textContent).toContain("2 of 10");
     expect(requested).toEqual([]);
     expect(errors).toEqual([]);
+  }, 60_000);
+
+  test("a page whose loader fails sends no word of the error, not even in its hydration data", async () => {
+    const secret = "secret detail from the api";
+    const page = await renderOnServer("/octosync", undefined, { NODE_ENV: "production", STARGREP_API_FAILURE: secret });
+    expect(page.status).toBe(500);
+    expect(page.html).toContain("stargrep tripped");
+    expect(page.html).toContain("$_TSR");
+    expect(page.html).not.toContain(secret);
+  }, 60_000);
+
+  test("a page whose own loader fails shows the styled error page, with no word of the error", async () => {
+    const secret = "secret detail from the page loader";
+    const page = await renderOnServer("/octosync", undefined, {
+      NODE_ENV: "production",
+      STARGREP_PAGE_FAILURE: secret,
+    });
+    expect(page.status).toBe(500);
+    expect(page.html).toContain("stargrep tripped");
+    expect(page.html).toContain(">Reload</button>");
+    expect(page.html).not.toContain("Something went wrong!");
+    expect(page.html).toContain("$_TSR");
+    expect(page.html).not.toContain(secret);
   }, 60_000);
 
   test("a login named like a stargrep path lives at /@login, which any login can use", async () => {

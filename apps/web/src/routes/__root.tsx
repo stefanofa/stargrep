@@ -1,6 +1,8 @@
 import fredoka from "@stargrep/ui/fonts/fredoka-latin-600-normal.woff2?url";
 import inter from "@stargrep/ui/fonts/inter-latin-wght-normal.woff2?url";
-import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
+import { createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
+import type { ReactNode } from "react";
+import { Failure, NotFound } from "../components/problem-page.tsx";
 import { loadSession } from "../lib/load-page.ts";
 import styles from "../styles.css?url";
 
@@ -25,7 +27,8 @@ export const Route = createRootRoute({
       { rel: "manifest", href: "/manifest.webmanifest" },
     ],
   }),
-  component: () => (
+  // The shell wraps the error and not-found pages too, so they keep the head, the styles and the scripts.
+  shellComponent: ({ children }: { children: ReactNode }) => (
     // The demo page's reveal script marks <html> before hydration, so its attribute is expected to differ from the server's.
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -35,9 +38,11 @@ export const Route = createRootRoute({
         <meta name="theme-color" content="#15131f" media="(prefers-color-scheme: dark)" />
       </head>
       <body>
-        <Outlet />
+        {children}
         <Scripts />
       </body>
     </html>
   ),
+  notFoundComponent: NotFound,
+  errorComponent: Failure,
 });
