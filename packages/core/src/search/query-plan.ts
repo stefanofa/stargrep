@@ -1,7 +1,22 @@
-import { RepoKind } from "@stargrep/ai/summarize";
 import * as Schema from "effect/Schema";
 import { MetricId } from "./metric-registry.ts";
 import * as Vocabulary from "./vocabulary.ts";
+
+// Frozen, because the planner's schema is part of PlannerPrompt.version, which keys the plan and answer caches.
+const PlannedKind = Schema.Literals([
+  "app",
+  "library",
+  "framework",
+  "cli",
+  "plugin",
+  "template",
+  "list",
+  "learning",
+  "dataset",
+  "model",
+  "config",
+  "other",
+]);
 
 const Day = Schema.DateTimeUtcFromString.annotate({ description: "A date as YYYY-MM-DD." });
 
@@ -16,7 +31,7 @@ export const Filters = Schema.Struct({
   languages: Schema.Array(Schema.String).annotate({
     description: "GitHub language names, matched against a repo's language and topics.",
   }),
-  kinds: Schema.Array(RepoKind),
+  kinds: Schema.Array(PlannedKind),
   licenses: Schema.Array(Schema.String).annotate({ description: "SPDX license identifiers, such as MIT." }),
   archived: Schema.NullOr(Schema.Boolean),
   starredAfter: Schema.NullOr(Day),

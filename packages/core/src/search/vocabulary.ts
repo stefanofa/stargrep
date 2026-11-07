@@ -1,4 +1,4 @@
-import { RepoKind } from "@stargrep/ai/summarize";
+import { kinds } from "@stargrep/knowledge/registry";
 
 interface Language {
   readonly aliases: ReadonlyArray<string>;
@@ -7,6 +7,8 @@ interface Language {
 
 const plain: Language = { aliases: [], topics: [] };
 
+// Search keeps today's language names and topics, with node and nodejs on JavaScript, until its filters read atoms.
+// The audited closed values live in @stargrep/knowledge/registry.
 const languages: Readonly<Record<string, Language>> = {
   abap: plain,
   ada: plain,
@@ -149,9 +151,7 @@ const licenseWords = [
   "unlicense",
 ];
 
-const kindWords = RepoKind.literals
-  .filter((kind) => kind !== "other")
-  .flatMap((kind) => [kind, kind.endsWith("y") ? `${kind.slice(0, -1)}ies` : `${kind}s`]);
+const kindWords = kinds.flatMap(({ id }) => [id, id.endsWith("y") ? `${id.slice(0, -1)}ies` : `${id}s`]);
 
 const connectives = [
   "a",

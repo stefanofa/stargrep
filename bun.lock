@@ -142,6 +142,7 @@
       "name": "@stargrep/ai",
       "dependencies": {
         "@ai-sdk/gateway": "4.0.135",
+        "@stargrep/knowledge": "workspace:*",
         "ai": "7.0.162",
         "effect": "catalog:",
       },
@@ -205,6 +206,7 @@
         "@stargrep/ai": "workspace:*",
         "@stargrep/db": "workspace:*",
         "@stargrep/github": "workspace:*",
+        "@stargrep/knowledge": "workspace:*",
         "effect": "catalog:",
       },
       "devDependencies": {

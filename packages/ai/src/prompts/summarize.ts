@@ -1,23 +1,11 @@
+import { kinds } from "@stargrep/knowledge/registry";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { toAiSchema } from "../schema-bridge.ts";
 import * as TextGeneration from "../text-generation.ts";
 
-export const RepoKind = Schema.Literals([
-  "app",
-  "library",
-  "framework",
-  "cli",
-  "plugin",
-  "template",
-  "list",
-  "learning",
-  "dataset",
-  "model",
-  "config",
-  "other",
-]);
+export const RepoKind = Schema.Literals([...kinds.map((kind) => kind.id), "other"]);
 export type RepoKind = typeof RepoKind.Type;
 
 export const RepoSummary = Schema.Struct({
