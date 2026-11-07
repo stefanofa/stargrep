@@ -29,7 +29,7 @@ import { useReveal } from "../lib/reveal.ts";
 import type { Viewer } from "../lib/rpc.ts";
 import { librarySorts, type Params, searchSorts, validateParams } from "../lib/search-params.ts";
 import { type Arriving, type Body, pageView, type Retry, type Stage, stageOf } from "../lib/search-state.ts";
-import { useStoredView } from "../lib/stored-view.ts";
+import { storedView, useStoredView } from "../lib/stored-view.ts";
 import { libraryRevision, nothingSynced } from "../lib/sync-status.ts";
 import { libraryTrouble, type Trouble } from "../lib/trouble.ts";
 import { useSemanticSearch } from "../lib/use-semantic.ts";
@@ -43,7 +43,18 @@ import { OwnerPill } from "./owner-pill.tsx";
 // A navigation in the browser starts from the session the server loaded. The page reads the rest once it mounts.
 export const pageFor = (request: PageRequest, { viewer, config }: Session): PageData => {
   const { owner, own, query, defaultQuery } = pageOwner(viewer, config, request);
-  return { viewer, owner, own, config, query, defaultQuery, first: null, sync: null, refusal: null };
+  return {
+    viewer,
+    owner,
+    own,
+    config,
+    query,
+    defaultQuery,
+    first: null,
+    sync: null,
+    refusal: null,
+    view: storedView(document.cookie) ?? null,
+  };
 };
 
 // Until other scopes ship, the scope switch is one link to the viewer's own stars rather than a tab list of one.
@@ -68,10 +79,10 @@ export function HeaderControls({ viewer }: { viewer: Viewer }) {
 const dock =
   "max-sm:fixed max-sm:inset-x-3 max-sm:bottom-[max(16px,env(safe-area-inset-bottom))] max-sm:z-30 max-sm:[&_[data-slot=tile]]:shadow-dock";
 
-function useArrangement(searching: boolean) {
+function useArrangement(searching: boolean, saved: View | null) {
   const params: Params = useSearch({ strict: false });
   const navigate = useNavigate();
-  const [storedView, storeView] = useStoredView();
+  const [storedView, storeView] = useStoredView(saved ?? "tiles");
   const view = params.view ?? storedView;
   const sort = params.sort ?? (searching ? "best" : "starred");
   const setView = (next: View) => {
@@ -218,7 +229,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
 
   const hits = hitsOf(semantic);
   const searching = keywordTerms(query).length > 0 || semantic.kind === "pending" || hits.length > 0;
-  const { view, sort, setView, setSort } = useArrangement(searching);
+  const { view, sort, setView, setSort } = useArrangement(searching, data.view);
   // A result's link carries what the page shows, including a view this browser saved, so it opens the same way
   // anywhere. The default view and sort stay out, so a link doesn't override the opener's own choice.
   const links: Params = {

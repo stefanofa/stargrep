@@ -17,6 +17,7 @@ import { api, type Client, type SyncStatus, type Viewer } from "../lib/rpc.ts";
 import { validateParams } from "../lib/search-params.ts";
 import { stageOf } from "../lib/search-state.ts";
 import { allStars } from "../lib/stars-pages.ts";
+import { storedView } from "../lib/stored-view.ts";
 import { libraryRevision } from "../lib/sync-status.ts";
 import { rememberedRefusal } from "../lib/trouble.ts";
 import { type Computed, cachedFirstAnswer, firstAnswerKey } from "./first-answers.ts";
@@ -100,6 +101,7 @@ const loadSession = async (): Promise<Session> => {
 const loadPage = async ({ login }: PageRequest, { viewer, config }: Session): Promise<PageData> => {
   const request = getRequest();
   const client = api();
+  const cookies = request.headers.get("cookie");
   const { q, sort } = validateParams(Object.fromEntries(new URL(request.url).searchParams));
   const { owner, own, query, defaultQuery, showcase } = pageOwner(viewer, config, { login, q });
   // The server reads the sync first, since it names the library revision a cached answer must match. Crawlers and link
@@ -112,10 +114,9 @@ const loadPage = async ({ login }: PageRequest, { viewer, config }: Session): Pr
       ? await demoAnswer(request, client, sync, owner, query, sort).catch(() => null)
       : null;
   const remembered =
-    first === null && (sync === null || sync.state === "unknown")
-      ? rememberedRefusal(request.headers.get("cookie"), owner)
-      : undefined;
-  return { viewer, owner, own, config, query, defaultQuery, first, sync, refusal: remembered ?? null };
+    first === null && (sync === null || sync.state === "unknown") ? rememberedRefusal(cookies, owner) : undefined;
+  const view = storedView(cookies) ?? null;
+  return { viewer, owner, own, config, query, defaultQuery, first, sync, refusal: remembered ?? null, view };
 };
 
 // The router sends a failed loader's error to the browser in the page's hydration data. So the server logs an unexpected

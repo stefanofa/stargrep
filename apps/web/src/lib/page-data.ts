@@ -1,4 +1,4 @@
-import type { Sort } from "@stargrep/ui";
+import type { Sort, View } from "@stargrep/ui";
 import type { PublicConfig, SearchResult, SyncStatus, Viewer } from "./rpc.ts";
 import type { SearchView } from "./search-state.ts";
 import type { Refusal } from "./trouble.ts";
@@ -31,6 +31,8 @@ export interface PageData extends Session {
   // browser remembers.
   readonly sync: SyncStatus | null;
   readonly refusal: Refusal | null;
+  // The view this browser picked, so the server paints it.
+  readonly view: View | null;
 }
 
 export interface PageRequest {

@@ -130,6 +130,12 @@ describe("a stars page from the Worker to the browser", () => {
     expect(page.html).not.toContain("@StefanoFA");
   }, 60_000);
 
+  test("the view this browser picked paints from the server, so the page does not switch on hydration", async () => {
+    const page = await renderOnServer("/", "stargrep-view=list");
+    expect(page.html).toContain("view-list");
+    expect(page.html).not.toContain("view-tiles");
+  }, 60_000);
+
   test("a login never synced renders ready to import, and only the hydrated page asks for the import", async () => {
     const page = await renderOnServer("/fresh-login");
     expect(page.html).toContain("ready to import @fresh-login");

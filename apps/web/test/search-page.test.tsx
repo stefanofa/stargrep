@@ -512,7 +512,8 @@ describe("the search page in each state", () => {
   });
 
   test("a result's link keeps the query and a view this browser saved, so it opens the same way anywhere", async () => {
-    localStorage.setItem("stargrep:view", "list");
+    // biome-ignore lint/suspicious/noDocumentCookie: the test saves a view the way the page does.
+    document.cookie = "stargrep-view=list; Path=/";
     try {
       await open("/?q=terminal");
       await waitFor(() =>
@@ -525,7 +526,8 @@ describe("the search page in each state", () => {
         repo: "ClementTsang/bottom",
       });
     } finally {
-      localStorage.removeItem("stargrep:view");
+      // biome-ignore lint/suspicious/noDocumentCookie: the test clears the view it saved.
+      document.cookie = "stargrep-view=; Max-Age=0; Path=/";
     }
   });
 

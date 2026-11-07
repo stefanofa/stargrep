@@ -1,13 +1,13 @@
 import "./register.ts";
 import { afterEach, describe, expect, test } from "bun:test";
-import { ViewToggle } from "@stargrep/ui";
+import { type View, ViewToggle } from "@stargrep/ui";
 import { cleanup, render, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderToString } from "react-dom/server";
-import { useStoredView } from "../src/lib/stored-view.ts";
+import { storedView, useStoredView } from "../src/lib/stored-view.ts";
 
-function Toggle() {
-  const [view, setView] = useStoredView();
+function Toggle({ initial }: { initial: View }) {
+  const [view, setView] = useStoredView(initial);
   return (
     <>
       <ViewToggle value={view} onValueChange={setView} />
@@ -20,45 +20,27 @@ const pressed = (name: string) => within(document.body).getByRole("button", { na
 
 afterEach(() => {
   cleanup();
-  localStorage.clear();
+  // biome-ignore lint/suspicious/noDocumentCookie: the test clears the cookie the page writes.
+  document.cookie = "stargrep-view=; Max-Age=0; Path=/";
 });
 
 describe("the stored view", () => {
-  test("the chosen view survives a remount through local storage", async () => {
+  test("a picked view lands in the cookie the server reads for the next page", async () => {
     const user = userEvent.setup();
-    const first = render(<Toggle />);
+    render(<Toggle initial="tiles" />);
+    expect(storedView(document.cookie)).toBeUndefined();
     await user.click(within(document.body).getByRole("button", { name: "List view" }));
     expect(pressed("List view")).toBe("true");
-    first.unmount();
-
-    render(<Toggle />);
-    expect(pressed("List view")).toBe("true");
-    expect(pressed("Tiles view")).toBe("false");
+    expect(storedView(document.cookie)).toBe("list");
   });
 
-  test("server rendering never reads storage and renders the default view", () => {
-    localStorage.setItem("stargrep:view", "list");
-    const storage = globalThis.localStorage;
-    let reads = 0;
-    Object.defineProperty(globalThis, "localStorage", {
-      configurable: true,
-      get() {
-        reads++;
-        return storage;
-      },
-    });
-    try {
-      const html = renderToString(<Toggle />);
-      expect(reads).toBe(0);
-      expect(html).toContain("view-tiles");
-    } finally {
-      Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage });
-    }
+  test("the server paints the view the cookie holds", () => {
+    const html = renderToString(<Toggle initial={storedView("theme=dark; stargrep-view=list") ?? "tiles"} />);
+    expect(html).toContain("view-list");
   });
 
-  test("an unreadable stored value falls back to tiles", () => {
-    localStorage.setItem("stargrep:view", "carousel");
-    render(<Toggle />);
-    expect(pressed("Tiles view")).toBe("true");
+  test("an unreadable cookie value is no view", () => {
+    expect(storedView("stargrep-view=carousel")).toBeUndefined();
+    expect(storedView(null)).toBeUndefined();
   });
 });
