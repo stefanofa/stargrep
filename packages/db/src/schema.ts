@@ -63,7 +63,11 @@ export const githubAccounts = pgTable(
     starsSyncedAt: time("stars_synced_at"),
     starsFullSyncedAt: time("stars_full_synced_at"),
   },
-  (table) => [uniqueIndex("github_accounts_claimed_by_key").on(table.claimedBy)],
+  (table) => [
+    uniqueIndex("github_accounts_claimed_by_key").on(table.claimedBy),
+    // Serves accountNamed's lookup and its order. Not unique, because an account renamed away keeps its old login.
+    index("github_accounts_login_idx").on(sql`lower(${table.login})`, table.starsSyncedAt.desc().nullsLast(), table.id),
+  ],
 );
 
 // A repo with this many of its own failed enrichments counts as failed, and the sweep stops sending it.
@@ -195,7 +199,13 @@ export const stars = pgTable(
     observedAt: time("observed_at").notNull(),
     source: starSource("source").notNull(),
   },
-  (table) => [primaryKey({ columns: [table.accountId, table.repoId] })],
+  (table) => [
+    primaryKey({ columns: [table.accountId, table.repoId] }),
+    // An account's current stars in page order, newest first and then by repo ID, so a page reads only its own rows.
+    index("stars_page_idx")
+      .on(table.accountId, table.starredAt.desc().nullsFirst(), table.repoId)
+      .where(sql`${table.unstarredAt} is null`),
+  ],
 );
 
 export const follows = pgTable(
