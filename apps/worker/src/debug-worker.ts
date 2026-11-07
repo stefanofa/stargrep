@@ -20,7 +20,15 @@ export const DebugToken = Alchemy.makeRandom("DebugToken");
 
 const DebugJobs = Cloudflare.Queues.Queue("DebugJobs");
 const DebugCache = Cloudflare.KV.Namespace("DebugCache");
-const DebugBlobs = Cloudflare.R2.Bucket("DebugBlobs");
+const DebugBlobs = Cloudflare.R2.Bucket("DebugBlobs", {
+  lifecycleRules: [
+    {
+      id: "expire-consumption-receipts",
+      prefix: "consumed/",
+      deleteObjectsTransition: { condition: { type: "Age", maxAge: 86400 } },
+    },
+  ],
+});
 
 export class Counter extends Cloudflare.DurableObject<Counter>()(
   "Counter",
@@ -68,6 +76,11 @@ const decodeCount = Schema.decodeUnknownOption(
 );
 const decodeSeconds = Schema.decodeUnknownOption(
   Schema.NumberFromString.pipe(Schema.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 60 }))),
+);
+const decodeIds = Schema.decodeUnknownOption(
+  Schema.Array(Schema.String.pipe(Schema.check(Schema.isUUID(4)))).pipe(
+    Schema.check(Schema.isMinLength(1), Schema.isMaxLength(10)),
+  ),
 );
 const decodeTransactionRow = Schema.decodeUnknownEffect(Schema.Struct({ pid: Schema.Int, sum: Schema.Int }));
 
@@ -157,13 +170,16 @@ export default Cloudflare.Worker(
           sendPings(count.value).pipe(Effect.flatMap((sent) => HttpServerResponse.json({ sent }))),
         );
       }
-      const job = /^\/queue\/([a-f0-9-]{36})$/.exec(url.pathname)?.[1];
-      if (method === "GET" && job !== undefined) {
+      if (method === "GET" && url.pathname === "/queue") {
+        const ids = decodeIds(url.searchParams.get("ids")?.split(",") ?? []);
+        if (Option.isNone(ids)) return HttpServerResponse.empty({ status: 400 });
         return yield* withinBudget(
           1,
-          blobs
-            .head(`consumed/${job}`)
-            .pipe(Effect.flatMap((receipt) => HttpServerResponse.json({ consumed: receipt !== null }))),
+          Effect.forEach(
+            ids.value,
+            (id) => blobs.head(`consumed/${id}`).pipe(Effect.map((receipt) => (receipt === null ? [] : [id]))),
+            { concurrency: 10 },
+          ).pipe(Effect.flatMap((receipts) => HttpServerResponse.json({ consumed: receipts.flat() }))),
         );
       }
       if (method === "POST" && url.pathname === "/transaction") {

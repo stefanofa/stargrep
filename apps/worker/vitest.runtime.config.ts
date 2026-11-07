@@ -1,12 +1,14 @@
 import { WorkerBundle } from "@alchemy.run/cloudflare/Workers/Sources/Rolldown";
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { databaseUrl } from "@stargrep/db/local-database";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import { defineConfig } from "vitest/config";
 
 const generated = new URL("./.alchemy/test-runtime/", import.meta.url).pathname;
 const databaseName = `stargrep_worker_runtime_${process.pid}`;
+const adminUrl = process.env.DATABASE_URL ?? "postgres://stargrep:stargrep@127.0.0.1:54317/stargrep";
 const object = {
   kind: "durableObject",
   constructor: Effect.die("bundle metadata"),
@@ -58,13 +60,13 @@ export default defineConfig({
           FetchIconsDeadLetters: "fetch-icon-dead-letters",
         },
         durableObjects: { GitHubGate: "GitHubGate", UserGitHubGate: "UserGitHubGate" },
-        hyperdrives: { Database: `postgres://stargrep:stargrep@127.0.0.1:54317/${databaseName}` },
+        hyperdrives: { Database: databaseUrl(adminUrl, databaseName) },
       },
     }),
   ],
   test: {
     globalSetup: ["./test/runtime/setup.ts"],
-    provide: { databaseName },
+    provide: { databaseName, adminUrl },
     include: ["test/runtime/**/*.workerd-test.ts"],
     testTimeout: 30_000,
     fsModuleCache: false,
