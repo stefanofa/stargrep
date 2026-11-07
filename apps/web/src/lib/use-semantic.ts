@@ -26,19 +26,21 @@ export function useSemanticSearch(
   );
   const search = useRef<Search>(undefined);
   const readBefore = useRef<number>(undefined);
+  const [answered] = useState(known?.query);
 
   useEffect(() => {
     const client = api();
     const running = startSemanticSearch(
       (q, signal) => client.search({ scope: { kind: "stars", login }, q }, { signal }).then(({ results }) => results),
       setAnswer,
+      answered,
     );
     search.current = running;
     return () => {
       running.stop();
       search.current = undefined;
     };
-  }, [login]);
+  }, [login, answered]);
 
   useEffect(() => {
     search.current?.offer(query);

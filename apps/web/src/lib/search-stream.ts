@@ -21,14 +21,22 @@ export interface Ask {
   readonly round: number;
 }
 
+const same = (a: Ask, b: Ask) => a.query === b.query && a.round === b.round;
+
+// Each query is asked once, until it changes or a refresh asks again. A query the page already has an answer for, such
+// as the one the server painted, counts as asked.
 export const semanticAnswers = <A, E, R>(
   asks: Stream.Stream<Ask>,
   search: (query: string) => Effect.Effect<A, E, R>,
+  answered?: string,
 ): Stream.Stream<Answer<A, E>, never, R> =>
   asks.pipe(
     Stream.map(({ query, round }) => ({ query: normalize(query), round })),
     Stream.debounce(pause),
-    Stream.changesWith((a, b) => a.query === b.query && a.round === b.round),
+    Stream.mapAccum(
+      (): Ask | undefined => (answered === undefined ? undefined : { query: normalize(answered), round: 0 }),
+      (previous, ask) => [ask, previous !== undefined && same(previous, ask) ? [] : [ask]] as const,
+    ),
     Stream.switchMap(({ query }) =>
       query.length < minimumLength
         ? Stream.succeed<Answer<A, E>>({ query, result: undefined })
@@ -41,16 +49,20 @@ export class SearchFailed extends Data.TaggedError("SearchFailed")<{ readonly ca
 export const startSemanticSearch = <A>(
   search: (query: string, signal: AbortSignal) => Promise<A>,
   onAnswer: (answer: Answer<A, SearchFailed>) => void,
+  answered?: string,
 ) => {
   const asks = Effect.runSync(Queue.unbounded<Ask>());
-  let last: Ask = { query: "", round: 0 };
+  let last: Ask = { query: answered ?? "", round: 0 };
   const ask = (next: Ask) => {
     last = next;
     Queue.offerUnsafe(asks, next);
   };
   const fiber = Effect.runFork(
-    semanticAnswers(Stream.fromQueue(asks), (query) =>
-      Effect.tryPromise({ try: (signal) => search(query, signal), catch: (cause) => new SearchFailed({ cause }) }),
+    semanticAnswers(
+      Stream.fromQueue(asks),
+      (query) =>
+        Effect.tryPromise({ try: (signal) => search(query, signal), catch: (cause) => new SearchFailed({ cause }) }),
+      answered,
     ).pipe(Stream.runForEach((answer) => Effect.sync(() => onAnswer(answer)))),
   );
   return {
