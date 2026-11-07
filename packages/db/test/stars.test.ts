@@ -21,20 +21,19 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
         starred: [],
         unstarred: [],
       });
-      yield* db.accounts.recordStarSync({ accountId: id, etag: "next", at: at("2026-10-03T00:00:00Z") });
+      yield* db.accounts.recordStarSync({ accountId: id, at: at("2026-10-03T00:00:00Z") });
       expect(yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-01T00:00:00Z") })).toEqual({
         starred: [],
         unstarred: [],
       });
 
       const stored = Option.getOrThrow(yield* db.accounts.get(id));
-      expect(stored.starsEtag).toBe("next");
       expect(iso(stored.starsSyncedAt)).toBe("2026-10-03T00:00:00.000Z");
       expect(iso(stored.starsFullSyncedAt)).toBe("2026-10-02T00:00:00.000Z");
 
       const missing = accountId(999_998);
       const sync = yield* db.accounts
-        .recordStarSync({ accountId: missing, etag: null, at: at("2026-10-02T00:00:00Z") })
+        .recordStarSync({ accountId: missing, at: at("2026-10-02T00:00:00Z") })
         .pipe(Effect.flip);
       const snapshot = yield* db.stars
         .applySnapshot({ accountId: missing, stars: [], at: at("2026-10-02T00:00:00Z") })
@@ -43,20 +42,20 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
     }),
   );
 
-  test.effect("keeps the newest sync time and its ETag when an older run records last", () =>
+  test.effect("keeps the newest sync time when an older run records last", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
       const id = accountId(105);
       yield* db.accounts.upsert(account(id));
-      yield* db.accounts.recordStarSync({ accountId: id, etag: "newer", at: at("2026-10-05T00:00:00Z") });
-      yield* db.accounts.recordStarSync({ accountId: id, etag: "older", at: at("2026-10-03T00:00:00Z") });
+      yield* db.accounts.recordStarSync({ accountId: id, at: at("2026-10-05T00:00:00Z") });
+      yield* db.accounts.recordStarSync({ accountId: id, at: at("2026-10-03T00:00:00Z") });
 
       const stored = Option.getOrThrow(yield* db.accounts.get(id));
-      expect([stored.starsEtag, iso(stored.starsSyncedAt)]).toEqual(["newer", "2026-10-05T00:00:00.000Z"]);
+      expect(iso(stored.starsSyncedAt)).toBe("2026-10-05T00:00:00.000Z");
 
-      yield* db.accounts.recordStarSync({ accountId: id, etag: "latest", at: at("2026-10-06T00:00:00Z") });
+      yield* db.accounts.recordStarSync({ accountId: id, at: at("2026-10-06T00:00:00Z") });
       const advanced = Option.getOrThrow(yield* db.accounts.get(id));
-      expect([advanced.starsEtag, iso(advanced.starsSyncedAt)]).toEqual(["latest", "2026-10-06T00:00:00.000Z"]);
+      expect(iso(advanced.starsSyncedAt)).toBe("2026-10-06T00:00:00.000Z");
     }),
   );
 

@@ -462,7 +462,7 @@ const make = Effect.fnUntraced(function* (share: BudgetShare) {
     if (owner.account.type === "org") {
       // The facts were written just above, so the account row exists.
       yield* db.accounts
-        .recordStarSync({ accountId: owner.account.id, etag: null, at: now })
+        .recordStarSync({ accountId: owner.account.id, at: now })
         .pipe(Effect.catchTags({ AccountNotFound: Effect.die }));
       // An org has nothing to send, so its claim starts now.
       yield* db.syncRequests.schedule(login, now, now);

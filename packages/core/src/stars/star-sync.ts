@@ -3,7 +3,7 @@ import { UserId } from "@stargrep/db/auth-schema";
 import type { AccountNotFound, DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
 import type { GitHubError } from "@stargrep/github/errors";
 import * as GitHub from "@stargrep/github/github";
-import { GitHubAccountId, Login, type Star } from "@stargrep/github/schemas";
+import { type GitHubAccountId, Login, type Star } from "@stargrep/github/schemas";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -18,12 +18,6 @@ import * as DiffPage from "./diff-page.ts";
 export const Mode = Schema.Literals(["incremental", "full"]);
 export type Mode = typeof Mode.Type;
 
-// The signed-in user who started a sync. Their token pays for its GitHub reads and for the enrichment it queues.
-const PaidBy = Schema.optionalKey(UserId);
-
-export const SyncRequest = Schema.Struct({ accountId: GitHubAccountId, mode: Mode, userId: PaidBy });
-export type SyncRequest = typeof SyncRequest.Type;
-
 export const LoginSyncRequest = Schema.Struct({
   login: Login,
   mode: Mode,
@@ -32,7 +26,8 @@ export const LoginSyncRequest = Schema.Struct({
   // The units admission reserved in the line for the sync's own GitHub requests. A message without them, such as one
   // from the debug Worker, pays for every request the sync makes.
   reserved: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-  userId: PaidBy,
+  // The signed-in user who started the sync. Their token pays for its GitHub reads and for the enrichment it queues.
+  userId: Schema.optionalKey(UserId),
 });
 export type LoginSyncRequest = typeof LoginSyncRequest.Type;
 
@@ -48,7 +43,6 @@ export type StarSyncError =
 export class StarSync extends Context.Service<
   StarSync,
   {
-    readonly sync: (request: SyncRequest) => Effect.Effect<SyncReport, StarSyncError>;
     readonly syncLogin: (request: LoginSyncRequest) => Effect.Effect<SyncReport, StarSyncError>;
   }
 >()("@stargrep/core/stars/star-sync/StarSync") {}
@@ -77,8 +71,8 @@ const make = Effect.gen(function* () {
     return { page: { ...page, starred, enqueued: pending.length }, pending };
   });
 
-  const sync = Effect.fn("StarSync.sync")(function* (request: SyncRequest) {
-    const account = yield* db.accounts.require(request.accountId);
+  const sync = Effect.fn("StarSync.sync")(function* (accountId: GitHubAccountId, request: LoginSyncRequest) {
+    const account = yield* db.accounts.require(accountId);
     // The run's start, not its end: the snapshot unstars rows observed before it, and the next run's
     // stop line is this time, so a star added while the pages are read must land after it.
     const at = yield* DateTime.now;
@@ -124,18 +118,17 @@ const make = Effect.gen(function* () {
             at,
           })
         : noChanges;
-    if (!shifted) yield* db.accounts.recordStarSync({ accountId: account.id, etag: null, at });
+    if (!shifted) yield* db.accounts.recordStarSync({ accountId: account.id, at });
     return DiffPage.report(stored, pages, snapshot, shifted);
   });
 
   const syncLogin = Effect.fn("StarSync.syncLogin")(function* (request: LoginSyncRequest) {
     const account = yield* github.account(request.login);
     yield* db.accounts.upsert(account);
-    const paidBy = request.userId === undefined ? {} : { userId: request.userId };
-    return yield* sync({ accountId: account.id, mode: request.mode, ...paidBy });
+    return yield* sync(account.id, request);
   });
 
-  return StarSync.of({ sync, syncLogin });
+  return StarSync.of({ syncLogin });
 });
 
 export const layer = Layer.effect(StarSync, make);

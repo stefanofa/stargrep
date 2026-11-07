@@ -11,13 +11,12 @@ import * as Struct from "effect/Struct";
 import { UserGates } from "../user-gate.ts";
 import * as Settle from "./settle.ts";
 
-const Body = Schema.Union([StarSync.SyncRequest, StarSync.LoginSyncRequest]);
-type Body = typeof Body.Type;
+type Body = StarSync.LoginSyncRequest;
 
-const encodeBody = Schema.encodeSync(Body);
+const encodeBody = Schema.encodeSync(StarSync.LoginSyncRequest);
 
 const markFailed = Effect.fn("SyncStarsConsumer.markFailed")(function* (body: Body) {
-  if ("accountId" in body || body.requestedAt === undefined) return;
+  if (body.requestedAt === undefined) return;
   const db = yield* Db.Db;
   yield* db.syncRequests
     .settle(body.login, body.requestedAt, "failed")
@@ -30,8 +29,7 @@ const markFailed = Effect.fn("SyncStarsConsumer.markFailed")(function* (body: Bo
 
 // A message's first delivery spends the units admission reserved for it. A later delivery, a deferred message sent
 // again, and a message that reserved nothing pay for every request they make.
-const reservedFor = ({ body, attempts }: Settle.Delivery<Body>) =>
-  "accountId" in body || attempts > 1 ? 0 : (body.reserved ?? 0);
+const reservedFor = ({ body, attempts }: Settle.Delivery<Body>) => (attempts > 1 ? 0 : (body.reserved ?? 0));
 
 // The sync already ran, so a reconciliation that fails is logged and the message still settles. A retry would read
 // GitHub again.
@@ -50,7 +48,7 @@ export const pipeline = <R>(
   syncs: Layer.Layer<StarSync.StarSync, never, TokenGate.TokenGate | R>,
 ) =>
   Settle.pipeline({
-    schema: Body,
+    schema: StarSync.LoginSyncRequest,
     run: Effect.fn("SyncStarsConsumer.run")(function* (deliveries) {
       const gate = yield* TokenGate.TokenGate;
       const users = yield* UserGates;
@@ -62,20 +60,18 @@ export const pipeline = <R>(
             const { body } = delivery;
             const server = TokenGate.counting(gate, sent);
             const counted = Settle.onGate(syncs, yield* users.gate(body.userId, server));
-            const synced = yield* StarSync.StarSync.use((starSync) =>
-              "accountId" in body ? starSync.sync(body) : starSync.syncLogin(body),
-            ).pipe(Effect.provide(counted), Effect.result);
+            const synced = yield* StarSync.StarSync.use((starSync) => starSync.syncLogin(body)).pipe(
+              Effect.provide(counted),
+              Effect.result,
+            );
             yield* reconcile(line, delivery, yield* Ref.get(sent));
             return Result.map(synced, () => Settle.Settlement.Done());
           }),
         { concurrency: "unbounded" },
       );
     }),
-    describe: (body) =>
-      "accountId" in body ? { accountId: body.accountId, mode: body.mode } : { login: body.login, mode: body.mode },
+    describe: (body) => ({ login: body.login, mode: body.mode }),
     onDeadLetter: markFailed,
     resend: (body) =>
-      "accountId" in body || body.reserved === undefined
-        ? Option.none()
-        : Option.some(encodeBody(Struct.omit(body, ["reserved"]))),
+      body.reserved === undefined ? Option.none() : Option.some(encodeBody(Struct.omit(body, ["reserved"]))),
   });

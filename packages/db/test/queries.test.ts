@@ -72,7 +72,14 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.accounts.upsert(account(id, { login: login("after"), type: "org", followers: 7 }));
 
       const stored = Option.getOrThrow(yield* db.accounts.get(id));
-      expect(stored).toMatchObject({ id, type: "org", login: "after", followers: 7, starsEtag: null });
+      expect(stored).toEqual({
+        ...account(id, { login: login("after"), type: "org", followers: 7 }),
+        claimedBy: null,
+        ownedRepoStars: null,
+        starredCount: null,
+        starsSyncedAt: null,
+        starsFullSyncedAt: null,
+      });
       expect(Option.isNone(yield* db.accounts.get(accountId(999_999)))).toBe(true);
     }),
   );

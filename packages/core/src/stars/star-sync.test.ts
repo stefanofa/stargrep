@@ -46,9 +46,10 @@ const github = Fake.layer((request) => {
   const [, , login = "", list] = request.url.pathname.split("/");
   if (list === undefined) {
     const user = users.get(login);
+    const type = orgs.has(login) ? "Organization" : "User";
     return user === undefined
       ? { status: 404 }
-      : { body: { ...user, type: "User", name: null, avatar_url: null, followers: 1, public_repos: 2 } };
+      : { body: { ...user, type, name: null, avatar_url: null, followers: 1, public_repos: 2 } };
   }
   const stars = lists.get(login) ?? [];
   const page = Number(request.url.searchParams.get("page"));
@@ -88,24 +89,21 @@ const unstar = (list: Array<Starred>, index: number): Starred => {
   return gone;
 };
 
+// GitHub has the account and lists these stars for it. A sync looks the login up and stores the account itself.
 const account = (id: number, login: string, list: Array<Starred>, type: "user" | "org" = "user") =>
-  Effect.gen(function* () {
+  Effect.sync(() => {
+    users.set(login, { id, login });
     lists.set(login, list);
     if (type === "org") orgs.add(login);
-    yield* (yield* Db.Db).accounts.upsert({
-      id: id as GitHubAccountId,
-      type,
-      login: login as Login,
-      name: null,
-      avatarUrl: null,
-      followers: null,
-      publicRepos: null,
-    });
     return id as GitHubAccountId;
   });
 
-const sync = (accountId: GitHubAccountId, mode: StarSync.Mode = "incremental") =>
-  Effect.flatMap(StarSync.StarSync, (starSync) => starSync.sync({ accountId, mode }));
+const sync = (id: GitHubAccountId, mode: StarSync.Mode = "incremental") =>
+  Effect.flatMap(StarSync.StarSync, (starSync) => {
+    const login = [...users.values()].find((user) => user.id === id)?.login;
+    if (login === undefined) throw new Error(`GitHub has no account ${id}`);
+    return starSync.syncLogin({ login: login as Login, mode });
+  });
 
 interface Row {
   readonly repo_id: number;
@@ -185,6 +183,7 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
       expect(yield* activeRepos(id)).toEqual(list.map((star) => star.repo).toSorted(byNumber));
       expect(sentRepos().toSorted(byNumber)).toEqual(list.map((star) => star.repo).toSorted(byNumber));
       expect(github.sent.map((sent) => sent.url.pathname)).toEqual([
+        "/users/ada",
         "/graphql",
         "/users/ada/starred",
         "/users/ada/starred",
@@ -208,7 +207,7 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
     }),
   );
 
-  test.effect("makes one request and changes nothing when it runs twice", () =>
+  test.effect("reads the account and one star page, and changes nothing, when it runs twice", () =>
     Effect.gen(function* () {
       yield* reset();
       const id = yield* account(1, "ada", newestFirst(250));
@@ -227,7 +226,7 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
         shifted: false,
       });
       expect(yield* rows(id)).toEqual(before);
-      expect(github.sent.length - requests).toBe(1);
+      expect(github.sent.length - requests).toBe(2);
       expect(sent).toHaveLength(enqueued);
     }),
   );
@@ -250,7 +249,7 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
         enqueued: 2,
         shifted: false,
       });
-      expect(github.sent.length - requests).toBe(1);
+      expect(github.sent.length - requests).toBe(2);
       expect(yield* activeRepos(id)).toContain(900);
       expect(sentRepos().slice(-2)).toEqual([900, 901]);
     }),
@@ -493,18 +492,25 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
         expect(yield* sync(id, mode)).toEqual(report({ listed: 0, added: 0, unstarred: 0, shifted: false }));
         yield* TestClock.adjust("1 hour");
       }
-      expect(github.sent.map((sent) => sent.url.pathname)).toEqual(["/users/acme/starred", "/users/acme/starred"]);
+      expect(github.sent.map((sent) => sent.url.pathname)).toEqual([
+        "/users/acme",
+        "/users/acme/starred",
+        "/users/acme",
+        "/users/acme/starred",
+      ]);
       const stored = yield* (yield* Db.Db).accounts.require(id);
       expect([stored.starsSyncedAt, stored.starsFullSyncedAt]).not.toContain(null);
     }),
   );
 
-  test.effect("fails with AccountNotFound for an account it has no row for", () =>
+  test.effect("fails with NotFound for a login GitHub does not have, and stores nothing", () =>
     Effect.gen(function* () {
       yield* reset();
-      const error = yield* Effect.flip(sync(42 as GitHubAccountId));
-      expect(error).toMatchObject({ _tag: "AccountNotFound", accountId: 42 });
-      expect(github.sent).toHaveLength(0);
+      const starSync = yield* StarSync.StarSync;
+      const error = yield* Effect.flip(starSync.syncLogin({ login: "ghost" as Login, mode: "incremental" }));
+      expect(error).toMatchObject({ _tag: "NotFound" });
+      expect(github.sent.map((sent) => sent.url.pathname)).toEqual(["/users/ghost"]);
+      expect(yield* query("select id from github_accounts")).toEqual([]);
     }),
   );
 

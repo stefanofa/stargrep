@@ -58,6 +58,7 @@ export const githubAccounts = pgTable(
     ownedRepoStars: integer("owned_repo_stars"),
     claimedBy: text("claimed_by").references(() => user.id, { onDelete: "set null" }),
     starredCount: integer("starred_count"),
+    // Unused, because ETags cannot tell a star sync anything. A cleanup migration drops it.
     starsEtag: text("stars_etag"),
     starsSyncedAt: time("stars_synced_at"),
     starsFullSyncedAt: time("stars_full_synced_at"),

@@ -73,15 +73,15 @@ describe("sync-stars consumer", () => {
     expect(result.retryMessages).toEqual([]);
   });
 
-  it("acks a synced account and retries one whose database connection dropped", async () => {
+  it("acks a synced login and retries one whose database connection dropped", async () => {
     const { queues, deadLetters } = recordingQueues();
     const batch = batchOf("sync-stars", [
-      { accountId: 1, mode: "full" },
-      { accountId: 2, mode: "incremental" },
+      { login: "octocat", mode: "full" },
+      { login: "hubot", mode: "incremental" },
     ]);
     const layer = Layer.mock(StarSync.StarSync, {
-      sync: (request) =>
-        request.accountId === Schema.decodeSync(GitHubAccountId)(2)
+      syncLogin: (request) =>
+        request.login === "hubot"
           ? Effect.fail(new DbQueryFailed({ operation: "stars.upsert", reason: "transport", sqlState: null }))
           : Effect.succeed(report),
     });
@@ -98,16 +98,14 @@ describe("sync-stars consumer", () => {
       { login: "octocat", mode: "incremental", reserved: 2 },
       { login: "hubot", mode: "incremental", reserved: 9 },
       { login: "debugged", mode: "full" },
-      { accountId: 7, mode: "full" },
     ]);
     const result = await syncing(sending(7), line)(queues, batch);
     expect(line.adjusted.toSorted((a, b) => a.units - b.units)).toEqual([
       { line: "all", units: -2 },
       { line: "all", units: 5 },
       { line: "all", units: 7 },
-      { line: "all", units: 7 },
     ]);
-    expect(result.explicitAcks.toSorted()).toEqual(["m0", "m1", "m2", "m3"]);
+    expect(result.explicitAcks.toSorted()).toEqual(["m0", "m1", "m2"]);
   });
 
   it("gives back what a failed first delivery did not use, and bills what it sent", async () => {
@@ -930,14 +928,13 @@ describe("dead letters", () => {
     expect(logs).toEqual([["Dead letter", { queue: "enrich-repo", messageId: "m0", attempts: 1, repoId: 11 }]]);
   });
 
-  it("marks the request a login sync carries as failed, and leaves other syncs alone", async () => {
+  it("marks the request a sync carries as failed, and leaves a sync without one alone", async () => {
     const db = recordingDb();
     const requestedAt = Date.parse("2026-11-04T12:00:00Z");
     await handle(
       [
         { login: "No-Such-Login", mode: "incremental", requestedAt },
         { login: "octocat", mode: "full" },
-        { accountId: 5, mode: "full" },
       ],
       db.layer,
     );

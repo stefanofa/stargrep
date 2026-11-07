@@ -301,7 +301,7 @@ The `sync-stars` message carries `reserved`, the units admission put in the `all
 - A first delivery moves the line by the count minus `reserved`. It bills what the sync spent past its reservation and gives back what it did not use.
 - A later delivery bills its whole count.
 - A deferred message goes out again without `reserved`, because its first delivery already settled it.
-- A message without `reserved`, such as an account sync or one from the debug Worker, bills its whole count.
+- A message without `reserved`, such as one from the debug Worker, bills its whole count.
 
 So a dead-lettered message is already settled. A message the queue refuses at admission gives its reservation back at once. A reconciliation that fails to write is logged, and the message still settles, because a retry would read GitHub again. `GitHubGate`'s share stays the hard cap.
 

@@ -166,7 +166,7 @@ export const synced = Effect.fn("synced")(function* (login: string, syncedAt: nu
     followers: null,
     publicRepos: null,
   });
-  yield* db.accounts.recordStarSync({ accountId, etag: null, at: at(syncedAt) });
+  yield* db.accounts.recordStarSync({ accountId, at: at(syncedAt) });
 });
 
 export const fullSynced = (syncedAt: number) =>
@@ -176,7 +176,7 @@ export const finished = (login: string) =>
   Effect.flatMap(DateTime.now, (now) =>
     Db.Db.use((db) =>
       Effect.flatMap(db.accounts.byLogin(login as Login), (account) =>
-        db.accounts.recordStarSync({ accountId: Option.getOrThrow(account).id, etag: null, at: now }),
+        db.accounts.recordStarSync({ accountId: Option.getOrThrow(account).id, at: now }),
       ),
     ),
   );

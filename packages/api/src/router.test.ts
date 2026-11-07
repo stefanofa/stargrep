@@ -96,7 +96,6 @@ const ada: Viewer = {
     ownedRepoStars: null,
     claimedBy: UserId.make("user-ada"),
     starredCount: 2431,
-    starsEtag: null,
     starsSyncedAt: null,
     starsFullSyncedAt: null,
   },
@@ -530,7 +529,7 @@ const syncedAccount = Effect.gen(function* () {
   const lastSync = DateTime.makeUnsafe(now - 80 * 60_000);
   yield* db.accounts.upsert({ id, type, login, name, avatarUrl, followers, publicRepos });
   yield* db.stars.applySnapshot({ accountId: id, stars: [], at: lastSync });
-  yield* db.accounts.recordStarSync({ accountId: id, etag: null, at: lastSync });
+  yield* db.accounts.recordStarSync({ accountId: id, at: lastSync });
 });
 
 const signedInWith = (sender: Layer.Layer<SyncQueue.SyncQueue>) =>
@@ -589,7 +588,7 @@ it.layer(signedInWith(queue.layer), { timeout: 30_000 })("opening the library", 
       yield* TestClock.adjust("70 seconds");
       expect(yield* openLibrary).toMatchObject({ state: "queued", requestedAt: "2026-11-05T12:55:30.000Z" });
       const finished = DateTime.makeUnsafe(now + 40_000);
-      yield* Db.Db.use((db) => db.accounts.recordStarSync({ accountId: ada.account.id, etag: null, at: finished }));
+      yield* Db.Db.use((db) => db.accounts.recordStarSync({ accountId: ada.account.id, at: finished }));
       expect(yield* openLibrary).toMatchObject({ state: "done", syncedAt: "2026-11-05T12:56:10.000Z" });
       expect(queue.sent).toHaveLength(1);
       yield* TestClock.adjust("30 seconds");
