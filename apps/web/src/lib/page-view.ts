@@ -7,11 +7,16 @@ import { mergeResults } from "./results.ts";
 import type { SearchResult, SyncStatus } from "./rpc.ts";
 import { type SearchView, type Stage, searchView, type Whose } from "./search-state.ts";
 
-export interface Semantic {
-  readonly results: ReadonlyArray<SearchResult>;
-  readonly pending: boolean;
-  readonly failed: boolean;
-}
+// Where the search by meaning stands for the query on screen. A pending search keeps an earlier query's results, which
+// stay on screen until its own answer lands.
+export type Semantic =
+  | { readonly kind: "none" }
+  | { readonly kind: "pending"; readonly results: ReadonlyArray<SearchResult> }
+  | { readonly kind: "answered"; readonly results: ReadonlyArray<SearchResult> }
+  | { readonly kind: "failed" }
+  | { readonly kind: "limited" };
+
+export const hitsOf = (semantic: Semantic) => ("results" in semantic ? semantic.results : []);
 
 export interface LiveInputs {
   readonly query: string;
@@ -40,7 +45,7 @@ export const liveView = (inputs: LiveInputs): SearchView => {
   const merged = mergeResults({
     matched: inputs.matched,
     terms,
-    hits: inputs.semantic.results,
+    hits: hitsOf(inputs.semantic),
     find: inputs.find,
     at: inputs.at,
     order: inputs.sort === "best" ? undefined : orders[inputs.sort],
@@ -50,8 +55,7 @@ export const liveView = (inputs: LiveInputs): SearchView => {
     search: {
       terms,
       ...merged,
-      pending: inputs.semantic.pending,
-      failed: inputs.semantic.failed,
+      semantic: inputs.semantic.kind,
       hasMatches: (words) => inputs.entries.some(containsAll(words)),
     },
     synced: inputs.sync?.syncedAt ? syncedAgo(inputs.sync.syncedAt, inputs.at) : undefined,

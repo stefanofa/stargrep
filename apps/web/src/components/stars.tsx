@@ -24,7 +24,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { keywordTerms, normalize } from "../lib/keyword.ts";
 import { getLibrary, type Library, useRecoveries } from "../lib/library-collection.ts";
 import { type PageData, type PageRequest, pageOwner, type Session } from "../lib/page-data.ts";
-import { liveView } from "../lib/page-view.ts";
+import { hitsOf, liveView } from "../lib/page-view.ts";
 import { now, startsIn, toDetail } from "../lib/present.ts";
 import { withReply } from "../lib/results.ts";
 import { useReveal } from "../lib/reveal.ts";
@@ -230,17 +230,18 @@ function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Li
   const estimate = useTimeLeft(stage);
   const timeLeft =
     stage.name === "importing" && stage.phase.kind === "in-line" ? startsIn(stage.phase.startsAt, now()) : estimate;
-  const semantic = useSemanticSearch(owner, query, {
+  const { semantic, retry: retrySearch } = useSemanticSearch(owner, query, {
     read: sync?.enrichment.read,
     settled: stage.name === "ready",
     known: first === null ? undefined : { query: first.query, results: first.hits },
   });
 
-  const searching = terms.length > 0 || semantic.pending || semantic.results.length > 0;
+  const hits = hitsOf(semantic);
+  const searching = terms.length > 0 || semantic.kind === "pending" || hits.length > 0;
   const { view, sort, controls } = useControls(searching, data.own);
   const trouble: Trouble | undefined =
     watch.kind !== "watching" ? watch.kind : isLoadingError ? libraryTrouble(library?.failure()) : undefined;
-  const surprised = useSurprise(query, !semantic.pending && semantic.results.length > 0);
+  const surprised = useSurprise(query, semantic.kind === "answered" && hits.length > 0);
   const visitor = data.viewer === null;
   const page = pageView({
     owner,
@@ -277,7 +278,7 @@ function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Li
     setRetrying(true);
     library?.reload().finally(() => setRetrying(false));
   };
-  const tryAgain: Record<Retry, () => void> = { sync: retry, library: retryLibrary };
+  const tryAgain: Record<Retry, () => void> = { sync: retry, library: retryLibrary, search: retrySearch };
   const search = (next: string) => {
     setQuery(next);
     navigate({ to: ".", search: (previous) => ({ ...previous, q: next === "" ? undefined : next }), replace: true });
@@ -288,7 +289,7 @@ function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Li
   };
   const entry =
     params.repo === undefined ? undefined : entries.find((repo) => `${repo.owner}/${repo.name}` === params.repo);
-  const hit = semantic.results.find((result) => result.id === entry?.id);
+  const hit = hits.find((result) => result.id === entry?.id);
   const opened = entry && (hit ? withReply(entry, hit) : entry);
 
   const body = (current: Body) => {

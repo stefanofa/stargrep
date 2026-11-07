@@ -297,7 +297,15 @@ export function StatusLine({
             </span>
           )}
         </p>
-        {action}
+        {/* Phones have one line under the label, so an action shares it with the detail rather than hiding it. */}
+        {action ? (
+          <div className="flex max-w-full min-w-0 items-center gap-2">
+            {detail && (
+              <span className="min-w-0 truncate text-sm text-muted-foreground sm:hidden">{phoneDetail ?? detail}</span>
+            )}
+            {action}
+          </div>
+        ) : null}
       </div>
     </div>
   );

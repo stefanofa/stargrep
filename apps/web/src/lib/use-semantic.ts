@@ -1,15 +1,15 @@
 import * as Result from "effect/Result";
 import { useEffect, useRef, useState } from "react";
 import { normalize } from "./keyword.ts";
-import type { Semantic } from "./page-view.ts";
-import { api, type SearchResult } from "./rpc.ts";
+import { hitsOf, type Semantic } from "./page-view.ts";
+import { api, type SearchResult, wireCode } from "./rpc.ts";
 import { type Answer, minimumLength, type SearchFailed, startSemanticSearch } from "./search-stream.ts";
 
 type Search = ReturnType<typeof startSemanticSearch<ReadonlyArray<SearchResult>>>;
 
 export type { Semantic };
 
-const none: Semantic = { results: [], pending: false, failed: false };
+const none: Semantic = { kind: "none" };
 
 export interface Known {
   readonly query: string;
@@ -20,7 +20,7 @@ export function useSemanticSearch(
   login: string,
   query: string,
   { read, settled, known }: { read: number | undefined; settled: boolean; known?: Known | undefined },
-): Semantic {
+): { readonly semantic: Semantic; readonly retry: () => void } {
   const [answer, setAnswer] = useState<Answer<ReadonlyArray<SearchResult>, SearchFailed> | undefined>(
     known && { query: normalize(known.query), result: Result.succeed(known.results) },
   );
@@ -51,15 +51,21 @@ export function useSemanticSearch(
     if (settled || before === undefined) readBefore.current = read;
   }, [read, settled]);
 
+  // Asking again drops the failed answer, so the page shows the search pending until the new answer lands.
+  const retry = () => {
+    setAnswer(undefined);
+    search.current?.refresh();
+  };
+
   const wanted = normalize(query);
-  const landed =
+  const landed: Semantic =
     answer?.result === undefined
       ? none
       : Result.match(answer.result, {
-          onSuccess: (results) => ({ ...none, results }),
-          onFailure: () => ({ ...none, failed: true }),
+          onSuccess: (results) => ({ kind: "answered", results }),
+          onFailure: ({ cause }) => ({ kind: wireCode(cause) === "TOO_MANY_REQUESTS" ? "limited" : "failed" }),
         });
-  if (answer?.query === wanted) return landed;
-  if (wanted.length < minimumLength) return none;
-  return { results: landed.results, pending: true, failed: false };
+  if (answer?.query === wanted) return { semantic: landed, retry };
+  if (wanted.length < minimumLength) return { semantic: none, retry };
+  return { semantic: { kind: "pending", results: hitsOf(landed) }, retry };
 }
