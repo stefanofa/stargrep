@@ -10,7 +10,7 @@ import { disabled } from "@stargrep/api/answer-cache";
 const [path = "/", cookie] = process.argv.slice(2);
 const request = new Request(`http://localhost${path}`, cookie === undefined ? {} : { headers: { cookie } });
 
-const { serveApi, requested } = await import("./page-api.ts");
+const { serveApi, requested, searched } = await import("./page-api.ts");
 // Bun loads a CSS import as an object, where Vite gives the root route a URL string.
 mock.module("../src/styles.css?url", () => ({ default: "/styles.css" }));
 // The Worker's app module binds Cloudflare's env. The page path needs its API handler, and a cache that keeps nothing,
@@ -47,6 +47,7 @@ process.stdout.write(
     location: response.headers.get("location"),
     html: await response.text(),
     requested,
+    searched,
   }),
 );
 process.stdout.write("\n");

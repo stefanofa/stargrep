@@ -16,8 +16,9 @@ import type { Client } from "../src/lib/rpc.ts";
 import { testServer } from "./serve.ts";
 
 // The real API behind the stars pages, with fake services: the demo account stefanofa is synced with three stars in two
-// pages, of which mobile-mcp answers the demo query and asciinema, on the second page, is new and not read yet; octosync is importing, two stars in; every other login is unknown, and
-// ghost-login is no one on GitHub. Each process keeps its own record of the imports it was asked for.
+// pages, of which mobile-mcp answers the demo query and asciinema, on the second page, is new and not read yet; octodone
+// is synced with the same three stars and no answer by meaning; octosync is importing, two stars in; every other login
+// is unknown, and ghost-login is no one on GitHub. Each process keeps its own record of the imports it was asked for.
 
 const at = DateTime.makeUnsafe("2026-11-01T08:00:00Z");
 
@@ -56,6 +57,7 @@ const perPage = 2;
 
 const accounts: Record<string, { id: number; repos: ReadonlyArray<Db.Repo>; synced: boolean }> = {
   stefanofa: { id: 11, repos: demoRepos, synced: true },
+  octodone: { id: 13, repos: demoRepos, synced: true },
   octosync: { id: 12, repos: demoRepos.slice(1), synced: false },
 };
 
@@ -84,7 +86,7 @@ const syncRequests = Layer.mock(SyncRequests.SyncRequests, {
   }),
   status: (login: Login) =>
     Effect.succeed(
-      login.toLowerCase() === "stefanofa"
+      login.toLowerCase() === "stefanofa" || login.toLowerCase() === "octodone"
         ? { state: "done", syncedAt: at, starredTotal: demoRepos.length, accountType: "user" }
         : login.toLowerCase() === "octosync"
           ? { state: "queued", requestedAt: at, syncedAt: null, ...looked }
@@ -92,18 +94,23 @@ const syncRequests = Layer.mock(SyncRequests.SyncRequests, {
     ),
 });
 
+// Every search the API ran, by query. Planning and embedding run inside search, so no search means no model call.
+export const searched: Array<string> = [];
+
 const search = Layer.succeed(
   Search.Search,
   Search.Search.of({
     search: Effect.fn("Search.search")((request: Search.SearchRequest) =>
-      Effect.succeed({
-        plan: QueryPlan.asTyped(request.query, "sentence"),
-        planSource: "fallback",
-        results:
-          request.scope._tag === "stars" && request.scope.login.toLowerCase() === "stefanofa"
-            ? [{ repo: demoRepos[0] as Db.Repo, nameMatch: false, textRank: 1, vectorRank: 1, metrics: [] }]
-            : [],
-      } satisfies Search.SearchOutcome),
+      Effect.sync(() => searched.push(request.query)).pipe(
+        Effect.as({
+          plan: QueryPlan.asTyped(request.query, "sentence"),
+          planSource: "fallback",
+          results:
+            request.scope._tag === "stars" && request.scope.login.toLowerCase() === "stefanofa"
+              ? [{ repo: demoRepos[0] as Db.Repo, nameMatch: false, textRank: 1, vectorRank: 1, metrics: [] }]
+              : [],
+        } satisfies Search.SearchOutcome),
+      ),
     ),
   }),
 );

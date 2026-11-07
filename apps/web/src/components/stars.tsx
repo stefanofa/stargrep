@@ -19,7 +19,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { useEffect, useRef, useState } from "react";
-import { keywordTerms, normalize } from "../lib/keyword.ts";
+import { keywordTerms, normalize, searchText } from "../lib/keyword.ts";
 import { getLibrary, type Library } from "../lib/library-collection.ts";
 import { type PageData, type PageRequest, pageOwner, type Session } from "../lib/page-data.ts";
 import { hitsOf, liveView } from "../lib/page-view.ts";
@@ -53,6 +53,7 @@ export const pageFor = (request: PageRequest, { viewer, config }: Session): Page
     first: null,
     sync: null,
     refusal: null,
+    opened: null,
     view: storedView(document.cookie) ?? null,
   };
 };
@@ -224,7 +225,9 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     revision: sync === undefined ? undefined : libraryRevision(sync),
     settled: stage.name === "ready",
     known:
-      first === null ? undefined : { query: first.query, results: first.hits, revision: libraryRevision(first.sync) },
+      first?.hits == null
+        ? undefined
+        : { query: first.query, results: first.hits, revision: libraryRevision(first.sync) },
   });
 
   const hits = hitsOf(semantic);
@@ -297,11 +300,16 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     else navigate({ to: ".", search: (previous) => ({ ...previous, repo: undefined }), replace: true });
     pushed.current = false;
   };
-  // The panel keeps the last repo it showed while it slides closed.
+  // The panel keeps the last repo it showed while it slides closed. Until the library loads, the repo a shared link
+  // opens comes from the server.
   const [panelRepo, setPanelRepo] = useState(params.repo);
   if (params.repo !== undefined && params.repo !== panelRepo) setPanelRepo(params.repo);
+  const named = (repo: { readonly owner: string; readonly name: string }) => `${repo.owner}/${repo.name}` === panelRepo;
   const entry =
-    panelRepo === undefined ? undefined : entries.find((repo) => `${repo.owner}/${repo.name}` === panelRepo);
+    panelRepo === undefined
+      ? undefined
+      : (entries.find(named) ??
+        (data.opened !== null && named(data.opened) ? { ...data.opened, text: searchText(data.opened) } : undefined));
   const hit = hits.find((result) => result.id === entry?.id);
   const opened = entry && (hit ? withReply(entry, hit) : entry);
 

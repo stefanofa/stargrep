@@ -18,6 +18,7 @@ interface Rendered {
   readonly location: string | null;
   readonly html: string;
   readonly requested: ReadonlyArray<string>;
+  readonly searched: ReadonlyArray<string>;
 }
 
 const renderOnServer = async (path: string, cookie?: string, env: Record<string, string> = {}): Promise<Rendered> => {
@@ -34,7 +35,18 @@ const renderOnServer = async (path: string, cookie?: string, env: Record<string,
 
 mock.module("../src/styles.css?url", () => ({ default: "/styles.css" }));
 const rpc = await import("../src/lib/rpc.ts");
-const client = browserClient();
+// A test can hold the browser's reads of the library, to see what the page shows before it loads.
+let libraryHeld: Promise<void> | undefined;
+const api = browserClient();
+const client = new Proxy(api, {
+  get: (target, key) =>
+    key === "stars"
+      ? async (...args: Parameters<typeof api.stars>) => {
+          await libraryHeld;
+          return target.stars(...args);
+        }
+      : Reflect.get(target, key),
+});
 mock.module("../src/lib/rpc.ts", () => ({ ...rpc, api: () => client }));
 const { routeTree } = await import("../src/routeTree.gen.ts");
 
@@ -128,6 +140,71 @@ describe("a stars page from the Worker to the browser", () => {
     expect(page.html).toContain("found 1!");
     expect(page.html).toContain("@stefanofa");
     expect(page.html).not.toContain("@StefanoFA");
+  }, 60_000);
+
+  test("the demo landing's own query is the one answer the server searches for", async () => {
+    const page = await renderOnServer("/");
+    expect(page.searched).toEqual(["let an ai agent control my iphone"]);
+  }, 60_000);
+
+  test("a shared link with another query paints its keyword matches and searches nothing on the server", async () => {
+    const page = await renderOnServer("/stefanofa?q=terminal");
+    expect(page.html).toContain("found 1!");
+    expect(page.html).toContain(">asciinema</a>");
+    expect(page.html).not.toContain("loading @stefanofa");
+    expect(page.searched).toEqual([]);
+    // The reveal types the demo's own query, never a shared one.
+    expect(page.html).not.toContain("stargrep:revealed");
+
+    const router = await hydratePage("/stefanofa?q=terminal", page.html);
+    // The page has no answer by meaning, so the browser searches for one through the API.
+    const loaded = router.state.matches.at(-1)?.loaderData as { first: { hits: unknown } | null } | undefined;
+    expect(loaded?.first?.hits).toBeNull();
+    const shown = new Set([statusText()]);
+    const watching = new MutationObserver(() => shown.add(statusText()));
+    watching.observe(document.body, { subtree: true, childList: true, characterData: true });
+    await waitFor(() =>
+      expect(document.querySelector("[role=status]")?.closest("p")?.textContent).toContain("3 stars"),
+    );
+    watching.disconnect();
+    expect([...shown]).toEqual(["found 1!"]);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test("an HTML request for a new query on another login, or a cold demo query, makes no search and no model call", async () => {
+    for (const path of [
+      "/octodone?q=a%20sentence%20no%20one%20asked%20before",
+      "/stefanofa?q=another%20cold%20sentence",
+    ]) {
+      const page = await renderOnServer(path);
+      expect([path, page.status, page.searched]).toEqual([path, 200, []]);
+    }
+  }, 60_000);
+
+  test("a login no import has written gets no first answer for a shared query, only its import state", async () => {
+    const page = await renderOnServer("/octosync?q=fuzzy");
+    expect(page.html).toContain("@octosync is new here.");
+    expect(page.html).not.toContain(">fzf</a>");
+    expect(page.searched).toEqual([]);
+  }, 60_000);
+
+  test("a shared link to a repo opens its panel as the page hydrates, before the library loads", async () => {
+    // No other test loads octodone's library, which this process would keep.
+    const page = await renderOnServer("/octodone?q=fuzzy&repo=junegunn%2Ffzf");
+    expect(page.html).toContain("found 1");
+    let release = () => {};
+    libraryHeld = new Promise((resolve) => {
+      release = resolve;
+    });
+    try {
+      await hydratePage("/octodone?q=fuzzy&repo=junegunn%2Ffzf", page.html);
+      // The library's reads are held, so the panel's repo came with the page.
+      await waitFor(() => expect(document.querySelector("[role=dialog] h2")?.textContent).toBe("fzf"));
+    } finally {
+      libraryHeld = undefined;
+      release();
+    }
+    expect(errors).toEqual([]);
   }, 60_000);
 
   test("the view this browser picked paints from the server, so the page does not switch on hydration", async () => {

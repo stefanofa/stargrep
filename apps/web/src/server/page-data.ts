@@ -11,15 +11,17 @@ import {
   pageOwner,
   type Session,
 } from "../lib/page-data.ts";
-import { liveView } from "../lib/page-view.ts";
+import { liveView, type Semantic } from "../lib/page-view.ts";
 import { now } from "../lib/present.ts";
-import { api, type Client, type SyncStatus, type Viewer } from "../lib/rpc.ts";
+import { api, type Client, type LibraryRepo, type SearchResult, type SyncStatus, type Viewer } from "../lib/rpc.ts";
 import { validateParams } from "../lib/search-params.ts";
 import { stageOf } from "../lib/search-state.ts";
-import { allStars } from "../lib/stars-pages.ts";
+import { minimumLength } from "../lib/search-stream.ts";
+import { allStars, findStar } from "../lib/stars-pages.ts";
 import { storedView } from "../lib/stored-view.ts";
 import { libraryRevision } from "../lib/sync-status.ts";
 import { rememberedRefusal } from "../lib/trouble.ts";
+import { type Whose, whoseOf } from "../lib/whose.ts";
 import { type Computed, cachedFirstAnswer, firstAnswerKey } from "./first-answers.ts";
 import { inProcess } from "./in-process.ts";
 
@@ -30,6 +32,48 @@ const viewerOf = async (client: Client, request: Request): Promise<Viewer | null
   if (!hasSession(request)) return null;
   // The API logs its own failures, so a viewer it could not read renders the visitor's page.
   return client.viewer().catch(() => null);
+};
+
+interface Asking {
+  readonly login: string;
+  readonly query: string;
+  readonly sort: Asked["sort"];
+  readonly whose: Whose;
+  // How many stars the page says the login has: the viewer's own count on their page, or the sync's.
+  readonly starred: (sync: SyncStatus) => number | null;
+}
+
+// What the page shows for the query from the imported library: its keyword matches, and the answer by meaning when the
+// server has one. Without one, the view says the search by meaning is still to come, as the browser's own view does
+// until its search answers.
+const firstView = (
+  repos: ReadonlyArray<LibraryRepo>,
+  sync: SyncStatus,
+  { query, sort, whose, starred }: Asking,
+  hits: ReadonlyArray<SearchResult> | null,
+): FirstAnswer => {
+  const entries = repos.map((repo) => ({ ...repo, text: searchText(repo) }));
+  const byId = new Map(entries.map((entry) => [entry.id as number, entry]));
+  const at = now();
+  const semantic: Semantic =
+    hits !== null
+      ? { kind: "answered", results: hits }
+      : normalize(query).length < minimumLength
+        ? { kind: "none" }
+        : { kind: "pending", results: [] };
+  const view = liveView({
+    query,
+    stage: stageOf({ sync, entries, starred: starred(sync) }),
+    entries,
+    find: (id) => byId.get(id),
+    sync,
+    semantic,
+    sort: sort ?? "best",
+    at,
+    timeLeft: undefined,
+    whose,
+  });
+  return { query, at, sync, hits, view };
 };
 
 // The search answer and when the API stored it, which bounds how long a page built from it stays fresh.
@@ -43,53 +87,35 @@ const searched = async (login: string, query: string) => {
   return { answer, searchedAt: storedAt ?? now() };
 };
 
-const firstAnswer = async (
-  client: Client,
-  sync: SyncStatus,
-  login: string,
-  query: string,
-  sort: Asked["sort"],
-): Promise<Computed> => {
-  const [repos, { answer, searchedAt }] = await Promise.all([allStars(client, login), searched(login, query)]);
-  const { results: hits, planSource } = answer;
-  const entries = repos.map((repo) => ({ ...repo, text: searchText(repo) }));
-  const byId = new Map(entries.map((entry) => [entry.id as number, entry]));
-  const at = now();
-  const view = liveView({
-    query,
-    stage: stageOf({ sync, entries, starred: sync.starredTotal }),
-    entries,
-    find: (id) => byId.get(id),
-    sync,
-    semantic: { kind: "answered", results: hits },
-    sort: sort ?? "best",
-    at,
-    timeLeft: undefined,
-    whose: { own: false, login },
-  });
-  return { first: { query, at, sync, hits, view } satisfies FirstAnswer, searchedAt, keep: planSource !== "fallback" };
-};
-
-// The API module binds Cloudflare's env, which only the Worker has, so it loads with the first page that needs it.
-const demoAnswer = async (
-  request: Request,
-  client: Client,
-  sync: SyncStatus,
-  login: string,
-  query: string,
-  sort: Asked["sort"],
-) => {
+// The demo landing's own query is the one answer the server searches for, so the model work an HTML request can cause
+// is bounded to it, and it is cached. The API module binds Cloudflare's env, which only the Worker has, so it loads with
+// the first page that needs it.
+const demoAnswer = async (request: Request, client: Client, sync: SyncStatus, asking: Asking) => {
   const { answers, waitUntil } = await import("./app.ts");
+  const { login, query, sort } = asking;
+  const compute = async (): Promise<Computed> => {
+    const [repos, { answer, searchedAt }] = await Promise.all([allStars(client, login), searched(login, query)]);
+    return {
+      first: firstView(repos, sync, asking, answer.results),
+      searchedAt,
+      keep: answer.planSource !== "fallback",
+    };
+  };
   const build = import.meta.env.STARGREP_BUILD ?? "source";
   const { first, outcome } = await cachedFirstAnswer({
     store: answers(request),
     key: firstAnswerKey(build, loginKey(login), libraryRevision(sync), normalize(query), sort ?? "best"),
-    compute: () => firstAnswer(client, sync, login, query, sort),
+    compute,
     background: waitUntil,
   });
   setResponseHeader("x-answer-cache", outcome);
   return first;
 };
+
+// Any other query, a shared link's or a crawler's, paints from the library alone. The server searches nothing for it,
+// so an HTML request never spends model work, and the browser asks for the search by meaning through the API.
+const keywordAnswer = async (client: Client, sync: SyncStatus, asking: Asking) =>
+  firstView(await allStars(client, asking.login), sync, asking, null);
 
 const loadSession = async (): Promise<Session> => {
   const request = getRequest();
@@ -102,21 +128,33 @@ const loadPage = async ({ login }: PageRequest, { viewer, config }: Session): Pr
   const request = getRequest();
   const client = api();
   const cookies = request.headers.get("cookie");
-  const { q, sort } = validateParams(Object.fromEntries(new URL(request.url).searchParams));
+  const { q, sort, repo } = validateParams(Object.fromEntries(new URL(request.url).searchParams));
   const { owner, own, query, defaultQuery, showcase } = pageOwner(viewer, config, { login, q });
-  // The server reads the sync first, since it names the library revision a cached answer must match. Crawlers and link
-  // previews render pages too, so the server paints an import under way, a place in line, or a login ready to import,
-  // and the browser asks for the import. A refusal this browser saw for a login still unknown paints again, so a reload
-  // doesn't ask GitHub again.
+  // The server reads the sync first: it names the library revision a cached answer must match, and only a library an
+  // import has written gets a first answer or a panel. Crawlers and link previews render pages too, so the server paints
+  // an import under way, a place in line, or a login ready to import, and the browser asks for the import. A refusal
+  // this browser saw for a login still unknown paints again, so a reload doesn't ask GitHub again.
   const sync = await client.syncStatus({ login: owner }).catch(() => null);
-  const first =
-    showcase && query === config.demoQuery && sync !== null
-      ? await demoAnswer(request, client, sync, owner, query, sort).catch(() => null)
-      : null;
+  const imported = sync !== null && sync.syncedAt !== null ? sync : null;
+  const asking: Asking = {
+    login: owner,
+    query,
+    sort,
+    whose: whoseOf({ owner, own }),
+    starred: (status) => (own ? (viewer?.starredCount ?? null) : status.starredTotal),
+  };
+  const answer = (library: SyncStatus) =>
+    showcase && query === config.demoQuery
+      ? demoAnswer(request, client, library, asking)
+      : keywordAnswer(client, library, asking);
+  const [first, opened] = await Promise.all([
+    imported === null || query === "" ? null : answer(imported).catch(() => null),
+    imported === null || repo === undefined ? null : findStar(client, owner, repo).catch(() => null),
+  ]);
   const remembered =
     first === null && (sync === null || sync.state === "unknown") ? rememberedRefusal(cookies, owner) : undefined;
   const view = storedView(cookies) ?? null;
-  return { viewer, owner, own, config, query, defaultQuery, first, sync, refusal: remembered ?? null, view };
+  return { viewer, owner, own, config, query, defaultQuery, first, sync, refusal: remembered ?? null, opened, view };
 };
 
 // The router sends a failed loader's error to the browser in the page's hydration data. So the server logs an unexpected
