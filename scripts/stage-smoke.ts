@@ -238,14 +238,15 @@ const flood = Effect.gen(function* () {
   ];
 });
 
-const checks = (
-  await Effect.runPromise(
-    ready.pipe(
-      Effect.andThen(Effect.all([publicSmoke(webUrl), web, worker, unauthenticated, traffic, flood])),
-      Effect.provide(FetchHttpClient.layer),
-    ),
-  )
-).flat();
+const checks = await Effect.runPromise(
+  Effect.gen(function* () {
+    yield* ready;
+    const authorization = yield* unauthenticated;
+    const services = yield* Effect.all([publicSmoke(webUrl), web, worker, traffic]);
+    const cap = yield* flood;
+    return [...services.flat(), ...authorization, ...cap];
+  }).pipe(Effect.provide(FetchHttpClient.layer)),
+);
 for (const result of checks) console.log(JSON.stringify(result));
 console.log(JSON.stringify({ resentAfterCloudflare404: resends.cloudflare404, resentAfterDrop: resends.dropped }));
 if (checks.some(({ ok }) => !ok)) process.exit(1);
