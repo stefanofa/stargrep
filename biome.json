@@ -41,7 +41,7 @@
   },
   "overrides": [
     {
-      "includes": ["packages/api/src/router.ts"],
+      "includes": ["packages/api/src/**", "!packages/api/src/**/*.test.ts"],
       "plugins": ["./packages/config/api-handler-errors.grit"]
     },
     {
