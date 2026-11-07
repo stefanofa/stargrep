@@ -1,4 +1,20 @@
-import { kinds } from "@stargrep/knowledge/registry";
+// Search keeps today's kinds, language names, and topics, with node and nodejs on JavaScript, until its filters read
+// atoms. The kinds are part of PlannerPrompt.version, which keys the plan and answer caches. The audited closed values
+// live in @stargrep/knowledge/registry.
+export const plannedKinds = [
+  "app",
+  "library",
+  "framework",
+  "cli",
+  "plugin",
+  "template",
+  "list",
+  "learning",
+  "dataset",
+  "model",
+  "config",
+  "other",
+] as const;
 
 interface Language {
   readonly aliases: ReadonlyArray<string>;
@@ -7,8 +23,6 @@ interface Language {
 
 const plain: Language = { aliases: [], topics: [] };
 
-// Search keeps today's language names and topics, with node and nodejs on JavaScript, until its filters read atoms.
-// The audited closed values live in @stargrep/knowledge/registry.
 const languages: Readonly<Record<string, Language>> = {
   abap: plain,
   ada: plain,
@@ -151,7 +165,9 @@ const licenseWords = [
   "unlicense",
 ];
 
-const kindWords = kinds.flatMap(({ id }) => [id, id.endsWith("y") ? `${id.slice(0, -1)}ies` : `${id}s`]);
+const kindWords = plannedKinds
+  .filter((kind) => kind !== "other")
+  .flatMap((kind) => [kind, kind.endsWith("y") ? `${kind.slice(0, -1)}ies` : `${kind}s`]);
 
 const connectives = [
   "a",

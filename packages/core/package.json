@@ -16,7 +16,6 @@
     "@stargrep/ai": "workspace:*",
     "@stargrep/db": "workspace:*",
     "@stargrep/github": "workspace:*",
-    "@stargrep/knowledge": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
