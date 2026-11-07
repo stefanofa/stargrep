@@ -41,14 +41,14 @@ const titleOf = (html: string) =>
   html.match(/<title>(.*?)<\/title>/)?.[1]?.replace(/&[^;]+;/g, (entity) => entities[entity] ?? entity);
 
 test("a stars page is titled by whose stars it shows and what it searches", async () => {
-  expect(titleOf(await renderPage("/octo"))).toBe("@octo's stars · Stargrep");
-  expect(titleOf(await renderPage("/octo?q=rust%20tui"))).toBe(`"rust tui" in @octo's stars · Stargrep`);
-  expect(titleOf(await renderPage("/octo?q="))).toBe("@octo's stars · Stargrep");
+  expect(titleOf(await renderPage("/octo"))).toBe("@octo's stars · stargrep");
+  expect(titleOf(await renderPage("/octo?q=rust%20tui"))).toBe(`"rust tui" in @octo's stars · stargrep`);
+  expect(titleOf(await renderPage("/octo?q="))).toBe("@octo's stars · stargrep");
   expect(await renderPage("/octo")).toContain(`content="Search @octo&#x27;s GitHub stars in plain words."`);
 });
 
 test("the home page a visitor lands on keeps the site's title", async () => {
-  expect(titleOf(await renderPage("/"))).toBe("Stargrep");
+  expect(titleOf(await renderPage("/"))).toBe("stargrep");
 });
 
 test("a path that is no page says so on a styled page with a way home", async () => {
