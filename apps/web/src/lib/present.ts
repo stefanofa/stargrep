@@ -1,4 +1,4 @@
-import type { Activity, RepoDetail, Result } from "@stargrep/ui";
+import type { Activity, RepoDetail, Result, ResultGroup } from "@stargrep/ui";
 import { defaultStringifySearch } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import { highlights } from "./keyword.ts";
@@ -57,8 +57,14 @@ export const monthOf = (iso: string) => monthFormat.format(millis(iso)).toLowerC
 
 // A result's link opens its repo over the page it was found on, with the same query, view and sort, so a new tab or a
 // copied link lands on the same state.
-const repoHref = (search: Params, repo: LibraryEntry) =>
+const repoHref = (search: Params, repo: Pick<Result, "owner" | "name">) =>
   defaultStringifySearch({ ...search, error: undefined, repo: `${repo.owner}/${repo.name}` });
+
+export const withLinks = (groups: ReadonlyArray<ResultGroup>, search: Params): ReadonlyArray<ResultGroup> =>
+  groups.map((group) => ({
+    ...group,
+    results: group.results.map((result) => ({ ...result, href: repoHref(search, result) })),
+  }));
 
 const reasonOf = (repo: LibraryEntry) =>
   (repo.read ? (repo.summary ?? repo.description) : (repo.description ?? repo.summary)) ?? "";

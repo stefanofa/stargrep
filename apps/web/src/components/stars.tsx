@@ -24,7 +24,7 @@ import { keywordTerms, normalize } from "../lib/keyword.ts";
 import { getLibrary, type Library } from "../lib/library-collection.ts";
 import { type PageData, type PageRequest, pageOwner, type Session } from "../lib/page-data.ts";
 import { hitsOf, liveView } from "../lib/page-view.ts";
-import { now, startsIn, toDetail } from "../lib/present.ts";
+import { now, startsIn, toDetail, withLinks } from "../lib/present.ts";
 import { withReply } from "../lib/results.ts";
 import { useReveal } from "../lib/reveal.ts";
 import type { Viewer } from "../lib/rpc.ts";
@@ -231,6 +231,13 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   const hits = hitsOf(semantic);
   const searching = terms.length > 0 || semantic.kind === "pending" || hits.length > 0;
   const { view, sort, setView, setSort } = useArrangement(searching);
+  // A result's link carries what the page shows, including a view this browser saved, so it opens the same way
+  // anywhere. The default view and sort stay out, so a link doesn't override the opener's own choice.
+  const links: Params = {
+    ...params,
+    q: query === data.defaultQuery ? undefined : query,
+    view: view === "tiles" && params.view === undefined ? undefined : view,
+  };
   const trouble: Trouble | undefined =
     watch.kind !== "watching" ? watch.kind : isLoadingError ? libraryTrouble(library?.failure()) : undefined;
   const surprised = useSurprise(query, semantic.kind === "answered" && hits.length > 0);
@@ -243,7 +250,6 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     query,
     stage,
     live: liveView({
-      search: params,
       query,
       stage,
       entries,
@@ -319,7 +325,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
             at={at}
             view={view}
             sort={sort}
-            search={params}
+            search={links}
             arriving={current.arriving}
             pose={page.pose}
             butter={!visitor}
@@ -327,7 +333,14 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           />
         );
       case "results":
-        return <Results view={view} groups={current.groups} hero={visitor ? "card" : "butter"} onOpen={open} />;
+        return (
+          <Results
+            view={view}
+            groups={withLinks(current.groups, links)}
+            hero={visitor ? "card" : "butter"}
+            onOpen={open}
+          />
+        );
       case "empty-reading":
         return <EmptyTile pose={page.pose} ring={current.ring} {...current.copy} />;
       case "empty":

@@ -47,7 +47,6 @@ describe("mergeResults", () => {
   test("ranks keyword matches by name first, then appends semantic hits not already shown", () => {
     const terms = keywordTerms("ratatui");
     const merged = mergeResults({
-      search: {},
       matched: [tuiRs, ratatui],
       terms,
       hits: [hit(ratatui), hit(bottom, ["11.6K stars"]), hit({ ...bottom, id: 99 as LibraryEntry["id"] })],
@@ -64,7 +63,6 @@ describe("mergeResults", () => {
   test("takes a semantic tile's summary from the search reply, which can be newer than the library", () => {
     const stale: LibraryEntry = { ...bottom, summary: null, description: null };
     const merged = mergeResults({
-      search: {},
       matched: [],
       terms: [],
       hits: [hit(bottom, ["11.6K stars"])],
@@ -76,7 +74,6 @@ describe("mergeResults", () => {
 
   test("shows only semantic hits when the query has no keyword", () => {
     const merged = mergeResults({
-      search: {},
       matched: [ratatui, tuiRs, bottom],
       terms: [],
       hits: [hit(bottom)],

@@ -5,7 +5,6 @@ import { orders } from "./order.ts";
 import { syncedAgo } from "./present.ts";
 import { mergeResults } from "./results.ts";
 import type { SearchResult, SyncStatus } from "./rpc.ts";
-import type { Params } from "./search-params.ts";
 import { type SearchView, type Stage, searchView, type Whose } from "./search-state.ts";
 
 // Where the search by meaning stands for the query on screen. A pending search keeps an earlier query's results, which
@@ -20,7 +19,6 @@ export type Semantic =
 export const hitsOf = (semantic: Semantic) => ("results" in semantic ? semantic.results : []);
 
 export interface LiveInputs {
-  readonly search: Params;
   readonly query: string;
   readonly stage: Stage;
   readonly entries: ReadonlyArray<LibraryEntry>;
@@ -45,7 +43,6 @@ export const matchesEvery = (entries: ReadonlyArray<LibraryEntry>, terms: Readon
 export const liveView = (inputs: LiveInputs): SearchView => {
   const terms = keywordTerms(inputs.query);
   const merged = mergeResults({
-    search: inputs.search,
     matched: inputs.matched,
     terms,
     hits: hitsOf(inputs.semantic),
