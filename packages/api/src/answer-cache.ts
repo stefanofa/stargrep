@@ -74,7 +74,12 @@ const served = (
 // When each key's latest refresh in this isolate started, oldest first. A refresh that stores its answer frees its key.
 // One that stores nothing, such as an answer the planner could not plan, keeps it, so a stale answer starts at most one
 // refresh per fresh window however its refreshes end.
-const claimRefresh = (refreshStarts: Map<string, number>, key: string, now: number, every: Duration.Duration) => {
+export const claimRefresh = (
+  refreshStarts: Map<string, number>,
+  key: string,
+  now: number,
+  every: Duration.Duration,
+) => {
   for (const [started, at] of refreshStarts) {
     if (now - at < Duration.toMillis(every)) break;
     refreshStarts.delete(started);

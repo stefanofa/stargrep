@@ -1,7 +1,8 @@
+import { loginKey } from "@stargrep/github/login";
 import { isNotFound, isRedirect } from "@tanstack/react-router";
-import { getRequest } from "@tanstack/react-start/server";
+import { getRequest, setResponseHeader } from "@tanstack/react-start/server";
 import * as Effect from "effect/Effect";
-import { searchText } from "../lib/keyword.ts";
+import { normalize, searchText } from "../lib/keyword.ts";
 import {
   type Asked,
   type FirstAnswer,
@@ -17,6 +18,7 @@ import { validateParams } from "../lib/search-params.ts";
 import { stageOf } from "../lib/search-state.ts";
 import { allStars } from "../lib/stars-pages.ts";
 import { rememberedRefusal } from "../lib/trouble.ts";
+import { type Computed, cachedFirstAnswer } from "./first-answers.ts";
 
 const hasSession = (request: Request) =>
   /(^|;\s*)(__Secure-)?better-auth\.session_token=/.test(request.headers.get("cookie") ?? "");
@@ -27,10 +29,10 @@ const viewerOf = async (client: Client, request: Request): Promise<Viewer | null
   return client.viewer().catch(() => null);
 };
 
-const firstAnswer = async (client: Client, login: string, query: string, sort: Asked["sort"]) => {
-  const [repos, hits, sync] = await Promise.all([
+const firstAnswer = async (client: Client, login: string, query: string, sort: Asked["sort"]): Promise<Computed> => {
+  const [repos, { results: hits, planSource }, sync] = await Promise.all([
     allStars(client, login),
-    client.search({ scope: { kind: "stars", login }, q: query }).then(({ results }) => results),
+    client.search({ scope: { kind: "stars", login }, q: query }),
     client.syncStatus({ login }),
   ]);
   const entries = repos.map((repo) => ({ ...repo, text: searchText(repo) }));
@@ -48,7 +50,20 @@ const firstAnswer = async (client: Client, login: string, query: string, sort: A
     timeLeft: undefined,
     whose: { own: false, login },
   });
-  return { query, at, sync, hits, view } satisfies FirstAnswer;
+  return { first: { query, at, sync, hits, view } satisfies FirstAnswer, keep: planSource !== "fallback" };
+};
+
+// The API module binds Cloudflare's env, which only the Worker has, so it loads with the first page that needs it.
+const demoAnswer = async (request: Request, client: Client, login: string, query: string, sort: Asked["sort"]) => {
+  const { answers, waitUntil } = await import("./app.ts");
+  const { first, outcome } = await cachedFirstAnswer({
+    store: answers(request),
+    key: `first/${import.meta.env.STARGREP_BUILD ?? "source"}/${loginKey(login)}/${normalize(query)}/${sort ?? "best"}`,
+    compute: () => firstAnswer(client, login, query, sort),
+    background: waitUntil,
+  });
+  setResponseHeader("x-answer-cache", outcome);
+  return first;
 };
 
 // The server only reads the sync, since crawlers and link previews render pages too, so it paints an import under way, a
@@ -77,7 +92,9 @@ const loadPage = async ({ login }: PageRequest, { viewer, config }: Session): Pr
   const { q, sort } = validateParams(Object.fromEntries(new URL(request.url).searchParams));
   const { owner, own, query, defaultQuery, showcase } = pageOwner(viewer, config, { login, q });
   const first =
-    showcase && query === config.demoQuery ? await firstAnswer(client, owner, query, sort).catch(() => null) : null;
+    showcase && query === config.demoQuery
+      ? await demoAnswer(request, client, owner, query, sort).catch(() => null)
+      : null;
   const { sync, refusal } =
     first === null ? await syncOf(client, owner, request.headers.get("cookie")) : { sync: first.sync, refusal: null };
   return { viewer, owner, own, config, query, defaultQuery, first, sync, refusal };

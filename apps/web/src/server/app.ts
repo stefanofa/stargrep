@@ -38,10 +38,15 @@ const layerForRequest = (request: Request) => {
   return layerRequest(bindings, readConfig(), request);
 };
 
+// The page keeps its first answers beside the API's answers.
+export const answers = makeAnswerCache(() => Promise.resolve(workerCache()));
+
+export { waitUntil };
+
 export const serveApi = makeServer({
   layerFor: layerForRequest,
   tracer: Tracing.tracer,
   publicConfig: () => readConfig().site,
-  answerCache: makeAnswerCache(() => Promise.resolve(workerCache())),
+  answerCache: answers,
   waitUntil,
 });
