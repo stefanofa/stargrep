@@ -1,6 +1,6 @@
 # Setup
 
-These are the one-time steps to work on Stargrep. Each later step that needs an account, such as Cloudflare, Neon, or the GitHub App, is added here by the change that first needs it.
+Install dependencies, start a local stage, and configure deployed stages with the steps below.
 
 ## Local checkout
 
@@ -16,7 +16,7 @@ These are the one-time steps to work on Stargrep. Each later step that needs an 
    bun install --frozen-lockfile
    ```
 
-3. Run lint and typecheck. Turborepo caches both, so a second run with no changes replays the logs.
+3. Run the checks. This includes lint, custom lint fixtures, workspace typechecks, and both web bundle budgets. Turborepo caches the tasks.
 
    ```sh
    bun run check
@@ -76,15 +76,16 @@ For other editors, run `bunx effect-tsgo setup --help` to see the setup for Neov
 
    The routes spend from a budget of 300 units a minute: one per counter read, counter increment, transaction, or sleep, one per queued job, and one per message sent to `sync-stars` or `enrich-repo`. Those two routes send the request body as it is, so they also send malformed messages. `/sleep` runs `pg_sleep` through Hyperdrive and gives up after 10 seconds like the app, so `pg_stat_activity` shows whether the server stops the query. `/budget` is free. `scripts/stage-smoke.ts` checks the token, the budget, the queue, the counter, and pooled transactions. On a new stage, it first waits up to 60 seconds for `/budget` and a counter to answer, because the Durable Objects can fail for a few seconds after the deploy. A new workers.dev URL also answers with Cloudflare's own 404 page on some machines for over a minute, so each call that gets that page is sent again, for up to 60 seconds. A call whose connection drops before any answer is sent once more within the same 60 seconds. It waits for the next minute and then spends that minute's budget.
 
-5. Run the Worker tests. They run on workerd and need the Postgres container from step 1.
+5. Run both apps' workerd suites. They need the Postgres container from step 1. The worker command runs the consumer suite and then bundles the real Worker for its runtime suite.
 
    ```sh
    bun run --cwd apps/worker test
+   bun run --cwd apps/web test
    ```
 
 ## API
 
-The web Worker serves the API from one oRPC contract in `packages/api`. Search needs a synced login and the AI Gateway key, so on a local stage without them it answers `SERVICE_UNAVAILABLE`. Replace the URL with a stage's `Web` URL from its pull request comment to call a deployed stage.
+The web Worker serves the API from one oRPC contract in `packages/api`. Search needs a synced login. A missing login answers `ACCOUNT_NOT_SYNCED`. Without a model key, search can fall back to full-text matching. Replace the URL with a stage's `Web` URL from its pull request comment to call a deployed stage.
 
 ```sh
 WEB=http://localhost:1340
@@ -95,7 +96,7 @@ curl "$WEB/api/repos/1300192"
 curl "$WEB/openapi.json"
 ```
 
-Search takes its query in a JSON body, so the query never appears in a URL, a request log, or Cloudflare's request span. `triggerSync` answers `queued`, and `syncStatus` answers `done` once the sync has run or `failed` if it could not, such as for a login GitHub does not know. Triggers for a login already requested in the last 10 minutes answer with that request and queue nothing. Each caller may trigger about 5 syncs a minute, a soft limit that Cloudflare counts per location. Every error body has a `code` and a `traceId`, including a validation error and a body that is not JSON, and every response has an `x-trace-id` header. Each response's `Server-Timing` header gives the handler's total time and the procedure's time, in milliseconds.
+The search API takes its query in a JSON body. Shared page links can contain `?q=`, so those URLs can appear in request logs. `triggerSync` can answer `waiting`, `queued`, or `done` for an empty org sync. An unknown GitHub login answers `LOGIN_NOT_FOUND`. `syncStatus` reports `unknown`, `waiting`, `queued`, `failed`, or `done`. Triggers for a login already requested in the last 10 minutes answer with that request and queue nothing. Each caller may trigger about 5 syncs a minute, a soft limit that Cloudflare counts per location. Every REST error body has a `code` and a `traceId` in `data`, including a validation error and a body that is not JSON, and every response has an `x-trace-id` header. Each response's `Server-Timing` header gives the handler's total time and the procedure's time, in milliseconds.
 
 To search from Claude Code, add the stage's MCP endpoint and ask it to search a synced login's stars:
 
@@ -189,7 +190,7 @@ Four workflows run the stages, and their jobs skip until the steps below are don
 
 2. Create two Neon API keys in the Neon console. Prod's key is an organization key, because the deploy from `main` creates the projects. The preview key is scoped to the project `stargrep-previews-us-east`, so create it after that deploy.
 
-3. Create a fine-grained GitHub token with read access to public repositories and no other permission. Give it an expiration no longer than its owner's organizations allow, 366 days by default. Each preview stage's Worker syncs stars and fetches READMEs with it, and uses half of each hourly window. Prod uses the GitHub App's installation token instead, as "The App's installation token" below explains.
+3. Create a fine-grained GitHub token with read access to public repositories and no other permission. Give it an expiration no longer than its owner's organizations allow, 366 days by default. Each preview stage's Worker syncs stars and fetches READMEs with it, and uses half of each hourly window. Prod uses the GitHub App's installation token instead, as "The app's installation token" below explains.
 
    If the Worker misses an organization's stars, check that organization's token policy. GitHub lists only the stars a token can read. An organization can block a fine-grained token of one of its members, for example a token that outlives the organization's limit. That token then reads none of the organization's repos, public ones included.
 
@@ -222,7 +223,7 @@ Four workflows run the stages, and their jobs skip until the steps below are don
 
 Every stage gets its own Neon branch. Prod's branch is in the project `stargrep-us-east`, and each preview stage's branch is in `stargrep-previews-us-east`. Neon deletes a preview branch about two weeks after its last deploy, in case its destroy job never ran.
 
-## The App's installation token
+## The app's installation token
 
 Prod reads GitHub with the Stargrep GitHub App's installation token, as "GitHub access" in `docs/architecture.md` explains. The App needs no repository permission and its installation no repositories, because it reads only public data. The key never belongs in `preview`, which every branch can read, and any stage other than prod that sees `STARGREP_GITHUB_APP_PRIVATE_KEY` fails its deploy.
 

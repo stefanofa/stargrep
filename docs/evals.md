@@ -50,7 +50,7 @@ The winner rule differs by port, in `evals/rank.ts`.
 - **Embedding models must fit a latency budget, then win on recall.** Query embedding is on the search path. The plan's budget is a 250 ms median from a Worker, which the perf lane measures. The bakeoff runs on a laptop, which adds network distance to every model, so it screens with the plan's 600 ms p95 ceiling applied to the laptop median. Models over it are dropped before ranking, and the rest are ordered by recall.
 - **Summary models win on recall, with ties broken by cost.** Two runs of the same setup differ by up to 0.009 for one model, about one query, so models within 1/129 of the best recall are tied. Summaries run in the background, so the cheapest tied model wins.
 
-Transient gateway errors are retried up to three times.
+The AI SDK retries transient model requests up to three times within the port timeout. The Gateway batch adapter retries batch API requests itself. Callers do not add another model retry loop.
 
 Every embedding candidate is asked for 1,024 dimensions. One size keeps the comparison fair and fixes the database column at `halfvec(1024)`.
 
@@ -101,7 +101,7 @@ The choice of `voyage/voyage-4` does not depend on the tie rule. It follows from
 
 ## Recall bar
 
-Search must reach **recall@10 of 0.97** on this query set over this 736-repo corpus, loaded as one account's stars and enriched by the production pipeline. `evals/recall.ts` enforces it, and CI runs it on a fixture.
+The full recall run must reach **recall@10 of 0.97** on this query set over the 736-repo corpus, loaded as one account's stars and enriched by the production pipeline. `evals/recall.ts` enforces that bar. CI runs a smaller recorded fixture and requires its recorded score, described below.
 
 The chosen pair measured 0.988 and 0.990 with vector search alone. Hybrid search should not score lower. Run-to-run noise is about one query, 0.008. The bar is the measured recall minus two queries of noise, rounded down to 0.97. A result below it means search lost at least two queries' worth of results, which is a real regression and not noise.
 
@@ -207,7 +207,7 @@ AI_GATEWAY_API_KEY=... bun run evals/bakeoff.ts
 bun run evals/bakeoff.ts --fake
 ```
 
-`--limit N` scores only the first N queries against their own expected repos, without distractors, as a cheap smoke test. `--summary <model>` scores one summary model on the full corpus through one AI Gateway batch job, using the embedding model in `models.ts`. `--fake` runs the whole pipeline on the fake layers from `@stargrep/ai/fake` and needs no key. No run edits code. To adopt a result, copy the models from the `Chosen:` line into `packages/ai/src/models.ts` by hand.
+`--limit N` scores only the first N queries against their own expected repos, without distractors, as a cheap smoke test. `--summary <model>` scores one summary model on the full corpus through one AI Gateway batch job, using the embedding model in `models.ts`. `--fake` runs the whole pipeline on the fake layers from `@stargrep/ai/fake` and needs no key. No run edits code. To adopt a result, update `packages/ai/src/models.ts`. A summary model, prompt, or schema change also requires a new summary recipe and its migration. An embedding model change requires the database migration and re-embedding described in `docs/architecture.md`. Regenerate the recall fixture after planner or model changes.
 
 The recall gate needs Postgres, from `docker compose up --detach --wait` or a `DATABASE_URL` that names an admin connection. It creates and migrates `stargrep_recall` on first use.
 

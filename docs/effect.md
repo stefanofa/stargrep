@@ -1,6 +1,6 @@
 # Effect conventions
 
-This doc sets Stargrep's Effect conventions. Each rule comes from T3 Code (github.com/pingdotgg/t3code, commit `e27e12d`, 2026-11-03), which runs Effect 4.1.2. That is the same version Stargrep pins. Every excerpt is T3 Code's code and is credited by its path in that repo. Each section ends with a verdict for Stargrep. Adopt means take it as is. Adapt says what to change. Skip says why not.
+This doc sets Stargrep's Effect conventions. The reference excerpts come from T3 Code (github.com/pingdotgg/t3code, commit `e27e12d`, 2026-11-03), which runs Effect 4.1.2. That is the same version Stargrep pins. Excerpt paths refer to that historical T3 Code checkout, not this repository. Stargrep adaptations below set the local conventions. Each section ends with a verdict for Stargrep. Adopt means take it as is. Adapt says what to change. Skip says why not.
 
 Excerpts from T3 Code are used under its MIT License, Copyright (c) 2026 T3 Tools Inc.
 
@@ -322,7 +322,7 @@ getLink: Effect.fn("relay.t3chat.get_link")(function* (input) {
 
 Queue messages are `unknown` until decoded. `ApnsDeliveries.processSignedJob(body: unknown)` decodes first and fails with `ApnsDeliveryJobQueuePayloadInvalid`, which records only the received type, never the payload (`infra/relay/src/agentActivity/ApnsDeliveries.ts`). For HTTP responses the server also uses `HttpClientResponse.schemaBodyJson(Schema)` (`apps/server/src/cloud/CliTokenManager.ts`).
 
-**For Stargrep.** Adopt as is. It applies to GitHub responses, GH Archive rows, queue bodies, model output, and the `QueryPlan`. Biome has no rule for hoisting, so cover it in review.
+**For Stargrep.** Adopt as is. It applies to GitHub responses, queue bodies, model output, and the `QueryPlan`. Biome has no rule for hoisting, so cover it in review.
 
 ### Rule: SQL rows decode through a schema too
 
@@ -344,7 +344,7 @@ const getSessionRowById = SqlSchema.findOneOption({
 
 The relay, which uses Drizzle, does not decode rows. It trusts Drizzle's column types and casts JSON columns with `.$type<T>()` (`infra/relay/src/persistence/schema.ts`).
 
-**For Stargrep.** Adapt. Use `drizzle-orm/effect-schema`, as `docs/architecture.md` already plans, to derive row schemas from tables. Decode `jsonb` columns with a schema rather than `.$type<T>()`, since a cast hides drift between old rows and new code.
+**For Stargrep.** Adapt. Use `drizzle-orm/effect-schema` to derive row schemas from tables. Decode `jsonb` columns with a schema rather than `.$type<T>()`, since a cast hides drift between old rows and new code.
 
 ## 5. Config and secrets
 
@@ -386,7 +386,7 @@ export const layer = (configuration: RelayConfiguration["Service"]) =>
 
 `Redacted.value(secret)` is called only at the point of use, such as `HttpClientRequest.bearerToken(Redacted.value(linkSecret))`. The `Layer.succeed` form also gives tests a one-line config layer (`RelayConfiguration.layer(config)` in `ApnsDeliveryQueue.test.ts`). The Node CLI groups its env config with `Config.all({...})` in `apps/server/src/cli/config.ts`.
 
-**For Stargrep.** Adopt. On Workers, env vars and secrets come from the `env` bindings object, not `process.env`. In the relay, Alchemy's runtime supplies a `ConfigProvider` backed by that object (`.repos/alchemy-effect/packages/alchemy/src/Runtime.ts`), so `Config.String` just works. Without Alchemy at runtime, provide `ConfigProvider.fromUnknown(env)` at the entry point. Stargrep's "validated at startup" means validated in each Worker's init effect. That runs on isolate start, not once per deploy.
+**For Stargrep.** Adopt. On Workers, env vars and secrets come from the `env` bindings object, not `process.env`. In the relay, Alchemy's runtime supplies a `ConfigProvider` backed by that object (`.repos/alchemy-effect/packages/alchemy/src/Runtime.ts`), so `Config.String` just works. Without Alchemy at runtime, provide `ConfigProvider.fromUnknown(env)` at the entry point. Shared stage choices come from `stageSettings` in `packages/runtime/src/stage.ts`. Required and optional secret readers live in `packages/runtime/src/config.ts`. Runtime binding validation runs when the Worker initializes, and request-owned layers such as `Db` build within each invocation.
 
 ## 6. Concurrency and resources
 
@@ -430,7 +430,7 @@ return yield* HttpClientRequest.post(new URL(path, baseUrl).toString()).pipe(
 );
 ```
 
-**For Stargrep.** Adopt as is. Workers bill wall time against a request, so a hung GitHub or model call is a real cost.
+**For Stargrep.** Adopt. Timeouts bound stalled calls. Gateway model retries belong to the AI SDK, within the port timeout. Callers do not retry model calls again.
 
 ### Rule: acquire resources with `acquireRelease` inside `Effect.scoped`
 
@@ -502,7 +502,7 @@ const db = yield* Drizzle.Postgres(hyperdrive.connectionString, {
 
 Alchemy's `Drizzle.Postgres` helper builds `@effect/sql-pg`'s `PgClient.layer` and wraps it with `drizzle-orm/effect-postgres` (`.repos/alchemy-effect/packages/alchemy/src/Drizzle/Postgres.ts`). The relay Worker sets the `nodejs_compat` flag, pins `drizzle-orm` `1.0.0-rc.5-ab785fc`, and talks to PlanetScale Postgres through Hyperdrive.
 
-**For Stargrep.** Adopt for any `@effect/sql-pg` client. `docs/architecture.md` leaves open whether `drizzle-orm/effect-postgres` works through Hyperdrive on Workers, and names its default named prepared statements as a risk. T3 Code runs that exact stack in production with `prepare: false`, which is evidence the phase 0 prototype should pass. Neon is not PlanetScale, so the prototype still has to run.
+**For Stargrep.** Use unnamed statements on `pg` through Hyperdrive. The prototype is complete. Stargrep uses `drizzle-orm/node-postgres` for both core queries and Better Auth, and disables Drizzle JIT row mapping because Workers block `new Function`.
 
 ## 7. Testing
 
@@ -614,7 +614,7 @@ Other differences:
 - `@effect/vitest` adds `it.prop` for property tests. Under Bun, call `FastCheck` from `effect/testing` yourself if needed.
 - `bun test` runs on Bun, not workerd. `docs/architecture.md` already flags that Worker-level tests need another runner. T3 Code's relay tests also skip workerd and run on Node with `@effect/platform-node`.
 
-**For Stargrep.** Adapt. Write the helper once, and allow `runPromise` only in that file.
+**For Stargrep.** Use `@stargrep/testing` for Bun Effect tests. Framework adapters, vitest configuration, and workerd entry points may run Effects at their runtime boundary.
 
 ## 8. Observability
 
@@ -674,7 +674,7 @@ export const rpcInstrumentationLayer = Layer.succeed(RpcInstrumentation)((effect
 });
 ```
 
-**For Stargrep.** Adapt. Write one oRPC middleware that opens the span and records metrics for every procedure, so REST, MCP, and the web client get the same traces.
+**For Stargrep.** `packages/api/src/middleware/instrumentation.ts` provides one oRPC middleware that opens the span and records metrics for every procedure. REST, MCP, and the web client get the same traces.
 
 ### Rule: metrics are module-level constants with a prefix and a description
 
@@ -753,13 +753,13 @@ export class RelayTransactions extends Context.Service<
 
 Queries return Effects, so they pipe straight into `Effect.map` and `Effect.mapError`. Each statement maps its own `SqlError` to a domain error with the operation name. Errors left at the transaction edge come from open or commit (`ManagedTunnelLimits.ts`).
 
-**For Stargrep.** Adapt. `docs/architecture.md` starts `Db` on `drizzle-orm/node-postgres` and `pg`, because Better Auth's Drizzle adapter awaits queries, and moves core to `effect-postgres` only if phase 0 passes. That makes the shape of the `Db` service matter more than the driver. If `Db` exposes the whole Drizzle database the way `RelayDb` does, core imports Drizzle types, ties itself to one driver, and loses its in-memory test layer. Make `Db`'s methods the query functions from `packages/db`, each returning an Effect with a typed error. On `pg`, each method wraps the promise with `Effect.tryPromise` and maps the failure to a domain error with the operation name, as `ManagedTunnelLimits.ts` does for `SqlError`. Keep `withTransaction` as its own service like `RelayTransactions`. A later move to `effect-postgres` then changes only `packages/db`.
+**For Stargrep.** `Db` uses `drizzle-orm/node-postgres` and `pg`, because Better Auth's adapter awaits queries. `Db` exposes query functions returning Effects with typed errors, rather than the Drizzle database. Core imports no Drizzle types. Query adapters wrap promises with `Effect.tryPromise` and map failures by operation. Transactions have a separate service. PGlite and Postgres tests run the same query code.
 
 ### Rule: Effect runs in the browser through atoms
 
 `apps/web` builds a `ManagedRuntime` and an `Atom.runtime` from layers, and React reads state with `useAtomValue` from `@effect/atom-react` (`apps/web/src/lib/runtime.ts`, `apps/web/src/connection/runtime.ts`).
 
-**For Stargrep.** Adapt. Skip atoms and `ManagedRuntime` state, because TanStack DB owns client state and a second store would split ownership. Use Effect in the browser only in code-split routes where it does real work, such as the search box's `Stream` pipeline. Public pages load no Effect code. A probe bundle measured about 25 KB gzipped for Schema alone, 34 KB for the runtime with `Stream` and Schema, and 49 KB with atoms added.
+**For Stargrep.** Skip atoms. TanStack DB holds the browser library, while React holds view and request state. The stars engine loads during hydration and includes Effect for search streams, polling, and reveal timing. The landing entry stays separate from that engine. Both have bundle budgets.
 
 ## 10. What they avoid, and the lint that enforces it
 
@@ -790,11 +790,11 @@ Other things the docs argue against:
 
 1. **Services are `Context.Service` classes with the interface inline.** `make` yields its dependencies from the environment, `layer = Layer.effect(Foo, make)`, and a platform implementation is `layer<Platform>`.
 2. **Transports stay thin.** An oRPC procedure, queue consumer, or cron handler decodes input, calls one service method, and maps errors. Logic in a handler is invisible to MCP and to the other transports.
-3. **Errors are `Schema.TaggedError` classes with bounded, structured fields.** The message comes from the fields, the original failure stays in `cause`, and no secret or payload goes in a field.
+3. **Errors are `Schema.TaggedError` classes with bounded, structured fields.** The message comes from the fields, uncredentialed failures may retain `cause`. Credentialed requests keep bounded reasons and no cause.
 4. **Map domain errors to wire errors only at the transport, with a stable `code` and a `traceId`.** Catch known tags with an exhaustive `Effect.catchTags`.
-5. **Decode every external input at the boundary with a decoder hoisted to module scope.** That covers GitHub, GH Archive, queue bodies, model output, and `jsonb` columns. Inside, trust the types.
+5. **Decode every external input at the boundary with a decoder hoisted to module scope.** That covers GitHub, queue bodies, model output, and `jsonb` columns. Inside, trust the types.
 6. **Brand every id.** GitHub numeric ids get `GitHubAccountId` and `RepoId`. Logins and repo names get their own brands.
 7. **Read config with `effect/Config` once per Worker entry, secrets as `Redacted`, into one typed config service.** Services never read the environment.
 8. **Every reusable Effect function is `Effect.fn("Service.operation")`.** Untraced only for hot paths, with a comment saying why.
 9. **No globals inside Effect code.** Use `Clock`, `Random`, `HttpClient`, and `Effect.log*`, enforced by `@effect/language-service`. This is what lets tests run on `TestClock` and fake layers.
-10. **Tests go through the service, with fake layers only for external systems, on `TestClock`, with no sleeps, timeouts, or retries.** Under `bun test`, one helper file replaces `it.effect` and `it.layer` and is the only place allowed to call `runPromise`.
+10. **Tests go through the service, with fake layers only for external systems, on `TestClock`, with no sleeps, timeouts, or retries.** Under `bun test`, one helper file replaces `it.effect` and `it.layer` for Bun Effect tests. Framework runtime boundaries may call `runPromise`.
