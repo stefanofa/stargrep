@@ -52,6 +52,23 @@ const forget = `
   )
   delete from repo_facets where repo_id in (select id from gone)`;
 
+const firstText = { summary: "First answer", keywords: ["first"] };
+const firstAnswer = { ...firstText, claims: [{ term: "first" }] };
+const secondAnswer = { summary: "Second answer", keywords: ["second"], claims: [{ term: "second" }] };
+
+// The answer a repo shows next to the answer its receipt holds, which must be the same.
+const shownAnswer = Effect.fn("shownAnswer")(function* (id: number) {
+  const database = yield* TestDatabase.TestDatabase;
+  const [row] = yield* database.query(
+    `select r.summary, r.keywords, json_build_object('summary', c.summary, 'keywords', c.keywords) as "receiptText",
+       r.summary_input_hash as "summaryInputHash", r.receipt_id as "receiptId", r.summary_recipe as "summaryRecipe",
+       r.enrich_retry_at as "retryAt", f.stale, (select count(*)::int from receipts where repo_id = r.id) as receipts
+     from repos r join receipts c on c.id = r.receipt_id join repo_facets f on f.repo_id = r.id where r.id = $1`,
+    [id],
+  );
+  return row;
+});
+
 const cases = (test: { readonly effect: it.Tester<Services> }) => {
   test.effect("the database holds the registry's enums and functions exactly as registry.sql generates them", () =>
     Effect.gen(function* () {
@@ -270,36 +287,38 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
     }),
   );
 
-  test.effect("capture saves the summary and points the repo at the receipt, and a retry converges on it", () =>
+  test.effect("capture saves the summary and points the repo at the receipt, and a retry keeps the first answer", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
       const database = yield* TestDatabase.TestDatabase;
       const id = yield* seedRepo({ id: 70_501 });
       yield* database.query("update repos set enrich_retry_at = now() + interval '1 day' where id = $1", [id]);
-      const first = yield* db.knowledge.capture([answer(id, receiptId(70_501), { keywords: ["first"] })]);
+      const first = yield* db.knowledge.capture([answer(id, receiptId(70_501), firstAnswer)]);
       expect(first).toEqual([{ repoId: id, receiptId: receiptId(70_501), saved: true }]);
-      const retry = yield* db.knowledge.capture([answer(id, receiptId(70_502), { keywords: ["retry"] })]);
+      const retry = yield* db.knowledge.capture([answer(id, receiptId(70_502), secondAnswer)]);
       expect(retry).toEqual([{ repoId: id, receiptId: receiptId(70_501), saved: true }]);
-      expect(
-        yield* database.query(
-          `select r.summary, r.keywords, r.summary_input_hash as "summaryInputHash", r.receipt_id as "receiptId",
-             r.summary_recipe as "summaryRecipe", r.enrich_retry_at as "retryAt", f.stale,
-             (select count(*)::int from receipts where repo_id = r.id) as receipts
-           from repos r join repo_facets f on f.repo_id = r.id where r.id = $1`,
-          [id],
-        ),
-      ).toEqual([
-        {
-          summary: `summary of ${id}`,
-          keywords: ["retry"],
-          summaryInputHash: hash("a"),
-          receiptId: receiptId(70_501),
-          summaryRecipe: 2,
-          retryAt: null,
-          stale: true,
-          receipts: 1,
-        },
-      ]);
+      expect(yield* shownAnswer(id)).toEqual({
+        ...firstText,
+        receiptText: firstText,
+        summaryInputHash: hash("a"),
+        receiptId: receiptId(70_501),
+        summaryRecipe: 2,
+        retryAt: null,
+        stale: true,
+        receipts: 1,
+      });
+    }),
+  );
+
+  test.effect("a duplicate answer after projection leaves the projected answer and its atoms in place", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const id = yield* seedRepo({ id: 70_551 });
+      yield* db.knowledge.capture([answer(id, receiptId(70_551), firstAnswer)]);
+      yield* projectAtoms(() => [atom("is", { dim: "kind", id: "cli" })], [id]);
+      const duplicate = yield* db.knowledge.capture([answer(id, receiptId(70_552), secondAnswer)]);
+      expect(duplicate).toEqual([{ repoId: id, receiptId: receiptId(70_551), saved: true }]);
+      expect(yield* shownAnswer(id)).toMatchObject({ ...firstText, receiptText: firstText, stale: false, receipts: 1 });
     }),
   );
 

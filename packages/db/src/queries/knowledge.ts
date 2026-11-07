@@ -361,12 +361,14 @@ export const make = Effect.gen(function* () {
               on conflict (repo_id, source, input_hash, recipe) do nothing
               returning id, repo_id
             ),
-            -- A retried answer converges on the receipt committed first.
+            -- A retried answer converges on the receipt committed first, text included, so the repo always shows the
+            -- answer its receipt holds.
             winner as (
-              select a.*, coalesce(i.id, r.id) as receipt_id
-              from answer a
-              left join inserted i on i.id = a."receiptId"
-              left join receipts r
+              select a."repoId", a."readmeOid", a."inputHash", a.recipe, i.id as receipt_id, a.summary, a.keywords
+              from answer a join inserted i on i.id = a."receiptId"
+              union all
+              select a."repoId", a."readmeOid", a."inputHash", a.recipe, r.id, r.summary, r.keywords
+              from answer a join receipts r
                 on (r.repo_id, r.source, r.input_hash, r.recipe) = (a."repoId", a.source, a."inputHash", a.recipe)
             ),
             -- A new summary of the README a read repo's summary describes keeps the old embedding, marked stale, as
