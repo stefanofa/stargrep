@@ -10,12 +10,13 @@ import { answer, atom, facetsOf, key, receiptId, seedRepo } from "./knowledge-fi
 
 // PGlite has one connection, so these run only where two transactions can interleave.
 
-// Waits, inside Postgres, until a session of this database waits on a lock, and returns what it waits on.
+// Waits, inside Postgres, up to three seconds for a session of this database to wait on a lock, and returns what the
+// waiting sessions wait on. A blocked session shows up within milliseconds, so an empty list means nothing blocked.
 const lockWait = Effect.gen(function* () {
   const database = yield* TestDatabase.TestDatabase;
   yield* database.query(`
     do $$ begin
-      for attempt in 1 .. 1000 loop
+      for attempt in 1 .. 300 loop
         exit when exists (
           select 1 from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock');
         perform pg_sleep(0.01);

@@ -178,10 +178,13 @@ const membershipCases = (test: { readonly effect: it.Tester<Services> }) => {
             return `when ${index} then ${hit}`;
           })
           .join("\n");
-        const [result] = yield* database.query(
-          `with forms as (
+        // JIT compiles this one statement for most of a second on pg, longer than it runs, so the check turns it off.
+        yield* database.query(
+          `create or replace function agreement(form_prefixes text[], form_widen boolean[])
+           returns table (checked int, mismatches int, nonempty int) language sql set jit = off as $check$
+           with forms as (
              select ordinality - 1 as form, prefix, widen
-             from unnest($1::text[], $2::boolean[]) with ordinality as f (prefix, widen)
+             from unnest(form_prefixes, form_widen) with ordinality as f (prefix, widen)
            ),
            targets as materialized (
              select s.id, coalesce(c.canonical_id, s.id) as canonical, f.form, f.prefix,
@@ -202,9 +205,13 @@ const membershipCases = (test: { readonly effect: it.Tester<Services> }) => {
            select count(*)::int as checked,
              count(*) filter (where coalesce(l.repos, '{}') is distinct from s.repos)::int as mismatches,
              count(*) filter (where cardinality(s.repos) > 0)::int as nonempty
-           from searched s left join listed l on l.atom = s.prefix || s.canonical`,
-          [prefixes, forms.map((form) => form.widen)],
+           from searched s left join listed l on l.atom = s.prefix || s.canonical
+           $check$`,
         );
+        const [result] = yield* database.query("select * from agreement($1::text[], $2::boolean[])", [
+          prefixes,
+          forms.map((form) => form.widen),
+        ]);
         const { checked, mismatches, nonempty } = result as { checked: number; mismatches: number; nonempty: number };
         expect({ checked, mismatches }).toEqual({ checked: 120 * forms.length, mismatches: 0 });
         expect(nonempty).toBeGreaterThan(checked / 2);
