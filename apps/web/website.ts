@@ -16,6 +16,8 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import { rateLimitPolicy } from "./rate-limit-policy.ts";
+
 const SearchCache = Cloudflare.KV.Namespace("SearchCache");
 
 const CallerKey = Alchemy.makeRandom("CallerKey");
@@ -68,20 +70,20 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
         [serverTokenName]: kind,
         ICONS: yield* Icons,
         SYNC_PER_CALLER: Cloudflare.RateLimit("SYNC_PER_CALLER", {
-          namespaceId: namespaceId(stage, "sync-per-caller"),
-          simple: { limit: 5, period: 60 },
+          namespaceId: namespaceId(stage, rateLimitPolicy.SYNC_PER_CALLER.namespace),
+          simple: rateLimitPolicy.SYNC_PER_CALLER.simple,
         }),
         SYNC_OVERALL: Cloudflare.RateLimit("SYNC_OVERALL", {
-          namespaceId: namespaceId(stage, "sync-overall"),
-          simple: { limit: 60, period: 60 },
+          namespaceId: namespaceId(stage, rateLimitPolicy.SYNC_OVERALL.namespace),
+          simple: rateLimitPolicy.SYNC_OVERALL.simple,
         }),
         SEARCH_PER_CALLER: Cloudflare.RateLimit("SEARCH_PER_CALLER", {
-          namespaceId: namespaceId(stage, "search-per-caller"),
-          simple: { limit: 120, period: 60 },
+          namespaceId: namespaceId(stage, rateLimitPolicy.SEARCH_PER_CALLER.namespace),
+          simple: rateLimitPolicy.SEARCH_PER_CALLER.simple,
         }),
         STARS_PER_CALLER: Cloudflare.RateLimit("STARS_PER_CALLER", {
-          namespaceId: namespaceId(stage, "stars-per-caller"),
-          simple: { limit: 60, period: 60 },
+          namespaceId: namespaceId(stage, rateLimitPolicy.STARS_PER_CALLER.namespace),
+          simple: rateLimitPolicy.STARS_PER_CALLER.simple,
         }),
         ...Option.match(key, { onNone: () => ({}), onSome: (value) => ({ [apiKeyName]: value }) }),
         ...Option.match(demoLogin, { onNone: () => ({}), onSome: (value) => ({ [demoLoginName]: value }) }),

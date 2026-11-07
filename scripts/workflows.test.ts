@@ -96,3 +96,35 @@ describe("workflow concurrency", () => {
     expect(deploys.filter((group) => group.queue !== "max" || group["cancel-in-progress"] !== undefined)).toEqual([]);
   });
 });
+
+describe("production validation", () => {
+  test("automatic deploys follow completed main CI and checkout its exact SHA", () => {
+    const source = readFileSync(join(workflows, "deploy.yml"), "utf8");
+    expect(source).toContain("workflow_run:");
+    expect(source).toContain("workflows: [ci]");
+    expect(source).toContain("types: [completed]");
+    expect(source).not.toContain("  push:");
+    for (const guard of [
+      "github.event.workflow_run.conclusion == 'success'",
+      "github.event.workflow_run.event == 'push'",
+      "github.event.workflow_run.head_branch == 'main'",
+      "github.event.workflow_run.head_repository.full_name == github.repository",
+      "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
+      "github.event.workflow_run.head_sha || github.sha",
+      "ref: ${{ env.DEPLOY_SHA }}",
+    ])
+      expect(source).toContain(guard);
+    const run = load("deploy.yml").jobs.prod?.steps.find((step) => step.run?.includes("commits/main"))?.run ?? "";
+    expect(run).toContain('if [ "$head" != "$DEPLOY_SHA" ]');
+    expect(run).toContain('if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]');
+    expect(run).toContain("branch=main&event=push&head_sha=$DEPLOY_SHA&status=success");
+    expect(run).toContain('if [ "$passed" -eq 0 ]');
+    expect(run.indexOf('if [ "$head"')).toBeLessThan(run.indexOf("bun run --cwd infra deploy"));
+    expect(source).toContain("if: steps.deploy.outputs.deployed == 'true'");
+    expect(source).toContain("bun scripts/stage-smoke.ts --public https://stargrep.com");
+  });
+
+  test("CI checks lint fixtures", () => {
+    expect(load("ci.yml").jobs.lint?.steps.some((step) => step.run === "bun run lint:fixtures")).toBe(true);
+  });
+});

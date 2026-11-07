@@ -18,7 +18,28 @@ export const EnrichedRepo = Schema.Struct({
 });
 export type EnrichedRepo = typeof EnrichedRepo.Type;
 
-const Summaries = Schema.Record(Schema.String, Summarize.RepoSummary);
+// Bump when RepoSummary's output contract changes.
+const summarySchemaVersion = 1;
+export const summaryFingerprint = (repo: Summarize.RepoFacts): string =>
+  new Bun.CryptoHasher("sha256")
+    .update(
+      JSON.stringify({
+        facts: {
+          fullName: repo.fullName,
+          description: repo.description,
+          topics: repo.topics,
+          language: repo.language,
+          readme: repo.readme,
+        },
+        system: Summarize.system,
+        prompt: Summarize.prompt(repo),
+        schemaVersion: summarySchemaVersion,
+      }),
+    )
+    .digest("hex");
+
+const SummaryEntry = Schema.Struct({ fingerprint: Schema.String, summary: Summarize.RepoSummary });
+const Summaries = Schema.Record(Schema.String, Schema.Union([SummaryEntry, Summarize.RepoSummary]));
 const Vectors = Schema.Record(Schema.String, Schema.Struct({ text: Schema.String, vector: Float32Vector }));
 
 const summaryConcurrency = 8;
@@ -55,7 +76,13 @@ export const enrich = Effect.fn("EnrichedCorpus.enrich")(function* (summaryModel
   const summaryCache = cacheFile(`summaries/${slug(summaryModel)}.json`, Summaries);
   const vectorCache = cacheFile(`vectors/${slug(embeddings.model.id)}.json`, Vectors);
 
-  const summaries: Record<string, Summarize.RepoSummary> = { ...(yield* summaryCache.read) };
+  const cached = (yield* summaryCache.read) ?? {};
+  const summaries: Record<string, typeof SummaryEntry.Type> = {};
+  for (const repo of corpus) {
+    const entry = cached[repo.fullName];
+    if (entry && "fingerprint" in entry && entry.fingerprint === summaryFingerprint(repo))
+      summaries[repo.fullName] = entry;
+  }
   const unsummarized = corpus.filter((repo) => summaries[repo.fullName] === undefined);
   if (unsummarized.length > 0) yield* Console.log(`Summarizing ${unsummarized.length} repos with ${summaryModel}`);
   for (let start = 0; start < unsummarized.length; start += summaryChunk) {
@@ -63,7 +90,9 @@ export const enrich = Effect.fn("EnrichedCorpus.enrich")(function* (summaryModel
       unsummarized.slice(start, start + summaryChunk),
       (repo) =>
         Summarize.summarize(repo).pipe(
-          Effect.tap((summary) => Effect.sync(() => (summaries[repo.fullName] = summary))),
+          Effect.tap((summary) =>
+            Effect.sync(() => (summaries[repo.fullName] = { fingerprint: summaryFingerprint(repo), summary })),
+          ),
           Effect.catch((error) => Console.log(`  no summary for ${repo.fullName}: ${error.message}`)),
         ),
       { concurrency: summaryConcurrency, discard: true },
@@ -75,7 +104,7 @@ export const enrich = Effect.fn("EnrichedCorpus.enrich")(function* (summaryModel
     ...(yield* vectorCache.read),
   };
   const texts = corpus.map((repo) => {
-    const summary = summaries[repo.fullName] ?? { summary: repo.description ?? repo.fullName, keywords: [] };
+    const summary = summaries[repo.fullName]?.summary ?? { summary: repo.description ?? repo.fullName, keywords: [] };
     return { repo, text: Summarize.embeddingText(repo, summary) };
   });
   const unembedded = texts.filter(({ repo, text }) => vectors[repo.fullName]?.text !== text);
@@ -90,7 +119,7 @@ export const enrich = Effect.fn("EnrichedCorpus.enrich")(function* (summaryModel
   yield* vectorCache.write(vectors);
 
   return texts.map(({ repo }): EnrichedRepo => {
-    const summary = summaries[repo.fullName];
+    const summary = summaries[repo.fullName]?.summary;
     return {
       fullName: repo.fullName,
       description: repo.description,

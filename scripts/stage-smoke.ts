@@ -5,9 +5,17 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schema from "effect/Schema";
 import { NotSettled, untilRouted, waitUntilReady } from "./fresh-stage.ts";
+import { publicSmoke } from "./public-smoke.ts";
 import { readStageOutput } from "./stage-output.ts";
 
 const [stage, ...alchemyArgs] = process.argv.slice(2);
+if (stage === "--public") {
+  const origin = alchemyArgs[0];
+  if (!origin) throw new Error("usage: bun scripts/stage-smoke.ts --public <origin>");
+  const checks = await Effect.runPromise(publicSmoke(origin).pipe(Effect.provide(FetchHttpClient.layer)));
+  for (const result of checks) console.log(JSON.stringify(result));
+  process.exit(checks.every(({ ok }) => ok) ? 0 : 1);
+}
 if (!stage) throw new Error("usage: bun scripts/stage-smoke.ts <stage> [alchemy state read flags]");
 const { url: workerUrl, debugUrl, debugToken, webUrl } = await readStageOutput(stage, alchemyArgs);
 
@@ -228,7 +236,7 @@ const flood = Effect.gen(function* () {
 const checks = (
   await Effect.runPromise(
     ready.pipe(
-      Effect.andThen(Effect.all([web, worker, unauthenticated, traffic, flood])),
+      Effect.andThen(Effect.all([publicSmoke(webUrl), web, worker, unauthenticated, traffic, flood])),
       Effect.provide(FetchHttpClient.layer),
     ),
   )

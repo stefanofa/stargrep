@@ -1,12 +1,15 @@
 name: deploy
 
 on:
-  push:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   ALCHEMY_TELEMETRY_DISABLED: "1"
@@ -18,7 +21,12 @@ defaults:
 
 jobs:
   prod:
-    if: vars.CLOUDFLARE_ACCOUNT_ID != '' && github.ref == 'refs/heads/main'
+    if: >-
+      vars.CLOUDFLARE_ACCOUNT_ID != '' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 20
@@ -27,8 +35,11 @@ jobs:
       queue: max
     env:
       GH_TOKEN: ${{ github.token }}
+      DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
       - uses: ./.github/actions/setup
       - name: Stop early when a pipeline or sign-in secret is missing
         run: |
@@ -57,11 +68,17 @@ jobs:
           STARGREP_GITHUB_APP_CLIENT_SECRET: ${{ secrets.STARGREP_GITHUB_APP_CLIENT_SECRET }}
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
           AUTH_PROXY_SECRET: ${{ secrets.AUTH_PROXY_SECRET }}
-      - run: |
+      - id: deploy
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&head_sha=$DEPLOY_SHA&status=success" --jq '.workflow_runs | length')
+            if [ "$passed" -eq 0 ]; then echo "CI has not passed for $DEPLOY_SHA on main."; exit 1; fi
+          fi
           head=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
-          if [ "$head" != "$GITHUB_SHA" ]; then echo "main moved to $head, so the run for that commit deploys prod."; exit 0; fi
+          if [ "$head" != "$DEPLOY_SHA" ]; then echo "main moved to $head, so the run for that commit deploys prod."; exit 0; fi
           bun run --cwd infra deploy --config database.run.ts --stage shared --yes
           bun run --cwd infra deploy --stage prod --yes
+          echo "deployed=true" >> "$GITHUB_OUTPUT"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
@@ -73,3 +90,6 @@ jobs:
           STARGREP_GITHUB_APP_CLIENT_SECRET: ${{ secrets.STARGREP_GITHUB_APP_CLIENT_SECRET }}
           AUTH_PROXY_SECRET: ${{ secrets.AUTH_PROXY_SECRET }}
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+      - name: Check public production health and API
+        if: steps.deploy.outputs.deployed == 'true'
+        run: bun scripts/stage-smoke.ts --public https://stargrep.com

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { audit, type Chunk } from "../scripts/landing-budget.ts";
+import { audit, auditEngine, type Chunk } from "../scripts/landing-budget.ts";
 
 const chunk = (fileName: string, moduleIds: Array<string>, extra: Partial<Chunk> = {}): Chunk => ({
   fileName,
@@ -24,6 +24,21 @@ describe("the landing budget", () => {
     expect(report.chunks.map((entry) => entry.fileName)).toEqual(["index.js", "shared.js", "routes.js"]);
     expect(report.found).toEqual([]);
     expect(report.total).toBe(report.chunks.reduce((sum, entry) => sum + entry.gzipped, 0));
+  });
+
+  test("home hydration loads the engine and its dependencies while the landing budget stays light", () => {
+    const chunks = [
+      chunk("index.js", [`${app}/router.tsx`, `${app}/routes/index.tsx`], { isEntry: true, imports: ["runtime.js"] }),
+      chunk("runtime.js", ["/runtime.js"]),
+      chunk("stars.js", [`${app}/components/stars.tsx`, effect], { imports: ["index.js", "db.js"] }),
+      chunk("db.js", ["/repo/node_modules/@tanstack/db/index.js"], { imports: ["runtime.js"] }),
+      chunk("settings.js", [`${app}/routes/settings.tsx`]),
+    ];
+    expect(audit(chunks).chunks.map((entry) => entry.fileName)).toEqual(["index.js", "runtime.js"]);
+    const engine = auditEngine(chunks);
+    expect(engine.chunks.map((entry) => entry.fileName)).toEqual(["index.js", "runtime.js", "stars.js", "db.js"]);
+    expect(engine.total).toBe(engine.chunks.reduce((sum, entry) => sum + entry.gzipped, 0));
+    expect(() => auditEngine(chunks.filter((chunk) => chunk.fileName !== "stars.js"))).toThrow("engine moved");
   });
 
   test("names each forbidden package by module path, however the code was minified", () => {
