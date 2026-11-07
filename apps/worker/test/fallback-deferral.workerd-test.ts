@@ -5,10 +5,11 @@ import { GitHubTokens } from "@stargrep/auth/tokens";
 import { IconQueue } from "@stargrep/core/icons";
 import { BlobStore, EnrichRepo } from "@stargrep/core/repos";
 import * as Db from "@stargrep/db";
+import { makeDb, repo } from "@stargrep/db/testing";
 import { TokenBudgetExhausted } from "@stargrep/github/errors";
 import * as GitHub from "@stargrep/github/github";
 import * as Fake from "@stargrep/github/github.fixture";
-import { Login, type RepoId } from "@stargrep/github/schemas";
+import { Login } from "@stargrep/github/schemas";
 import * as TokenGate from "@stargrep/github/token-gate";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -51,15 +52,23 @@ it("shares the server token's rate-limit deferral across users who spent their o
   let reads = 0;
   const db = Layer.succeed(
     Db.Db,
-    Db.Db.of({
+    makeDb({
       repos: {
-        getMany: (ids: ReadonlyArray<RepoId>) =>
+        getMany: (ids) =>
           Effect.andThen(
             reads++ === 1 ? Effect.sleep("2 minutes") : Effect.void,
-            Effect.succeed(ids.map((id) => ({ id, pending: true, enrichRetryAt: null, nodeId: `R_${id}` }))),
+            Effect.succeed(
+              ids.map((id) => ({
+                ...repo(id),
+                pending: true,
+                enrichRetryAt: null,
+                enrichFailures: 0,
+                summaryRecipe: 0,
+              })),
+            ),
           ),
       },
-    } as unknown as Db.Db["Service"]),
+    }),
   );
   const enrichers = EnrichRepo.layer.pipe(
     Layer.provide(GitHub.layer),

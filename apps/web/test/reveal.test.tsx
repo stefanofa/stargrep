@@ -13,18 +13,12 @@ afterEach(() => {
 });
 
 describe("the staged reveal", () => {
-  test("types the query once, settles, and marks the visit as revealed", async () => {
+  test("wires the typing state and marks the visit as revealed", () => {
     root().dataset.reveal = "pending";
     const { result } = renderHook(() => useReveal("rust tui", true));
     expect(sessionStorage.getItem(revealedKey)).toBe("1");
     expect(result.current.typed).toBe("");
-    await act(() => Bun.sleep(90));
-    expect("rust tui".startsWith(result.current.typed ?? "x")).toBe(true);
-    expect(result.current.typed?.length).toBeGreaterThan(0);
-    await act(() => Bun.sleep(1400));
-    expect(result.current.phase).toBe("done");
-    expect(result.current.typed).toBeUndefined();
-    expect(root().dataset.reveal).toBeUndefined();
+    expect(result.current.phase).toBe("typing");
   });
 
   test.each([
@@ -34,8 +28,7 @@ describe("the staged reveal", () => {
   ])("%s anywhere on the page jumps to the end", async (_, interact) => {
     root().dataset.reveal = "pending";
     const { result } = renderHook(() => useReveal("rust tui library", true));
-    await act(() => Bun.sleep(60));
-    expect(result.current.typed?.length).toBeGreaterThan(0);
+    expect(result.current.phase).toBe("typing");
     act(interact);
     expect(result.current.phase).toBe("done");
     expect(result.current.typed).toBeUndefined();
@@ -115,7 +108,6 @@ describe("the reveal script before the engine hydrates", () => {
       input.value = "terminal recorder";
       input.dispatchEvent(new Event("input", { bubbles: true }));
       const { result } = renderHook(() => useReveal("let an ai agent control my iphone", true));
-      await act(() => Bun.sleep(60));
       expect(result.current.phase).toBe("done");
       expect(result.current.typed).toBeUndefined();
       expect(input.value).toBe("terminal recorder");

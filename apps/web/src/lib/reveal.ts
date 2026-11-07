@@ -1,10 +1,9 @@
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { useEffect, useLayoutEffect, useState } from "react";
 import { revealedKey } from "./reveal-script.ts";
+import { playReveal } from "./reveal-timing.ts";
 
-const perCharacter = Duration.millis(20);
 const ease = "cubic-bezier(0.2, 0, 0, 1)";
 const lifted = 6;
 
@@ -55,19 +54,15 @@ export function useReveal(query: string, eligible: boolean) {
 
   useEffect(() => {
     if (phase !== "typing") return;
-    const play = Effect.gen(function* () {
-      for (let length = 1; length <= query.length; length++) {
-        yield* Effect.sleep(perCharacter);
-        setTyped(query.slice(0, length));
-      }
-      yield* Effect.sync(() => {
+    const play = playReveal(query, {
+      typed: setTyped,
+      settled: () => {
         delete root().dataset.reveal;
         emphasize();
         setTyped(undefined);
         setPhase("settled");
-      });
-      yield* Effect.sleep(Duration.millis(400));
-      yield* Effect.sync(() => setPhase("done"));
+      },
+      done: () => setPhase("done"),
     });
     const fiber = Effect.runFork(play);
     return () => {

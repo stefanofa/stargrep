@@ -4,7 +4,9 @@ import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { hydrate } from "@tanstack/react-router/ssr/client";
 import { act, waitFor } from "@testing-library/react";
 import { hydrateRoot, type Root } from "react-dom/client";
-import { browserClient, requested } from "./page-api.ts";
+import { loadEngine } from "../src/lib/engine.ts";
+import { getLibrary } from "../src/lib/library-collection.ts";
+import { browserClient, holdSecondPage, requested } from "./page-api.ts";
 
 // A page goes from the Worker to the browser in two steps, and each runs here as it does in production. The server
 // step renders in its own process (render-server.tsx) through the real routes, server loaders and in-process API. This
@@ -110,6 +112,7 @@ describe("a stars page from the Worker to the browser", () => {
     expect(page.requested).toEqual([]);
 
     sessionStorage.setItem("stargrep:revealed", "1");
+    using secondPage = holdSecondPage();
     const router = await hydratePage("/", page.html);
     const loaded = router.state.matches.at(-1)?.loaderData as { first: unknown } | undefined;
     expect(loaded?.first).not.toBeNull();
@@ -122,11 +125,21 @@ describe("a stars page from the Worker to the browser", () => {
       results: ["mobile-mcp"],
       query: "let an ai agent control my iphone",
     });
+    await act(async () => {
+      await loadEngine();
+    });
+    await act(async () => {
+      await secondPage.arrived;
+    });
+    expect({ status: statusText(), results: resultNames(), query: searchValue() }).toEqual(painted);
+    await act(async () => {
+      secondPage.release();
+      await getLibrary("stefanofa", false, false).whole;
+    });
     // The browser loads the library from the same API and derives the view live. Nothing on screen changes.
     await waitFor(() =>
       expect(document.querySelector("[role=status]")?.closest("p")?.textContent).toContain("3 stars"),
     );
-    await act(() => Bun.sleep(1000));
     watching.disconnect();
     expect({ status: statusText(), results: resultNames(), query: searchValue() }).toEqual(painted);
     // Not even for a moment while the library's first page alone has landed.
@@ -247,7 +260,7 @@ describe("a stars page from the Worker to the browser", () => {
     expect(reload.html).toContain("github has no one called @ghost-login");
     expect(reload.requested).toEqual([]);
     await hydratePage("/ghost-login", reload.html);
-    await act(() => Bun.sleep(300));
+    await waitFor(() => expect(statusText()).toBe("no such github user"));
     expect(statusText()).toBe("no such github user");
     expect(requested).toEqual([]);
   }, 60_000);

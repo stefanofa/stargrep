@@ -7,7 +7,8 @@ import { NotSignedIn, Viewers } from "@stargrep/api/viewers";
 import { QueryPlan, Search } from "@stargrep/core/search";
 import { SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
-import type { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
+import { accountRow, makeDb, repo as repoRow } from "@stargrep/db/testing";
+import { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -22,36 +23,25 @@ import { testServer } from "./serve.ts";
 
 const at = DateTime.makeUnsafe("2026-11-01T08:00:00Z");
 
-const repo = (id: number, owner: string, name: string, description: string): Db.Repo => ({
-  id: id as RepoId,
-  owner: owner as Login,
-  name: name as RepoName,
-  nodeId: null,
-  description,
-  topics: [],
-  language: "TypeScript",
-  license: "MIT",
-  homepage: null,
-  kind: "library",
-  createdAt: null,
-  pushedAt: at,
-  archived: false,
-  readmeOid: null,
-  summary: description,
-  summaryReadmeOid: null,
-  keywords: [],
-  embeddingModel: null,
-  icon: null,
-  iconCheckedAt: null,
-  ownerType: "org",
-  ownerAvatarUrl: null,
-});
+const repo = (id: number, owner: string, name: string, description: string): Db.Repo =>
+  repoRow(RepoId.make(id), {
+    owner: Login.make(owner),
+    name: RepoName.make(name),
+    nodeId: null,
+    description,
+    language: "TypeScript",
+    license: "MIT",
+    kind: "library",
+    pushedAt: at,
+    summary: description,
+    ownerType: "org",
+  });
 
 export const demoRepos = [
   repo(1, "mobile-next", "mobile-mcp", "Let an AI agent control your iPhone and Android phone through MCP."),
   repo(2, "junegunn", "fzf", "A command-line fuzzy finder."),
   { ...repo(3, "asciinema", "asciinema", "Terminal session recorder."), pushedAt: null },
-];
+] as const;
 
 const perPage = 2;
 
@@ -65,13 +55,14 @@ const accountOf = (login: string) => {
   const found = accounts[login.toLowerCase()];
   return found === undefined
     ? Option.none()
-    : Option.some({
-        id: found.id as GitHubAccountId,
-        login: login.toLowerCase() as Login,
-        type: "user" as const,
-        starredCount: found.synced ? found.repos.length : 10,
-        starsSyncedAt: found.synced ? at : null,
-      });
+    : Option.some(
+        accountRow(GitHubAccountId.make(found.id), {
+          login: Login.make(login.toLowerCase()),
+          type: "user" as const,
+          starredCount: found.synced ? found.repos.length : 10,
+          starsSyncedAt: found.synced ? at : null,
+        }),
+      );
 };
 
 export const requested: Array<string> = [];
@@ -107,7 +98,7 @@ const search = Layer.succeed(
           planSource: "fallback",
           results:
             request.scope._tag === "stars" && request.scope.login.toLowerCase() === "stefanofa"
-              ? [{ repo: demoRepos[0] as Db.Repo, nameMatch: false, textRank: 1, vectorRank: 1, metrics: [] }]
+              ? [{ repo: demoRepos[0], nameMatch: false, textRank: 1, vectorRank: 1, metrics: [] }]
               : [],
         } satisfies Search.SearchOutcome),
       ),
@@ -115,10 +106,22 @@ const search = Layer.succeed(
   }),
 );
 
-const db = {
+let pageTwo: { readonly released: Promise<void>; readonly arrived: () => void } | undefined;
+export const holdSecondPage = () => {
+  const released = Promise.withResolvers<void>();
+  const arrived = Promise.withResolvers<void>();
+  pageTwo = { released: released.promise, arrived: () => arrived.resolve() };
+  const release = () => {
+    pageTwo = undefined;
+    released.resolve();
+  };
+  return { arrived: arrived.promise, release, [Symbol.dispose]: release };
+};
+
+const db = makeDb({
   accounts: { byLogin: (login: Login) => Effect.succeed(accountOf(login)) },
   stars: {
-    // The second page takes a moment, as a page past the first does on a big library.
+    // A hydration test can hold page two until it has checked the first page.
     page: (id: number, { after }: { after: Option.Option<unknown> }) => {
       const entries = (Object.values(accounts).find((account) => account.id === id)?.repos ?? []).map(
         (each, index) => ({
@@ -137,7 +140,12 @@ const db = {
                 ? Option.none()
                 : Option.some({ starredAt: last.starredAt, repoId: last.repo.id }),
           })
-        : Effect.as(Effect.sleep("150 millis"), { entries: entries.slice(perPage), next: Option.none() });
+        : Effect.promise(async () => {
+            const held = pageTwo;
+            held?.arrived();
+            await held?.released;
+            return { entries: entries.slice(perPage), next: Option.none() };
+          });
     },
     enrichment: (login: Login) => {
       const found = accounts[login.toLowerCase()];
@@ -146,7 +154,7 @@ const db = {
       return Effect.succeed({ total, read: total - unread, failed: 0 });
     },
   },
-} as unknown as Db.Db["Service"];
+});
 
 export const serveApi = testServer((request) =>
   Layer.mergeAll(
