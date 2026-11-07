@@ -63,6 +63,8 @@ describe("closed values", () => {
     expect(owner("chrome extension")).toEqual([]);
     expect(owner("Objective-C++")).toEqual(["language:objective-cpp"]);
     expect(owner("Jupyter Notebook")).toEqual(["language:jupyter-notebook"]);
+    expect(owner("Visual Basic .NET")).toEqual(["language:visual-basic"]);
+    expect(owner("Visual Basic 6.0")).toEqual(["language:visual-basic"]);
   });
 });
 
@@ -72,15 +74,15 @@ describe("reservedKeys", () => {
     return [term, key !== null && Registry.reservedKeys.has(key)];
   };
 
-  test("holds the 172 keys of kinds, languages, platforms, and statuses", () => {
-    expect(Registry.reservedKeys.size).toBe(172);
+  test("holds the 174 keys of kinds, languages, platforms, and statuses", () => {
+    expect(Registry.reservedKeys.size).toBe(174);
     for (const term of ["cli", "rust", "macos", "node", "shell", "library", "c++", "c#", ".NET", "deprecated"]) {
       expect(reserved(term)).toEqual([term, true]);
     }
   });
 
   test("leaves subjects, licenses, and impliedBy names free", () => {
-    for (const term of ["tui", "postgresql", "zlib", "chrome", "ubuntu", "sdk", "MIT", "apache", "workers"]) {
+    for (const term of ["tui", "postgresql", "zlib", "chrome", "ubuntu", "sdk", "asm", "MIT", "apache", "workers"]) {
       expect(reserved(term)).toEqual([term, false]);
     }
   });

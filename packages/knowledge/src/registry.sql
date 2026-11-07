@@ -58,7 +58,8 @@ as $$
     'rust lang', 'scala', 'scheme', 'scss', 'shell', 'smalltalk', 'solidity', 'sql', 'starter', 'stata',
     'superseded', 'svelte', 'swift', 'tcl', 'template', 'templates', 'terminal', 'the browser', 'the terminal', 'ts',
     'tutorial', 'typescript', 'unmaintained', 'v', 'vala', 'vb', 'verilog', 'vhdl', 'vim script', 'viml',
-    'vimscript', 'visual basic', 'vue', 'wasm', 'webassembly', 'windows', 'workerd', 'zig', 'zsh'
+    'vimscript', 'visual basic', 'visual basic .net', 'visual basic 6.0', 'vue', 'wasm', 'webassembly', 'windows',
+    'workerd', 'zig', 'zsh'
   ])
 $$;
 

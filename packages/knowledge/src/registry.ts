@@ -38,12 +38,13 @@ export const kinds = [
   value("config", "config", ["dotfiles", "configuration"]),
 ] as const;
 
-// Labels are GitHub's display names, so a repo's language field resolves through its label.
+// Labels are GitHub's display names, so a repo's language field resolves through its label or an alias. GitHub
+// reports Delphi code as Pascal, so no language field resolves to delphi.
 export const languages = [
   value("abap", "ABAP"),
   value("ada", "Ada"),
   value("apex", "Apex"),
-  value("assembly", "Assembly"),
+  value("assembly", "Assembly", [], ["asm"]),
   value("astro", "Astro"),
   value("blade", "Blade"),
   value("c", "C"),
@@ -118,7 +119,7 @@ export const languages = [
   value("verilog", "Verilog"),
   value("vhdl", "VHDL"),
   value("vim-script", "Vim Script", ["vimscript", "viml"]),
-  value("visual-basic", "Visual Basic", ["vb"]),
+  value("visual-basic", "Visual Basic", ["vb", "Visual Basic .NET", "Visual Basic 6.0"]),
   value("vue", "Vue"),
   value("zig", "Zig"),
 ] as const;
