@@ -2,6 +2,7 @@ import type { Owner } from "@stargrep/github/owner";
 import { GitHubAccountId, Login } from "@stargrep/github/schemas";
 import { eq, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
+import type { PgSelect } from "drizzle-orm/pg-core";
 import * as Arr from "effect/Array";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -69,6 +70,14 @@ export interface Queries {
   readonly recordStarSync: (sync: StarSync) => Effect.Effect<void, DbQueryFailed | AccountNotFound>;
 }
 
+// GitHub can give a login to a new account while an account renamed away from it keeps it here, so a login names the
+// account that synced most recently, then the one with the lowest ID. github_accounts_login_idx serves the lookup.
+export const accountNamed = <T extends PgSelect>(query: T, login: Login) =>
+  query
+    .where(sql`lower(${githubAccounts.login}) = lower(${login})`)
+    .orderBy(sql`${githubAccounts.starsSyncedAt} desc nulls last`, githubAccounts.id)
+    .limit(1);
+
 const decodeAccounts = rowsDecoder(Account);
 const encodeFacts = writeEncoder(AccountFacts);
 const encodeTime = writeEncoder(Schema.DateTimeUtcFromDate);
@@ -113,14 +122,10 @@ export const make = Effect.gen(function* () {
         Effect.map(Arr.head),
       ),
     byLogin: (login) =>
-      run("accounts.byLogin", (db) =>
-        db
-          .select()
-          .from(githubAccounts)
-          .where(sql`lower(${githubAccounts.login}) = lower(${login})`)
-          .orderBy(sql`${githubAccounts.starsSyncedAt} desc nulls last`, githubAccounts.id)
-          .limit(1),
-      ).pipe(Effect.flatMap(decodeAccounts("accounts.byLogin")), Effect.map(Arr.head)),
+      run("accounts.byLogin", (db) => accountNamed(db.select().from(githubAccounts).$dynamic(), login)).pipe(
+        Effect.flatMap(decodeAccounts("accounts.byLogin")),
+        Effect.map(Arr.head),
+      ),
     require: (id) =>
       run("accounts.require", (db) => db.select().from(githubAccounts).where(eq(githubAccounts.id, id))).pipe(
         Effect.flatMap(decodeAccounts("accounts.require")),

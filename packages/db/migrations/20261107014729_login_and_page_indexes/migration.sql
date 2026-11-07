@@ -1,0 +1,2 @@
+CREATE INDEX "github_accounts_login_idx" ON "github_accounts" (lower("login"),"stars_synced_at" DESC NULLS LAST,"id");--> statement-breakpoint
+CREATE INDEX "stars_page_idx" ON "stars" ("account_id","starred_at" DESC,"repo_id") WHERE "unstarred_at" is null;

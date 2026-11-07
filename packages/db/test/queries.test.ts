@@ -391,6 +391,34 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     }),
   );
 
+  test.effect("names the account that synced last when two share a login, then the lower ID, in every lookup", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const [older, newer] = [accountId(2601), accountId(2602)];
+      yield* db.accounts.upsert(account(newer, { login: login("Reused") }));
+      yield* db.accounts.upsert(account(older, { login: login("reused") }));
+      yield* db.repos.upsertRefs([ref(repoId(2611)), ref(repoId(2612))]);
+      yield* db.stars.upsert({ accountId: older, stars: [starred(repoId(2611), "2025-01-01T00:00:00Z")] });
+      yield* db.stars.upsert({
+        accountId: newer,
+        stars: [starred(repoId(2611), "2025-01-01T00:00:00Z"), starred(repoId(2612), "2025-01-02T00:00:00Z")],
+      });
+      const named = (name: string) =>
+        Effect.all([
+          Effect.map(db.accounts.byLogin(login(name)), (found) => Option.getOrThrow(found).id),
+          Effect.map(db.stars.enrichment(login(name)), (progress) => progress.total),
+        ]);
+
+      expect(yield* named("REUSED")).toEqual([older, 1]);
+      yield* db.accounts.recordStarSync({ accountId: newer, at: at("2026-05-01T00:00:00Z") });
+      expect(yield* named("reused")).toEqual([newer, 2]);
+      yield* db.accounts.recordStarSync({ accountId: older, at: at("2026-05-02T00:00:00Z") });
+      expect(yield* named("Reused")).toEqual([older, 1]);
+      yield* db.accounts.recordStarSync({ accountId: newer, at: at("2026-05-02T00:00:00Z") });
+      expect(yield* named("reused")).toEqual([older, 1]);
+    }),
+  );
+
   test.effect("stores repo refs and follows renames", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;

@@ -1,5 +1,5 @@
 import { GitHubAccountId, type Login, RepoId } from "@stargrep/github/schemas";
-import { and, desc, eq, gt, isNull, lt, or, type SQL, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, lt, lte, or, type SQL, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import * as Arr from "effect/Array";
@@ -13,6 +13,7 @@ import { AccountNotFound, type DbQueryFailed, type DbRowInvalid } from "../error
 import * as Postgres from "../postgres.ts";
 import { excluded, NullableTime, requireRow, rowsDecoder, writeEncoder } from "../rows.ts";
 import { enrichFailureCap, githubAccounts, repoMetrics, repos, stars, unreadEnrichment } from "../schema.ts";
+import { accountNamed } from "./accounts.ts";
 import { Repo, repoColumns } from "./repos.ts";
 
 export const Star = createSelectSchema(stars, {
@@ -141,7 +142,8 @@ const writeStarsReturningVisibleChanges = (accountId: GitHubAccountId, events: s
 const encodePosition = (position: StarsPosition) =>
   encodeTime(position.starredAt).pipe(Effect.map((starredAt) => Option.some({ starredAt, repoId: position.repoId })));
 
-// Newest star first, ties by repo ID, so a page continues after a position with no gap and no repeat.
+// Newest star first, ties by repo ID, so a page continues after a position with no gap and no repeat. The bound on
+// starred_at alone lets stars_page_idx start a later page at its position instead of reading every older star.
 const libraryEntries = (
   db: Postgres.Database,
   accountId: GitHubAccountId,
@@ -163,9 +165,12 @@ const libraryEntries = (
         isNull(stars.unstarredAt),
         after === undefined
           ? undefined
-          : or(
-              lt(stars.starredAt, sql`${after.starredAt}::timestamptz`),
-              and(eq(stars.starredAt, sql`${after.starredAt}::timestamptz`), gt(stars.repoId, after.repoId)),
+          : and(
+              lte(stars.starredAt, sql`${after.starredAt}::timestamptz`),
+              or(
+                lt(stars.starredAt, sql`${after.starredAt}::timestamptz`),
+                and(eq(stars.starredAt, sql`${after.starredAt}::timestamptz`), gt(stars.repoId, after.repoId)),
+              ),
             ),
       ),
     )
@@ -283,7 +288,7 @@ export const make = Effect.gen(function* () {
           };
         }),
       ),
-    // The account is chosen as accounts.byLogin chooses it, so the progress and the sync status describe one account.
+    // The progress and the sync status describe the account accountNamed chooses.
     enrichment: (login) =>
       run("stars.enrichment", (db) =>
         db
@@ -298,12 +303,7 @@ export const make = Effect.gen(function* () {
             and(
               eq(
                 stars.accountId,
-                sql`(${db
-                  .select({ id: githubAccounts.id })
-                  .from(githubAccounts)
-                  .where(sql`lower(${githubAccounts.login}) = lower(${login})`)
-                  .orderBy(sql`${githubAccounts.starsSyncedAt} desc nulls last`, githubAccounts.id)
-                  .limit(1)})`,
+                sql`(${accountNamed(db.select({ id: githubAccounts.id }).from(githubAccounts).$dynamic(), login)})`,
               ),
               isNull(stars.unstarredAt),
             ),

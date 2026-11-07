@@ -1,0 +1,132 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "a57abf0a-6c9c-4082-9106-cff375df11ae",
+  "prevIds": [
+    "27102634-4e65-499b-a77b-4df3b2378342"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "github_accounts",
+        "github_accounts_login_idx"
+      ],
+      "writes": [
+        "s|idx|public.github_accounts_login_idx",
+        "n|idx|public.github_accounts_login_idx",
+        "e|idx|public.github_accounts_login_idx",
+        "n|rel|public.github_accounts_login_idx"
+      ],
+      "reads": [
+        "n|tbl|public.github_accounts",
+        "n|sch|public",
+        "n|col|public.github_accounts.stars_synced_at",
+        "n|col|public.github_accounts.id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "stars",
+        "stars_page_idx"
+      ],
+      "writes": [
+        "s|idx|public.stars_page_idx",
+        "n|idx|public.stars_page_idx",
+        "e|idx|public.stars_page_idx",
+        "n|rel|public.stars_page_idx"
+      ],
+      "reads": [
+        "n|tbl|public.stars",
+        "n|sch|public",
+        "n|col|public.stars.account_id",
+        "n|col|public.stars.starred_at",
+        "n|col|public.stars.repo_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_accounts",
+        "name": "github_accounts_login_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "lower(\"login\")",
+            "isExpression": true,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "stars_synced_at",
+            "isExpression": false,
+            "asc": false,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "stars",
+        "name": "stars_page_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "account_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "starred_at",
+            "isExpression": false,
+            "asc": false,
+            "nullsFirst": true,
+            "opclass": null
+          },
+          {
+            "value": "repo_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": "\"unstarred_at\" is null",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    }
+  ]
+}
