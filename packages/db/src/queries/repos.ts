@@ -60,8 +60,8 @@ export const RepoIcon = Schema.Struct({
 });
 export type RepoIcon = typeof RepoIcon.Type;
 
-// Columns the pipeline reads but a Repo leaves out: the vector, the full-text column, the retry state, and the recipe
-// that made the summary.
+// Columns a Repo leaves out: the vector, the full-text column, the retry state, the recipe that made the summary, and
+// the knowledge columns, which only queries/knowledge.ts reads and writes.
 const internalColumns = [
   "embedding",
   "search",
@@ -69,6 +69,23 @@ const internalColumns = [
   "enrichRetryAt",
   "summaryRecipe",
   "embeddingStale",
+  "inputHash",
+  "summaryInputHash",
+  "receiptId",
+  "goneAt",
+  "kinds",
+  "statuses",
+  "writtenIn",
+  "runsOn",
+  "forLanguages",
+  "forPlatforms",
+  "builtWithLanguages",
+  "builtWithPlatforms",
+  "licensed",
+  "altLanguages",
+  "altPlatforms",
+  "replacedByLanguages",
+  "replacedByPlatforms",
 ] as const;
 
 const rowFields = Struct.omit(RepoRow.fields, internalColumns);

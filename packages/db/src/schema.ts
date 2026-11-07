@@ -1,4 +1,15 @@
 import { summaryRecipe } from "@stargrep/ai/models";
+import {
+  type Dim,
+  defaultRoles,
+  KindId,
+  LanguageId,
+  LicenseId,
+  PlatformId,
+  type RoleId,
+  roleIds,
+  StatusId,
+} from "@stargrep/knowledge/registry";
 import { type SQL, sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
@@ -8,6 +19,7 @@ import {
   customType,
   date,
   doublePrecision,
+  foreignKey,
   halfvec,
   index,
   integer,
@@ -15,10 +27,12 @@ import {
   pgEnum,
   pgTable,
   primaryKey,
+  smallint,
   text,
   timestamp,
   unique,
   uniqueIndex,
+  uuid,
 } from "drizzle-orm/pg-core";
 import { user } from "./auth-schema.ts";
 import { embeddingDimensions } from "./embedding.ts";
@@ -26,6 +40,53 @@ import { embeddingDimensions } from "./embedding.ts";
 const githubId = (name: string) => bigint(name, { mode: "number" });
 const time = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
 const tsvector = customType<{ data: string }>({ dataType: () => "tsvector" });
+
+// The closed dimensions of packages/knowledge. The knowledge migration creates these types from registry.sql, and a
+// registry change ships "alter type ... add value" (docs/knowledge.md).
+// Every closed dimension has at least one value, which the registry's tests check.
+const closedEnum = <Id extends string>(name: string, ids: ReadonlyArray<Id>) =>
+  pgEnum(name, ids as readonly [Id, ...Array<Id>]);
+export const knowledgeKind = closedEnum("knowledge_kind", KindId.literals);
+export const knowledgeLanguage = closedEnum("knowledge_language", LanguageId.literals);
+export const knowledgeLicense = closedEnum("knowledge_license", LicenseId.literals);
+export const knowledgePlatform = closedEnum("knowledge_platform", PlatformId.literals);
+export const knowledgeStatus = closedEnum("knowledge_status", StatusId.literals);
+
+// Where projection stores each role's atoms: one array per role and accepted dimension. A closed dimension's array is
+// on repos, the row personal search already reads, and a subject array is in repo_facets.
+export const atomColumns = {
+  is: { kind: "kinds" },
+  status: { status: "statuses" },
+  written_in: { language: "written_in" },
+  runs_on: { platform: "runs_on" },
+  for: { language: "for_languages", platform: "for_platforms", subject: "for_subjects" },
+  built_with: { language: "built_with_languages", platform: "built_with_platforms", subject: "built_with" },
+  about: { subject: "about" },
+  trait: { subject: "traits" },
+  licensed: { license: "licensed" },
+  tagged: { subject: "tagged" },
+  alternative_to: { language: "alt_languages", platform: "alt_platforms", subject: "alternative_to" },
+  replaced_by: { language: "replaced_by_languages", platform: "replaced_by_platforms", subject: "replaced_by" },
+} as const satisfies { readonly [R in RoleId]: Partial<Record<Dim, string>> };
+
+const columnsOf = (role: RoleId): Partial<Record<Dim, string>> => atomColumns[role];
+const subjectColumn = (role: RoleId): ReadonlyArray<string> => {
+  const column = columnsOf(role).subject;
+  return column === undefined ? [] : [column];
+};
+const closedColumns = roleIds.flatMap((role) =>
+  Object.entries(columnsOf(role)).flatMap(([dim, column]) => (dim === "subject" ? [] : [column])),
+);
+const subjectColumns = roleIds.flatMap(subjectColumn);
+
+// Every subject a bare "subject:N" filter reaches, for its one GIN index. built_with is left out: only "with:" atoms
+// reach it.
+const membersExpression = defaultRoles("subject").flatMap(subjectColumn).join(" || ");
+
+const namespaceOf = sql.raw(`case when owner_id is null then 'public' else 'user:' || owner_id end`);
+const noNulls = (columns: ReadonlyArray<string>) =>
+  sql.raw(columns.map((column) => `knowledge_no_nulls(${column})`).join(" and "));
+const sha256Hex = (column: AnyPgColumn) => sql`${column} ~ '^[0-9a-f]{64}$'`;
 
 export const accountType = pgEnum("account_type", ["user", "org"]);
 export const starSource = pgEnum("star_source", ["gharchive", "api"]);
@@ -133,6 +194,27 @@ export const repos = pgTable(
     iconCheckedAt: time("icon_checked_at"),
     ownerType: accountType("owner_type"),
     ownerAvatarUrl: text("owner_avatar_url"),
+    // SHA-256 of the prompt inputs as saveFacts last saw them, and of the inputs the saved summary was made from.
+    inputHash: text("input_hash"),
+    summaryInputHash: text("summary_input_hash"),
+    // The receipt the summary and the repo's atoms come from.
+    receiptId: uuid("receipt_id"),
+    // Set when GitHub stops serving the repo publicly. A gone repo has no atoms, and nothing recreates its facets row.
+    goneAt: time("gone_at"),
+    // The closed atoms, one array per role and closed dimension (atomColumns). Only projection writes them.
+    kinds: knowledgeKind("kinds").array().notNull().default(sql`'{}'`),
+    statuses: knowledgeStatus("statuses").array().notNull().default(sql`'{}'`),
+    writtenIn: knowledgeLanguage("written_in").array().notNull().default(sql`'{}'`),
+    runsOn: knowledgePlatform("runs_on").array().notNull().default(sql`'{}'`),
+    forLanguages: knowledgeLanguage("for_languages").array().notNull().default(sql`'{}'`),
+    forPlatforms: knowledgePlatform("for_platforms").array().notNull().default(sql`'{}'`),
+    builtWithLanguages: knowledgeLanguage("built_with_languages").array().notNull().default(sql`'{}'`),
+    builtWithPlatforms: knowledgePlatform("built_with_platforms").array().notNull().default(sql`'{}'`),
+    licensed: knowledgeLicense("licensed").array().notNull().default(sql`'{}'`),
+    altLanguages: knowledgeLanguage("alt_languages").array().notNull().default(sql`'{}'`),
+    altPlatforms: knowledgePlatform("alt_platforms").array().notNull().default(sql`'{}'`),
+    replacedByLanguages: knowledgeLanguage("replaced_by_languages").array().notNull().default(sql`'{}'`),
+    replacedByPlatforms: knowledgePlatform("replaced_by_platforms").array().notNull().default(sql`'{}'`),
     search: tsvector("search")
       .notNull()
       .generatedAlwaysAs(
@@ -152,6 +234,18 @@ export const repos = pgTable(
       "repos_icon_complete",
       sql`(${table.iconKey} is null) = (${table.iconSource} is null) and (${table.iconKey} is null) = (${table.iconPlate} is null) and (${table.iconKey} is null) = (${table.iconSize} is null)`,
     ),
+    check("repos_input_hash_sha256", sha256Hex(table.inputHash)),
+    check("repos_summary_input_hash_sha256", sha256Hex(table.summaryInputHash)),
+    check(
+      "repos_closed_atom_limits",
+      sql`cardinality(${table.kinds}) <= 2 and cardinality(${table.statuses}) <= 2 and cardinality(${table.writtenIn}) <= 4 and cardinality(${table.runsOn}) <= 8 and cardinality(${table.forLanguages}) <= 8 and cardinality(${table.forPlatforms}) <= 8 and cardinality(${table.builtWithLanguages}) <= 4 and cardinality(${table.builtWithPlatforms}) <= 4 and cardinality(${table.licensed}) <= 1 and cardinality(${table.altLanguages}) <= 6 and cardinality(${table.altPlatforms}) <= 6 and cardinality(${table.replacedByLanguages}) <= 2 and cardinality(${table.replacedByPlatforms}) <= 2`,
+    ),
+    check("repos_closed_atom_no_nulls", noNulls(closedColumns)),
+    foreignKey({
+      name: "repos_receipt_fk",
+      columns: [table.receiptId, table.id],
+      foreignColumns: [receipts.id, receipts.repoId],
+    }),
   ],
 );
 
@@ -293,4 +387,383 @@ export const apiUsage = pgTable(
     counts: jsonb("counts").notNull().default({}),
   },
   (table) => [primaryKey({ columns: [table.key, table.day] })],
+);
+
+// Structured repo knowledge (docs/knowledge.md). Receipts and decisions are the sources of truth. Subjects, their
+// labels, and the derived maps are the vocabulary, and repo_facets with the closed arrays on repos is the projection.
+// queries/knowledge.ts is the only writer. The knowledge migration adds the triggers, views, and functions that read
+// and guard these tables.
+
+export const receiptSource = pgEnum("receipt_source", ["model", "stand-in", "legacy"]);
+export const batchState = pgEnum("batch_state", ["prepared", "submitted", "captured", "abandoned"]);
+export const subjectStatus = pgEnum("subject_status", ["candidate", "accepted", "rejected"]);
+export const decisionKind = pgEnum("decision_kind", [
+  "create",
+  "merge",
+  "split",
+  "rename",
+  "alias",
+  "parent",
+  "expand",
+  "keep_apart",
+  "status",
+  "link",
+  "correct",
+  "publish",
+  "retire",
+  "undo",
+]);
+export const closureVia = pgEnum("closure_via", ["split", "parent", "expand"]);
+
+const revision = (name: string) => bigint(name, { mode: "number" });
+const subjectId = (name: string) => bigint(name, { mode: "number" });
+const subjectArray = (name: string) => bigint(name, { mode: "number" }).array().notNull().default(sql`'{}'`);
+
+// One row per provider request of the prefill, written before the request is sent, so a crashed run resends the
+// stored body byte for byte and finds the batch it already paid for.
+export const extractionBatches = pgTable(
+  "extraction_batches",
+  {
+    id: uuid("id").primaryKey(),
+    adapter: text("adapter").notNull(),
+    model: text("model").notNull(),
+    recipe: integer("recipe").notNull(),
+    // The Gateway idempotency key the request hashes to.
+    requestKey: text("request_key").notNull().unique("extraction_batches_request_key_key"),
+    // R2 key of the exact request body.
+    requestObject: text("request_object").notNull(),
+    providerBatchId: text("provider_batch_id"),
+    // Item i of the request is repo_ids[i], built from input_hashes[i].
+    repoIds: bigint("repo_ids", { mode: "number" }).array().notNull(),
+    inputHashes: text("input_hashes").array().notNull(),
+    state: batchState("state").notNull().default("prepared"),
+    leaseUntil: time("lease_until").notNull(),
+    createdAt: time("created_at").notNull().defaultNow(),
+    updatedAt: time("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("extraction_batches_open_idx").on(table.createdAt).where(sql`${table.state} in ('prepared', 'submitted')`),
+    check("extraction_batches_adapter_known", sql`${table.adapter} in ('gateway-batch', 'claude-code')`),
+    check("extraction_batches_recipe_positive", sql`${table.recipe} > 0`),
+    check("extraction_batches_size", sql`cardinality(${table.repoIds}) between 1 and 1000`),
+    check("extraction_batches_items_paired", sql`cardinality(${table.repoIds}) = cardinality(${table.inputHashes})`),
+    check("extraction_batches_no_nulls", noNulls(["repo_ids", "input_hashes"])),
+    // A batch is submitted only once the provider has named it.
+    check(
+      "extraction_batches_named_when_submitted",
+      sql`${table.state} = 'prepared' or ${table.adapter} = 'claude-code' or ${table.providerBatchId} is not null`,
+    ),
+  ],
+);
+
+// What one source said about one repo for one input, kept as it was. A trigger refuses edits except to the projection
+// markers, and to batch_id and carried_from going null when the row they name expires.
+export const receipts = pgTable(
+  "receipts",
+  {
+    id: uuid("id").primaryKey(),
+    repoId: githubId("repo_id")
+      .notNull()
+      .references((): AnyPgColumn => repos.id, { onDelete: "cascade" }),
+    source: receiptSource("source").notNull(),
+    inputHash: text("input_hash").notNull(),
+    recipe: integer("recipe").notNull(),
+    model: text("model").notNull(),
+    batchId: uuid("batch_id").references(() => extractionBatches.id, { onDelete: "set null" }),
+    capturedAt: time("captured_at").notNull().defaultNow(),
+    summary: text("summary").notNull(),
+    keywords: jsonb("keywords").notNull(),
+    // Decoded claims, each with ordinal, role, term, key, quote, and found.
+    claims: jsonb("claims").notNull(),
+    // Role to complete, invalid, or missing.
+    lanes: jsonb("lanes").notNull(),
+    // Items the decoder could not read, with bounded issue codes and no model text.
+    dropped: jsonb("dropped").notNull().default([]),
+    // Set when the answer had no facets list and capture copied the previous receipt's claims.
+    carriedFrom: uuid("carried_from").references((): AnyPgColumn => receipts.id, { onDelete: "set null" }),
+    rawKey: text("raw_key"),
+    // Written only by projection.
+    projectedRevision: revision("projected_revision"),
+    verdicts: jsonb("verdicts"),
+  },
+  (table) => [
+    // One answer per source, input, and recipe, so a retry or a resumed batch converges on the first one committed.
+    unique("receipts_answer_key").on(table.repoId, table.source, table.inputHash, table.recipe),
+    // Lets repos and repo_facets prove a receipt belongs to their repo.
+    unique("receipts_id_repo_key").on(table.id, table.repoId),
+    index("receipts_repo_idx").on(table.repoId, table.capturedAt.desc().nullsFirst()),
+    index("receipts_batch_idx").on(table.batchId).where(sql`${table.batchId} is not null`),
+    check("receipts_input_hash_sha256", sha256Hex(table.inputHash)),
+    check("receipts_recipe_positive", sql`${table.recipe} > 0`),
+    check("receipts_model_length", sql`length(${table.model}) between 1 and 120`),
+    check("receipts_summary_present", sql`length(${table.summary}) > 0`),
+    check("receipts_keywords_array", sql`jsonb_typeof(${table.keywords}) = 'array'`),
+    check("receipts_claims_array", sql`jsonb_typeof(${table.claims}) = 'array'`),
+    check("receipts_lanes_object", sql`jsonb_typeof(${table.lanes}) = 'object'`),
+    check("receipts_dropped_array", sql`jsonb_typeof(${table.dropped}) = 'array'`),
+    check("receipts_verdicts_array", sql`${table.verdicts} is null or jsonb_typeof(${table.verdicts}) = 'array'`),
+  ],
+);
+
+// The curation log, one per namespace and append-only. Revisions are dense, assigned under the namespace's exclusive
+// knowledge lock. A private log goes with its owner.
+export const decisions = pgTable(
+  "decisions",
+  {
+    // Null is the public log.
+    ownerId: text("owner_id").references(() => user.id, { onDelete: "cascade" }),
+    namespace: text("namespace").notNull().generatedAlwaysAs(namespaceOf),
+    revision: revision("revision").notNull(),
+    kind: decisionKind("kind").notNull(),
+    // The kind column repeats the payload's tag for indexing.
+    payload: jsonb("payload").notNull(),
+    undoes: revision("undoes"),
+    actor: text("actor").notNull(),
+    reason: text("reason").notNull(),
+    decidedAt: time("decided_at").notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: "decisions_pkey", columns: [table.namespace, table.revision] }),
+    foreignKey({
+      name: "decisions_undoes_fk",
+      columns: [table.namespace, table.undoes],
+      foreignColumns: [table.namespace, table.revision],
+    }),
+    index("decisions_kind_idx").on(table.namespace, table.kind, table.revision),
+    check("decisions_revision_positive", sql`${table.revision} > 0`),
+    check(
+      "decisions_payload_tagged",
+      sql`jsonb_typeof(${table.payload}) = 'object' and ${table.payload} ->> '_tag' is not null`,
+    ),
+    check("decisions_actor_length", sql`length(${table.actor}) between 1 and 80`),
+    check("decisions_reason_length", sql`length(${table.reason}) between 1 and 1000`),
+    check("decisions_undo_names_revision", sql`(${table.kind} = 'undo') = (${table.undoes} is not null)`),
+    check("decisions_undoes_earlier", sql`${table.undoes} is null or ${table.undoes} < ${table.revision}`),
+    // Pages are public, so a private log never publishes or retires.
+    check("decisions_private_unpublished", sql`${table.ownerId} is null or ${table.kind} not in ('publish', 'retire')`),
+  ],
+);
+
+// The open vocabulary, in immutable namespaces.
+export const subjects = pgTable(
+  "subjects",
+  {
+    id: subjectId("id").primaryKey().generatedByDefaultAsIdentity(),
+    // Null is the public namespace. A private subject goes with its owner.
+    ownerId: text("owner_id").references(() => user.id, { onDelete: "cascade" }),
+    namespace: text("namespace").notNull().generatedAlwaysAs(namespaceOf),
+    // The first surface form seen, until a Rename decision.
+    label: text("label").notNull(),
+    definition: text("definition"),
+    status: subjectStatus("status").notNull().default("candidate"),
+    // Distinct live public repos a filter on this subject matches, from the last knowledge_refresh_counts.
+    repoCount: integer("repo_count").notNull().default(0),
+    // A subject shows in chips, counts, lookups, profiles, and pages once a second repo holds it.
+    listed: boolean("listed").notNull().generatedAlwaysAs(sql.raw("repo_count >= 2")),
+    // The repo that is this subject's project. Set by a Link decision.
+    repoId: githubId("repo_id").references((): AnyPgColumn => repos.id, { onDelete: "set null" }),
+    // The receipt whose claim minted it, or the decision that created it.
+    originReceiptId: uuid("origin_receipt_id").references(() => receipts.id, { onDelete: "set null" }),
+    originRevision: revision("origin_revision"),
+    createdAt: time("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    // Composite key for same-namespace foreign keys.
+    unique("subjects_id_namespace_key").on(table.id, table.namespace),
+    foreignKey({
+      name: "subjects_origin_revision_fk",
+      columns: [table.namespace, table.originRevision],
+      foreignColumns: [decisions.namespace, decisions.revision],
+    }).onDelete("cascade"),
+    // One subject per linked repo. A second link means the two subjects should merge.
+    uniqueIndex("subjects_repo_key").on(table.repoId).where(sql`${table.repoId} is not null`),
+    index("subjects_status_idx").on(table.status, table.id),
+    check("subjects_label_length", sql`length(${table.label}) between 1 and 120`),
+    check("subjects_definition_length", sql`length(${table.definition}) <= 400`),
+    check("subjects_repo_count_nonnegative", sql`${table.repoCount} >= 0`),
+    // Receipts hold only public repos, so a private subject never cites one, and never links a public repo.
+    check(
+      "subjects_private_unlinked",
+      sql`${table.ownerId} is null or (${table.originReceiptId} is null and ${table.repoId} is null)`,
+    ),
+  ],
+);
+
+// Label keys to subjects. Every claim with the same key resolves the same way. Resolution reads the knowledge_labels
+// view, where a decision default outranks a minted one.
+export const subjectLabels = pgTable(
+  "subject_labels",
+  {
+    namespace: text("namespace").notNull(),
+    // labelKey(term) from packages/knowledge.
+    key: text("key").notNull(),
+    subjectId: subjectId("subject_id").notNull(),
+    isDefault: boolean("is_default").notNull(),
+    // minted: written once by projection. decision: written by Create, Alias, Rename, or Split, removed by their undo.
+    source: text("source").notNull(),
+    revision: revision("revision"),
+    createdAt: time("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: "subject_labels_pkey", columns: [table.namespace, table.key, table.subjectId] }),
+    // The knowledge migration makes this deferrable, so a mint can insert labels before their subjects.
+    foreignKey({
+      name: "subject_labels_subject_fk",
+      columns: [table.subjectId, table.namespace],
+      foreignColumns: [subjects.id, subjects.namespace],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "subject_labels_revision_fk",
+      columns: [table.namespace, table.revision],
+      foreignColumns: [decisions.namespace, decisions.revision],
+    }).onDelete("cascade"),
+    // One default per key and per writer.
+    uniqueIndex("subject_labels_decision_default_key")
+      .on(table.namespace, table.key)
+      .where(sql`${table.isDefault} and ${table.source} = 'decision'`),
+    uniqueIndex("subject_labels_minted_default_key")
+      .on(table.namespace, table.key)
+      .where(sql`${table.isDefault} and ${table.source} = 'minted'`),
+    index("subject_labels_subject_idx").on(table.subjectId),
+    // Prefix lookup for lookups and chip autocomplete.
+    index("subject_labels_prefix_idx").on(table.namespace, table.key.op("text_pattern_ops")),
+    // A closed value's spelling is never a subject label.
+    check(
+      "subject_labels_key_check",
+      sql`${table.key} = btrim(${table.key}) and length(${table.key}) between 1 and 80 and not knowledge_reserved_key(${table.key})`,
+    ),
+    check("subject_labels_source_known", sql`${table.source} in ('minted', 'decision')`),
+    check("subject_labels_decision_revision", sql`(${table.source} = 'decision') = (${table.revision} is not null)`),
+  ],
+);
+
+// Merged origins and their survivor, one hop. A subject with no row is canonical.
+export const subjectCanonical = pgTable(
+  "subject_canonical",
+  {
+    namespace: text("namespace").notNull(),
+    originId: subjectId("origin_id").primaryKey(),
+    canonicalId: subjectId("canonical_id").notNull(),
+    revision: revision("revision").notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: "subject_canonical_origin_fk",
+      columns: [table.originId, table.namespace],
+      foreignColumns: [subjects.id, subjects.namespace],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "subject_canonical_canonical_fk",
+      columns: [table.canonicalId, table.namespace],
+      foreignColumns: [subjects.id, subjects.namespace],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "subject_canonical_revision_fk",
+      columns: [table.namespace, table.revision],
+      foreignColumns: [decisions.namespace, decisions.revision],
+    }).onDelete("cascade"),
+    index("subject_canonical_canonical_idx").on(table.canonicalId, table.originId),
+    check("subject_canonical_distinct", sql`${table.originId} <> ${table.canonicalId}`),
+  ],
+);
+
+// Split, Parent, and Expand descendants of canonical subjects. via is the weakest edge on the path.
+export const subjectClosure = pgTable(
+  "subject_closure",
+  {
+    namespace: text("namespace").notNull(),
+    ancestorId: subjectId("ancestor_id").notNull(),
+    descendantId: subjectId("descendant_id").notNull(),
+    depth: smallint("depth").notNull(),
+    via: closureVia("via").notNull(),
+    revision: revision("revision").notNull(),
+  },
+  (table) => [
+    primaryKey({ name: "subject_closure_pkey", columns: [table.ancestorId, table.descendantId] }),
+    foreignKey({
+      name: "subject_closure_ancestor_fk",
+      columns: [table.ancestorId, table.namespace],
+      foreignColumns: [subjects.id, subjects.namespace],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "subject_closure_descendant_fk",
+      columns: [table.descendantId, table.namespace],
+      foreignColumns: [subjects.id, subjects.namespace],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "subject_closure_revision_fk",
+      columns: [table.namespace, table.revision],
+      foreignColumns: [decisions.namespace, decisions.revision],
+    }).onDelete("cascade"),
+    index("subject_closure_descendant_idx").on(table.descendantId, table.ancestorId),
+    check("subject_closure_depth", sql`${table.depth} between 1 and 3`),
+    check("subject_closure_distinct", sql`${table.ancestorId} <> ${table.descendantId}`),
+  ],
+);
+
+// The one rule for what a subject filter matches: a filter on canonical subject_id matches a repo whose array holds
+// origin_id. comparison rows serve alternative_to and replaced_by, which widen through splits only. Search reads it by
+// subject, and every count reads it by origin.
+export const subjectMatches = pgTable(
+  "subject_matches",
+  {
+    subjectId: subjectId("subject_id")
+      .notNull()
+      .references(() => subjects.id, { onDelete: "cascade" }),
+    comparison: boolean("comparison").notNull(),
+    originId: subjectId("origin_id")
+      .notNull()
+      .references(() => subjects.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    primaryKey({ name: "subject_matches_pkey", columns: [table.subjectId, table.comparison, table.originId] }),
+    index("subject_matches_origin_idx").on(table.originId, table.comparison, table.subjectId),
+  ],
+);
+
+// The subject half of the serving projection, one row per live repo. Subject arrays hold origin IDs, so a merge
+// rewrites no row. Triggers mark the row stale when an input changes, and only projection clears it.
+export const repoFacets = pgTable(
+  "repo_facets",
+  {
+    repoId: githubId("repo_id")
+      .primaryKey()
+      .references((): AnyPgColumn => repos.id, { onDelete: "cascade" }),
+    // The receipt this row and the repo's closed arrays project. Null for a repo projected from GitHub facts alone.
+    receiptId: uuid("receipt_id"),
+    // The decision revision the projection read.
+    revision: revision("revision").notNull().default(0),
+    stale: boolean("stale").notNull().default(true),
+    projectedAt: time("projected_at"),
+    forSubjects: subjectArray("for_subjects"),
+    builtWith: subjectArray("built_with"),
+    about: subjectArray("about"),
+    traits: subjectArray("traits"),
+    tagged: subjectArray("tagged"),
+    alternativeTo: subjectArray("alternative_to"),
+    replacedBy: subjectArray("replaced_by"),
+    members: bigint("members", { mode: "number" }).array().notNull().generatedAlwaysAs(sql.raw(membersExpression)),
+    // Label keys the projection looked up and found no label for. A new label for one marks the row stale.
+    unresolvedKeys: text("unresolved_keys").array().notNull().default(sql`'{}'`),
+  },
+  (table) => [
+    foreignKey({
+      name: "repo_facets_receipt_fk",
+      columns: [table.receiptId, table.repoId],
+      foreignColumns: [receipts.id, receipts.repoId],
+    }),
+    index("repo_facets_members_idx").using("gin", table.members),
+    index("repo_facets_built_with_idx").using("gin", table.builtWith),
+    index("repo_facets_alternative_to_idx").using("gin", table.alternativeTo),
+    index("repo_facets_replaced_by_idx").using("gin", table.replacedBy),
+    index("repo_facets_unresolved_keys_idx").using("gin", table.unresolvedKeys),
+    // The projection sweep reads only stale rows.
+    index("repo_facets_stale_idx").on(table.repoId).where(sql`${table.stale}`),
+    check(
+      "repo_facets_subject_limits",
+      sql`cardinality(${table.forSubjects}) <= 16 and cardinality(${table.builtWith}) <= 8 and cardinality(${table.about}) <= 16 and cardinality(${table.traits}) <= 16 and cardinality(${table.tagged}) <= 20 and cardinality(${table.alternativeTo}) <= 8 and cardinality(${table.replacedBy}) <= 4`,
+    ),
+    check("repo_facets_unresolved_limit", sql`cardinality(${table.unresolvedKeys}) <= 64`),
+    check("repo_facets_no_nulls", noNulls([...subjectColumns, "unresolved_keys"])),
+  ],
 );
