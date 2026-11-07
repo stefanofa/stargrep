@@ -1,4 +1,5 @@
 import { GitHubAccountId, RepoId } from "@stargrep/github/schemas";
+import { Revision } from "@stargrep/knowledge/ids";
 import * as Schema from "effect/Schema";
 
 export const Operation = Schema.Literals([
@@ -49,6 +50,16 @@ export const Operation = Schema.Literals([
   "usage.increment",
   "usage.get",
   "settings.adopt",
+  "knowledge.capture",
+  "knowledge.mint",
+  "knowledge.labels",
+  "knowledge.project",
+  "knowledge.stale",
+  "knowledge.invalidate",
+  "knowledge.count",
+  "knowledge.allocate",
+  "knowledge.revision",
+  "knowledge.decide",
 ]);
 export type Operation = typeof Operation.Type;
 
@@ -96,5 +107,17 @@ export class AccountNotFound extends Schema.TaggedError<AccountNotFound, { reado
 ) {
   override get message(): string {
     return `GitHub account ${this.accountId} does not exist`;
+  }
+}
+
+export class StaleRevision extends Schema.TaggedError<StaleRevision, { readonly brand: unique symbol }>()(
+  "StaleRevision",
+  {
+    expected: Revision,
+    head: Revision,
+  },
+) {
+  override get message(): string {
+    return `A decision expected curation revision ${this.expected}, but the log is at ${this.head}`;
   }
 }

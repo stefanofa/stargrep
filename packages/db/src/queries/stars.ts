@@ -6,12 +6,11 @@ import * as Arr from "effect/Array";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 import { AccountNotFound, type DbQueryFailed, type DbRowInvalid } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
-import { excluded, NullableTime, requireRow, rowsDecoder, writeEncoder } from "../rows.ts";
+import { excluded, NullableTime, requireRow, resultRows, rowsDecoder, writeEncoder } from "../rows.ts";
 import { enrichFailureCap, githubAccounts, repoMetrics, repos, stars, unreadEnrichment } from "../schema.ts";
 import { accountNamed } from "./accounts.ts";
 import { Repo, repoColumns } from "./repos.ts";
@@ -101,8 +100,6 @@ const encodeEvents = writeEncoder(
   ),
 );
 const encodeTime = writeEncoder(Schema.DateTimeUtcFromString);
-
-const resultRows = (result: unknown) => (Predicate.hasProperty(result, "rows") ? result.rows : result);
 
 const column = (target: PgColumn) => sql.identifier(target.name);
 

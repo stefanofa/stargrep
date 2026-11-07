@@ -67,6 +67,18 @@ const defaults = {
     increment: unexpected("usage.increment"),
     get: unexpected("usage.get"),
   },
+  knowledge: {
+    capture: unexpected("knowledge.capture"),
+    mint: unexpected("knowledge.mint"),
+    labels: unexpected("knowledge.labels"),
+    project: unexpected("knowledge.project"),
+    stale: unexpected("knowledge.stale"),
+    invalidate: unexpected("knowledge.invalidate"),
+    count: unexpected("knowledge.count")(),
+    allocate: unexpected("knowledge.allocate"),
+    revision: unexpected("knowledge.revision")(),
+    decide: unexpected("knowledge.decide"),
+  },
 } satisfies Db.Db["Service"];
 
 export const makeDb = (overrides: Overrides = {}): Db.Db["Service"] =>
@@ -78,4 +90,5 @@ export const makeDb = (overrides: Overrides = {}): Db.Db["Service"] =>
     syncRequests: { ...defaults.syncRequests, ...overrides.syncRequests },
     rateLines: { ...defaults.rateLines, ...overrides.rateLines },
     usage: { ...defaults.usage, ...overrides.usage },
+    knowledge: { ...defaults.knowledge, ...overrides.knowledge },
   });
