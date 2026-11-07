@@ -25,8 +25,9 @@ export const fallbacks = Metric.counter("stargrep_github_fallbacks", {
 // A 401 means the token expired or the user revoked it. A rate limit with nothing remaining means the user's own tools
 // spent the window. A secondary rate limit keeps quota, so the GitHub client waits it out on the same token.
 const replyReason = (reply: TokenGate.Reply, now: number): Option.Option<FallbackReason> => {
-  if (reply.status === 401) return Option.some("unauthorized");
-  return RateLimit.isWindowSpent(reply, now) ? Option.some("rate-limited") : Option.none();
+  const meaning = RateLimit.classify(reply, now);
+  if (meaning._tag === "Unauthorized") return Option.some("unauthorized");
+  return meaning._tag === "RateLimited" && meaning.windowSpent ? Option.some("rate-limited") : Option.none();
 };
 
 const logFallback = (reason: FallbackReason, operation: Operation) => {

@@ -57,6 +57,7 @@ export const fakeGitHub = async (request: Request): Promise<Response> => {
     return Response.json({
       data: {
         viewer: {
+          __typename: "User",
           databaseId: ada.user.id,
           login: ada.user.login,
           name: ada.user.name,

@@ -54,7 +54,7 @@ describe("GitHub App tokens on workerd", () => {
       AppToken.makeInstallationTokens({
         credentials: { clientId: "Iv23liTestClient", privateKey: Redacted.make(testKeys.TEST_APP_PRIVATE_KEY) },
       }).pipe(
-        Effect.flatMap((tokens) => tokens.current("account")),
+        Effect.flatMap((tokens) => tokens.current("owner")),
         Effect.provide(fake.client),
         Effect.scoped,
       ),

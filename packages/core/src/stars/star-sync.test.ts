@@ -40,18 +40,23 @@ const hooks: { beforePage: BeforePage } = { beforePage: () => undefined };
 const github = Fake.layer((request) => {
   if (request.url.pathname === "/graphql") {
     const login: string = JSON.parse(request.body ?? "{}").variables.login;
-    return orgs.has(login)
-      ? { body: { data: { user: null }, errors: [{ type: "NOT_FOUND", message: "Could not resolve to a User" }] } }
-      : Fake.starCountReply(lists.get(login)?.length ?? 0);
-  }
-  const [, , login = "", list] = request.url.pathname.split("/");
-  if (list === undefined) {
     const user = users.get(login);
-    const type = orgs.has(login) ? "Organization" : "User";
-    return user === undefined
-      ? { status: 404 }
-      : { body: { ...user, type, name: null, avatar_url: null, followers: 1, public_repos: 2 } };
+    const node =
+      user === undefined
+        ? null
+        : {
+            __typename: orgs.has(login) ? "Organization" : "User",
+            databaseId: user.id,
+            login: user.login,
+            name: null,
+            avatarUrl: null,
+            followers: { totalCount: 1 },
+            repositories: { totalCount: 2 },
+            starredRepositories: { totalCount: lists.get(login)?.length ?? 0 },
+          };
+    return { body: { data: { repositoryOwner: node } }, headers: Fake.rateLimitHeaders(4000, 3600, "graphql") };
   }
+  const [, , login = ""] = request.url.pathname.split("/");
   const stars = lists.get(login) ?? [];
   const page = Number(request.url.searchParams.get("page"));
   return (
@@ -184,7 +189,6 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
       expect(yield* activeRepos(id)).toEqual(list.map((star) => star.repo).toSorted(byNumber));
       expect(sentRepos().toSorted(byNumber)).toEqual(list.map((star) => star.repo).toSorted(byNumber));
       expect(github.sent.map((sent) => sent.url.pathname)).toEqual([
-        "/users/ada",
         "/graphql",
         "/users/ada/starred",
         "/users/ada/starred",
@@ -197,7 +201,7 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
   test.effect("enqueues new repos only after it has read the last page", () =>
     Effect.gen(function* () {
       const sentBeforePage: Array<number> = [];
-      yield* reset((page) => {
+      yield* reset(() => {
         sentBeforePage.push(sent.length);
         return undefined;
       });
@@ -485,7 +489,7 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
     }),
   );
 
-  test.effect("syncs an org as having no stars without asking GraphQL for a count", () =>
+  test.effect("syncs an org with one owner read and no extra count read", () =>
     Effect.gen(function* () {
       yield* reset();
       const id = yield* account(3, "acme", [], "org");
@@ -494,9 +498,9 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
         yield* TestClock.adjust("1 hour");
       }
       expect(github.sent.map((sent) => sent.url.pathname)).toEqual([
-        "/users/acme",
+        "/graphql",
         "/users/acme/starred",
-        "/users/acme",
+        "/graphql",
         "/users/acme/starred",
       ]);
       const stored = yield* (yield* Db.Db).accounts.require(id);
@@ -510,7 +514,7 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
       const starSync = yield* StarSync.StarSync;
       const error = yield* Effect.flip(starSync.syncLogin({ login: "ghost" as Login, mode: "incremental" }));
       expect(error).toMatchObject({ _tag: "NotFound" });
-      expect(github.sent.map((sent) => sent.url.pathname)).toEqual(["/users/ghost"]);
+      expect(github.sent.map((sent) => sent.url.pathname)).toEqual(["/graphql"]);
       expect(yield* query("select id from github_accounts")).toEqual([]);
     }),
   );
@@ -527,7 +531,6 @@ const cases = (test: { readonly effect: it.Tester<StarSync.StarSync | Db.Db | Te
       );
       expect(yield* activeRepos(7 as GitHubAccountId)).toHaveLength(120);
       expect(github.sent.map((sent) => sent.url.pathname)).toEqual([
-        "/users/ada",
         "/graphql",
         "/users/ada/starred",
         "/users/ada/starred",

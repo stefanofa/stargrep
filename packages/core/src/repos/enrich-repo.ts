@@ -6,7 +6,7 @@ import * as TextGeneration from "@stargrep/ai/text-generation";
 import * as Db from "@stargrep/db";
 import { Embedding, type EmbeddingModelMismatch } from "@stargrep/db/embedding";
 import type { DbQueryFailed, DbRowInvalid, RepoNotFound } from "@stargrep/db/errors";
-import type { GitHubError } from "@stargrep/github/errors";
+import { type GitHubError, isPermanent } from "@stargrep/github/errors";
 import * as GitHub from "@stargrep/github/github";
 import type { ObjectId, RepoFacts, RepoId } from "@stargrep/github/schemas";
 import * as Arr from "effect/Array";
@@ -51,9 +51,8 @@ export const Enrichment = Data.taggedEnum<Enrichment>();
 const ownError = (error: EnrichRepoError): boolean =>
   Match.valueTags(error, {
     NotFound: () => true,
-    GitHubRequestFailed: (failure) =>
-      failure.reason === "status" && failure.status !== null && failure.status < 500 && failure.status !== 403,
-    GitHubResponseInvalid: (failure) => failure.reason !== "unreadable-body",
+    GitHubRequestFailed: isPermanent,
+    GitHubResponseInvalid: isPermanent,
     // A summary answer is one paid call for one repo, so a repo whose answers never decode must reach the cap. An
     // embedding answer covers a whole batch, so its bad shape is the provider's fault, not any one repo's.
     AiOutputInvalid: (failure) => failure.operation === "generate",

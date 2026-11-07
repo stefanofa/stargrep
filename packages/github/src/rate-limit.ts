@@ -1,5 +1,6 @@
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { decodeErrors } from "./graphql.ts";
 import { IntFromString } from "./schemas.ts";
 import { isSuccess, type Reply } from "./token-gate.ts";
 
@@ -23,27 +24,31 @@ const waitOf = (reply: Reply, now: number): Option.Option<number> =>
 // GitHub sends a secondary rate limit as a 403 that can keep quota and name no wait, so only its message names it.
 const secondaryLimit = /secondary rate limit|abuse detection/i;
 
-export const isRateLimit = (reply: Reply, now: number) =>
-  reply.status === 429 ||
-  (reply.status === 403 &&
-    (Option.isSome(waitOf(reply, now)) || Option.exists(reply.body, (body) => secondaryLimit.test(body))));
+export type Classification =
+  | { readonly _tag: "Ok" }
+  | { readonly _tag: "Unauthorized" }
+  | { readonly _tag: "NotFound" }
+  | { readonly _tag: "RateLimited"; readonly retryAfterMillis: number; readonly windowSpent: boolean }
+  | { readonly _tag: "Failed" };
 
-export const retryAfterMillis = (reply: Reply, now: number) => Option.getOrElse(waitOf(reply, now), () => defaultWait);
-
-const GraphQLErrors = Schema.fromJsonString(
-  Schema.Struct({
-    errors: Schema.optionalKey(Schema.Array(Schema.Struct({ type: Schema.optionalKey(Schema.String) }))),
-  }),
-);
-const decodeGraphQLErrors = Schema.decodeUnknownOption(GraphQLErrors);
-
-// GraphQL answers a spent window with a 200 whose errors name RATE_LIMITED.
-const isGraphQLRateLimit = (reply: Reply) =>
-  isSuccess(reply.status) &&
-  Option.exists(Option.flatMap(reply.body, decodeGraphQLErrors), (body) =>
-    (body.errors ?? []).some((error) => error.type === "RATE_LIMITED"),
-  );
-
-// A rate limit with nothing remaining: whoever owns the token spent the window.
-export const isWindowSpent = (reply: Reply, now: number) =>
-  Option.contains(reply.rateLimit.remaining, 0) && (isRateLimit(reply, now) || isGraphQLRateLimit(reply));
+export const classify = (reply: Reply, now: number): Classification => {
+  if (reply.status === 401) return { _tag: "Unauthorized" };
+  if (reply.status === 404) return { _tag: "NotFound" };
+  const graphql =
+    isSuccess(reply.status) &&
+    Option.exists(Option.flatMap(reply.body, decodeErrors), (body) =>
+      (body.errors ?? []).some((error) => error.type === "RATE_LIMITED"),
+    );
+  const limited =
+    graphql ||
+    reply.status === 429 ||
+    (reply.status === 403 &&
+      (Option.isSome(waitOf(reply, now)) || Option.exists(reply.body, (body) => secondaryLimit.test(body))));
+  if (limited)
+    return {
+      _tag: "RateLimited",
+      retryAfterMillis: Option.getOrElse(waitOf(reply, now), () => defaultWait),
+      windowSpent: Option.contains(reply.rateLimit.remaining, 0),
+    };
+  return { _tag: isSuccess(reply.status) ? "Ok" : "Failed" };
+};

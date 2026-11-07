@@ -113,15 +113,16 @@ export const makeInstallationTokens = Effect.fn("AppToken.makeInstallationTokens
       ),
     );
     const now = yield* Clock.currentTimeMillis;
-    if (reply.status === 401) return yield* new AppTokenRefused({ reason: "jwt-rejected" });
-    if (reply.status === 404) return yield* new AppTokenRefused({ reason: "not-found" });
-    if (RateLimit.isRateLimit(reply, now)) {
-      return yield* new MintRateLimited({ resetAt: now + RateLimit.retryAfterMillis(reply, now) });
+    const meaning = RateLimit.classify(reply, now);
+    if (meaning._tag === "Unauthorized") return yield* new AppTokenRefused({ reason: "jwt-rejected" });
+    if (meaning._tag === "NotFound") return yield* new AppTokenRefused({ reason: "not-found" });
+    if (meaning._tag === "RateLimited") {
+      return yield* new MintRateLimited({ resetAt: now + meaning.retryAfterMillis });
     }
     if (reply.status === 403) return yield* new AppTokenRefused({ reason: "forbidden" });
     const failed = (reason: "status" | "malformed") =>
       new GitHubRequestFailed({ ...endpoint, status: reply.status, reason });
-    if (!TokenGate.isSuccess(reply.status)) return yield* failed("status");
+    if (meaning._tag !== "Ok") return yield* failed("status");
     return yield* Effect.mapError(Effect.fromOption(reply.body), () => failed("malformed")).pipe(
       Effect.map((body) => ({ body, malformed: () => failed("malformed") })),
     );
