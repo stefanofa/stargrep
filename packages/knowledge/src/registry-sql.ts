@@ -74,21 +74,23 @@ const prefixCases = Dim.literals
   .filter((dim) => dimPrefix[dim] !== dim)
   .map((dim) => `when ${quote(dim)} then ${quote(dimPrefix[dim])}`);
 
+// Drizzle's migrator runs each chunk between these markers as one statement, so a migration can carry the file as is.
+const breakpoint = "\n--> statement-breakpoint\n\n";
+
 // The SQL the registry generates: the closed enums, their expansions, the reserved label keys, and the atom key
 // functions. A migration carries it, and registry.sql holds the current output.
 export const renderRegistrySql = (): string =>
   `-- Generated from packages/knowledge/src/registry.ts by \`bun run --cwd packages/knowledge generate\`. Edit the
 -- registry, not this file, and carry the result into a migration.
 
-${closedDims.map(enumType).join("\n\n")}
-
--- A filter on from_id also matches to_id, written out as a transitive closure.
+${[
+  ...closedDims.map(enumType),
+  `-- A filter on from_id also matches to_id, written out as a transitive closure.
 create function knowledge_closed_expansions()
 returns table (dim text, from_id text, to_id text)
 language sql immutable parallel safe
-as $$ ${expansionRows()} $$;
-
--- The label key of every id, label, and alias of a kind, language, platform, or status. No subject label may use one,
+as $$ ${expansionRows()} $$;`,
+  `-- The label key of every id, label, and alias of a kind, language, platform, or status. No subject label may use one,
 -- so "about: rust" cannot mint a subject that competes with the language. License keys and the names that only imply
 -- a value reserve nothing, so PostgreSQL, zlib, Chrome, and Ubuntu stay free to be subjects.
 create function knowledge_reserved_key(key text)
@@ -98,9 +100,8 @@ as $$
   select key = any (array[
 ${wrap([...reservedKeys].sort().map(quote), "    ")}
   ])
-$$;
-
--- The key a consumer counts an atom by. A role that bare atoms match gives the bare key, "lang:rust" or
+$$;`,
+  `-- The key a consumer counts an atom by. A role that bare atoms match gives the bare key, "lang:rust" or
 -- "subject:4127". Any other role keeps its name, as "with:subject:812" or "alt:platform:node".
 create function knowledge_atom_key(role text, dim text, value text)
 returns text
@@ -110,9 +111,8 @@ as $$
 ${keptRoleCases.join("\n")}
       else '' end)
     || (case dim ${prefixCases.join(" ")} else dim end) || ':' || value
-$$;
-
--- The role-qualified key of an atom in a role that bare atoms match, as "for:subject:812" or "written-in:lang:rust".
+$$;`,
+  `-- The role-qualified key of an atom in a role that bare atoms match, as "for:subject:812" or "written-in:lang:rust".
 -- Null when no other role of the dimension is matched by bare atoms, as for kinds, because the bare key already means
 -- the same repos.
 create function knowledge_role_key(role text, dim text, value text)
@@ -122,10 +122,10 @@ as $$
   select case
 ${roleKeyCases.join("\n")}
   end
-$$;
-
-create function knowledge_no_nulls(anyarray)
+$$;`,
+  `create function knowledge_no_nulls(anyarray)
 returns boolean
 language sql immutable parallel safe
-as $$ select array_position($1, null) is null $$;
+as $$ select array_position($1, null) is null $$;`,
+].join(breakpoint)}
 `;
