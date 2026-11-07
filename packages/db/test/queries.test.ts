@@ -42,9 +42,18 @@ const syncCooldown = Duration.minutes(10);
 const summaryOf = (id: RepoId) => `summary of ${id}`;
 
 const embedSummarized = (db: Db.Db["Service"], id: RepoId, vector: Embedding) =>
-  db.repos
-    .saveSummary({ id, readmeOid: null, summary: summaryOf(id), keywords: [], kind: "app" })
-    .pipe(Effect.andThen(db.repos.saveEmbedding({ id, embedding: vector, summary: summaryOf(id), readmeOid: null })));
+  db.repos.saveSummary({ id, readmeOid: null, summary: summaryOf(id), keywords: [], kind: "app" }).pipe(
+    Effect.andThen(
+      db.repos.saveEmbedding({
+        keywords: [],
+        description: null,
+        id,
+        embedding: vector,
+        summary: summaryOf(id),
+        readmeOid: null,
+      }),
+    ),
+  );
 
 const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | TestDatabase.TestDatabase> }) => {
   test.effect("reads stored account logins and repo owners without applying signup syntax", () =>
@@ -291,7 +300,14 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         expect(yield* db.stars.enrichment(login("stale-reader"))).toEqual({ total: 1, read: 1, failed: 0 });
         expect(yield* db.repos.pendingEnrichment([id])).toEqual([id]);
 
-        yield* db.repos.saveEmbedding({ id, embedding: embedding({ 1: 1 }), summary: better.summary, readmeOid: null });
+        yield* db.repos.saveEmbedding({
+          description: null,
+          id,
+          embedding: embedding({ 1: 1 }),
+          summary: better.summary,
+          keywords: better.keywords,
+          readmeOid: null,
+        });
         expect(yield* db.repos.getMany([id])).toEqual([expect.objectContaining({ pending: false })]);
 
         const changed = readme("c");
@@ -677,6 +693,8 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.repos.upsertRefs([ref(fresh), ref(enriched), ref(alsoFresh)]);
       yield* db.repos.saveSummary({ id: enriched, readmeOid: null, summary: "done", keywords: [], kind: "app" });
       yield* db.repos.saveEmbedding({
+        keywords: [],
+        description: null,
         id: enriched,
         embedding: embedding({ 0: 1 }),
         summary: "done",
@@ -698,6 +716,8 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       expect(yield* db.repos.pendingEnrichment([id])).toEqual([id]);
 
       yield* db.repos.saveEmbedding({
+        keywords: [],
+        description: null,
         id,
         embedding: embedding({ 0: 1 }),
         summary: "summarized",
@@ -829,7 +849,14 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.repos.upsertRefs([ref(id)]);
 
       const error = yield* db.repos
-        .saveEmbedding({ id, embedding: embedding({ 0: 1 }, otherModel), summary: summaryOf(id), readmeOid: null })
+        .saveEmbedding({
+          keywords: [],
+          description: null,
+          id,
+          embedding: embedding({ 0: 1 }, otherModel),
+          summary: summaryOf(id),
+          readmeOid: null,
+        })
         .pipe(Effect.flip);
       expect(error).toMatchObject({ _tag: "EmbeddingModelMismatch", expected: model, received: otherModel });
       expect(Option.getOrThrow(yield* db.repos.get(id)).embeddingModel).toBeNull();
@@ -844,7 +871,14 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         .saveSummary({ id, readmeOid: null, summary: "", keywords: [], kind: "app" })
         .pipe(Effect.flip);
       const vector = yield* db.repos
-        .saveEmbedding({ id, embedding: embedding({ 0: 1 }), summary: summaryOf(id), readmeOid: null })
+        .saveEmbedding({
+          keywords: [],
+          description: null,
+          id,
+          embedding: embedding({ 0: 1 }),
+          summary: summaryOf(id),
+          readmeOid: null,
+        })
         .pipe(Effect.flip);
       expect([summary._tag, vector._tag]).toEqual(["RepoNotFound", "RepoNotFound"]);
     }),
@@ -917,7 +951,14 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         [neither, "photo editor", { 2: 1 }],
       ] as const) {
         yield* db.repos.saveSummary({ id: repo, readmeOid: null, summary, keywords: [], kind: "app" });
-        yield* db.repos.saveEmbedding({ id: repo, embedding: embedding(weights), summary, readmeOid: null });
+        yield* db.repos.saveEmbedding({
+          keywords: [],
+          description: null,
+          id: repo,
+          embedding: embedding(weights),
+          summary,
+          readmeOid: null,
+        });
       }
       yield* db.stars.upsert({
         accountId: id,
@@ -1043,9 +1084,11 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.repos.saveFacts({ ...facts(id), readmeOid: readme("b") });
       yield* db.repos.saveSummary({ id, readmeOid: readme("b"), summary: "NEW", keywords: ["new"], kind: "app" });
       yield* db.repos.saveEmbedding({
+        description: null,
         id,
         embedding: embedding({ 0: 1 }),
         summary: "NEW",
+        keywords: ["new"],
         readmeOid: readme("b"),
       });
       yield* db.repos.saveSummary({ id, readmeOid: readme("a"), summary: "STALE", keywords: ["old"], kind: "cli" });
@@ -1078,6 +1121,30 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     }),
   );
 
+  test.effect("refuses an embedding whose keywords or description changed while it was made", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const id = repoId(9022);
+      const summary = { id, readmeOid: null, summary: "same sentence", keywords: ["old"], kind: "app" };
+      const vector = { id, embedding: embedding({ 0: 1 }), summary: summary.summary, readmeOid: null };
+      yield* db.repos.saveFacts({ ...facts(id), description: "old description" });
+      yield* db.repos.saveSummary(summary);
+      yield* db.repos.saveSummary({ ...summary, keywords: ["new", "keywords"] });
+      expect(yield* db.repos.saveEmbedding({ ...vector, keywords: ["old"], description: "old description" })).toBe(
+        false,
+      );
+      expect(Option.getOrThrow(yield* db.repos.get(id)).embeddingModel).toBeNull();
+      yield* db.repos.saveFacts({ ...facts(id), description: "new description" });
+      expect(
+        yield* db.repos.saveEmbedding({ ...vector, keywords: ["new", "keywords"], description: "old description" }),
+      ).toBe(false);
+      expect(
+        yield* db.repos.saveEmbedding({ ...vector, keywords: ["new", "keywords"], description: "new description" }),
+      ).toBe(true);
+      expect(Option.getOrThrow(yield* db.repos.get(id)).embeddingModel).toBe(model);
+    }),
+  );
+
   test.effect("refuses an embedding whose summary or README moved, and reports it", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
@@ -1085,15 +1152,47 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.repos.saveFacts({ ...facts(id), readmeOid: readme("b") });
       yield* db.repos.saveSummary({ id, readmeOid: readme("b"), summary: "NEW", keywords: [], kind: "app" });
       const vector = { id, embedding: embedding({ 0: 1 }) };
-      expect(yield* db.repos.saveEmbedding({ ...vector, summary: "OLD", readmeOid: readme("b") })).toBe(false);
-      expect(yield* db.repos.saveEmbedding({ ...vector, summary: "NEW", readmeOid: readme("a") })).toBe(false);
+      expect(
+        yield* db.repos.saveEmbedding({
+          keywords: [],
+          description: null,
+          ...vector,
+          summary: "OLD",
+          readmeOid: readme("b"),
+        }),
+      ).toBe(false);
+      expect(
+        yield* db.repos.saveEmbedding({
+          keywords: [],
+          description: null,
+          ...vector,
+          summary: "NEW",
+          readmeOid: readme("a"),
+        }),
+      ).toBe(false);
 
       yield* db.repos.saveFacts({ ...facts(id), readmeOid: readme("c") });
-      expect(yield* db.repos.saveEmbedding({ ...vector, summary: "NEW", readmeOid: readme("b") })).toBe(false);
+      expect(
+        yield* db.repos.saveEmbedding({
+          keywords: [],
+          description: null,
+          ...vector,
+          summary: "NEW",
+          readmeOid: readme("b"),
+        }),
+      ).toBe(false);
       expect(Option.getOrThrow(yield* db.repos.get(id)).embeddingModel).toBeNull();
 
       yield* db.repos.saveFacts({ ...facts(id), readmeOid: readme("b") });
-      expect(yield* db.repos.saveEmbedding({ ...vector, summary: "NEW", readmeOid: readme("b") })).toBe(true);
+      expect(
+        yield* db.repos.saveEmbedding({
+          keywords: [],
+          description: null,
+          ...vector,
+          summary: "NEW",
+          readmeOid: readme("b"),
+        }),
+      ).toBe(true);
       expect(Option.getOrThrow(yield* db.repos.get(id)).embeddingModel).toBe(model);
     }),
   );
@@ -1279,11 +1378,25 @@ const settingsCases = (test: { readonly effect: it.Tester<TestDatabase.TestDatab
       const id = repoId(9701);
       const refused = yield* withDb(otherModel, (db) =>
         db.repos
-          .saveEmbedding({ id, embedding: embedding({ 0: 1 }, otherModel), summary: summaryOf(id), readmeOid: null })
+          .saveEmbedding({
+            keywords: [],
+            description: null,
+            id,
+            embedding: embedding({ 0: 1 }, otherModel),
+            summary: summaryOf(id),
+            readmeOid: null,
+          })
           .pipe(
             Effect.andThen(
               db.repos
-                .saveEmbedding({ id, embedding: embedding({ 0: 1 }), summary: summaryOf(id), readmeOid: null })
+                .saveEmbedding({
+                  keywords: [],
+                  description: null,
+                  id,
+                  embedding: embedding({ 0: 1 }),
+                  summary: summaryOf(id),
+                  readmeOid: null,
+                })
                 .pipe(Effect.flip),
             ),
           ),

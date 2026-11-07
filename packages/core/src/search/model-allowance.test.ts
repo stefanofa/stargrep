@@ -109,6 +109,8 @@ const seeded = Effect.gen(function* () {
     yield* db.repos.saveSummary({ id: ref.id, readmeOid: null, summary: repo.summary, keywords: [], kind: "library" });
     const [vector] = yield* embeddings.embed([repo.summary]);
     yield* db.repos.saveEmbedding({
+      keywords: [],
+      description: null,
       id: ref.id,
       embedding: yield* decodeEmbedding({ model, vector: vector?.vector }),
       summary: repo.summary,

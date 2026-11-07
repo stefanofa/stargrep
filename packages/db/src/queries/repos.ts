@@ -153,6 +153,8 @@ export interface RepoEmbedding {
   readonly id: RepoId;
   readonly embedding: Embedding;
   readonly summary: string;
+  readonly keywords: ReadonlyArray<string>;
+  readonly description: string | null;
   readonly readmeOid: ObjectId | null;
 }
 
@@ -353,6 +355,8 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
                 and(
                   eq(repos.id, input.id),
                   sql`${repos.summary} is not distinct from ${input.summary}`,
+                  eq(repos.keywords, [...input.keywords]),
+                  sql`${repos.description} is not distinct from ${input.description}`,
                   sql`${repos.summaryReadmeOid} is not distinct from ${input.readmeOid}`,
                   sql`${repos.readmeOid} is not distinct from ${input.readmeOid}`,
                 ),

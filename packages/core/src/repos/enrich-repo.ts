@@ -279,6 +279,8 @@ const make = Effect.gen(function* () {
         id: job.id,
         embedding: vector.success,
         summary: summary.summary,
+        keywords: summary.keywords,
+        description: job.facts.description,
         readmeOid: readmeOidOf(job.facts),
       }),
       saved,
