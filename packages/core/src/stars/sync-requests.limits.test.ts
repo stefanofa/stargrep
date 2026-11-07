@@ -7,6 +7,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
+import * as RateLine from "../limits/rate-line.ts";
 import {
   admitting,
   anyone,
@@ -54,8 +55,8 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests line", (it) => {
 
   it.effect("pays the line out at 80% of the budget share of 5,000 requests an hour", () =>
     Effect.gen(function* () {
-      expect(SyncRequests.allRate(BudgetShare.make(0.5)).unitsPerHour).toBe(2_000);
-      expect(SyncRequests.allRate(BudgetShare.make(0.25)).unitsPerHour).toBe(1_000);
+      expect(RateLine.githubAll(BudgetShare.make(0.5)).rate.units).toBe(2_000);
+      expect(RateLine.githubAll(BudgetShare.make(0.25)).rate.units).toBe(1_000);
       yield* admitting(
         ({ owners }) =>
           Effect.gen(function* () {
@@ -72,7 +73,7 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests line", (it) => {
     admitting(({ delays }) =>
       Effect.gen(function* () {
         yield* fill(300);
-        const startsAt = at(start + 101 * unitMillis);
+        const startsAt = at(start + 102 * unitMillis);
         expect(yield* request("octocat")).toEqual({
           state: "waiting",
           requestedAt: at(start),
@@ -81,14 +82,14 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests line", (it) => {
           syncedAt: null,
           ...octocat,
         });
-        expect(delays).toEqual([units(101)]);
+        expect(delays).toEqual([units(102)]);
         expect(yield* row("octocat")).toMatchObject(Option.some({ outcome: "pending", startsAt }));
 
         expect(yield* request("hubot", anyone("caller-b"))).toMatchObject({ state: "waiting", ahead: 1 });
         expect(yield* status("octocat")).toMatchObject({ state: "waiting", ahead: 0 });
         expect(yield* status("hubot")).toMatchObject({ state: "waiting", ahead: 1 });
 
-        yield* TestClock.adjust(units(101));
+        yield* TestClock.adjust(units(102));
         expect(yield* status("octocat")).toEqual({
           state: "queued",
           requestedAt: at(start),
@@ -107,13 +108,13 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests line", (it) => {
         yield* request("octocat");
         yield* TestClock.adjust("10 minutes");
         expect(yield* request("octocat")).toMatchObject({ state: "queued", requestedAt: at(start) });
-        yield* TestClock.adjust(units(100));
+        yield* TestClock.adjust(units(101));
         expect(yield* request("octocat")).toMatchObject({ state: "queued", requestedAt: at(start) });
         expect(sent).toHaveLength(1);
         yield* TestClock.adjust(units(1));
         expect(yield* request("octocat")).toMatchObject({
           state: "queued",
-          requestedAt: at(start + 10 * minute + 101 * unitMillis),
+          requestedAt: at(start + 10 * minute + 102 * unitMillis),
         });
         expect(sent).toHaveLength(2);
       }),
@@ -127,7 +128,7 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests line", (it) => {
         expect(yield* Effect.flip(request("octocat"))).toMatchObject({ _tag: "SyncBusy", reason: "line-full" });
         expect(lookups).toEqual([]);
         expect(yield* lineUnits()).toBe(4_500);
-        expect(yield* lineUnits(Db.callerLine(Db.CallerKey.make("caller-a")))).toBe(0);
+        expect(yield* networkUnits()).toBe(0);
         expect(yield* row("octocat")).toEqual(Option.none());
       }),
     ),
@@ -206,7 +207,7 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests line", (it) => {
         yield* Db.Db.use((db) => db.accounts.upsertLooked(user("linus", 9004, 2_431)));
         yield* fill(300);
         yield* request("linus", owner);
-        expect(yield* request("octocat")).toMatchObject({ state: "waiting", startsAt: at(start + 101 * unitMillis) });
+        expect(yield* request("octocat")).toMatchObject({ state: "waiting", startsAt: at(start + 102 * unitMillis) });
       }),
     ),
   );
@@ -259,9 +260,9 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests line", (it) => {
       Effect.gen(function* () {
         yield* fill(4_000);
         expect(yield* request("octocat")).toMatchObject({ state: "waiting" });
-        yield* fillNetwork(150, "caller-b");
+        yield* fillNetwork(149, "caller-b");
         expect(yield* request("octocat", signedIn("caller-b"))).toMatchObject({ state: "queued" });
-        expect(yield* networkUnits("caller-b")).toBe(151);
+        expect(yield* networkUnits("caller-b")).toBe(150);
         expect(sent.map((each) => each.userId ?? null)).toEqual([null, memberId]);
       }),
     ),
@@ -341,7 +342,7 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests network limit", (it) => {
     () =>
       admitting(({ sent, lookups }) =>
         Effect.gen(function* () {
-          yield* fillNetwork(151);
+          yield* fillNetwork(150);
           expect((yield* Effect.flip(request("swarm")))._tag).toBe("NewAccountLimited");
           expect(lookups).toEqual([]);
           expect(yield* row("swarm")).toEqual(Option.none());
@@ -356,11 +357,11 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests network limit", (it) => {
     () =>
       admitting(({ sent, lookups }) =>
         Effect.gen(function* () {
-          yield* fillNetwork(150);
+          yield* fillNetwork(149);
           expect((yield* Effect.flip(request("hubot")))._tag).toBe("NewAccountLimited");
           expect(lookups).toEqual(["hubot" as Login]);
           expect(yield* row("hubot")).toEqual(Option.none());
-          expect(yield* networkUnits()).toBe(151);
+          expect(yield* networkUnits()).toBe(150);
           expect(yield* lineUnits()).toBe(1);
           expect(sent).toEqual([]);
         }),

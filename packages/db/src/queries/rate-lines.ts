@@ -14,11 +14,9 @@ import { rateLines } from "../schema.ts";
 export const CallerKey = Schema.String.pipe(Schema.brand("CallerKey"));
 export type CallerKey = typeof CallerKey.Type;
 
-// Every signed-out sync takes a turn in the line all, and each network pays its own line for its lookups and new logins.
-// Planner and query embedding calls take one in model/all and one in their network's model line.
-export type LineKey = "all" | `caller/${CallerKey}` | "model/all" | `model/${CallerKey}`;
-
-export const callerLine = (caller: CallerKey): LineKey => `caller/${caller}`;
+// Names a rate line. Core names every line it meters, so this package holds none of their names.
+export const LineKey = Schema.String.pipe(Schema.brand("LineKey"));
+export type LineKey = typeof LineKey.Type;
 
 // The generic cell rate algorithm with weighted cells. busy_until is when the line would be clear of every reserved
 // cost. A reservation starts once busy_until minus the tolerance has passed, so up to the tolerance starts at once.

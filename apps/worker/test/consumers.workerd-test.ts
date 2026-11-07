@@ -48,7 +48,6 @@ import * as EnrichSweep from "../src/jobs/enrich-sweep.ts";
 import * as Layers from "../src/layers.ts";
 import * as UserGate from "../src/user-gate.ts";
 import {
-  allLine,
   answering,
   batchOf,
   inMillis,
@@ -59,6 +58,7 @@ import {
   run,
   runtimeContext,
   sending,
+  share,
   syncing,
 } from "./consumers.fixture.ts";
 
@@ -149,9 +149,9 @@ describe("sync-stars consumer", () => {
     expect(later.map((sent) => sent.body)).toEqual([{ login: "octocat", mode: "incremental", requestedAt }]);
   });
 
-  it("sends a sync that ran out of GitHub budget again after the reset, without spending a retry", async () => {
+  it("sends a sync that ran out of GitHub budget again after the reset, as it arrived, without spending a retry", async () => {
     const { queues, later } = recordingQueues();
-    const batch = batchOf("sync-stars", [{ login: "octocat", mode: "incremental" }]);
+    const batch = batchOf("sync-stars", [{ login: "octocat", mode: "incremental", from: "debug" }]);
     const layer = Layer.mock(StarSync.StarSync, {
       syncLogin: () =>
         Effect.flatMap(inMillis(600_000), (resetAt) =>
@@ -160,7 +160,7 @@ describe("sync-stars consumer", () => {
     });
     const result = await syncing(layer)(queues, batch);
     expect(later).toHaveLength(1);
-    expect(later[0]?.body).toEqual({ login: "octocat", mode: "incremental" });
+    expect(later[0]?.body).toEqual({ login: "octocat", mode: "incremental", from: "debug" });
     expect(later[0]?.delaySeconds).toBeGreaterThanOrEqual(600);
     expect(later[0]?.delaySeconds).toBeLessThanOrEqual(606);
     expect(result.explicitAcks).toEqual(["m0"]);
@@ -179,7 +179,7 @@ describe("sync-stars consumer", () => {
     );
     const ctx = createExecutionContext();
     await Effect.runPromise(
-      Settle.processBatch(SyncStarsConsumer.pipeline(allLine, syncs), queues, batch.messages).pipe(
+      Settle.processBatch(SyncStarsConsumer.pipeline(share, syncs), queues, batch.messages).pipe(
         Effect.provide(Layer.mergeAll(TokenGate.layerMissing, UserGate.layerServerOnly, unusedDb)),
       ),
     );
@@ -207,7 +207,7 @@ describe("sync-stars consumer", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const fiber = yield* Effect.forkChild(
-          Settle.processBatch(SyncStarsConsumer.pipeline(allLine, syncs), queues, batch.messages),
+          Settle.processBatch(SyncStarsConsumer.pipeline(share, syncs), queues, batch.messages),
         );
         yield* TestClock.adjust("3 minutes");
         yield* Fiber.join(fiber);
@@ -241,7 +241,7 @@ describe("sync-stars consumer", () => {
     }
     const ctx = createExecutionContext();
     await Effect.runPromise(
-      Settle.processBatch(SyncStarsConsumer.pipeline(allLine, layer), queues, batch.messages).pipe(
+      Settle.processBatch(SyncStarsConsumer.pipeline(share, layer), queues, batch.messages).pipe(
         Effect.provide(
           Layer.mergeAll(
             answering,
@@ -275,7 +275,7 @@ describe("sync-stars consumer", () => {
     const ctx = createExecutionContext();
     await Effect.runPromise(
       Settle.processBatch(
-        SyncStarsConsumer.pipeline(allLine, Layer.mock(StarSync.StarSync, {})),
+        SyncStarsConsumer.pipeline(share, Layer.mock(StarSync.StarSync, {})),
         queues,
         batch.messages,
       ).pipe(
@@ -902,7 +902,7 @@ describe("dead letters", () => {
     run(
       Settle.handleDeadLetters(
         "sync-stars",
-        SyncStarsConsumer.pipeline(allLine, Layer.mock(StarSync.StarSync, {})),
+        SyncStarsConsumer.pipeline(share, Layer.mock(StarSync.StarSync, {})),
         5,
       )(Stream.fromIterable(batch.messages)).pipe(
         Effect.provide(Layer.merge(layer, Logger.layer([Logger.make(({ message }) => logs.push(message))]))),

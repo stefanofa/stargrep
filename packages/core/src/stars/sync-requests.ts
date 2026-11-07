@@ -11,8 +11,10 @@ import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
+import * as RateLine from "../limits/rate-line.ts";
 import * as OwnerLookup from "./owner-lookup.ts";
-import type { Mode } from "./star-sync.ts";
+import type { LoginSyncRequest, Mode } from "./star-sync.ts";
 import * as SyncQueue from "./sync-queue.ts";
 
 export const SyncState = Schema.Literals(["unknown", "waiting", "queued", "failed", "done"]);
@@ -99,40 +101,7 @@ export class SyncRequests extends Context.Service<
   }
 >()("@stargrep/core/stars/sync-requests/SyncRequests") {}
 
-// A rate line counts GitHub requests, a unit each. It pays out unitsPerHour, a reservation passes while the line owes
-// at most burstUnits, and one that would start later than maxWait from now is refused.
-export interface Rate {
-  readonly unitsPerHour: number;
-  readonly burstUnits: number;
-  readonly maxWait: Duration.Duration;
-}
-
-// GitHub allows the token 5,000 REST requests an hour, and the gate lets Stargrep spend its budget share of them.
-// Signed-out syncs together take turns in the line all, which pays out 80% of that share and leaves the rest to
-// enrichment. A signed-in user's sync pays into it only for the requests that fell back to the server's token.
-export const allRate = (share: BudgetShare): Rate => ({
-  unitsPerHour: 0.8 * share * 5_000,
-  burstUnits: 200,
-  maxWait: Duration.hours(2),
-});
-
-// Each network pays a line of its own for every lookup it asks for and for the first read of a login that never synced,
-// so one network can neither look logins up without end nor fill the line all.
-const networkRate: Rate = { unitsPerHour: 150, burstUnits: 150, maxWait: Duration.zero };
-
-const unitsOf = (rate: Rate, count: number) =>
-  Duration.millis((count * Duration.toMillis(Duration.hours(1))) / rate.unitsPerHour);
-
-const reservation = (key: Db.LineKey, rate: Rate, at: DateTime.Utc, count: number, force: boolean) => ({
-  line: key,
-  at,
-  cost: unitsOf(rate, count),
-  tolerance: unitsOf(rate, rate.burstUnits),
-  maxWait: rate.maxWait,
-  force,
-});
-
-// A missing login or an org costs its lookup and nothing more.
+// A unit is one GitHub request. A missing login or an org costs its lookup and nothing more.
 export const lookupCost = 1;
 
 // A page holds 100 stars. A first or full read reads every page and counts the stars through GraphQL before and after.
@@ -151,22 +120,27 @@ const pagesOf = (read: StarRead) =>
 // stops, because stars removed, starred again, or swapped at an unchanged total all move it, so this is an estimate.
 export const costOf = (read: StarRead): number => 1 + (read._tag === "every" ? 2 : 0) + pagesOf(read);
 
-const reserve = (db: Db.Db["Service"], line: Rate, at: DateTime.Utc, units: number, force: boolean) =>
-  db.rateLines.reserve(reservation("all", line, at, units, force));
-
-// After each delivery of a sync, whether it succeeded or failed, the line settles with the GitHub requests the token gate
-// counted. reserved is what admission put in the line for this delivery. The delivery bills what it counted past that,
-// or gives back what it did not use, and the line never moves earlier than now.
-export const reconcileSync = Effect.fn("SyncRequests.reconcileSync")(function* (
-  line: Rate,
-  reserved: number,
+// After each delivery of a sync, whether it succeeded or failed, githubAll settles with the GitHub requests the token
+// gate counted on the server's token. A first delivery spends what admission reserved for it, so it bills what it
+// counted past that and gives back what it did not use. A later delivery, and a message that reserved nothing, bills
+// its whole count. The line never moves earlier than now.
+export const billDelivery = Effect.fn("SyncRequests.billDelivery")(function* (
+  share: BudgetShare,
+  delivery: { readonly body: LoginSyncRequest; readonly attempts: number },
   counted: number,
 ) {
+  const reserved = delivery.attempts > 1 ? 0 : (delivery.body.reserved ?? 0);
   const owed = counted - reserved;
   yield* Effect.annotateCurrentSpan({ "sync.requests": counted, "sync.reserved": reserved, "sync.owed": owed });
   if (owed === 0) return;
-  yield* (yield* Db.Db).rateLines.adjust("all", yield* DateTime.now, unitsOf(line, owed));
+  const db = yield* Db.Db;
+  yield* RateLine.bill(db.rateLines, RateLine.githubAll(share), yield* DateTime.now, owed);
 });
+
+// The body a deferred sync goes out again with, or none to send it as it arrived. Its delivery settled the
+// reservation, so the next one bills in full.
+export const resent = (body: LoginSyncRequest): Option.Option<LoginSyncRequest> =>
+  body.reserved === undefined ? Option.none() : Option.some(Struct.omit(body, ["reserved"]));
 
 type Decision =
   | "started"
@@ -303,8 +277,7 @@ const statusOf = (
 const syncedAtOf = (status: SyncStatus) => (status.state === "unknown" ? null : status.syncedAt);
 
 const make = Effect.fnUntraced(function* (share: BudgetShare) {
-  const line = allRate(share);
-  const tolerance = unitsOf(line, line.burstUnits);
+  const all = RateLine.githubAll(share);
   const db = yield* Db.Db;
   const queue = yield* SyncQueue.SyncQueue;
   const owners = yield* OwnerLookup.OwnerLookup;
@@ -367,7 +340,7 @@ const make = Effect.fnUntraced(function* (share: BudgetShare) {
         Effect.tapError(() =>
           Effect.all([
             db.syncRequests.settle(login, at, "failed"),
-            db.rateLines.adjust("all", at, unitsOf(line, -reserved)),
+            RateLine.bill(db.rateLines, all, at, -reserved),
           ]).pipe(Effect.ignore),
         ),
       );
@@ -436,17 +409,17 @@ const make = Effect.fnUntraced(function* (share: BudgetShare) {
     }
 
     if (userId === undefined) {
-      const wait = yield* db.rateLines.wait("all", now, tolerance);
-      if (Duration.isGreaterThan(wait, line.maxWait)) return { _tag: "LineFull", cost: 0, wait };
+      const wait = yield* RateLine.wait(db.rateLines, all, now);
+      if (Duration.isGreaterThan(wait, all.rate.maxWait)) return { _tag: "LineFull", cost: 0, wait };
     }
-    const network = Db.callerLine(caller);
-    const charge = (units: number) => db.rateLines.reserve(reservation(network, networkRate, now, units, false));
+    const network = RateLine.githubNetwork(caller);
+    const charge = (units: number) => RateLine.reserve(db.rateLines, network, now, units);
     if (Option.isNone(yield* charge(lookupCost))) return { _tag: "CallerLimit" };
 
     const found = yield* Effect.result(owners.lookup(login));
     if (Result.isFailure(found)) return { _tag: "LookupFailed", error: found.failure };
     // GitHub answered, so the lookup spent a request whatever comes of the sync.
-    yield* reserve(db, line, now, lookupCost, true);
+    yield* RateLine.reserve(db.rateLines, all, now, lookupCost, true);
     const claim = (outcome: "claimed" | "missing") =>
       db.syncRequests.claim({ login, at: now, cooldown: anyoneCooldown, overtakesWaiting: overtakes, outcome });
 
@@ -487,11 +460,11 @@ const make = Effect.fnUntraced(function* (share: BudgetShare) {
         { ...looked, syncedAt },
       );
     }
-    const startsAt = yield* reserve(db, line, now, work, false);
+    const startsAt = yield* RateLine.reserve(db.rateLines, all, now, work);
     if (Option.isNone(startsAt)) {
       yield* db.syncRequests.settle(login, now, "released");
-      if (networkWork > 0) yield* db.rateLines.adjust(network, now, unitsOf(networkRate, -networkWork));
-      return { _tag: "LineFull", cost: lookupCost, wait: line.maxWait };
+      if (networkWork > 0) yield* RateLine.bill(db.rateLines, network, now, -networkWork);
+      return { _tag: "LineFull", cost: lookupCost, wait: all.rate.maxWait };
     }
     return yield* start(
       login,

@@ -3,9 +3,10 @@ import type * as Embeddings from "@stargrep/ai/embeddings";
 import type * as TextGeneration from "@stargrep/ai/text-generation";
 import { type FetchIcon, IconQueue } from "@stargrep/core/icons";
 import { type BlobStore, type EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
-import { StarSync, type SyncRequests } from "@stargrep/core/stars";
+import { StarSync } from "@stargrep/core/stars";
 import type * as Db from "@stargrep/db";
 import * as GitHub from "@stargrep/github/github";
+import type { BudgetShare } from "@stargrep/github/schemas";
 import type * as TokenGate from "@stargrep/github/token-gate";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
@@ -71,14 +72,14 @@ export const consumeAll = <E>(
     E,
     RuntimeContext
   >,
-  line: SyncRequests.Rate,
+  share: BudgetShare,
 ) =>
   Effect.all([
     consume(
       queueNames.syncStars,
       { queue: SyncStars, deadLetters: SyncStarsDeadLetters },
       { batchSize: 5, maxWaitTime: "1 second", ...retries },
-      SyncStarsConsumer.pipeline(line, syncs),
+      SyncStarsConsumer.pipeline(share, syncs),
       runtime,
     ),
     consume(

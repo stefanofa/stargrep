@@ -24,8 +24,8 @@ export type {
   StarredCount,
   StarSync,
 } from "./queries/accounts.ts";
-export type { LineKey, Reservation } from "./queries/rate-lines.ts";
-export { CallerKey, callerLine } from "./queries/rate-lines.ts";
+export type { Reservation } from "./queries/rate-lines.ts";
+export { CallerKey, LineKey } from "./queries/rate-lines.ts";
 export type {
   DueIcon,
   EnrichFailures,

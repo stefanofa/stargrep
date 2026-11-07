@@ -11,6 +11,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
+import * as RateLine from "../limits/rate-line.ts";
 import * as EnrichQueue from "../repos/enrich-queue.ts";
 import * as OwnerLookup from "./owner-lookup.ts";
 import * as StarSync from "./star-sync.ts";
@@ -615,11 +616,14 @@ const starred = (list: Array<Starred>) => {
   });
 };
 
-const lineUnits = Effect.flatMap(DateTime.now, (now) =>
-  Db.Db.use((db) => db.rateLines.wait("all", now, Duration.zero)),
-).pipe(Effect.map((wait) => Duration.toMillis(wait) / 1_800));
+const all = RateLine.githubAll(share);
+const unit = Duration.toMillis(RateLine.durationOf(all.rate, 1));
 
-// Admits ada's sync, then runs the message it queued and reconciles the line as the sync-stars consumer does on a first
+const lineUnits = Effect.flatMap(DateTime.now, (now) =>
+  Db.Db.use((db) => db.rateLines.wait(all.key, now, Duration.zero)),
+).pipe(Effect.map((wait) => Duration.toMillis(wait) / unit));
+
+// Admits ada's sync, then runs the message it queued and bills the line as the sync-stars consumer does on a first
 // delivery. served counts the lookups and the GitHub requests the run made, and paid what the line took for them.
 const admitAndRun = (by: SyncRequests.Requester) =>
   Effect.gen(function* () {
@@ -631,7 +635,7 @@ const admitAndRun = (by: SyncRequests.Requester) =>
     const message = syncs.sent[queued];
     if (message === undefined) throw new Error("the request queued no sync");
     yield* StarSync.StarSync.use((service) => service.syncLogin(message));
-    yield* SyncRequests.reconcileSync(SyncRequests.allRate(share), message.reserved ?? 0, github.sent.length);
+    yield* SyncRequests.billDelivery(share, { body: message, attempts: 1 }, github.sent.length);
     return {
       message,
       served: owners.lookups.length - lookups + github.sent.length,
@@ -750,16 +754,7 @@ it.layer(admission, { timeout: 30_000 })("SyncRequests with StarSync", (it) => {
       yield* TestClock.adjust("11 minutes");
       const at = yield* now;
       starred(newestFirst(300).map((star, i) => ({ repo: star.repo, at: at - (i + 1) * second })));
-      yield* Db.Db.use((db) =>
-        db.rateLines.reserve({
-          line: "all",
-          at: DateTime.makeUnsafe(at),
-          cost: Duration.millis(300 * 1_800),
-          tolerance: Duration.zero,
-          maxWait: Duration.zero,
-          force: true,
-        }),
-      );
+      yield* Db.Db.use((db) => RateLine.bill(db.rateLines, all, DateTime.makeUnsafe(at), 300));
       const run = yield* admitAndRun(anyone);
       expect(run.message.reserved).toBe(2);
       expect(run.served).toBe(1 + 1 + 3);
@@ -780,10 +775,10 @@ it.layer(admission, { timeout: 30_000 })("SyncRequests with StarSync", (it) => {
       const next = yield* SyncRequests.SyncRequests.use((service) =>
         service.request("grace" as Login, { _tag: "anyone", caller: Db.CallerKey.make("caller-b") }),
       );
-      const burst = SyncRequests.allRate(share).burstUnits;
+      const owed = 300 + run.served + SyncRequests.lookupCost;
       expect(next).toMatchObject({
         state: "waiting",
-        startsAt: DateTime.makeUnsafe(at + (300 + run.served + SyncRequests.lookupCost - burst) * 1_800),
+        startsAt: DateTime.makeUnsafe(at + (owed - (all.rate.burst - 1)) * unit),
       });
     }),
   );

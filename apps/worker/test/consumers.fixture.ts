@@ -1,6 +1,7 @@
 // @effect-diagnostics effectFnOpportunity:off - the fakes here return fixed effects.
 import { createExecutionContext, createMessageBatch, getQueueResult } from "cloudflare:test";
-import { StarSync, SyncRequests } from "@stargrep/core/stars";
+import { RateLine } from "@stargrep/core/limits";
+import { StarSync } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import { DbQueryFailed } from "@stargrep/db/errors";
 import { BudgetShare, RepoId } from "@stargrep/github/schemas";
@@ -22,7 +23,7 @@ import * as UserGate from "../src/user-gate.ts";
 
 export const report = { listed: 1, added: 1, unchanged: 0, unstarred: 0, enqueued: 1, shifted: false };
 export const repoId = Schema.decodeSync(RepoId);
-export const allLine = SyncRequests.allRate(BudgetShare.make(0.5));
+export const share = BudgetShare.make(0.5);
 export const inMillis = (millis: number) => Effect.map(Clock.currentTimeMillis, (now) => now + millis);
 
 export const recordingQueues = (fail = false) => {
@@ -50,7 +51,9 @@ export const run = async <E>(effect: Effect.Effect<void, E>, batch: MessageBatch
   return getQueueResult(batch, ctx);
 };
 
-// Records each move of the line, in units of 1.8 seconds.
+const unit = Duration.toMillis(RateLine.durationOf(RateLine.githubAll(share).rate, 1));
+
+// Records each move of a line, in units of githubAll at the test share.
 export const recordingLine = (fail = false) => {
   const adjusted: Array<{ readonly line: string; readonly units: number }> = [];
   const layer = Layer.succeed(
@@ -60,7 +63,7 @@ export const recordingLine = (fail = false) => {
         adjust: (line: Db.LineKey, _: DateTime.Utc, by: Duration.Duration) =>
           fail
             ? Effect.fail(new DbQueryFailed({ operation: "rateLines.adjust", reason: "transport", sqlState: null }))
-            : Effect.sync(() => void adjusted.push({ line, units: Duration.toMillis(by) / 1_800 })),
+            : Effect.sync(() => void adjusted.push({ line, units: Duration.toMillis(by) / unit })),
       },
     } as unknown as Db.Db["Service"]),
   );
@@ -105,7 +108,7 @@ export const syncing =
   ) =>
   (queues: Settle.Queues, batch: MessageBatch) =>
     run(
-      Settle.processBatch(SyncStarsConsumer.pipeline(allLine, syncs), queues, batch.messages).pipe(
+      Settle.processBatch(SyncStarsConsumer.pipeline(share, syncs), queues, batch.messages).pipe(
         Effect.provide(
           Layer.mergeAll(
             answering,
