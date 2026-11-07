@@ -22,23 +22,22 @@ const cases: ReadonlyArray<{ readonly name: string; readonly reply: GitHubFake.R
   { name: "a response whose body never finishes", reply: { stream: "hang" }, requests: 1 },
 ];
 
-for (const { name, reply, requests } of cases)
-  it.effect(`bounds the whole sign-in viewer read to five seconds for ${name}`, () => {
-    const fake = GitHubFake.layer(() => reply);
-    return Effect.gen(function* () {
-      const started = yield* Clock.currentTimeMillis;
-      const fiber = yield* Effect.forkChild(Effect.flip(OwnerAccount.importViewer(UserId.make("user-1"))));
-      yield* TestClock.adjust("5 seconds");
-      expect(yield* Fiber.join(fiber)).toMatchObject({ _tag: "OwnerImportFailed" });
-      expect((yield* Clock.currentTimeMillis) - started).toBe(5_000);
-      expect(fake.sent).toHaveLength(requests);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          fake.layer,
-          Memory.layerMemory({ embeddingModel: EmbeddingModelId.make("test/owner-import") }),
-          Layer.mock(SyncRequests, {}),
-        ),
-      ),
-    );
-  });
+// One database for every case, built before the clock starts. Building PGlite on a cold machine can take seconds, which
+// must not count against a test of five virtual seconds.
+it.layer(Memory.layerMemory({ embeddingModel: EmbeddingModelId.make("test/owner-import") }), { timeout: 30_000 })(
+  "OwnerAccount.importViewer",
+  (test) => {
+    for (const { name, reply, requests } of cases)
+      test.effect(`bounds the whole sign-in viewer read to five seconds for ${name}`, () => {
+        const fake = GitHubFake.layer(() => reply);
+        return Effect.gen(function* () {
+          const started = yield* Clock.currentTimeMillis;
+          const fiber = yield* Effect.forkChild(Effect.flip(OwnerAccount.importViewer(UserId.make("user-1"))));
+          yield* TestClock.adjust("5 seconds");
+          expect(yield* Fiber.join(fiber)).toMatchObject({ _tag: "OwnerImportFailed" });
+          expect((yield* Clock.currentTimeMillis) - started).toBe(5_000);
+          expect(fake.sent).toHaveLength(requests);
+        }).pipe(Effect.provide(Layer.mergeAll(fake.layer, Layer.mock(SyncRequests, {}))));
+      });
+  },
+);
