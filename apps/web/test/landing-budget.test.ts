@@ -14,12 +14,12 @@ const app = "/repo/apps/web/src";
 const effect = "/repo/node_modules/.bun/effect@4.1.2/node_modules/effect/dist/Effect.js";
 
 describe("the landing budget", () => {
-  test("counts the entry, the index route and what they import, and nothing the search route loads alone", () => {
+  test("counts the entry, the index route and their imports, excluding unrelated routes", () => {
     const report = audit([
       chunk("index.js", [`${app}/router.tsx`], { isEntry: true, imports: ["shared.js"] }),
       chunk("shared.js", ["/repo/packages/ui/src/mark/pip.tsx"]),
       chunk("routes.js", [`${app}/routes/index.tsx?tsr-split=component`], { imports: ["shared.js"] }),
-      chunk("search.js", [`${app}/routes/search.tsx?tsr-split=component`, effect]),
+      chunk("settings.js", [`${app}/routes/settings.tsx?tsr-split=component`, effect]),
     ]);
     expect(report.chunks.map((entry) => entry.fileName)).toEqual(["index.js", "shared.js", "routes.js"]);
     expect(report.found).toEqual([]);
