@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { githubLogin, reservedLogin } from "../src/lib/search-params.ts";
+import { githubLogin } from "@stargrep/github/login";
+import { reservedLogin } from "../src/lib/search-params.ts";
 
 const read = (path: string) => Bun.file(new URL(path, import.meta.url)).text();
 

@@ -90,7 +90,7 @@ The web Worker serves the API from one oRPC contract in `packages/api`. Search n
 WEB=http://localhost:1340
 curl -X POST "$WEB/api/sync/octocat"
 curl "$WEB/api/sync/octocat"
-curl -X POST -H "content-type: application/json" -d '{"login":"octocat","q":"terminal dashboards"}' "$WEB/api/search"
+curl -X POST -H "content-type: application/json" -d '{"scope":{"kind":"stars","login":"octocat"},"q":"terminal dashboards"}' "$WEB/api/search"
 curl "$WEB/api/repos/1300192"
 curl "$WEB/openapi.json"
 ```

@@ -1,8 +1,13 @@
+import "@orpc/effect/extensions/effect";
+import "@orpc/effect/extensions/schema";
 import { describe, expect } from "bun:test";
+import { middlewareGen, type WithEffectContext } from "@orpc/effect";
+import { createRouterClient, os } from "@orpc/server";
 import * as it from "@stargrep/testing";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as AnswerCache from "./answer-cache.ts";
@@ -27,34 +32,69 @@ const harness = (planned: () => boolean = () => true) => {
   const counts = { computed: 0, builds: 0, admitted: 0 };
   const refreshes: Array<Effect.Effect<void, never, ApiServices>> = [];
   const resHeaders = new Headers();
-  const context: AnswerCache.AnswerContext = {
-    answerCache: memory.cache,
-    services: Effect.sync(() => {
-      counts.builds++;
-      return Context.empty() as unknown as Context.Context<ApiServices>;
-    }),
-    background: (run) => Effect.sync(() => refreshes.push(run)),
-    resHeaders,
-  };
-  const compute = Effect.sync((): Answer => ({ value: ++counts.computed, planned: planned() }));
-  const answer = (key: string, admit: Effect.Effect<void, Refused> = Effect.void) =>
-    AnswerCache.cachedAnswer(
-      context,
-      policy,
-      key,
-      compute,
-      Effect.andThen(
-        Effect.sync(() => counts.admitted++),
-        admit,
-      ),
-    ).pipe(Effect.map((found) => ({ value: found.value, cache: resHeaders.get("x-answer-cache") })));
+  interface CacheContext extends AnswerCache.AnswerContext, WithEffectContext<never> {
+    readonly admission: Effect.Effect<void, Refused>;
+    readonly execution: "request" | "refresh";
+  }
+  const cached = AnswerCache.answerCache(policy, (key: string, _context: CacheContext) => Option.some(key));
+  const compute = os
+    .$context<CacheContext>()
+    .input(Schema.String)
+    .output(Answer)
+    .use(cached)
+    .use(
+      middlewareGen<CacheContext>(function* ({ context, next }) {
+        counts.builds++;
+        if (context.execution === "request") {
+          counts.admitted++;
+          yield* context.admission;
+        }
+        // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC erases downstream failures to unknown.
+        return yield* next();
+      }),
+    )
+    .handler(() => ({ value: ++counts.computed, planned: planned() }));
+  const answer = (key: string, admission: Effect.Effect<void, Refused> = Effect.void, signal?: AbortSignal) =>
+    Effect.gen(function* () {
+      const context: CacheContext = {
+        "effect/context": yield* Effect.context<never>(),
+        answerCache: memory.cache,
+        background: (run) => Effect.sync(() => refreshes.push(run)),
+        resHeaders,
+        admission,
+        execution: "request",
+      };
+      const client = createRouterClient({ compute }, { context });
+      const found = yield* Effect.tryPromise({
+        try: () => client.compute(key, { signal }),
+        catch: (error) => {
+          if (Schema.is(Refused)(error)) return error;
+          throw error;
+        },
+      });
+      return { value: found.value, cache: resHeaders.get("x-answer-cache") };
+    });
   const runRefreshes = Effect.suspend(() =>
     Effect.forEach(refreshes.splice(0), (run) => Effect.provideContext(run, Context.empty() as never)),
   );
   return { memory, counts, refreshes, answer, runRefreshes };
 };
 
-describe("cachedAnswer", () => {
+describe("answer cache middleware", () => {
+  it.effect("refreshes with a background signal after the stale request is aborted", () => {
+    const request = new AbortController();
+    return Effect.gen(function* () {
+      const cache = harness();
+      yield* cache.answer("aborted request");
+      yield* TestClock.adjust("6 minutes");
+      expect(yield* cache.answer("aborted request", Effect.void, request.signal)).toEqual({ value: 1, cache: "stale" });
+      request.abort();
+      yield* cache.runRefreshes;
+      expect(yield* cache.answer("aborted request")).toEqual({ value: 2, cache: "hit" });
+      expect(cache.counts).toEqual({ computed: 2, builds: 2, admitted: 1 });
+    });
+  });
+
   it.effect("computes on a miss after admitting the call, then serves the answer without services or admission", () =>
     Effect.gen(function* () {
       const cache = harness();
@@ -87,7 +127,7 @@ describe("cachedAnswer", () => {
 
       yield* TestClock.adjust(Duration.sum(Duration.days(1), Duration.minutes(6)));
       expect(yield* cache.answer("stale")).toEqual({ value: 3, cache: "miss" });
-      expect(cache.counts).toEqual({ computed: 3, builds: 2, admitted: 2 });
+      expect(cache.counts).toEqual({ computed: 3, builds: 3, admitted: 2 });
     }),
   );
 

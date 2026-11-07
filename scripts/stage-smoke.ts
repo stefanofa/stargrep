@@ -164,12 +164,12 @@ const web = Effect.gen(function* () {
     );
   const spec = yield* get("/openapi.json");
   const paths = Object.keys((yield* decode(Spec, spec.body)).paths).sort();
-  const emptyQuery = yield* post("/api/search", { login: "octocat", q: "" });
+  const emptyQuery = yield* post("/api/search", { scope: { kind: "stars", login: "octocat" }, q: "" });
   const emptyQueryBody = yield* decode(WireError, emptyQuery.body);
   const stranger = `smoke-${yield* Clock.currentTimeMillis}`;
   const status = yield* get(`/api/sync/${stranger}`);
   const statusBody = yield* decode(SyncState, status.body);
-  const unsynced = yield* post("/api/search", { login: stranger, q: "terminal dashboards" });
+  const unsynced = yield* post("/api/search", { scope: { kind: "stars", login: stranger }, q: "terminal dashboards" });
   const unsyncedBody = yield* decode(WireError, unsynced.body);
   const tools = yield* post("/mcp", { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
   const toolList = tools.body;

@@ -50,7 +50,7 @@ const viewerOf = async (client: Client, request: Request): Promise<Viewer | null
 const firstAnswer = async (client: Client, login: string, query: string, sort: Asked["sort"]) => {
   const [repos, hits, sync] = await Promise.all([
     allStars(client, login),
-    client.search({ login, q: query }).then(({ results }) => results),
+    client.search({ scope: { kind: "stars", login }, q: query }).then(({ results }) => results),
     client.syncStatus({ login }),
   ]);
   const entries = repos.map((repo) => ({ ...repo, text: searchText(repo) }));

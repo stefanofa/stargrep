@@ -8,6 +8,13 @@ const TraceData = Schema.Struct({
 });
 
 const wire = {
+  BAD_REQUEST: {
+    status: 400,
+    message:
+      "Malformed request. Ensure the request body is properly formatted and the 'Content-Type' header is set correctly.",
+  },
+  NOT_FOUND: { status: 404, message: "Stargrep has no route for this method and path." },
+  SIGN_IN_UNAVAILABLE: { status: 503, message: "This stage has no GitHub App to sign in with." },
   UNAUTHORIZED: { status: 401, message: "Sign in with GitHub to see your stars." },
   LOGIN_NOT_FOUND: { status: 404, message: "GitHub has no user or org with this login." },
   ACCOUNT_NOT_SYNCED: { status: 404, message: "Stargrep has not synced this login's stars yet. Trigger a sync first." },
@@ -24,7 +31,23 @@ const wire = {
 
 export type WireCode = keyof typeof wire;
 
-export const errors = Record.map(wire, ({ message }) => ({ message, data: TraceData }));
+export const errors = {
+  ...Record.map(wire, ({ message }) => ({ message, data: TraceData })),
+  BAD_REQUEST: {
+    message: wire.BAD_REQUEST.message,
+    data: Schema.Struct({
+      ...TraceData.fields,
+      issues: Schema.optionalKey(
+        Schema.Array(
+          Schema.Struct({
+            message: Schema.String,
+            path: Schema.optionalKey(Schema.Array(Schema.Union([Schema.String, Schema.Finite]))),
+          }),
+        ),
+      ),
+    }),
+  },
+};
 
 export const errorStatus = Record.map(wire, ({ status }) => status);
 

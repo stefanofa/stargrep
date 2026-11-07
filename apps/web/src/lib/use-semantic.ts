@@ -30,7 +30,7 @@ export function useSemanticSearch(
   useEffect(() => {
     const client = api();
     const running = startSemanticSearch(
-      (q, signal) => client.search({ login, q }, { signal }).then(({ results }) => results),
+      (q, signal) => client.search({ scope: { kind: "stars", login }, q }, { signal }).then(({ results }) => results),
       setAnswer,
     );
     search.current = running;

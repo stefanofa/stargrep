@@ -1,8 +1,9 @@
+import { middlewareGen, type WithEffectContext } from "@orpc/effect";
 import type { Search } from "@stargrep/core/search";
 import type { SyncRequests } from "@stargrep/core/stars";
 import type * as Db from "@stargrep/db";
-import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type { Caller } from "./caller.ts";
 import type { IconHost } from "./icon-host.ts";
@@ -22,8 +23,15 @@ export class ApiServicesUnavailable extends Schema.TaggedError<
   }
 }
 
-// Built at most once per request, and only when a procedure asks, so a bad request or a cached answer builds none.
-export type BuildServices = Effect.Effect<Context.Context<ApiServices>, ApiServicesUnavailable>;
-
-export const withServices = <A, E>(services: BuildServices, run: Effect.Effect<A, E, ApiServices>) =>
-  Effect.flatMap(services, (built) => Effect.provideContext(run, built));
+export const services = middlewareGen<
+  { readonly serviceLayer: Layer.Layer<ApiServices, ApiServicesUnavailable> },
+  WithEffectContext<ApiServices>
+>(function* ({ context, next }) {
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const built = yield* Layer.build(context.serviceLayer);
+      // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC erases downstream failures to unknown.
+      return yield* next({ context: { "effect/context": built } });
+    }),
+  );
+});

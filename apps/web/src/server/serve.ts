@@ -9,8 +9,8 @@ import { RPCHandler } from "@orpc/server/fetch";
 import { ResponseHeadersHandlerPlugin } from "@orpc/server/plugins";
 import type { StandardHandlerInterceptor } from "@orpc/server/standard";
 import type { AnswerCache } from "@stargrep/api/answer-cache";
-import { type PublicConfig, signedIn } from "@stargrep/api/contract";
-import { errorStatus, wireError, withTraceId } from "@stargrep/api/errors";
+import { anyoneCanCall, type PublicConfig } from "@stargrep/api/contract";
+import { errorStatus, type WireCode, wireError, withTraceId } from "@stargrep/api/errors";
 import type { Transport } from "@stargrep/api/middleware/instrumentation";
 import { type ApiContext, router } from "@stargrep/api/router";
 import { type ApiServices, ApiServicesUnavailable } from "@stargrep/api/services";
@@ -23,7 +23,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
-import * as Scope from "effect/Scope";
 
 export type RequestLayer = (request: Request) => Layer.Layer<ApiServices, { readonly _tag: string }>;
 
@@ -31,14 +30,11 @@ interface WebContext extends ApiContext {
   readonly requestTraceId: string;
 }
 
-const malformed =
-  "Malformed request. Ensure the request body is properly formatted and the 'Content-Type' header is set correctly.";
-
 // oRPC decodes the body before any procedure middleware runs, so a body it cannot decode gets the request's trace ID here.
 const traceErrors: StandardHandlerInterceptor<WebContext> = async (options) => {
   const decodeInput = () =>
     options.decodeInput().catch((cause: unknown) => {
-      throw cause instanceof ORPCError ? cause : new ORPCError("BAD_REQUEST", { message: malformed, cause });
+      throw cause instanceof ORPCError ? cause : wireError("BAD_REQUEST", options.context.requestTraceId);
     });
   try {
     return await options.next({ ...options, decodeInput });
@@ -61,7 +57,6 @@ const rest = new OpenAPIHandler<WebContext>(router, {
   errorStatusMap,
   interceptors,
 });
-const anyoneCanCall = (_: unknown, path: ReadonlyArray<string>) => !signedIn.has(path.join("."));
 const registrar = new McpRegistrar(router, { converters, plugins, filter: anyoneCanCall });
 
 let spec: Promise<string> | undefined;
@@ -108,12 +103,11 @@ const answerMcp = async (request: Request, context: WebContext) => {
   return new Response(withJsonRpcTraceId(body, context.requestTraceId), { status, statusText, headers });
 };
 
-type ServerError = ORPCError<string, { readonly traceId: string }>;
+type ServerError = ORPCError<WireCode, { readonly traceId: string }>;
 
-const noRoute = (traceId: string): ServerError =>
-  new ORPCError("NOT_FOUND", { message: "Stargrep has no route for this method and path.", data: { traceId } });
+const noRoute = (traceId: string): ServerError => wireError("NOT_FOUND", traceId);
 
-const statusOf = (error: ServerError) => (error.code === "NOT_FOUND" ? 404 : 500);
+const statusOf = (error: ServerError) => errorStatus[error.code];
 
 const rpcSerializer = new RPCSerializer();
 
@@ -194,19 +188,15 @@ interface RequestOptions {
 }
 
 export const requestContext = Effect.fn("Web.requestContext")(function* (options: RequestOptions) {
-  const scope = yield* Scope.Scope;
-  const services = yield* Effect.cached(
-    Layer.build(options.layer).pipe(
-      Effect.provideService(Scope.Scope, scope),
-      Effect.mapError((error) => new ApiServicesUnavailable({ failure: error._tag })),
-    ),
-  );
   return {
     "effect/context": yield* Effect.context<never>(),
     transport: options.transport,
     publicConfig: options.publicConfig,
     procedureTime: yield* Ref.make(Option.none<Duration.Duration>()),
-    services,
+    serviceLayer: Layer.effectContext(
+      Layer.build(options.layer).pipe(Effect.mapError((error) => new ApiServicesUnavailable({ failure: error._tag }))),
+    ),
+    execution: "request",
     answerCache: options.answerCache,
     background: options.background,
     requestTraceId: options.requestTraceId,
@@ -296,11 +286,7 @@ const respond = (route: Route, request: Request, options: ServerOptions) =>
 
 export type AuthLayer = (request: Request) => Option.Option<Layer.Layer<Auth.Auth, { readonly _tag: string }>>;
 
-const signInUnavailable = (traceId: string) =>
-  Response.json(
-    { code: "SIGN_IN_UNAVAILABLE", message: "This stage has no GitHub App to sign in with.", data: { traceId } },
-    { status: 503 },
-  );
+const signInUnavailable = (traceId: string) => restError(wireError("SIGN_IN_UNAVAILABLE", traceId));
 
 const respondAuth = (request: Request, layerFor: AuthLayer) =>
   Effect.useSpan("Web.auth", { kind: "server" }, (span) =>
@@ -321,7 +307,7 @@ const respondAuth = (request: Request, layerFor: AuthLayer) =>
         }).pipe(
           Effect.as(
             Response.json(wireError("INTERNAL_SERVER_ERROR", span.traceId).toJSON(), {
-              status: 500,
+              status: errorStatus.INTERNAL_SERVER_ERROR,
               headers: { "x-trace-id": span.traceId },
             }),
           ),

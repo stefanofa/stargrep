@@ -1,3 +1,4 @@
+import { loginKey } from "@stargrep/github/login";
 import type { Sort, View } from "@stargrep/ui";
 
 export interface Params {
@@ -30,8 +31,6 @@ export const validateParams = (search: Record<string, unknown>): Params => {
   };
 };
 
-export const githubLogin = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i;
-
 // Single-segment paths the Worker or the router answers before a login page could. These logins live at /@login, which
 // every login also accepts.
 export const reservedLogins: ReadonlyArray<string> = [
@@ -45,4 +44,4 @@ export const reservedLogins: ReadonlyArray<string> = [
   "search",
 ];
 
-export const reservedLogin = (login: string) => reservedLogins.includes(login.toLowerCase());
+export const reservedLogin = (login: string) => reservedLogins.includes(loginKey(login));

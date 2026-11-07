@@ -15,6 +15,7 @@ import * as DateTime from "effect/DateTime";
 import * as real from "../src/lib/library-collection.ts";
 import type { LibraryRepo, SearchResult, SyncStatus, Viewer } from "../src/lib/rpc.ts";
 import type {} from "../src/routeTree.gen.ts";
+import { syncStatus } from "./sync-status.fixture.ts";
 
 type Repo = LibraryRepo;
 
@@ -130,17 +131,7 @@ const reading = { total: 6, read: 4, failed: 0 };
 const allRead = { total: 6, read: 6, failed: 0 };
 const arriving = { total: 6, read: 0, failed: 0 };
 
-const status = (extra: Partial<Server["status"]>): Server["status"] => ({
-  login: "junodev",
-  state: "done",
-  requestedAt: "2026-11-05T10:00:00.000Z",
-  syncedAt: "2026-11-05T10:00:00.000Z",
-  waiting: null,
-  starredTotal: null,
-  accountType: null,
-  enrichment: allRead,
-  ...extra,
-});
+const status = (extra: Partial<Server["status"]>): Server["status"] => syncStatus({ enrichment: allRead, ...extra });
 // A sync waiting for GitHub budget, due to start in 24 minutes with 3 ahead of it.
 const inLine = () =>
   status({
