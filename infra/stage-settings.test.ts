@@ -24,6 +24,7 @@ test("production retains its database, region, placement, and resource lifetime 
     placement: { region: "aws:us-east-1" },
     retain: true,
     debug: false,
+    defaultAiProvider: "gateway",
   });
 });
 
@@ -43,6 +44,14 @@ test("preview and local stages use the preview project and disposable resources"
       },
       placement: { region: "aws:us-east-1" },
     });
+});
+
+test("previews default to the stand-in models, and local stages and prod to the gateway", () => {
+  expect(["pr-1", "dev_stefano", "prod"].map((stage) => stageSettings(stage).defaultAiProvider)).toEqual([
+    "fake",
+    "gateway",
+    "gateway",
+  ]);
 });
 
 test("the deploy's preview-host allowlist survives the auth config binding", async () => {

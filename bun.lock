@@ -131,6 +131,7 @@
       },
       "devDependencies": {
         "@effect/tsgo": "catalog:",
+        "@stargrep/ai": "workspace:*",
         "@stargrep/auth": "workspace:*",
         "@stargrep/config": "workspace:*",
         "@types/bun": "catalog:",

@@ -22,6 +22,7 @@
   },
   "devDependencies": {
     "@effect/tsgo": "catalog:",
+    "@stargrep/ai": "workspace:*",
     "@stargrep/config": "workspace:*",
     "@types/bun": "catalog:",
     "typescript": "catalog:",

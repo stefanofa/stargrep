@@ -6,9 +6,12 @@ const line = (prompt: string, label: string) =>
     .find((entry) => entry.startsWith(`${label}: `))
     ?.slice(label.length + 2) ?? "";
 
+// The prompt writes "none" for a missing description or README, which is no part of a summary.
+const given = (value: string) => (value === "none" ? "" : value);
+
 export const respond = (prompt: string): RepoSummary => {
-  const description = line(prompt, "Description");
-  const readme = prompt.split("\nREADME:\n")[1] ?? "";
+  const description = given(line(prompt, "Description"));
+  const readme = given(prompt.split("\nREADME:\n")[1] ?? "");
   const readmeWords = readme.split(/\s+/).filter(Boolean).slice(0, 60).join(" ");
   const topics = line(prompt, "Topics");
   return {

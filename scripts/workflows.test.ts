@@ -95,11 +95,11 @@ describe("workflow concurrency", () => {
     ].flatMap(({ at, concurrency }) => (concurrency === undefined ? [] : [{ at, ...concurrency }]));
   });
 
-  test("a newer push to a pull request cancels its ci and preview runs", () => {
+  test("a newer push to a pull request cancels its ci run, and never a running preview", () => {
     const cancelling = groups.filter((group) => group["cancel-in-progress"] !== undefined);
     expect(Object.fromEntries(cancelling.map((group) => [group.at, group["cancel-in-progress"]]))).toEqual({
       "ci.yml": "${{ github.event_name == 'pull_request' }}",
-      "preview.yml": true,
+      "preview.yml": false,
     });
   });
 

@@ -200,7 +200,11 @@ describe("when the server fails outside the API", () => {
 describe("when the database is unreachable", () => {
   const send = sendTo(
     testServer((request) =>
-      layerRequest(env, { aiKey: Option.none(), budgetShare: share, auth: Option.none() }, request),
+      layerRequest(
+        env,
+        { ai: { provider: "gateway", key: Option.none() }, budgetShare: share, auth: Option.none() },
+        request,
+      ),
     ),
   );
 

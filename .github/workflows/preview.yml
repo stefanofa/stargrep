@@ -2,7 +2,8 @@ name: preview
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize]
+    # Adding or removing the preview-ai label switches the stage between the fake models and the AI Gateway.
+    types: [opened, reopened, synchronize, labeled, unlabeled]
     # Docs never reach a stage. Preview is not a required check, so a skipped run blocks no merge. If it becomes one,
     # move this skip into the job, because a required check waits forever on a workflow that never starts.
     paths-ignore:
@@ -12,11 +13,13 @@ on:
 permissions:
   contents: read
 
-# A newer push cancels this run, even mid-deploy: Alchemy records each change before it makes it, and the next deploy
-# of the stage finishes what was cut off. The job's deploy-pr group is separate, so destroys are never cancelled.
+# A running preview is never cancelled, because its step may be destroying the stage. A newer push or preview-ai label
+# change waits as the group's one pending run and replaces any older pending one. Each run reads the pull request's
+# state, head, and labels when it starts, so the pending run deploys what the pull request asks for by then. Any other
+# label changes nothing, so its run takes a group of its own and waits for nothing.
 concurrency:
-  group: preview-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: preview-${{ github.event.pull_request.number }}${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'preview-ai' && format('-{0}', github.run_id) || '' }}
+  cancel-in-progress: false
 
 env:
   ALCHEMY_TELEMETRY_DISABLED: "1"
@@ -28,10 +31,14 @@ defaults:
 
 jobs:
   preview:
-    if: vars.CLOUDFLARE_ACCOUNT_ID != ''
+    # A fork's pull request gets no secrets, so it skips instead of failing to deploy.
+    if: >-
+      vars.CLOUDFLARE_ACCOUNT_ID != '' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'preview-ai')
     runs-on: ubuntu-latest
     environment: preview
-    timeout-minutes: 20
+    timeout-minutes: 30
     concurrency:
       group: deploy-pr-${{ github.event.pull_request.number }}
       queue: max
@@ -47,9 +54,24 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       - uses: ./.github/actions/setup
       - run: |
-          pr=$(gh pr view "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY" --json state,headRefOid --jq '.state + " " + .headRefOid')
-          if [ "${pr% *}" != OPEN ]; then echo "Pull request is ${pr% *}, so $STAGE is left to the destroy job."; exit 0; fi
-          if [ "${pr#* }" != "${{ github.event.pull_request.head.sha }}" ]; then echo "The head moved to ${pr#* }, so the run for that commit deploys $STAGE."; exit 0; fi
+          # The event's own labels can be stale by the time a queued run starts, so the provider comes from the labels now.
+          pr=$(gh pr view "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY" --json state,headRefOid,labels \
+            --jq '[.state, .headRefOid, (if any(.labels[]; .name == "preview-ai") then "gateway" else "fake" end)] | join(" ")')
+          read -r state head provider <<<"$pr"
+          if [ "$state" != OPEN ]; then echo "Pull request is $state, so $STAGE is left to the destroy job."; exit 0; fi
+          if [ "$head" != "${{ github.event.pull_request.head.sha }}" ]; then echo "The head moved to $head, so the run for that commit deploys $STAGE."; exit 0; fi
+          export STARGREP_AI_PROVIDER="$provider"
+          # A database keeps the embedding model of its first request, so a stage changes provider only by being
+          # destroyed and deployed fresh. A deploy writes the stage's output last and a destroy deletes it last, so an
+          # existing stage whose output names another provider, or none, may hold another provider's embeddings.
+          inventory=$(cd infra && bunx alchemy state list Stargrep -r)
+          if grep -q "^Stargrep/$STAGE/" <<<"$inventory"; then
+            deployed=$( (cd infra && bunx alchemy state read "Stargrep/$STAGE/output") | sed -n '/^{/,$p' | jq -r '.aiProvider // "none"' || echo none)
+            if [ "$deployed" != "$provider" ]; then
+              echo "$STAGE runs on ${deployed:-none} and the pull request asks for $provider, so the stage is destroyed and deployed fresh."
+              bun run --cwd infra destroy --stage "$STAGE" --yes
+            fi
+          fi
           # Cloudflare can take longer than Alchemy's own retries to find a Worker or queue it just created. Deploying again converges.
           if ! bun run --cwd infra deploy --stage "$STAGE" --yes; then
             echo "Deploying $STAGE failed, so it deploys once more in 30 seconds."
