@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { cn } from "../src/lib/cn.ts";
+import { cn, themeScales } from "../src/lib/cn.ts";
 
 describe("cn", () => {
   test("a later class from the custom theme scale replaces the earlier one", () => {
@@ -19,4 +19,16 @@ describe("cn", () => {
   test("a side padding refines the tile padding instead of replacing it", () => {
     expect(cn("p-tile", "pt-tile-top")).toBe("p-tile pt-tile-top");
   });
+});
+
+test("cn knows every named step theme.css defines, and no other", async () => {
+  const css = await Bun.file(new URL("../src/theme.css", import.meta.url)).text();
+  const theme = css.slice(0, css.indexOf("@layer base"));
+  for (const [scale, names] of Object.entries(themeScales)) {
+    const defined = Array.from(
+      theme.matchAll(new RegExp(`--${scale}-([a-z0-9-]+?)(?:--[a-z-]+)?:`, "g")),
+      (match) => match[1],
+    ).filter((name) => name !== undefined && !/^\d+$/.test(name));
+    expect([...new Set(defined)].toSorted()).toEqual([...names].toSorted());
+  }
 });

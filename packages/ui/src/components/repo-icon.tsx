@@ -30,10 +30,10 @@ export type RepoIconSize = "card" | "panel";
 const sizes: Record<RepoIconSize, { slot: string; letters: string; side: number }> = {
   card: {
     slot: "size-11 list:size-9",
-    letters: "text-[17px] leading-[20px] list:text-[15px] list:leading-[18px]",
+    letters: "text-lg leading-[20px] list:text-base list:leading-[18px]",
     side: 44,
   },
-  panel: { slot: "size-14", letters: "text-[22px] leading-[26px]", side: 56 },
+  panel: { slot: "size-14", letters: "text-title leading-[26px]", side: 56 },
 };
 
 export function Monogram({ letters, size = "card" }: { letters: string; size?: RepoIconSize }) {

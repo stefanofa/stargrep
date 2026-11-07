@@ -44,6 +44,20 @@ Text on the butter tile always uses the light-mode ink (#1E1B2E) and light-mode 
 
 Avatar fills for initials avatars rotate through #FBD9C4, #DCD0FF, #F9D4E6, #CDEEDC with ink text. Real GitHub avatars replace them when available.
 
+These color tokens back the rules above:
+
+| Token | Light | Dark | Use |
+|---|---|---|---|
+| `--color-ink` | #1E1B2E | #1E1B2E | Text and the primary button on the butter tile |
+| `--color-ink-secondary` | #3A3550 | #3A3550 | Secondary text on the butter tile |
+| `--color-ink-accent` | #5B3FCC | #5B3FCC | Matches and the focus ring on the butter tile |
+| `--color-avatar-1` to `-4` | #FBD9C4, #DCD0FF, #F9D4E6, #CDEEDC | same | Initials avatars and the repo monogram |
+| `--color-plate` | #FFFFFF | #FFF6D6 | The disc behind the mascot on the butter tile |
+| `--color-scrim` | #7860D2 at 26% | #0B0A12 at 60% | Behind the repo detail panel |
+| `--color-image-edge` | black at 10% | white at 10% | The 1px outline on images |
+
+The butter tile maps the semantic tokens onto these, so a component inside it needs no override: `foreground` becomes `ink`, `accent-strong` and `ring` become `ink-accent`, and `primary` becomes an ink button with white text.
+
 `--color-muted-foreground` is #6E6985, not the #757089 used in the G13 render. On the lilac ground, #757089 at 13px fell just under 4.5:1. The key screens already use the new value.
 
 ### Type
@@ -58,6 +72,7 @@ Avatar fills for initials avatars rotate through #FBD9C4, #DCD0FF, #F9D4E6, #CDE
 | `--text-meta` | 14px / `--leading-sm` 18px | Owner lines in small tiles, meta lines in the hero tile, chips, tabs, buttons |
 | `--text-base` | 15px / `--leading-base` 22px | Reason lines in small tiles, body |
 | `--text-lg` | 17px / `--leading-lg` 26px | Reason line in the hero tile, collection notes |
+| `--text-title` | 22px / 28px | Repo names in list rows, empty tile headings on phones, the monogram in the panel |
 | `--text-xl` | 24px / `--leading-xl` 32px | The query in the search tile |
 | `--text-name` | 26px / 30px | Repo names in small tiles |
 | `--text-2xl` | 30px / 34px | Tile numbers |
@@ -66,7 +81,7 @@ Avatar fills for initials avatars rotate through #FBD9C4, #DCD0FF, #F9D4E6, #CDE
 | `--text-display` | 52px | Hero tile headline ("found 5!") |
 | `--text-hero` | 120px | The one big number per page ("412") |
 
-Display sizes take `--tracking-tight` (-0.02em). Headings in Fredoka are lowercase ("found 5!", "pinned", "similar taste", "best rust tui libraries"). Nothing goes under 13px except uppercase labels at 11px.
+Display sizes take `--tracking-tight` (-0.02em). Names and headings below display size take `--tracking-snug` (-0.01em). Headings in Fredoka are lowercase ("found 5!", "pinned", "similar taste", "best rust tui libraries"). Nothing goes under 13px except uppercase labels at 11px.
 
 Load Fredoka (600 only) and Inter (variable) from the app, with `font-display: swap`. Two families and four weights in total.
 
@@ -82,10 +97,12 @@ Load Fredoka (600 only) and Inter (variable) from the app, with `font-display: s
 | `--spacing-tile` | 28px | Side padding of the search tile and list rows |
 | `--spacing-tile-lg` | 30px | Side padding of the hero and summary tiles |
 | `--spacing-12`, `-16`, `-24` | 48, 64, 96px | Page top and bottom |
+| `--radius-xs` | 8px | The `/` key hint in the search tile |
 | `--radius-sm` | 12px | Repo monogram squares |
 | `--radius-md` | 20px | List rows, menus, popovers, tooltips |
 | `--radius-tile` | 28px | Tiles, the search tile, the detail panel |
 | `--radius-full` | 999px | Chips, buttons, toggles, avatars |
+| `--radius-item` | `--radius-md` minus 7.5px | Menu items, concentric inside a menu's 1.5px border and 6px padding |
 | `--container-page` | 1200px | Page width |
 | `--container-narrow` | 720px | Reserved for long text, such as docs and the privacy page |
 | `--opacity-archived` | 60% | The star and the alive dot on archived and deprecated tiles |
@@ -96,7 +113,7 @@ The grid is 4 columns at 1024px and up, 2 columns from 640px, and 1 column below
 
 Small tiles take 24px padding at the top and left and 22px at the right and bottom. The hero tile takes 26px at the top, 30px at the sides, and 24px at the bottom. The search tile takes 26px at the top, 28px at the sides, and 24px at the bottom. A list row takes 20px (`--spacing-gap`) at the top and bottom and 28px at the sides.
 
-Tiles have no borders and no shadows. Separation comes from the lilac ground showing between white tiles. The only shadow in the system is on the repo detail panel, over a lilac scrim.
+Tiles have no borders and no shadows. Separation comes from the lilac ground showing between white tiles. Two shadows exist: `--shadow-panel` on the repo detail panel, over a lilac scrim, and `--shadow-dock` on the search tile while it docks at the bottom of a phone screen.
 
 ## Components
 
