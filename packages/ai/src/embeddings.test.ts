@@ -1,10 +1,7 @@
 import { describe, expect } from "bun:test";
 import * as it from "@stargrep/testing";
-import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
-import * as TestClock from "effect/testing/TestClock";
 import * as Embeddings from "./embeddings.ts";
 import { AiUnavailable } from "./errors.ts";
 import { embeddingModel } from "./models.ts";
@@ -20,9 +17,8 @@ const service = (vectors: ReadonlyArray<ReadonlyArray<number>>) =>
   });
 
 describe("Embeddings.make", () => {
-  it.effect("retries an embedding model that is briefly unavailable", () =>
+  it.effect("calls the adapter once, so retries stay with the adapter that knows the provider's retry-after", () =>
     Effect.gen(function* () {
-      const attempted = yield* Deferred.make<void>();
       let attempts = 0;
       const embeddings = Embeddings.make({
         provider: "test",
@@ -31,20 +27,11 @@ describe("Embeddings.make", () => {
         run: () =>
           Effect.suspend(() => {
             attempts++;
-            return attempts === 1
-              ? Deferred.succeed(attempted, undefined).pipe(
-                  Effect.andThen(
-                    Effect.fail(new AiUnavailable({ operation: "embed", model: model.id, detail: "503" })),
-                  ),
-                )
-              : Effect.succeed({ vectors: [[1, 0, 0]], tokens: 1 });
+            return Effect.fail(new AiUnavailable({ operation: "embed", model: model.id, detail: "503" }));
           }),
       });
-      const fiber = yield* Effect.forkChild(embeddings.embed(["one"]));
-      yield* Deferred.await(attempted);
-      yield* TestClock.adjust("10 seconds");
-      expect(yield* Fiber.join(fiber)).toEqual([{ model: model.id, vector: [1, 0, 0] }]);
-      expect(attempts).toBe(2);
+      expect((yield* Effect.flip(embeddings.embed(["one"])))._tag).toBe("AiUnavailable");
+      expect(attempts).toBe(1);
     }),
   );
 

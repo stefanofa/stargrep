@@ -196,14 +196,13 @@ describe("gateway text generation", () => {
     ),
   );
 
-  it.effect("retries an error the SDK marks as retryable three times, then fails with AiUnavailable", () => {
+  it.effect("lets the SDK retry an error it marks as retryable three times, then fails with AiUnavailable", () => {
     let attempts = 0;
     return Effect.gen(function* () {
-      const fiber = yield* Effect.forkChild(Effect.flip(Summarize.summarize(repo)));
-      const upstream = yield* settle(fiber);
+      const upstream = yield* Effect.flip(Summarize.summarize(repo));
       expect(attempts).toBe(4);
       expect(upstream.message).toBe(
-        "Model 'test/model' is unavailable for 'generate' and may answer a retry: AI_APICallError with status 502",
+        "Model 'test/model' is unavailable for 'generate' and may answer a retry: AI_APICallError with status 502 after 4 attempts",
       );
       expect(JSON.stringify(upstream)).not.toContain("SECRET");
     }).pipe(
@@ -215,6 +214,30 @@ describe("gateway text generation", () => {
             url: "https://ai-gateway.vercel.sh/v1",
             requestBodyValues: { prompt: "SECRET README TEXT" },
             statusCode: 502,
+            responseHeaders: { "retry-after-ms": "0" },
+          });
+        }),
+      ),
+    );
+  });
+
+  it.effect("waits as long as the provider's retry-after asks before it tries again", () => {
+    const tried: Array<number> = [];
+    return Effect.gen(function* () {
+      expect(yield* Summarize.summarize(repo)).toEqual(validSummary);
+      const [first = 0, second = 0] = tried;
+      expect(second - first).toBeGreaterThanOrEqual(40);
+    }).pipe(
+      Effect.provide(
+        textLayer(async () => {
+          tried.push(performance.now());
+          if (tried.length > 1) return textResult(JSON.stringify(validSummary));
+          throw new APICallError({
+            message: "rate limited",
+            url: "https://ai-gateway.vercel.sh/v1",
+            requestBodyValues: {},
+            statusCode: 429,
+            responseHeaders: { "retry-after-ms": "40" },
           });
         }),
       ),
@@ -234,7 +257,7 @@ describe("gateway text generation", () => {
         });
       },
       "test/model",
-      { retry: Port.noRetry },
+      { maxRetries: 0 },
     );
     return Effect.gen(function* () {
       const error = yield* Effect.flip(Summarize.summarize(repo));
@@ -249,7 +272,7 @@ describe("gateway text generation", () => {
           options.abortSignal?.addEventListener("abort", () => reject(options.abortSignal?.reason)),
         ),
       "test/model",
-      { timeout: Duration.seconds(4), retry: Port.noRetry },
+      { timeout: Duration.seconds(4), maxRetries: 0 },
     );
     return Effect.gen(function* () {
       const fiber = yield* Effect.forkChild(Effect.flip(Summarize.summarize(repo)));
@@ -262,15 +285,18 @@ describe("gateway text generation", () => {
 
   it.effect("fails with AiUnavailable on the gateway's internal server error", () =>
     Effect.gen(function* () {
-      const fiber = yield* Effect.forkChild(Effect.flip(Summarize.summarize(repo)));
-      const error = yield* settle(fiber);
+      const error = yield* Effect.flip(Summarize.summarize(repo));
       expect(error._tag).toBe("AiUnavailable");
       expect(error.message).toContain("GatewayInternalServerError with status 500");
     }).pipe(
       Effect.provide(
-        textLayer(async () => {
-          throw new GatewayInternalServerError({ message: "Internal server error" });
-        }),
+        textLayer(
+          async () => {
+            throw new GatewayInternalServerError({ message: "Internal server error" });
+          },
+          "test/model",
+          { maxRetries: 0 },
+        ),
       ),
     ),
   );
@@ -464,6 +490,47 @@ describe("gateway batch", () => {
 });
 
 describe("gateway embeddings", () => {
+  it.effect("retries only the provider call that failed when the SDK splits the texts", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    const provider = Gateway.AiProvider.of({
+      languageModel: unused,
+      embeddingModel: () =>
+        new MockEmbeddingModelV4({
+          maxEmbeddingsPerCall: 2,
+          supportsParallelCalls: false,
+          doEmbed: async ({ values }) => {
+            calls.push(values);
+            if (values.includes("three") && calls.length === 2) {
+              throw new APICallError({
+                message: "overloaded",
+                url: "https://ai-gateway.vercel.sh/v1",
+                requestBodyValues: {},
+                statusCode: 503,
+                responseHeaders: { "retry-after-ms": "0" },
+              });
+            }
+            return { embeddings: values.map(() => Array.from({ length: 64 }, () => 0.1)), warnings: [] };
+          },
+        }),
+      experimental_batch: unused,
+    });
+    return Effect.gen(function* () {
+      const embeddings = yield* Embeddings.Embeddings;
+      expect(yield* embeddings.embed(["one", "two", "three", "four"])).toHaveLength(4);
+      expect(calls).toEqual([
+        ["one", "two"],
+        ["three", "four"],
+        ["three", "four"],
+      ]);
+    }).pipe(
+      Effect.provide(
+        Gateway.layerEmbeddings({ ...Models.embeddingModel, id: "test/embed", dimensions: 64 }).pipe(
+          Layer.provide(Layer.succeed(Gateway.AiProvider, provider)),
+        ),
+      ),
+    );
+  });
+
   it.effect("fails with AiOutputInvalid when the model ignores the requested size", () => {
     const provider = Gateway.AiProvider.of({
       languageModel: unused,

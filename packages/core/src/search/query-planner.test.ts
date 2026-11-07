@@ -1,6 +1,5 @@
 import { expect } from "bun:test";
 import * as Fake from "@stargrep/ai/fake";
-import { noRetry } from "@stargrep/ai/port";
 import * as TextGeneration from "@stargrep/ai/text-generation";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
@@ -161,7 +160,6 @@ it.effect("searches the query as typed when the planner stalls past its timeout,
       provider: "stalled",
       model: "fake/planner",
       timeout: Duration.seconds(4),
-      retry: noRetry,
       run: () => Effect.never,
     }),
   );
