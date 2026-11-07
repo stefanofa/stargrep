@@ -1,16 +1,9 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { Avatar, type Person } from "./avatar.tsx";
 import { Button, buttonVariants } from "./button.tsx";
-import { CloseIcon, ExternalIcon, PlusIcon, StarIcon } from "./icons.tsx";
+import { CloseIcon, ExternalIcon, StarIcon } from "./icons.tsx";
 import { RepoIcon, type RepoVisual } from "./repo-icon.tsx";
 import { type Activity, activityLabel, formatStars } from "./results.tsx";
-
-export type RelatedRepo = {
-  readonly owner: string;
-  readonly name: string;
-  readonly href: string;
-  readonly stars: number;
-};
 
 export type RepoDetail = {
   readonly owner: string;
@@ -21,10 +14,8 @@ export type RepoDetail = {
   readonly stars: number | null;
   readonly starred?: { readonly by: string; readonly on: string };
   readonly activity: Activity;
-  readonly release?: string;
   readonly license?: string;
   readonly network: ReadonlyArray<Person>;
-  readonly alsoStarred: ReadonlyArray<RelatedRepo>;
   readonly githubUrl: string;
   readonly visual: RepoVisual;
 };
@@ -38,13 +29,11 @@ export function RepoPanel({
   repo,
   open,
   onOpenChange,
-  onAddToCollection,
   returnFocus,
 }: {
   repo: RepoDetail | undefined;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onAddToCollection?: (repo: RepoDetail) => void;
   returnFocus?: HTMLElement | null;
 }) {
   return (
@@ -113,12 +102,6 @@ export function RepoPanel({
                       {activityLabel(repo.activity)}
                     </dd>
                   </div>
-                  {repo.release && (
-                    <div className={`${fact} grow`}>
-                      <dt className={factLabel}>Release</dt>
-                      <dd className={factValue}>{repo.release}</dd>
-                    </div>
-                  )}
                   {repo.license && (
                     <div className={`${fact} grow-[0.7]`}>
                       <dt className={factLabel}>License</dt>
@@ -156,52 +139,15 @@ export function RepoPanel({
                 </section>
               )}
 
-              {repo.alsoStarred.length > 0 && (
-                <section className="flex flex-col gap-3">
-                  <h3 className={heading}>people who star this also star</h3>
-                  <ul className="grid grid-cols-3 gap-3 max-sm:grid-cols-1">
-                    {repo.alsoStarred.slice(0, 3).map((related) => (
-                      <li
-                        key={`${related.owner}/${related.name}`}
-                        className="relative flex flex-col gap-[14px] squircle rounded-md bg-background px-4 py-[14px]"
-                      >
-                        <div className="flex flex-col gap-px">
-                          <a
-                            href={related.href}
-                            className="font-display text-[19px] leading-base font-semibold after:absolute after:inset-0 after:rounded-[inherit]"
-                          >
-                            {related.name}
-                          </a>
-                          <span className="font-sans text-sm font-medium text-muted-foreground">{related.owner}</span>
-                        </div>
-                        <span className="flex items-center gap-1 font-display text-lg leading-gap font-semibold">
-                          <StarIcon className="size-3.5" />
-                          {formatStars(related.stars)}
-                          <span className="sr-only">stars</span>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )}
-
-              <div className="mt-auto flex gap-[10px]">
-                <a
-                  href={repo.githubUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={buttonVariants({ size: "lg", className: "flex-1" })}
-                >
-                  Open on GitHub
-                  <ExternalIcon />
-                </a>
-                {onAddToCollection && (
-                  <Button variant="secondary" size="lg" className="flex-1" onClick={() => onAddToCollection(repo)}>
-                    <PlusIcon />
-                    Add to collection
-                  </Button>
-                )}
-              </div>
+              <a
+                href={repo.githubUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={buttonVariants({ size: "lg", className: "mt-auto" })}
+              >
+                Open on GitHub
+                <ExternalIcon />
+              </a>
             </>
           )}
         </Dialog.Popup>

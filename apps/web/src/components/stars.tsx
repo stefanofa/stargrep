@@ -2,7 +2,6 @@ import {
   Button,
   EmptyTile,
   type OpenResult,
-  Pip,
   type PipPose,
   RephraseChips,
   RepoPanel,
@@ -12,8 +11,6 @@ import {
   type Sort,
   SortMenu,
   StatusLine,
-  Tile,
-  useStoredView,
   type View,
   ViewToggle,
 } from "@stargrep/ui";
@@ -23,7 +20,7 @@ import { useHydrated, useNavigate, useSearch } from "@tanstack/react-router";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { keywordTerms, normalize } from "../lib/keyword.ts";
 import { getLibrary, type Library, nothingSynced, useRecoveries } from "../lib/library-collection.ts";
 import { type PageData, type PageRequest, pageOwner, type Session } from "../lib/page-data.ts";
@@ -34,6 +31,7 @@ import { useReveal } from "../lib/reveal.ts";
 import type { Viewer } from "../lib/rpc.ts";
 import { librarySorts, type Params, searchSorts } from "../lib/search-params.ts";
 import { type Body, type Stage, stageOf } from "../lib/search-state.ts";
+import { useStoredView } from "../lib/stored-view.ts";
 import { libraryTrouble, type Trouble, troubleCopy } from "../lib/trouble.ts";
 import { useSemanticSearch } from "../lib/use-semantic.ts";
 import { useSync } from "../lib/use-sync.ts";
@@ -56,31 +54,6 @@ export function HeaderControls({ viewer }: { viewer: Viewer }) {
       <ScopeSwitch scopes={scopes} value="stars" className="max-sm:hidden" />
       <AccountMenu login={viewer.login} avatarUrl={viewer.avatarUrl} />
     </>
-  );
-}
-
-function Notice({
-  heading,
-  detail,
-  pose,
-  action,
-}: {
-  heading: string;
-  detail?: string;
-  pose: PipPose;
-  action?: ReactNode;
-}) {
-  return (
-    <Tile className="relative flex min-h-[240px] flex-col justify-center gap-6 px-tile-lg py-10 sm:px-12">
-      <div className="relative z-10 flex max-w-[640px] flex-col gap-2">
-        <h2 className="font-display text-3xl font-semibold tracking-tight text-balance sm:text-display sm:leading-[56px]">
-          {heading}
-        </h2>
-        {detail && <p className="font-sans text-lg text-secondary-foreground">{detail}</p>}
-      </div>
-      {action && <div className="relative z-10">{action}</div>}
-      <Pip pose={pose} size={200} className="absolute top-5 right-[88px] -rotate-12 max-md:hidden" />
-    </Tile>
   );
 }
 
@@ -398,18 +371,13 @@ function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Li
       )}
       <div data-reveal-results className="flex flex-col gap-gap max-sm:pb-44">
         {troubled !== undefined ? (
-          <Notice
-            heading={troubled.heading}
-            detail={troubled.detail}
-            pose={troubled.pose}
-            action={
-              tryAgain && (
-                <Button variant="primary" size="lg" disabled={retrying} onClick={tryAgain}>
-                  Try again
-                </Button>
-              )
-            }
-          />
+          <EmptyTile pose={troubled.pose} heading={troubled.heading} body={troubled.detail}>
+            {tryAgain && (
+              <Button variant="primary" size="lg" className="mt-2" disabled={retrying} onClick={tryAgain}>
+                Try again
+              </Button>
+            )}
+          </EmptyTile>
         ) : !ready ? (
           <Waiting
             view={view}

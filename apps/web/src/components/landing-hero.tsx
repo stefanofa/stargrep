@@ -1,4 +1,4 @@
-import { cn, Pip, type PipPose, Tile } from "@stargrep/ui";
+import { Chip, cn, Pip, type PipPose, ProgressRing, Tile } from "@stargrep/ui";
 import type { Stage } from "../lib/search-state.ts";
 import { SignInButton } from "./sign-in-button.tsx";
 
@@ -48,31 +48,6 @@ export const heroCopy = ({
   };
 };
 
-const radius = 68;
-const circumference = 2 * Math.PI * radius;
-
-function Ring({ progress }: { progress: number }) {
-  const length = Math.min(1, Math.max(0, progress)) * circumference;
-  return (
-    <svg aria-hidden viewBox="0 0 150 150" fill="none" className="absolute inset-0 size-full max-lg:hidden">
-      <circle cx="75" cy="75" r={radius} stroke="var(--color-plate)" strokeWidth="8" />
-      {length > 0 && (
-        <circle
-          cx="75"
-          cy="75"
-          r={radius}
-          transform="rotate(-90 75 75)"
-          stroke="var(--color-accent)"
-          strokeWidth="8"
-          strokeLinecap="round"
-          strokeDasharray={`${length} ${circumference}`}
-          className="transition-[stroke-dasharray] duration-500 ease-out motion-reduce:transition-none"
-        />
-      )}
-    </svg>
-  );
-}
-
 function ButterTile({ butter, pose }: { butter: Butter; pose: PipPose }) {
   const claim = butter.kind === "claim";
   return (
@@ -89,7 +64,7 @@ function ButterTile({ butter, pose }: { butter: Butter; pose: PipPose }) {
             claim && "lg:scale-[0.8267]",
           )}
         />
-        {claim && <Ring progress={butter.progress} />}
+        {claim && <ProgressRing progress={butter.progress} on="butter" className="max-lg:hidden" />}
         <Pip
           pose={pose}
           size={112}
@@ -148,13 +123,9 @@ export function TryChips({ examples, onPick }: { examples: ReadonlyArray<string>
       <ul aria-label="Example searches" className="contents">
         {examples.map((example) => (
           <li key={example}>
-            <button
-              type="button"
-              onClick={() => onPick(example)}
-              className="relative flex h-9 items-center rounded-full bg-card px-3.5 font-sans text-meta font-medium text-foreground transition-[background-color,scale] duration-120 after:absolute after:inset-x-0 after:-inset-y-1 hover:bg-muted motion-safe:active:scale-[0.96]"
-            >
+            <Chip type="button" tone="card" onClick={() => onPick(example)}>
               {example}
-            </button>
+            </Chip>
           </li>
         ))}
       </ul>

@@ -119,14 +119,8 @@ export const ratatui: RepoDetail = {
   stars: 16_400,
   starred: { by: "you", on: "Mar 14, 2025" },
   activity: { state: "alive", label: "pushed 2 days ago" },
-  release: "v0.29.0",
   license: "MIT",
   network: [people.lena, people.kofi, people.jprd, people.mtsk],
-  alsoStarred: [
-    { owner: "ClementTsang", name: "bottom", href: "?repo=ClementTsang/bottom", stars: 11_600 },
-    { owner: "crossterm-rs", name: "crossterm", href: "?repo=crossterm-rs/crossterm", stars: 3_600 },
-    { owner: "extrawurst", name: "gitui", href: "?repo=extrawurst/gitui", stars: 20_600 },
-  ],
   githubUrl: "https://github.com/ratatui/ratatui",
   visual: { kind: "icon", url: icons.ratatui, plate: "light", size: 128, letters: "ra" },
 };
@@ -154,7 +148,6 @@ export const detailFor = (result: Result): RepoDetail =>
         starred: { by: "you", on: result.starred },
         activity: result.activity,
         network: result.network,
-        alsoStarred: ratatui.alsoStarred.filter((related) => related.name !== result.name),
         githubUrl: `https://github.com/${result.owner}/${result.name}`,
         visual: result.visual,
       };

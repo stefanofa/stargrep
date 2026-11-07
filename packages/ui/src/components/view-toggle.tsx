@@ -1,38 +1,12 @@
 import { Toggle } from "@base-ui/react/toggle";
 import { ToggleGroup } from "@base-ui/react/toggle-group";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { cn } from "../lib/cn.ts";
 import { ListIcon, TilesIcon } from "./icons.tsx";
 
 export type View = "tiles" | "list";
 
-const storageKey = "stargrep:view";
-
-const isView = (value: unknown): value is View => value === "tiles" || value === "list";
-
-const readStoredView = (): View | undefined => {
-  try {
-    const stored = localStorage.getItem(storageKey);
-    return isView(stored) ? stored : undefined;
-  } catch {
-    return undefined;
-  }
-};
-
-export function useStoredView(fallback: View = "tiles") {
-  const [view, setView] = useState<View>(fallback);
-  useEffect(() => {
-    const stored = readStoredView();
-    if (stored) setView(stored);
-  }, []);
-  const update = useCallback((next: View) => {
-    setView(next);
-    try {
-      localStorage.setItem(storageKey, next);
-    } catch {}
-  }, []);
-  return [view, update] as const;
-}
+export const isView = (value: unknown): value is View => value === "tiles" || value === "list";
 
 const views = [
   { value: "tiles", label: "Tiles view", Icon: TilesIcon },

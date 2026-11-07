@@ -1,12 +1,15 @@
 export { Avatar, NetworkAvatars, type Person } from "./components/avatar.tsx";
 export { Badge } from "./components/badge.tsx";
 export { Button, buttonVariants } from "./components/button.tsx";
+export { Chip } from "./components/chip.tsx";
 export { DeepSearch } from "./components/deep-search.tsx";
 export { Digits } from "./components/digits.tsx";
 export { EmptyTile, RephraseChips } from "./components/empty-tile.tsx";
 export { LanguageBar, type LanguageShare } from "./components/language-bar.tsx";
+export { popupSurface } from "./components/popup.ts";
+export { ProgressRing } from "./components/progress-ring.tsx";
 export { Monogram, type Plate, RepoIcon, type RepoVisual } from "./components/repo-icon.tsx";
-export { type RelatedRepo, type RepoDetail, RepoPanel } from "./components/repo-panel.tsx";
+export { type RepoDetail, RepoPanel } from "./components/repo-panel.tsx";
 export {
   type Activity,
   formatStars,
@@ -24,8 +27,6 @@ export {
 } from "./components/results.tsx";
 export { type Scope, ScopeSwitch } from "./components/scope-switch.tsx";
 export {
-  type Filter,
-  FilterChip,
   SearchTile,
   type StatusIcon,
   StatusLine,
@@ -36,6 +37,6 @@ export { type Sort, SortMenu, sorts } from "./components/sort-menu.tsx";
 export { type StarredDay, type StarredWeek, StarredWeeks } from "./components/starred-weeks.tsx";
 export { Tile, type TileVariant } from "./components/tile.tsx";
 export { Tooltip } from "./components/tooltip.tsx";
-export { useStoredView, type View, ViewToggle } from "./components/view-toggle.tsx";
+export { isView, type View, ViewToggle } from "./components/view-toggle.tsx";
 export { cn } from "./lib/cn.ts";
 export { Pip, type PipPose, pipPoses } from "./mark/pip.tsx";

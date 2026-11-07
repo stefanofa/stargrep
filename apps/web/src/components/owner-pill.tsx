@@ -1,5 +1,5 @@
 import { Popover } from "@base-ui/react/popover";
-import { Avatar } from "@stargrep/ui";
+import { Avatar, cn, popupSurface } from "@stargrep/ui";
 import { useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
 import type { PublicConfig, Viewer } from "../lib/rpc.ts";
@@ -71,10 +71,7 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Positioner sideOffset={8} align="start" className="z-50 outline-none">
-          <Popover.Popup
-            aria-label="Whose stars to search"
-            className="flex w-72 flex-col gap-1 rounded-md border-[1.5px] border-border bg-card p-1.5 font-sans text-meta font-medium text-foreground transition-opacity duration-120 outline-none data-ending-style:opacity-0 data-starting-style:opacity-0"
-          >
+          <Popover.Popup aria-label="Whose stars to search" className={cn(popupSurface, "flex w-72 flex-col gap-1")}>
             <form onSubmit={submit} className="flex flex-col gap-1.5 p-1.5">
               <label htmlFor={field} className="text-sm text-muted-foreground">
                 search anyone's stars

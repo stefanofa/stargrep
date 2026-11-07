@@ -4,8 +4,8 @@ import { createRoot } from "react-dom/client";
 import {
   Badge,
   Button,
+  Chip,
   EmptyTile,
-  type Filter,
   LanguageBar,
   Pip,
   pipPoses,
@@ -24,7 +24,7 @@ import {
   StatusLine,
   Tile,
   type TileProgress,
-  useStoredView,
+  type View,
   ViewToggle,
 } from "../src/index.ts";
 import { detailFor, icons, results, weeks } from "./data.ts";
@@ -134,13 +134,9 @@ const typeScale = [
 
 function Gallery() {
   const [theme, setTheme] = useState<Theme>(initialTheme);
-  const [view, setView] = useStoredView();
+  const [view, setView] = useState<View>("tiles");
   const [scope, setScope] = useState("mine");
-  const [filters, setFilters] = useState<Filter[]>([
-    { id: "lang", label: "Rust" },
-    { id: "starred", label: "Starred in 2025" },
-    { id: "topic", label: "Topic: TUI" },
-  ]);
+  const [query, setQuery] = useState("rust library for terminal dashboards");
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelRepo, setPanelRepo] = useState<RepoDetail>();
   const [opener, setOpener] = useState<HTMLElement | null>(null);
@@ -186,9 +182,8 @@ function Gallery() {
           </span>
         </div>
         <SearchTile
-          defaultQuery="rust library for terminal dashboards"
-          filters={filters}
-          onRemoveFilter={(removed) => setFilters((current) => current.filter((filter) => filter.id !== removed.id))}
+          query={query}
+          onQueryChange={setQuery}
           status={<StatusLine icon="busy" label="found 3 so far" detail="1,364 stars not read yet" />}
           controls={controls}
           progress={{ value: 412, max: 1776, label: "reading your stars", text: "412 of 1,776 read" }}
@@ -214,19 +209,14 @@ function Gallery() {
             setPanelOpen(true);
           }}
         />
-        <RepoPanel
-          repo={panelRepo}
-          open={panelOpen}
-          onOpenChange={setPanelOpen}
-          onAddToCollection={() => {}}
-          returnFocus={opener}
-        />
+        <RepoPanel repo={panelRepo} open={panelOpen} onOpenChange={setPanelOpen} returnFocus={opener} />
       </Section>
 
       <Section id="states" title="strip states">
         {strips.map((strip) => (
           <SearchTile
             key={strip.label}
+            query=""
             placeholder="the rust tui library I starred last year"
             status={<StatusLine {...strip} />}
             controls={controls}
@@ -300,7 +290,13 @@ function Gallery() {
             Sign in with GitHub
           </Button>
           <Badge>archived</Badge>
-          <Badge variant="chip">Rust</Badge>
+          <Chip type="button">Rust 42%</Chip>
+          <Chip type="button" active>
+            All
+          </Chip>
+          <Chip type="button" tone="card">
+            terminal recorder
+          </Chip>
         </div>
       </Section>
 
