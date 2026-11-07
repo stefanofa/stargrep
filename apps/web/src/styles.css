@@ -6,6 +6,14 @@
   html {
     scrollbar-gutter: stable;
   }
+
+  /* On phones the search tile docks over the bottom of the screen, so focus scrolls a result clear of it. 11rem
+     matches the results' bottom padding. */
+  @media (width < 40rem) {
+    html {
+      scroll-padding-bottom: 11rem;
+    }
+  }
 }
 
 /* The reveal (src/lib/reveal.ts) types the query into the search input once per visit. Until it starts, only the

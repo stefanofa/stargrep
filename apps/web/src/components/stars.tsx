@@ -6,7 +6,6 @@ import {
   RephraseChips,
   RepoPanel,
   Results,
-  ScopeSwitch,
   SearchTile,
   type Sort,
   SortMenu,
@@ -16,7 +15,7 @@ import {
 } from "@stargrep/ui";
 import { and, ilike } from "@tanstack/db";
 import { useLiveQuery } from "@tanstack/react-db";
-import { useHydrated, useNavigate, useRouter, useSearch } from "@tanstack/react-router";
+import { Link, useHydrated, useNavigate, useRouter, useSearch } from "@tanstack/react-router";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -25,7 +24,7 @@ import { keywordTerms, normalize } from "../lib/keyword.ts";
 import { getLibrary, type Library } from "../lib/library-collection.ts";
 import { type PageData, type PageRequest, pageOwner, type Session } from "../lib/page-data.ts";
 import { hitsOf, liveView } from "../lib/page-view.ts";
-import { now, startsIn, toDetail } from "../lib/present.ts";
+import { now, startsIn, toDetail, withLinks } from "../lib/present.ts";
 import { withReply } from "../lib/results.ts";
 import { useReveal } from "../lib/reveal.ts";
 import type { Viewer } from "../lib/rpc.ts";
@@ -47,12 +46,19 @@ export const pageFor = (request: PageRequest, { viewer, config }: Session): Page
   return { viewer, owner, own, config, query, defaultQuery, first: null, sync: null, refusal: null };
 };
 
-const scopes = [{ value: "stars", label: "Your stars", href: "/" }];
-
+// Until other scopes ship, the scope switch is one link to the viewer's own stars rather than a tab list of one.
 export function HeaderControls({ viewer }: { viewer: Viewer }) {
   return (
     <>
-      <ScopeSwitch scopes={scopes} value="stars" className="max-sm:hidden" />
+      <nav aria-label="Scope" className="flex items-center rounded-full bg-card p-1 max-sm:hidden">
+        <Link
+          to="/"
+          activeOptions={{ exact: true, includeSearch: false }}
+          className="flex h-9 items-center rounded-full px-[18px] font-sans text-meta font-medium text-muted-foreground transition-[color,background-color] duration-120 hover:text-foreground aria-[current=page]:bg-accent aria-[current=page]:font-semibold aria-[current=page]:text-ink"
+        >
+          Your stars
+        </Link>
+      </nav>
       <AccountMenu login={viewer.login} avatarUrl={viewer.avatarUrl} />
     </>
   );
@@ -225,6 +231,13 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   const hits = hitsOf(semantic);
   const searching = terms.length > 0 || semantic.kind === "pending" || hits.length > 0;
   const { view, sort, setView, setSort } = useArrangement(searching);
+  // A result's link carries what the page shows, including a view this browser saved, so it opens the same way
+  // anywhere. The default view and sort stay out, so a link doesn't override the opener's own choice.
+  const links: Params = {
+    ...params,
+    q: query === data.defaultQuery ? undefined : query,
+    view: view === "tiles" && params.view === undefined ? undefined : view,
+  };
   const trouble: Trouble | undefined =
     watch.kind !== "watching" ? watch.kind : isLoadingError ? libraryTrouble(library?.failure()) : undefined;
   const surprised = useSurprise(query, semantic.kind === "answered" && hits.length > 0);
@@ -277,8 +290,11 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     setOpener(link);
     navigate({ to: ".", search: (previous) => ({ ...previous, repo: `${result.owner}/${result.name}` }) });
   };
+  // The panel keeps the last repo it showed while it slides closed.
+  const [panelRepo, setPanelRepo] = useState(params.repo);
+  if (params.repo !== undefined && params.repo !== panelRepo) setPanelRepo(params.repo);
   const entry =
-    params.repo === undefined ? undefined : entries.find((repo) => `${repo.owner}/${repo.name}` === params.repo);
+    panelRepo === undefined ? undefined : entries.find((repo) => `${repo.owner}/${repo.name}` === panelRepo);
   const hit = hits.find((result) => result.id === entry?.id);
   const opened = entry && (hit ? withReply(entry, hit) : entry);
 
@@ -309,7 +325,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
             at={at}
             view={view}
             sort={sort}
-            language={params.lang}
+            search={links}
             arriving={current.arriving}
             pose={page.pose}
             butter={!visitor}
@@ -317,7 +333,14 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           />
         );
       case "results":
-        return <Results view={view} groups={current.groups} hero={visitor ? "card" : "butter"} onOpen={open} />;
+        return (
+          <Results
+            view={view}
+            groups={withLinks(current.groups, links)}
+            hero={visitor ? "card" : "butter"}
+            onOpen={open}
+          />
+        );
       case "empty-reading":
         return <EmptyTile pose={page.pose} ring={current.ring} {...current.copy} />;
       case "empty":
@@ -385,7 +408,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
       </div>
       <RepoPanel
         repo={opened && toDetail(opened, at, data.own ? undefined : owner)}
-        open={opened !== undefined}
+        open={params.repo !== undefined && opened !== undefined}
         onOpenChange={(next) => {
           if (!next) navigate({ to: ".", search: (previous) => ({ ...previous, repo: undefined }) });
         }}

@@ -507,6 +507,62 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(mark()).toBe("unsure"));
   });
 
+  test("the header links to your stars, and marks the link current only on your own page", async () => {
+    await open("/?q=terminal");
+    expect(page().getByRole("link", { name: "Your stars" }).getAttribute("aria-current")).toBe("page");
+    expect(page().queryByRole("tablist")).toBeNull();
+    cleanup();
+    server.status = status({ login: "octosync" });
+    await open("/octosync", "Search @octosync's stars");
+    expect(page().getByRole("link", { name: "Your stars" }).getAttribute("aria-current")).toBeNull();
+  });
+
+  test("a result's link keeps the query and a view this browser saved, so it opens the same way anywhere", async () => {
+    localStorage.setItem("stargrep:view", "list");
+    try {
+      await open("/?q=terminal");
+      await waitFor(() =>
+        expect(within(tile()).getByRole("button", { name: "List view" }).getAttribute("aria-pressed")).toBe("true"),
+      );
+      const href = page().getByRole("link", { name: "bottom" }).getAttribute("href") ?? "";
+      expect(Object.fromEntries(new URLSearchParams(href.slice(1)))).toEqual({
+        q: "terminal",
+        view: "list",
+        repo: "ClementTsang/bottom",
+      });
+    } finally {
+      localStorage.removeItem("stargrep:view");
+    }
+  });
+
+  test("a result's link on the demo page keeps a search someone cleared", async () => {
+    const user = userEvent.setup();
+    server.signedIn = false;
+    server.status = status({ login: "stefanofa" });
+    await open("/", "Search @stefanofa's stars");
+    const box = page().getByRole<HTMLInputElement>("searchbox");
+    await user.type(box, "{Backspace}".repeat(box.value.length));
+    const href = (await page().findByRole("link", { name: "bottom" })).getAttribute("href") ?? "";
+    expect(Object.fromEntries(new URLSearchParams(href.slice(1)))).toEqual({ q: "", repo: "ClementTsang/bottom" });
+  });
+
+  test("a closing panel keeps its repo on screen while it slides away", async () => {
+    const user = userEvent.setup();
+    await open("/?q=terminal");
+    await user.click(await page().findByRole("link", { name: "bottom" }));
+    await page().findByRole("heading", { level: 2, name: "bottom" });
+    const blank: Array<boolean> = [];
+    const watch = new MutationObserver(() => {
+      const dialog = document.querySelector("[role=dialog]");
+      if (dialog !== null) blank.push(dialog.querySelector("h2") === null);
+    });
+    watch.observe(document.body, { subtree: true, childList: true });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
+    watch.disconnect();
+    expect(blank).not.toContain(true);
+  });
+
   test("Back puts the query of the page it returns to back in the search box", async () => {
     const user = userEvent.setup();
     const router = await open("/?q=terminal");

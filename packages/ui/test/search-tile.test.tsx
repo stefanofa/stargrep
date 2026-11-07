@@ -6,8 +6,8 @@ import { useState } from "react";
 import { SearchTile, StatusLine } from "../src/index.ts";
 import { page } from "./dom.ts";
 
-function Harness() {
-  const [query, setQuery] = useState("");
+function Harness({ query: initial = "" }: { query?: string }) {
+  const [query, setQuery] = useState(initial);
   return <SearchTile query={query} onQueryChange={setQuery} />;
 }
 
@@ -75,5 +75,34 @@ describe("a server-rendered tile", () => {
     });
     expect(seen).toEqual(["terminal recorder"]);
     container.remove();
+  });
+});
+
+describe("the search box", () => {
+  test("a clear button empties the box and keeps it focused, and shows only when there is text", async () => {
+    const user = userEvent.setup();
+    render(<Harness query="rust tui" />);
+    await user.click(page().getByRole("button", { name: "Clear search" }));
+    const box = page().getByRole<HTMLInputElement>("searchbox");
+    expect(box.value).toBe("");
+    expect(document.activeElement).toBe(box);
+    expect(page().queryByRole("button", { name: "Clear search" })).toBeNull();
+  });
+
+  test("the search key on a touch keyboard puts the keyboard away", async () => {
+    const user = userEvent.setup();
+    const matchMedia = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      ...matchMedia(query),
+      matches: query === "(pointer: coarse)",
+    })) as typeof window.matchMedia;
+    try {
+      render(<Harness query="rust" />);
+      await user.click(page().getByRole("searchbox"));
+      await user.keyboard("{Enter}");
+      expect(document.activeElement).not.toBe(page().getByRole("searchbox"));
+    } finally {
+      window.matchMedia = matchMedia;
+    }
   });
 });

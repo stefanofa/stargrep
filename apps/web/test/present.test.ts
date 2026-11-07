@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { defaultParseSearch } from "@tanstack/react-router";
 import { searchText } from "../src/lib/keyword.ts";
 import type { LibraryEntry } from "../src/lib/library-collection.ts";
 import { toDetail, toResult } from "../src/lib/present.ts";
+import { validateParams } from "../src/lib/search-params.ts";
 
 const entry = (description: string | null, summary: string | null): LibraryEntry => {
   const repo = {
@@ -53,4 +55,23 @@ test("the panel shows the same repo visual as the card", () => {
   const repo = entry("Widgets for charts.", null);
   expect(toDetail(repo, at, undefined).visual).toEqual(toResult(repo, at).visual);
   expect(toDetail(repo, at, undefined).visual).toMatchObject({ kind: "avatar", letters: "ra" });
+});
+
+test("a result's link opens the repo over the same query, view and sort, and drops a sign-in error", () => {
+  const search = {
+    q: "123",
+    view: "list",
+    sort: "stars",
+    lang: "Rust",
+    repo: "other/repo",
+    error: "access_denied",
+  } as const;
+  const { href } = toResult(entry("Widgets for charts.", null), at, { search });
+  expect(validateParams(defaultParseSearch(href))).toEqual({
+    q: "123",
+    view: "list",
+    sort: "stars",
+    lang: "Rust",
+    repo: "ratatui/ratatui",
+  });
 });

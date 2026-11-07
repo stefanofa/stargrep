@@ -73,7 +73,13 @@ describe("mergeResults", () => {
   });
 
   test("shows only semantic hits when the query has no keyword", () => {
-    const merged = mergeResults({ matched: [ratatui, tuiRs, bottom], terms: [], hits: [hit(bottom)], find, at });
+    const merged = mergeResults({
+      matched: [ratatui, tuiRs, bottom],
+      terms: [],
+      hits: [hit(bottom)],
+      find,
+      at,
+    });
     expect(merged.words).toEqual([]);
     expect(merged.meaning.map((result) => result.name)).toEqual(["bottom"]);
   });

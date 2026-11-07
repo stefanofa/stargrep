@@ -1,8 +1,10 @@
-import type { Activity, RepoDetail, Result } from "@stargrep/ui";
+import type { Activity, RepoDetail, Result, ResultGroup } from "@stargrep/ui";
+import { defaultStringifySearch } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import { highlights } from "./keyword.ts";
 import type { LibraryEntry } from "./library-collection.ts";
 import { repoVisual } from "./repo-visual.ts";
+import type { Params } from "./search-params.ts";
 import { factsPending, type Whose } from "./search-state.ts";
 
 const day = 86_400_000;
@@ -53,6 +55,17 @@ export const starredOn = (iso: string) => dateFormat.format(millis(iso));
 
 export const monthOf = (iso: string) => monthFormat.format(millis(iso)).toLowerCase();
 
+// A result's link opens its repo over the page it was found on, with the same query, view and sort, so a new tab or a
+// copied link lands on the same state.
+const repoHref = (search: Params, repo: Pick<Result, "owner" | "name">) =>
+  defaultStringifySearch({ ...search, error: undefined, repo: `${repo.owner}/${repo.name}` });
+
+export const withLinks = (groups: ReadonlyArray<ResultGroup>, search: Params): ReadonlyArray<ResultGroup> =>
+  groups.map((group) => ({
+    ...group,
+    results: group.results.map((result) => ({ ...result, href: repoHref(search, result) })),
+  }));
+
 const reasonOf = (repo: LibraryEntry) =>
   (repo.read ? (repo.summary ?? repo.description) : (repo.description ?? repo.summary)) ?? "";
 
@@ -60,17 +73,18 @@ export const toResult = (
   repo: LibraryEntry,
   at: number,
   {
+    search = {},
     terms = [],
     values = "",
     flagUnread = true,
-  }: { terms?: ReadonlyArray<string>; values?: string; flagUnread?: boolean } = {},
+  }: { search?: Params; terms?: ReadonlyArray<string>; values?: string; flagUnread?: boolean } = {},
 ): Result => {
   const summary = reasonOf(repo);
   const reason = values === "" ? summary : [summary, values].filter((part) => part !== "").join(" · ");
   return {
     owner: repo.owner,
     name: repo.name,
-    href: `?repo=${encodeURIComponent(`${repo.owner}/${repo.name}`)}`,
+    href: repoHref(search, repo),
     reason,
     matches: highlights(reason, terms),
     activity: activity(repo, at),
