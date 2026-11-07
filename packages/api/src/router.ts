@@ -98,7 +98,17 @@ const wireCodes = {
 } satisfies Record<ApiFailure["_tag"], WireCode>;
 
 // oRPC erases handler failures. api-handler-errors.grit requires this bound before that boundary.
-type ApiResult<A> = Effect.fn.Return<A, ApiFailure, ApiServices>;
+type Procedure = keyof typeof contract;
+type AllowedTag<P extends Procedure> = {
+  [Tag in keyof typeof wireCodes]: (typeof wireCodes)[Tag] extends keyof (typeof contract)[P]["~orpc"]["errorMap"]
+    ? Tag
+    : never;
+}[keyof typeof wireCodes];
+type ApiResult<P extends Procedure, A> = Effect.fn.Return<
+  A,
+  Extract<ApiFailure, { readonly _tag: AllowedTag<P> }>,
+  ApiServices
+>;
 
 const isFailureTag = Schema.is(Schema.Literals(Record.keys(wireCodes)));
 const wireErrors = middlewareGen<{ readonly traceId: string }>(function* ({ context, next }) {
@@ -161,7 +171,10 @@ const libraryRepo = (entry: Db.LibraryEntry, icons: IconHost["Service"]) => ({
 
 const searchAnswer = Effect.fnUntraced(function* (input: typeof SearchInput.Type) {
   const scope: Search.Scope = { _tag: input.scope.kind, login: input.scope.login };
-  const outcome = yield* (yield* Search.Search).search({ scope, query: input.q, limit: input.limit });
+  const outcome = yield* (yield* Search.Search).search({ scope, query: input.q, limit: input.limit }).pipe(
+    // The contract only accepts stars; a service rejecting that scope violates its contract.
+    Effect.catchTags({ SearchScopeUnavailable: Effect.die }),
+  );
   const icons = yield* IconHost;
   return {
     planSource: outcome.planSource,
@@ -308,13 +321,13 @@ export const router = implementer.router({
     .use(searchCache)
     .use(Services.services)
     .use(admission("search"))
-    .effect(function* ({ input }): ApiResult<typeof SearchOutput.Type> {
+    .effect(function* ({ input }): ApiResult<"search", typeof SearchOutput.Type> {
       return yield* searchAnswer(input);
     }),
 
   triggerSync: withServices.triggerSync.use(admission("sync")).effect(function* ({
     input,
-  }): ApiResult<typeof SyncStatus.Type> {
+  }): ApiResult<"triggerSync", typeof SyncStatus.Type> {
     const { key } = yield* Caller;
     // A session that cannot be read still imports, as a signed-out request.
     const signedIn = yield* (yield* Viewers).signedIn.pipe(Effect.orElseSucceed(Option.none));
@@ -328,7 +341,7 @@ export const router = implementer.router({
     );
   }),
 
-  syncStatus: withServices.syncStatus.effect(function* ({ input }): ApiResult<typeof SyncStatus.Type> {
+  syncStatus: withServices.syncStatus.effect(function* ({ input }): ApiResult<"syncStatus", typeof SyncStatus.Type> {
     return yield* withProgress(
       input.login,
       SyncRequests.SyncRequests.use((requests) => requests.status(input.login)),
@@ -336,7 +349,7 @@ export const router = implementer.router({
   }),
 
   // The page reads syncStatus only after viewer answers, so a sync claimed here is already queued when it looks.
-  viewer: withServices.viewer.effect(function* ({ context }): ApiResult<typeof WireViewer.Type> {
+  viewer: withServices.viewer.effect(function* ({ context }): ApiResult<"viewer", typeof WireViewer.Type> {
     const { userId, account } = yield* context.viewer;
     yield* requestOwnerSync(account.login, userId, "library open");
     return {
@@ -347,7 +360,7 @@ export const router = implementer.router({
     };
   }),
 
-  library: withServices.library.effect(function* ({ context }): ApiResult<typeof Library.Type> {
+  library: withServices.library.effect(function* ({ context }): ApiResult<"library", typeof Library.Type> {
     const { account } = yield* context.viewer;
     const entries = yield* (yield* Db.Db).stars.library(account.id);
     const icons = yield* IconHost;
@@ -359,7 +372,7 @@ export const router = implementer.router({
     .use(starsCache)
     .use(Services.services)
     .use(admission("stars"))
-    .effect(function* ({ input }): ApiResult<typeof PublicStars.Type> {
+    .effect(function* ({ input }): ApiResult<"stars", typeof PublicStars.Type> {
       return yield* starsPage(input.login, pageSizeFor(input.limit), Option.fromUndefinedOr(input.cursor));
     }),
 
@@ -368,7 +381,7 @@ export const router = implementer.router({
     return context.publicConfig;
   }),
 
-  getRepo: withServices.getRepo.effect(function* ({ input }): ApiResult<typeof RepoDetail.Type> {
+  getRepo: withServices.getRepo.effect(function* ({ input }): ApiResult<"getRepo", typeof RepoDetail.Type> {
     return yield* Effect.all([Db.Db.use((db) => db.repos.require(input.id)), IconHost]).pipe(
       Effect.map(([repo, icons]) => ({
         ...repoFields(repo, icons),

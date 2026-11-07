@@ -1,0 +1,7 @@
+language js
+
+`$key: $chain` where {
+  $chain <: contains `function* ($params): ApiResult<$procedure, $output> { $_ }`,
+  not $procedure <: `"$key"`,
+  register_diagnostic(span=$procedure, message="ApiResult names a different procedure than its router key.")
+}
