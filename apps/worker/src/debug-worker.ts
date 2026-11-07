@@ -20,7 +20,11 @@ export const DebugToken = Alchemy.makeRandom("DebugToken");
 
 const DebugJobs = Cloudflare.Queues.Queue("DebugJobs");
 const DebugCache = Cloudflare.KV.Namespace("DebugCache");
+// Only non-prod stages deploy the debug Worker, and a stage's destroy, including the recreate that switches a preview's
+// AI provider, must delete the bucket with whatever receipts it still holds. A destroy reads the props saved at the
+// stage's last deploy, so this setting covers only stages deployed with it.
 const DebugBlobs = Cloudflare.R2.Bucket("DebugBlobs", {
+  forceDestroy: true,
   lifecycleRules: [
     {
       id: "expire-consumption-receipts",

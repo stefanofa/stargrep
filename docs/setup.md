@@ -85,7 +85,7 @@ For other editors, run `bunx effect-tsgo setup --help` to see the setup for Neov
 
 ## API
 
-The web Worker serves the API from one oRPC contract in `packages/api`. Search needs a synced login. A missing login answers `ACCOUNT_NOT_SYNCED`. Without `AI_GATEWAY_API_KEY`, search answers `SERVICE_UNAVAILABLE`, except for a demo answer already in the cache. Replace the URL with a stage's `Web` URL from its pull request comment to call a deployed stage.
+The web Worker serves the API from one oRPC contract in `packages/api`. Search needs a synced login. A missing login answers `ACCOUNT_NOT_SYNCED`. On a local stage without `AI_GATEWAY_API_KEY`, search answers `SERVICE_UNAVAILABLE`, except for a demo answer already in the cache. A preview searches with the stand-in models and needs no key, as "Models on previews" explains. Replace the URL with a stage's `Web` URL from its pull request comment to call a deployed stage.
 
 ```sh
 WEB=http://localhost:1340
@@ -184,7 +184,7 @@ DATABASE_URL=postgres://stargrep:stargrep@127.0.0.1:54317/stargrep_bench \
 
 ## Cloudflare and Neon
 
-Four workflows run the stages, and their jobs skip until the steps below are done. `preview` deploys stage `pr-<number>` for each pull request and runs `scripts/stage-smoke.ts` against it. It skips a pull request that changes only `docs/` or Markdown files, and a newer push to the pull request cancels a preview still running. A failed preview deploy runs once more after 30 seconds, because Cloudflare can take a while to find a Worker or queue it just created. `preview-destroy` destroys the stage when the pull request closes. `preview-reconcile` runs daily, or by hand with a dry-run option, and destroys any `pr-<number>` stage whose pull request is closed or gone. `deploy` runs after push CI succeeds for a commit on `main`, or by hand on `main`, where it first requires successful push CI for that commit. It checks out that commit and checks that it is still the head of `main`. It deploys the database stack's stage `shared`, then stage `prod`, then runs read-only health and sync-status checks against `https://stargrep.com`. Preview deploys likewise check the pull request's current head before changing resources.
+Four workflows run the stages, and their jobs skip until the steps below are done. `preview` deploys stage `pr-<number>` for each pull request from this repository and runs `scripts/stage-smoke.ts` against it. It also runs when the pull request gains or loses the `preview-ai` label, as "Models on previews" below explains. It skips a pull request that changes only `docs/` or Markdown files, and a running preview is never cancelled. A newer push or `preview-ai` label change waits as the one pending run and replaces any older pending run, then deploys what the pull request asks for when it starts. A failed preview deploy runs once more after 30 seconds, because Cloudflare can take a while to find a Worker or queue it just created. `preview-destroy` destroys the stage when the pull request closes. `preview-reconcile` runs daily, or by hand with a dry-run option, and destroys any `pr-<number>` stage whose pull request is closed or gone. `deploy` runs after push CI succeeds for a commit on `main`, or by hand on `main`, where it first requires successful push CI for that commit. It checks out that commit and checks that it is still the head of `main`. It deploys the database stack's stage `shared`, then stage `prod`, then runs read-only health and sync-status checks against `https://stargrep.com`. Preview deploys likewise check the pull request's current head before changing resources.
 
 1. Create two Cloudflare API tokens for the account, one for prod and one for previews, each with these permissions: Workers Scripts Write, Workers KV Storage Write, Workers R2 Storage Write, Queues Write, Hyperdrive Write, Secrets Store Write, Account Settings Write, and Workers Tail Read. The Secrets Store permission is for Alchemy's state store, which keeps its keys there. Each preview creates new Workers, and Cloudflare grants creating Workers only across the whole account, so the preview token can still change prod's Workers. It can also read prod's records in the shared state store. The prod token also needs four permissions on the zone `stargrep.com` only: Zone Read, Workers Routes Write, Dynamic URL Redirects Write, and Zone WAF Write. Zone WAF Write lets the deploy own the zone's rate limiting rule, see "Limits" in `docs/architecture.md`. The preview token gets no zone permissions.
 
@@ -203,7 +203,7 @@ Four workflows run the stages, and their jobs skip until the steps below are don
    gh api -X PUT 'repos/{owner}/{repo}/environments/preview'
    ```
 
-5. Add each environment's secrets, and the Cloudflare account ID as a repository variable. The variable turns the deploy jobs on. `deploy` reads secrets only from `production`, and the preview workflows only from `preview`. A workflow on any branch can read repository secrets and `preview` secrets, so keep prod's credentials only in `production` and keep no secrets at the repository level. Pull requests from forks get no Actions secrets by default, so their previews don't deploy, and `production` stays limited to `main` either way. Both environments can hold the same AI Gateway key. `preview` holds the personal GitHub token. `production` holds the App's private key, and the personal token too for as long as prod may need to go back to it. Each deploy binds `AI_GATEWAY_API_KEY` and the one GitHub credential its stage reads with to the Worker as secrets. A `prod` deploy fails without the AI Gateway key or the credential `STARGREP_GITHUB_SERVER_TOKEN` picks, with the App's client ID for the App. A pull request stage or a local stage deploys without them. There, every GitHub call fails with `GitHubTokenMissing` and every model call with `AiKeyMissing`, so each pipeline message goes to the dead-letter queue on its first attempt.
+5. Add each environment's secrets, and the Cloudflare account ID as a repository variable. The variable turns the deploy jobs on. `deploy` reads secrets only from `production`, and the preview workflows only from `preview`. A workflow on any branch can read repository secrets and `preview` secrets, so keep prod's credentials only in `production` and keep no secrets at the repository level. Pull requests from forks get no Actions secrets by default, so their previews don't deploy, and `production` stays limited to `main` either way. Both environments can hold the same AI Gateway key. `preview` holds the personal GitHub token. `production` holds the App's private key, and the personal token too for as long as prod may need to go back to it. Each deploy binds `AI_GATEWAY_API_KEY` and the one GitHub credential its stage reads with to the Worker as secrets. A `prod` deploy fails without the AI Gateway key or the credential `STARGREP_GITHUB_SERVER_TOKEN` picks, with the App's client ID for the App. A pull request stage or a local stage deploys without them. Without the GitHub token, every GitHub call fails with `GitHubTokenMissing`, so each pipeline message goes to the dead-letter queue on its first attempt. A pull request stage binds the AI Gateway key only when its pull request opts in, as "Models on previews" below explains.
 
    ```sh
    for env in production preview; do
@@ -222,6 +222,32 @@ Four workflows run the stages, and their jobs skip until the steps below are don
 8. Push to `main`. That deploy creates the Neon projects in stage `shared`, and then `prod`. A pull request stage fails with a missing reference until it has run.
 
 Every stage gets its own Neon branch. Prod's branch is in the project `stargrep-us-east`, and each preview stage's branch is in `stargrep-previews-us-east`. Neon deletes a preview branch about two weeks after its last deploy, in case its destroy job never ran.
+
+## Models on previews
+
+Prod and local stages call the models. Each `pr-<number>` preview answers with deterministic fakes from `@stargrep/ai/stand-in` instead. Its deploy binds no `AI_GATEWAY_API_KEY`, even when the deploy's environment has one, and binds `STARGREP_AI_PROVIDER=fake`.
+
+- A summary is the repo's description and the first 60 words of its README. Its keywords are the repo's topics, and its kind is `other`.
+- An embedding hashes the words into 1,024 dimensions under the model ID `fake/hash-embedding`, so texts that share words land close together.
+- The planner has no key, so search runs every sentence as typed and reports the plan as a fallback.
+
+Opening a preview's home page still imports the demo account's real stars through GitHub, so the page shows real repos, icons, and import progress at no model cost. That import replaces seeding a stage by hand with synthetic accounts and fake vectors under the production model ID. The `stargrep_ai_tokens` metric names the model of every call it counts, and on a preview each model starts with `fake/`. Its Workers hold no AI Gateway key, so they can't reach the gateway at all.
+
+`defaultAiProvider` in `stageSettings` (`packages/runtime/src/stage.ts`) is each stage's default, and `withStageAi` in `packages/runtime/src/ai-key.ts` applies it to the config of every resource the stack declares. Prod always calls the gateway and ignores `STARGREP_AI_PROVIDER`.
+
+To call the real models on a preview, add the `preview-ai` label to its pull request. Remove the label to go back to the fakes. Each change runs the preview workflow at once, and the run reads the pull request's labels from GitHub right before it deploys, so a run queued before a label change deploys what the labels say now. An opted-in preview spends like prod, about $0.76 for every 1,000 repos it imports that no account has read yet, so remove the label as soon as the check is done.
+
+A database keeps the embedding model of its first request, so a stage never changes provider in place. The workflow compares the provider the labels ask for with the `aiProvider` in the stage's output. When they differ, it destroys the stage and then deploys it fresh, both inside the stage's deploy lock. The stage is down for those few minutes and imports its stars again. Because the old branch is gone before the new one is created, a switch needs no spare branch in the preview project. A deploy writes the output last and a destroy deletes it last, so a stage whose output names no provider, such as one deployed before stages recorded it or one cut off mid-deploy, is recreated too. That is also how every preview deployed before the fakes existed moves to them, on its next run.
+
+A pull request from a fork gets no secrets, so its preview job skips instead of failing.
+
+A local stage keeps calling the gateway, because its database is the `stargrep` database every earlier run wrote real embeddings into, and it fails every model call with `AiKeyMissing` when the environment has no key. To run a local stage on the fakes, start from an empty Postgres volume, because the fakes can't share a database with real embeddings. This deletes the local database:
+
+```sh
+docker compose down --volumes && docker compose up --detach --wait
+DATABASE_URL=postgres://stargrep:stargrep@127.0.0.1:54317/stargrep bun run --cwd packages/db migrate
+STARGREP_AI_PROVIDER=fake bun run --cwd infra dev
+```
 
 ## The app's installation token
 

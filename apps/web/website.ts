@@ -2,7 +2,7 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
 import { apiKeyName } from "@stargrep/ai/gateway";
 import { demoLoginName } from "@stargrep/api/public-config";
 import { bindings, githubSignIn, names } from "@stargrep/auth/config";
-import { aiGatewayKey } from "@stargrep/runtime/ai-key";
+import { aiGatewayKey, aiProviderName } from "@stargrep/runtime/ai-key";
 import { budgetShareName, serverTokenName, serverTokenPolicy } from "@stargrep/runtime/server-token";
 import { webResourceId } from "@stargrep/runtime/stage";
 import MainWorker from "@stargrep/worker";
@@ -54,6 +54,7 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
     const { stage, production, placement } = yield* settings;
     const { kind, share } = yield* serverTokenPolicy(stage);
     const key = yield* aiGatewayKey;
+    const aiProvider = yield* Config.option(Config.String(aiProviderName));
     const demoLogin = yield* Config.option(Config.String(demoLoginName));
     return {
       rootDir: new URL(".", import.meta.url).pathname,
@@ -76,6 +77,7 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
           Cloudflare.RateLimit(name, { namespaceId: namespaceId(stage, policy.namespace), simple: policy.simple }),
         ),
         ...Option.match(key, { onNone: () => ({}), onSome: (value) => ({ [apiKeyName]: value }) }),
+        ...Option.match(aiProvider, { onNone: () => ({}), onSome: (value) => ({ [aiProviderName]: value }) }),
         ...Option.match(demoLogin, { onNone: () => ({}), onSome: (value) => ({ [demoLoginName]: value }) }),
         ...(yield* signInBindings),
       },

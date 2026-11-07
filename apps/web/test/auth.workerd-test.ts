@@ -37,11 +37,21 @@ const stage = (origin: string, database: Hyperdrive, github: GitHubSignIn) => {
   const stageEnv = { ...env, DATABASE: database };
   const auth = makeAuthServer(
     (request) =>
-      Option.some(layerAuthRequest(stageEnv, { aiKey: Option.none(), budgetShare: share, auth: config }, request)),
+      Option.some(
+        layerAuthRequest(
+          stageEnv,
+          { ai: { provider: "gateway", key: Option.none() }, budgetShare: share, auth: config },
+          request,
+        ),
+      ),
     Layer.empty,
   );
   const api = testServer((request) =>
-    layerRequest(stageEnv, { aiKey: Option.none(), budgetShare: share, auth: Option.some(config) }, request),
+    layerRequest(
+      stageEnv,
+      { ai: { provider: "gateway", key: Option.none() }, budgetShare: share, auth: Option.some(config) },
+      request,
+    ),
   );
   const cookies = new Map<string, string>();
   const send = async (path: string, init: RequestInit = {}) => {

@@ -1,12 +1,11 @@
 import type * as Cloudflare from "@alchemy.run/cloudflare";
 import type * as Embeddings from "@stargrep/ai/embeddings";
-import * as Gateway from "@stargrep/ai/gateway";
 import type * as TextGeneration from "@stargrep/ai/text-generation";
 import { FetchIcon, IconHttp, IconQueue, IconStore, Normalize } from "@stargrep/core/icons";
 import { BlobStore, EnrichQueue } from "@stargrep/core/repos";
 import * as GitHub from "@stargrep/github/github";
 import type * as TokenGate from "@stargrep/github/token-gate";
-import { aiGatewayKey } from "@stargrep/runtime/ai-key";
+import * as Ai from "@stargrep/runtime/ai-key";
 import * as DbRuntime from "@stargrep/runtime/db";
 import { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Arr from "effect/Array";
@@ -126,7 +125,7 @@ export const layerIconStore = (bucket: Cloudflare.R2.ReadWriteBucketClient) =>
     }),
   );
 
-export const aiModels = Effect.map(aiGatewayKey, (key) => Gateway.layerModelsForKey(key, { batch: false }));
+export const aiModels = Effect.map(Ai.aiSetup, Ai.layerModels);
 
 interface Bindings {
   readonly database: Effect.Effect<Redacted.Redacted<string>, never, RuntimeContext>;

@@ -30,6 +30,9 @@ export const stageSettings = (stage: string) => {
     placement: { region: "aws:us-east-1" as const },
     retain: production,
     debug: !production,
+    // A preview answers with deterministic fakes unless its deploy opts in, so opening one spends no model money. A
+    // local stage shares one database with its earlier runs, so it keeps the gateway unless its deploy asks for fakes.
+    defaultAiProvider: /^pr-\d+$/.test(stage) ? ("fake" as const) : ("gateway" as const),
   } as const;
 };
 export type StageSettings = ReturnType<typeof stageSettings>;

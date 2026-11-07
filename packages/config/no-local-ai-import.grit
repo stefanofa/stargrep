@@ -8,6 +8,6 @@ or {
   `import $source`,
   `import($source)`
 } where {
-  $source <: r"[\"']@stargrep/ai/(?:local|fake|claude-code|summarize\.fake)(?:/.*)?[\"']",
-  register_diagnostic(span=$source, message="App code uses only the gateway layer from @stargrep/ai/gateway. The local selector, the Claude Code harness, and the fakes are for local tools and tests.")
+  $source <: r"[\"']@stargrep/ai/(?:local|fake|claude-code|summarize\.fake|stand-in)(?:/.*)?[\"']",
+  register_diagnostic(span=$source, message="App code uses only the gateway layer from @stargrep/ai/gateway. The local selector, the Claude Code harness, and the fakes are for local tools and tests. @stargrep/runtime/ai-key picks the stand-ins by stage.")
 }

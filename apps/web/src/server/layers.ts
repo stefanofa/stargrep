@@ -1,10 +1,10 @@
-import * as Gateway from "@stargrep/ai/gateway";
 import { Caller } from "@stargrep/api/caller";
 import { IconHost } from "@stargrep/api/icon-host";
 import type { AuthConfig } from "@stargrep/auth/config";
 import { ModelAllowance, QueryPlanner, Search } from "@stargrep/core/search";
 import { SyncRequests } from "@stargrep/core/stars";
 import type { BudgetShare } from "@stargrep/github/schemas";
+import { type AiSetup, layerSearch } from "@stargrep/runtime/ai-key";
 import * as DbRuntime from "@stargrep/runtime/db";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -26,18 +26,18 @@ const adopted = Ref.makeUnsafe(false);
 const connectionString = (env: WebEnv) => Redacted.make(env.DATABASE.connectionString);
 
 export interface RequestConfig {
-  readonly aiKey: Option.Option<Redacted.Redacted<string>>;
+  readonly ai: AiSetup;
   readonly budgetShare: BudgetShare;
   readonly auth: Option.Option<AuthConfig>;
 }
 
-const layerStorage = (env: WebEnv, { aiKey, budgetShare }: Pick<RequestConfig, "aiKey" | "budgetShare">) =>
+const layerStorage = (env: WebEnv, { ai, budgetShare }: Pick<RequestConfig, "ai" | "budgetShare">) =>
   Layer.mergeAll(SyncRequests.layer(budgetShare), FetchHttpClient.layer).pipe(
     Layer.provideMerge(Layer.merge(layerSyncQueue(env.SYNC_STARS), layerOwnerLookup(env.WORKER))),
     Layer.provideMerge(
       DbRuntime.layerDb({ connectionString: connectionString(env), adopted, maxConnections: maxDatabaseConnections }),
     ),
-    Layer.provideMerge(Gateway.layerSearchForKey(aiKey)),
+    Layer.provideMerge(layerSearch(ai)),
   );
 
 export const layerRequest = (env: WebEnv, config: RequestConfig, request: Request) =>
