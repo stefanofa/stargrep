@@ -84,9 +84,15 @@ returns text
 language sql immutable parallel safe
 as $$
   select case
-    when dim = 'language' and role in ('written_in', 'for') then replace(role, '_', '-') || ':lang:' || value
-    when dim = 'platform' and role in ('runs_on', 'for') then replace(role, '_', '-') || ':platform:' || value
-    when dim = 'subject' and role in ('for', 'about', 'trait', 'tagged') then role || ':subject:' || value
+    when dim = 'language' and role in ('written_in', 'for') then
+      (case role when 'written_in' then 'written-in' when 'for' then 'for' end)
+      || ':lang:' || value
+    when dim = 'platform' and role in ('runs_on', 'for') then
+      (case role when 'runs_on' then 'runs-on' when 'for' then 'for' end)
+      || ':platform:' || value
+    when dim = 'subject' and role in ('for', 'about', 'trait', 'tagged') then
+      (case role when 'for' then 'for' when 'about' then 'about' when 'trait' then 'trait' when 'tagged' then 'tagged' end)
+      || ':subject:' || value
   end
 $$;
 

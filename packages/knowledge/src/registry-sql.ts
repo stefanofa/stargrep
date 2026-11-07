@@ -53,19 +53,16 @@ const expansionRows = () => {
 };
 
 const roleWire = (group: ReadonlyArray<RoleId>) =>
-  group.every((role) => roles[role].wire === role)
-    ? "role"
-    : group.every((role) => roles[role].wire === role.replaceAll("_", "-"))
-      ? "replace(role, '_', '-')"
-      : `(case role ${group.map((role) => `when ${quote(role)} then ${quote(roles[role].wire)}`).join(" ")} end)`;
+  `(case role ${group.map((role) => `when ${quote(role)} then ${quote(roles[role].wire)}`).join(" ")} end)`;
 
 const roleKeyCases = Dim.literals.flatMap((dim) => {
   const group = defaultRoles(dim);
-  const roleList = group.map(quote).join(", ");
   return group.length < 2
     ? []
     : [
-        `    when dim = ${quote(dim)} and role in (${roleList}) then ${roleWire(group)} || ':${dimPrefix[dim]}:' || value`,
+        `    when dim = ${quote(dim)} and role in (${group.map(quote).join(", ")}) then`,
+        `      ${roleWire(group)}`,
+        `      || ':${dimPrefix[dim]}:' || value`,
       ];
 });
 
