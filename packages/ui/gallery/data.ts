@@ -117,7 +117,7 @@ export const ratatui: RepoDetail = {
   summary:
     "Build terminal UIs in Rust from ready widgets: charts, gauges, sparklines, tables, and lists. It draws in immediate mode on crossterm, termion, or termwiz. The maintained fork of tui-rs.",
   stars: 16_400,
-  starred: "Mar 14, 2025",
+  starred: { by: "you", on: "Mar 14, 2025" },
   activity: { state: "alive", label: "pushed 2 days ago" },
   release: "v0.29.0",
   license: "MIT",
@@ -151,7 +151,7 @@ export const detailFor = (result: Result): RepoDetail =>
         description: result.reason,
         summary: result.reason,
         stars: result.stars,
-        starred: result.starred,
+        starred: { by: "you", on: result.starred },
         activity: result.activity,
         network: result.network,
         alsoStarred: ratatui.alsoStarred.filter((related) => related.name !== result.name),

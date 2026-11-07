@@ -63,12 +63,23 @@ export const score = (repo: Searchable, terms: ReadonlyArray<string>) => {
   return terms.reduce((total, term) => total + termScore(term, name, owner, topics), exact);
 };
 
+const wordChar = /[\p{L}\p{N}]/u;
+
+const edge = (text: string, at: number) => !wordChar.test(text.charAt(at));
+
+// A mark explains the match, so it starts a word: "ai" in "jailbreaking" would read as noise. A term of two letters or
+// fewer also has to end the word, or "ai" would mark "aims".
 export const highlights = (text: string, terms: ReadonlyArray<string>): Array<Match> => {
   const lower = text.toLowerCase();
   return terms.flatMap((term) => {
     const found: Array<Match> = [];
-    for (let at = lower.indexOf(term); at >= 0 && term !== ""; at = lower.indexOf(term, at + term.length)) {
-      found.push([at, at + term.length]);
+    const whole = term.length <= 2;
+    for (let at = lower.indexOf(term); at >= 0 && term !== ""; at = lower.indexOf(term, at + 1)) {
+      const end = at + term.length;
+      if (!edge(term, 0) && !edge(lower, at - 1)) continue;
+      if (whole && !edge(lower, end)) continue;
+      found.push([at, end]);
+      at = end - 1;
     }
     return found;
   });

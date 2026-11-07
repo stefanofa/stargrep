@@ -116,6 +116,8 @@ export interface Search {
   readonly meaning: ReadonlyArray<Result>;
   readonly pending: boolean;
   readonly failed: boolean;
+  // Whether any star matches all of these words, so a suggestion never searches for words that find nothing.
+  readonly hasMatches: (terms: ReadonlyArray<string>) => boolean;
 }
 
 const placeholdersAlone = 4;
@@ -283,11 +285,15 @@ const groupsOf = (stage: Stage, { words, meaning, pending }: Search): ReadonlyAr
   ];
 };
 
-const rephrasings = (terms: ReadonlyArray<string>, limit = 3): ReadonlyArray<string> => {
+const rephrasings = ({ terms, hasMatches }: Search, limit = 3): ReadonlyArray<string> => {
   if (terms.length < 2) return [];
-  const pairs = terms.length > 2 ? terms.slice(1).map((term, index) => `${terms[index]} ${term}`) : [];
-  const singles = terms.toSorted((a, b) => b.length - a.length);
-  return [...new Set([...pairs, ...singles])].slice(0, limit);
+  const pairs = terms.length > 2 ? terms.slice(0, -1).map((_, index) => terms.slice(index, index + 2)) : [];
+  const singles = terms
+    .filter((term) => term.length > 2)
+    .toSorted((a, b) => b.length - a.length)
+    .map((term) => [term]);
+  const phrases = [...pairs, ...singles].filter(hasMatches).map((words) => words.join(" "));
+  return [...new Set(phrases)].slice(0, limit);
 };
 
 const notYetCopy = (stage: Underway, timeLeft: string | undefined, whose: Whose): EmptyCopy => {
@@ -347,7 +353,7 @@ const bodyOf = (
           copy: notYetCopy(stage, timeLeft, whose),
           ring: progress === undefined ? undefined : progress.value / Math.max(1, progress.max),
         };
-      const phrases = rephrasings(search.terms);
+      const phrases = rephrasings(search);
       return { kind: "empty", copy: nothingCopy(stage, phrases.length > 0, whose), phrases };
     }
   }

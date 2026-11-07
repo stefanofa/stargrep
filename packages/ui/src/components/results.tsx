@@ -70,6 +70,9 @@ const heroText = {
 const listText = "list:text-sm list:text-muted-foreground";
 const listCell = "list:self-center list:border-0 list:pt-0 list:pr-0 list:mt-0";
 
+// The first result of a search spans two columns. It is the page's butter tile unless the page already has one.
+export type Hero = "butter" | "card";
+
 export type OpenResult = (result: Result, opener: HTMLAnchorElement) => void;
 
 const plainClick = (event: MouseEvent) =>
@@ -93,11 +96,11 @@ function UnreadChip({ className }: { className?: string }) {
 
 export function ResultItem({
   result,
-  hero = false,
+  hero,
   onOpen,
 }: {
   result: Result;
-  hero?: boolean;
+  hero?: Hero | undefined;
   onOpen?: OpenResult | undefined;
 }) {
   const dim = retired(result.activity);
@@ -111,7 +114,7 @@ export function ResultItem({
     <article
       className={cn(
         tileVariants(),
-        hero && "tiles:butter",
+        hero === "butter" && "tiles:butter",
         "grid h-full grid-cols-[1fr_auto] grid-rows-[auto_auto_auto_1fr_auto] gap-y-3 pt-6 pr-tile-sm pb-tile-sm pl-6 [grid-template-areas:'head_head'_'reason_reason'_'network_network'_'stars_starred'_'alive_alive']",
         "list:grid-cols-[auto_1fr] list:grid-rows-none list:gap-x-4 list:gap-y-2 list:sm:gap-x-0 list:rounded-md list:py-gap list:pr-tile list:pl-[74px] list:[grid-template-areas:'head_head'_'reason_reason'_'alive_stars'] list:sm:grid-cols-[180px_100px_190px_1fr] list:sm:[grid-template-areas:'head_head_head_head'_'reason_reason_reason_reason'_'alive_stars_starred_network']",
       )}
@@ -258,7 +261,7 @@ const sample: Result = {
   unread: false,
 };
 
-export function ResultPlaceholder({ hero = false }: { hero?: boolean }) {
+export function ResultPlaceholder({ hero }: { hero?: Hero | undefined }) {
   return (
     <Measured loading label="Loading a result" className="h-full">
       <ResultItem result={sample} hero={hero} />
@@ -335,7 +338,7 @@ function Entry({
 export function ResultList({
   results,
   pending = 0,
-  heroFirst = false,
+  hero,
   entering = () => true,
   enter,
   label,
@@ -344,7 +347,7 @@ export function ResultList({
 }: {
   results: ReadonlyArray<Result>;
   pending?: number;
-  heroFirst?: boolean;
+  hero?: Hero | undefined;
   entering?: (key: string) => boolean;
   enter: Entrance;
   label?: string | undefined;
@@ -362,19 +365,19 @@ export function ResultList({
     >
       {results.map((result, index) => {
         const key = `${result.owner}/${result.name}`;
-        const hero = heroFirst && index === 0;
+        const wide = index === 0 ? hero : undefined;
         return (
-          <Entry key={key} entrance={entering(key) ? enter : null} className={cn(hero && "sm:col-span-2")}>
-            <ResultItem result={result} hero={hero} onOpen={onOpen} />
+          <Entry key={key} entrance={entering(key) ? enter : null} className={cn(wide && "sm:col-span-2")}>
+            <ResultItem result={result} hero={wide} onOpen={onOpen} />
           </Entry>
         );
       })}
       {Array.from({ length: pending }, (_, index) => {
         const position = results.length + index;
-        const hero = heroFirst && position === 0;
+        const wide = position === 0 ? hero : undefined;
         return (
-          <li key={`pending-${position}`} className={cn(hero && "sm:col-span-2")}>
-            <ResultPlaceholder hero={hero} />
+          <li key={`pending-${position}`} className={cn(wide && "sm:col-span-2")}>
+            <ResultPlaceholder hero={wide} />
           </li>
         );
       })}
@@ -384,11 +387,11 @@ export function ResultList({
 
 function Group({
   group,
-  heroFirst,
+  hero,
   onOpen,
 }: {
   group: ResultGroup;
-  heroFirst: boolean;
+  hero: Hero | undefined;
   onOpen?: OpenResult | undefined;
 }) {
   const headingId = useId();
@@ -398,7 +401,7 @@ function Group({
       <ResultList
         results={group.results}
         pending={group.pending ?? 0}
-        heroFirst={heroFirst}
+        hero={hero}
         enter="fade-in"
         label={group.heading ? undefined : "Results"}
         onOpen={onOpen}
@@ -410,18 +413,20 @@ function Group({
 export function Results({
   view,
   groups,
+  hero = "butter",
   onOpen,
   className,
 }: {
   view: View;
   groups: ReadonlyArray<ResultGroup>;
+  hero?: Hero;
   onOpen?: OpenResult | undefined;
   className?: string;
 }) {
   return (
     <div className={cn(view === "list" ? "view-list" : "view-tiles", "flex flex-col gap-6", className)}>
       {groups.map((group, index) => (
-        <Group key={group.key} group={group} heroFirst={index === 0} onOpen={onOpen} />
+        <Group key={group.key} group={group} hero={index === 0 ? hero : undefined} onOpen={onOpen} />
       ))}
     </div>
   );

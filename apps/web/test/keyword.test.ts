@@ -50,6 +50,26 @@ describe("highlights", () => {
     ]);
   });
 
+  test("marks a term only where it starts a word", () => {
+    const text = "Lets control jailbreaking, pairing and remote-control";
+    expect(highlights(text, ["let", "control", "ai"])).toEqual([
+      [0, 3],
+      [5, 12],
+      [46, 53],
+    ]);
+  });
+
+  test("marks a term of two letters only as a whole word", () => {
+    expect(highlights("AI aims for ai, not email", ["ai"])).toEqual([
+      [0, 2],
+      [12, 14],
+    ]);
+  });
+
+  test("marks a term that starts with punctuation wherever it appears", () => {
+    expect(highlights("a dotnet .net port", [".net"])).toEqual([[9, 13]]);
+  });
+
   test("builds lowercase search text from every searchable field", () => {
     expect(searchText({ ...repo("Ratatui", "ratatui", ["TUI"]), description: "Widgets", language: "Rust" })).toBe(
       "ratatui ratatui widgets rust tui",

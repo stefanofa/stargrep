@@ -58,7 +58,7 @@ function Rail({ progress, className }: { progress: TileProgress; className?: str
       className={cn("h-[3px] overflow-hidden bg-accent-soft", className)}
     >
       <div
-        className="h-full origin-left bg-accent transition-transform duration-500 ease-out"
+        className="h-full origin-left bg-accent transition-transform duration-500 ease-out motion-reduce:transition-none"
         style={{ transform: `scaleX(${Math.round(fraction * 1000) / 1000})` }}
       />
     </div>
@@ -136,7 +136,7 @@ export function SearchTile({
 
   return (
     <div className={cn("relative", className)}>
-      <Tile className="flex flex-col overflow-clip p-0 has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-accent">
+      <Tile className="flex flex-col overflow-clip p-0 has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-ring">
         <search
           className={cn(
             "flex flex-col gap-[18px] px-[22px] pt-4 pb-5 sm:px-8 sm:pt-7 sm:pb-6",

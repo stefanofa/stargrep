@@ -1,5 +1,6 @@
 import {
   Button,
+  cn,
   Digits,
   LanguageBar,
   type LanguageShare,
@@ -35,18 +36,21 @@ export interface Arriving {
   readonly total: number | null;
 }
 
+// A visitor's page already has the butter tile in its hero, so their count tile stays white.
 function CountTile({
   count,
   arriving,
   pose,
+  butter,
 }: {
   count: number | undefined;
   arriving: Arriving | undefined;
   pose: PipPose;
+  butter: boolean;
 }) {
   return (
     <Tile
-      variant="highlight"
+      variant={butter ? "highlight" : "default"}
       className="relative flex min-h-[148px] items-center justify-between gap-4 overflow-hidden pt-6 pr-5 pb-6 pl-6 sm:min-h-[236px] sm:pt-tile-top sm:pl-tile-lg"
     >
       <div className="relative z-10 flex flex-col">
@@ -67,7 +71,12 @@ function CountTile({
               : `of ${formatCount(arriving.total)} stars, still arriving`}
         </p>
       </div>
-      <div className="flex size-[104px] shrink-0 items-center justify-center rounded-full bg-plate sm:size-[200px]">
+      <div
+        className={cn(
+          "flex size-[104px] shrink-0 items-center justify-center rounded-full sm:size-[200px]",
+          butter ? "bg-plate" : "bg-accent-soft",
+        )}
+      >
         <Pip pose={pose} size={150} className="max-sm:size-[78px]" />
       </div>
     </Tile>
@@ -131,11 +140,19 @@ function MonthHeading({ heading, size, arriving }: { heading: string; size: numb
   );
 }
 
-export function LibraryPlaceholder({ view, arriving }: { view: View; arriving?: Arriving | undefined }) {
+export function LibraryPlaceholder({
+  view,
+  arriving,
+  butter,
+}: {
+  view: View;
+  arriving?: Arriving | undefined;
+  butter: boolean;
+}) {
   return (
     <>
       <div aria-busy className="grid gap-gap lg:grid-cols-2">
-        <CountTile count={undefined} arriving={arriving} pose="idle" />
+        <CountTile count={undefined} arriving={arriving} pose="idle" butter={butter} />
         <LanguagesTile shares={undefined} language={undefined} />
       </div>
       <section className="flex flex-col gap-gap pt-3">
@@ -158,6 +175,7 @@ export function LibraryView({
   language,
   arriving,
   pose,
+  butter,
   onOpen,
 }: {
   entries: ReadonlyArray<LibraryEntry>;
@@ -167,6 +185,7 @@ export function LibraryView({
   language: string | undefined;
   arriving: Arriving | undefined;
   pose: PipPose;
+  butter: boolean;
   onOpen: OpenResult;
 }) {
   const [shown, setShown] = useState(pageSize);
@@ -190,7 +209,7 @@ export function LibraryView({
   return (
     <>
       <div className="grid gap-gap lg:grid-cols-2">
-        <CountTile count={entries.length} arriving={arriving} pose={pose} />
+        <CountTile count={entries.length} arriving={arriving} pose={pose} butter={butter} />
         <LanguagesTile shares={shares} language={language} />
       </div>
       {Array.from(groups, ([heading, members]) => {

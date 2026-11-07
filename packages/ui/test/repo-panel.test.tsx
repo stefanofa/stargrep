@@ -48,3 +48,11 @@ test("the panel header falls back to the owner's avatar, then the monogram", () 
   cleanup();
   expect(slotIn({ kind: "monogram", letters: "ra" }).textContent).toBe("ra");
 });
+
+test("the panel says who starred the repo", () => {
+  render(
+    <RepoPanel repo={{ ...repo, starred: { by: "@stefanofa", on: "Feb 6, 2026" } }} open onOpenChange={() => {}} />,
+  );
+  expect(page().getByText("@stefanofa starred it Feb 6, 2026")).toBeTruthy();
+  expect(page().queryByText(/you starred it/)).toBeNull();
+});

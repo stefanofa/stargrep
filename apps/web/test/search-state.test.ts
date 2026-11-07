@@ -47,6 +47,7 @@ const search = (extra: Partial<Search> = {}): Search => ({
   meaning: [],
   pending: false,
   failed: false,
+  hasMatches: () => true,
   ...extra,
 });
 
@@ -313,6 +314,16 @@ describe("searching", () => {
     const one = view(ready, { terms: ["asciinema"] }).body;
     expect(one.kind === "empty" && one.phrases).toEqual([]);
     expect(one.kind === "empty" && one.copy.body).not.toContain("try one of these");
+  });
+
+  test("suggests only words that find something, so nonsense gets no chips", () => {
+    const nonsense = view(ready, { terms: ["qzxvbnm", "wplkj"], hasMatches: () => false }).body;
+    expect(nonsense.kind === "empty" && nonsense.phrases).toEqual([]);
+    expect(nonsense.kind === "empty" && nonsense.copy.body).not.toContain("try one of these");
+    const some = view(ready, { ...query, hasMatches: (words) => words.includes("terminal") }).body;
+    expect(some.kind === "empty" && some.phrases).toEqual(["record terminal", "terminal sessions", "terminal"]);
+    const short = view(ready, { terms: ["terminal", "as", "gifs"] }).body;
+    expect(short.kind === "empty" && short.phrases).toEqual(["terminal as", "as gifs", "terminal"]);
   });
 
   test("an empty answer never claims every star was read when some failed", () => {
