@@ -200,7 +200,8 @@ export interface Pipeline<A, R, D = never> {
     deliveries: ReadonlyArray<Delivery<A>>,
   ) => Effect.Effect<ReadonlyArray<Result.Result<Settlement, Failure>>, never, R>;
   readonly describe: (body: A) => Record<string, unknown>;
-  readonly onDeadLetter: (body: A) => Effect.Effect<void, never, D>;
+  // Records a dead letter's outcome. A failure retries the dead letter, so the outcome is never lost to an outage.
+  readonly onDeadLetter: (body: A) => Effect.Effect<void, Failure, D>;
   // The body a deferred message goes out again with. None sends the body it arrived with.
   readonly resend: (body: A) => Option.Option<unknown>;
   // Runs and settles the batch a chunk at a time, so a slow chunk never holds back the messages before it. None runs
@@ -302,16 +303,26 @@ const bodyType = (body: unknown) => ({
   bodyType: body === null ? "null" : Array.isArray(body) ? "array" : typeof body,
 });
 
-export const handleDeadLetters = <A, R, D>(name: string, pipeline: Pipeline<A, R, D>) =>
+// A dead-letter queue has no dead-letter queue of its own, so a dead letter whose outcome still fails to record on its
+// last attempt is logged and acked.
+export const handleDeadLetters = <A, R, D>(name: string, pipeline: Pipeline<A, R, D>, maxRetries: number) =>
   Stream.runForEach(
     Effect.fn("DeadLetters.handle")(function* (message: Message) {
       const decoded = pipeline.decode(message.body);
+      const fields = { queue: name, messageId: message.id, attempts: message.attempts };
       yield* Effect.logError("Dead letter", {
-        queue: name,
-        messageId: message.id,
-        attempts: message.attempts,
+        ...fields,
         ...(Result.isSuccess(decoded) ? pipeline.describe(decoded.success) : bodyType(message.body)),
       });
-      if (Result.isSuccess(decoded)) yield* pipeline.onDeadLetter(decoded.success);
+      const recorded = Result.isSuccess(decoded)
+        ? yield* Effect.result(pipeline.onDeadLetter(decoded.success))
+        : Result.void;
+      if (Result.isSuccess(recorded)) return message.ack();
+      if (message.attempts > maxRetries) {
+        message.ack();
+        return yield* Effect.logError("Dead letter dropped unrecorded", { ...fields, error: recorded.failure._tag });
+      }
+      message.retry();
+      yield* Effect.logWarning("Dead letter not recorded, retrying", { ...fields, error: recorded.failure._tag });
     }),
   );
