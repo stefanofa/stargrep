@@ -1,6 +1,7 @@
 import { gzipSync } from "node:zlib";
 
 export const budget = 130_000;
+export const engineBudget = 355_000;
 
 export const forbidden: ReadonlyArray<readonly [name: string, module: RegExp]> = [
   ["Effect", /\/node_modules\/effect\//],
@@ -10,6 +11,7 @@ export const forbidden: ReadonlyArray<readonly [name: string, module: RegExp]> =
 ];
 
 const indexRoute = /\/src\/routes\/index\.tsx(\?|$)/;
+const engineModule = /\/src\/components\/stars\.tsx(\?|$)/;
 
 export interface Chunk {
   readonly fileName: string;
@@ -30,6 +32,10 @@ export const landingChunks = (chunks: ReadonlyArray<Chunk>): ReadonlyArray<Chunk
   if (entries.length !== 1) throw new Error(`expected one entry chunk, found ${entries.length}`);
   const routes = chunks.filter((chunk) => chunk.moduleIds.some((id) => indexRoute.test(id)));
   if (routes.length === 0) throw new Error("no chunk holds src/routes/index.tsx, so the landing route moved");
+  return dependencies(chunks, [...entries, ...routes]);
+};
+
+const dependencies = (chunks: ReadonlyArray<Chunk>, roots: ReadonlyArray<Chunk>): ReadonlyArray<Chunk> => {
   const byName = new Map(chunks.map((chunk) => [chunk.fileName, chunk]));
   const loaded = new Set<string>();
   const visit = (chunk: Chunk) => {
@@ -40,23 +46,33 @@ export const landingChunks = (chunks: ReadonlyArray<Chunk>): ReadonlyArray<Chunk
       if (imported !== undefined) visit(imported);
     }
   };
-  for (const chunk of [...entries, ...routes]) visit(chunk);
+  for (const chunk of roots) visit(chunk);
   return chunks.filter((chunk) => loaded.has(chunk.fileName));
+};
+
+export const auditEngine = (chunks: ReadonlyArray<Chunk>) => {
+  const roots = chunks.filter((chunk) => chunk.moduleIds.some((id) => engineModule.test(id)));
+  if (roots.length === 0) throw new Error("no chunk holds src/components/stars.tsx, so the engine moved");
+  return measure(dependencies(chunks, roots));
+};
+
+const measure = (chunks: ReadonlyArray<Chunk>) => {
+  const sized = chunks.map((chunk) => ({
+    fileName: chunk.fileName,
+    gzipped: gzipSync(chunk.code, { level: 9 }).byteLength,
+  }));
+  return { chunks: sized, total: sized.reduce((sum, chunk) => sum + chunk.gzipped, 0) };
 };
 
 export const audit = (chunks: ReadonlyArray<Chunk>): Audit => {
   const landing = landingChunks(chunks);
-  const sized = landing.map((chunk) => ({
-    fileName: chunk.fileName,
-    gzipped: gzipSync(chunk.code, { level: 9 }).byteLength,
-  }));
   const found = landing.flatMap((chunk) =>
     forbidden.flatMap(([name, module]) => {
       const hit = chunk.moduleIds.find((id) => module.test(id));
       return hit === undefined ? [] : [{ name, fileName: chunk.fileName, module: hit }];
     }),
   );
-  return { chunks: sized, total: sized.reduce((sum, chunk) => sum + chunk.gzipped, 0), found };
+  return { ...measure(landing), found };
 };
 
 const buildClient = async (root: string): Promise<ReadonlyArray<Chunk>> => {
@@ -72,12 +88,17 @@ const buildClient = async (root: string): Promise<ReadonlyArray<Chunk>> => {
 };
 
 if (import.meta.main) {
-  const report = audit(await buildClient(new URL("..", import.meta.url).pathname));
+  const chunks = await buildClient(new URL("..", import.meta.url).pathname);
+  const report = audit(chunks);
+  const engine = auditEngine(chunks);
   const lines = [
     ...report.chunks.map((chunk) => `${String(chunk.gzipped).padStart(8)} B gz  ${chunk.fileName}`),
     `${String(report.total).padStart(8)} B gz  landing JS, budget ${budget}`,
+    ...engine.chunks.map((chunk) => `${String(chunk.gzipped).padStart(8)} B gz  engine dependency ${chunk.fileName}`),
+    `${String(engine.total).padStart(8)} B gz  engine JS with dependencies, budget ${engineBudget}`,
   ];
   const problems = [
+    ...(engine.total > engineBudget ? [`engine JS is ${engine.total - engineBudget} B over budget`] : []),
     ...report.found.map((hit) => `${hit.name} in landing chunk ${hit.fileName}: ${hit.module}`),
     ...(report.total > budget ? [`landing JS is ${report.total - budget} B over budget`] : []),
   ];

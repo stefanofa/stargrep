@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { audit, type Chunk } from "../scripts/landing-budget.ts";
+import { audit, auditEngine, type Chunk } from "../scripts/landing-budget.ts";
 
 const chunk = (fileName: string, moduleIds: Array<string>, extra: Partial<Chunk> = {}): Chunk => ({
   fileName,
@@ -14,16 +14,31 @@ const app = "/repo/apps/web/src";
 const effect = "/repo/node_modules/.bun/effect@4.1.2/node_modules/effect/dist/Effect.js";
 
 describe("the landing budget", () => {
-  test("counts the entry, the index route and what they import, and nothing the search route loads alone", () => {
+  test("counts the entry, the index route and their imports, excluding unrelated routes", () => {
     const report = audit([
       chunk("index.js", [`${app}/router.tsx`], { isEntry: true, imports: ["shared.js"] }),
       chunk("shared.js", ["/repo/packages/ui/src/mark/pip.tsx"]),
       chunk("routes.js", [`${app}/routes/index.tsx?tsr-split=component`], { imports: ["shared.js"] }),
-      chunk("search.js", [`${app}/routes/search.tsx?tsr-split=component`, effect]),
+      chunk("settings.js", [`${app}/routes/settings.tsx?tsr-split=component`, effect]),
     ]);
     expect(report.chunks.map((entry) => entry.fileName)).toEqual(["index.js", "shared.js", "routes.js"]);
     expect(report.found).toEqual([]);
     expect(report.total).toBe(report.chunks.reduce((sum, entry) => sum + entry.gzipped, 0));
+  });
+
+  test("home hydration loads the engine and its dependencies while the landing budget stays light", () => {
+    const chunks = [
+      chunk("index.js", [`${app}/router.tsx`, `${app}/routes/index.tsx`], { isEntry: true, imports: ["runtime.js"] }),
+      chunk("runtime.js", ["/runtime.js"]),
+      chunk("stars.js", [`${app}/components/stars.tsx`, effect], { imports: ["index.js", "db.js"] }),
+      chunk("db.js", ["/repo/node_modules/@tanstack/db/index.js"], { imports: ["runtime.js"] }),
+      chunk("settings.js", [`${app}/routes/settings.tsx`]),
+    ];
+    expect(audit(chunks).chunks.map((entry) => entry.fileName)).toEqual(["index.js", "runtime.js"]);
+    const engine = auditEngine(chunks);
+    expect(engine.chunks.map((entry) => entry.fileName)).toEqual(["index.js", "runtime.js", "stars.js", "db.js"]);
+    expect(engine.total).toBe(engine.chunks.reduce((sum, entry) => sum + entry.gzipped, 0));
+    expect(() => auditEngine(chunks.filter((chunk) => chunk.fileName !== "stars.js"))).toThrow("engine moved");
   });
 
   test("names each forbidden package by module path, however the code was minified", () => {

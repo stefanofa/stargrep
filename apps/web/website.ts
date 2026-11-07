@@ -15,6 +15,9 @@ import * as Alchemy from "alchemy";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Record from "effect/Record";
+
+import { rateLimitPolicy } from "./rate-limit-policy.ts";
 
 const SearchCache = Cloudflare.KV.Namespace("SearchCache");
 
@@ -67,22 +70,9 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
         [budgetShareName]: String(yield* stageBudgetShare(stage, kind)),
         [serverTokenName]: kind,
         ICONS: yield* Icons,
-        SYNC_PER_CALLER: Cloudflare.RateLimit("SYNC_PER_CALLER", {
-          namespaceId: namespaceId(stage, "sync-per-caller"),
-          simple: { limit: 5, period: 60 },
-        }),
-        SYNC_OVERALL: Cloudflare.RateLimit("SYNC_OVERALL", {
-          namespaceId: namespaceId(stage, "sync-overall"),
-          simple: { limit: 60, period: 60 },
-        }),
-        SEARCH_PER_CALLER: Cloudflare.RateLimit("SEARCH_PER_CALLER", {
-          namespaceId: namespaceId(stage, "search-per-caller"),
-          simple: { limit: 120, period: 60 },
-        }),
-        STARS_PER_CALLER: Cloudflare.RateLimit("STARS_PER_CALLER", {
-          namespaceId: namespaceId(stage, "stars-per-caller"),
-          simple: { limit: 60, period: 60 },
-        }),
+        ...Record.map(rateLimitPolicy, (policy, name) =>
+          Cloudflare.RateLimit(name, { namespaceId: namespaceId(stage, policy.namespace), simple: policy.simple }),
+        ),
         ...Option.match(key, { onNone: () => ({}), onSome: (value) => ({ [apiKeyName]: value }) }),
         ...Option.match(demoLogin, { onNone: () => ({}), onSome: (value) => ({ [demoLoginName]: value }) }),
         ...(yield* signInBindings),
