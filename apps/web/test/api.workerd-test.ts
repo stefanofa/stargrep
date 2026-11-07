@@ -391,6 +391,12 @@ describe("getRepo and the spec", () => {
     expect(search.properties.scope.properties.kind.enum).toEqual(["stars"]);
     expect(search.properties.scope.required).toEqual(["kind", "login"]);
     expect(search.properties.scope.properties.login.pattern).toBe(githubLogin.source);
+    expect(JSON.stringify(document.paths["/search"].post.responses)).not.toMatch(
+      /"(?:SIGN_IN_UNAVAILABLE|NOT_FOUND|REPO_NOT_FOUND|UNAUTHORIZED|SCOPE_UNAVAILABLE)"/,
+    );
+    expect(JSON.stringify(document.paths["/config"].get.responses)).not.toMatch(
+      /"(?:SERVICE_UNAVAILABLE|TOO_MANY_REQUESTS|ACCOUNT_NOT_SYNCED)"/,
+    );
     const status = document.paths["/sync/{login}"].get.responses["200"].content["application/json"].schema;
     expect(status.anyOf.map((variant: Json) => variant.properties.state.enum[0])).toEqual([
       "unknown",

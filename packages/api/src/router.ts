@@ -51,7 +51,6 @@ export interface ApiContext extends WithEffectContext<never>, AnswerContext {
   readonly publicConfig: PublicConfig;
   readonly procedureTime: ProcedureTime;
   readonly serviceLayer: Layer.Layer<ApiServices, ApiServicesUnavailable>;
-  readonly execution: "request" | "refresh";
 }
 
 type Equals<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -98,7 +97,7 @@ const wireCodes = {
   EmbeddingModelMismatch: "INTERNAL_SERVER_ERROR",
 } satisfies Record<ApiFailure["_tag"], WireCode>;
 
-// oRPC erases downstream failures to unknown. Handler generators retain this bound before entering that boundary.
+// oRPC erases handler failures. api-handler-errors.grit requires this bound before that boundary.
 type ApiResult<A> = Effect.fn.Return<A, ApiFailure, ApiServices>;
 
 const isFailureTag = Schema.is(Schema.Literals(Record.keys(wireCodes)));
@@ -121,6 +120,7 @@ const wireErrors = middlewareGen<{ readonly traceId: string }>(function* ({ cont
   );
 });
 
+// Public handlers receive a failing effect so reading a viewer also requires declaring session metadata.
 const session = middlewareGen<WithEffectContext<ApiServices>, { readonly viewer: Effect.Effect<Viewer, NotSignedIn> }>(
   function* ({ procedure, next }) {
     const viewer: Effect.Effect<Viewer, NotSignedIn> = requiresSession(procedure)
@@ -194,7 +194,7 @@ const demoSearchKey = (input: typeof SearchInput.Type, config: PublicConfig) => 
 };
 
 const admission = (kind: RateLimitKind) =>
-  middlewareGen<WithEffectContext<ApiServices> & Pick<ApiContext, "execution">>(function* ({ context, next }) {
+  middlewareGen<WithEffectContext<ApiServices> & Pick<AnswerContext, "execution">>(function* ({ context, next }) {
     if (context.execution === "request") yield* (yield* RateLimiter).acquire(kind);
     // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC erases downstream failures to unknown.
     return yield* next();
@@ -307,7 +307,6 @@ export const router = implementer.router({
   search: os.search
     .use(searchCache)
     .use(Services.services)
-    .use(session)
     .use(admission("search"))
     .effect(function* ({ input }): ApiResult<typeof SearchOutput.Type> {
       return yield* searchAnswer(input);
@@ -359,7 +358,6 @@ export const router = implementer.router({
     .use(starsResponse)
     .use(starsCache)
     .use(Services.services)
-    .use(session)
     .use(admission("stars"))
     .effect(function* ({ input }): ApiResult<typeof PublicStars.Type> {
       return yield* starsPage(input.login, pageSizeFor(input.limit), Option.fromUndefinedOr(input.cursor));

@@ -1,0 +1,5 @@
+{
+  "root": true,
+  "linter": { "enabled": true, "rules": { "recommended": false } },
+  "plugins": ["../../api-handler-errors.grit"]
+}

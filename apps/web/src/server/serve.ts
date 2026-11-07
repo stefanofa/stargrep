@@ -232,15 +232,13 @@ export interface ServerOptions {
 
 const refreshTimeout = Duration.seconds(25);
 
-// Work that outlives the response builds its own services, because the request's services close when it returns.
 const background =
-  (options: ServerOptions, request: Request): ApiContext["background"] =>
+  (options: ServerOptions): ApiContext["background"] =>
   (run) =>
     Effect.sync(() =>
       options.waitUntil(
         Effect.runPromise(
           run.pipe(
-            Effect.provide(options.layerFor(request)),
             Effect.timeout(refreshTimeout),
             Effect.catchCause((cause) =>
               Effect.logWarning("Background work failed", { failure: Cause.hasDies(cause) ? "defect" : "failure" }),
@@ -262,7 +260,7 @@ const respond = (route: Route, request: Request, options: ServerOptions) =>
         requestTraceId: span.traceId,
         publicConfig: options.publicConfig(),
         answerCache: options.answerCache(request),
-        background: background(options, request),
+        background: background(options),
       });
       const response =
         (yield* Effect.promise(() => route.answer(request, context))) ?? route.fail(noRoute(span.traceId));

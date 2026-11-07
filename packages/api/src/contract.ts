@@ -2,15 +2,23 @@ import "@orpc/effect/extensions/schema";
 import "@orpc/openapi/extensions/route";
 import { type AnyContractProcedure, oc } from "@orpc/contract";
 import { mcp } from "@orpc/mcp";
-import { githubLogin } from "@stargrep/github/login";
+import { githubLogin, isGitHubLogin } from "@stargrep/github/login";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
+import * as Struct from "effect/Struct";
 import { errors } from "./errors.ts";
 
-export const GitHubLogin = Schema.String.check(Schema.isPattern(githubLogin)).pipe(Schema.brand("Login")).annotate({
-  description: "A GitHub login, such as octocat.",
-});
+export const GitHubLogin = Schema.String.check(
+  Schema.makeFilter(isGitHubLogin, {
+    expected: "a GitHub login",
+    toJsonSchema: () => ({ pattern: githubLogin.source }),
+  }),
+)
+  .pipe(Schema.brand("Login"))
+  .annotate({
+    description: "A GitHub login, such as octocat.",
+  });
 
 const Timestamp = Schema.String.annotate({ description: "An ISO 8601 time in UTC." });
 
@@ -256,11 +264,13 @@ const sessionRequired = {
 export const requiresSession = (procedure: AnyContractProcedure) => procedure["~orpc"].meta.session === "required";
 export const anyoneCanCall = (procedure: AnyContractProcedure) => !requiresSession(procedure);
 
-const procedure = oc.errors(errors);
+const procedure = oc.errors(Struct.pick(errors, ["BAD_REQUEST", "INTERNAL_SERVER_ERROR"]));
+const withServices = procedure.errors(Struct.pick(errors, ["SERVICE_UNAVAILABLE"]));
 
 export const contract = {
   // The query goes in the body, so it never lands in a URL, a request log, or the platform's request span.
-  search: procedure
+  search: withServices
+    .errors(Struct.pick(errors, ["ACCOUNT_NOT_SYNCED", "TOO_MANY_REQUESTS"]))
     .route({
       method: "POST",
       path: "/search",
@@ -272,7 +282,8 @@ export const contract = {
     .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
     .input(SearchInput)
     .output(SearchOutput),
-  triggerSync: procedure
+  triggerSync: withServices
+    .errors(Struct.pick(errors, ["LOGIN_NOT_FOUND", "TOO_MANY_REQUESTS", "SYNC_BUSY"]))
     .route({
       method: "POST",
       path: "/sync/{login}",
@@ -284,7 +295,7 @@ export const contract = {
     })
     .input(SyncInput)
     .output(SyncStatus),
-  syncStatus: procedure
+  syncStatus: withServices
     .route({
       method: "GET",
       path: "/sync/{login}",
@@ -295,7 +306,8 @@ export const contract = {
     })
     .input(SyncInput)
     .output(SyncStatus),
-  getRepo: procedure
+  getRepo: withServices
+    .errors(Struct.pick(errors, ["REPO_NOT_FOUND"]))
     .route({
       method: "GET",
       path: "/repos/{id}",
@@ -305,7 +317,8 @@ export const contract = {
     })
     .input(RepoInput)
     .output(RepoDetail),
-  viewer: procedure
+  viewer: withServices
+    .errors(Struct.pick(errors, ["UNAUTHORIZED"]))
     .meta(sessionRequired)
     .route({
       method: "GET",
@@ -315,7 +328,8 @@ export const contract = {
       description: "Returns the GitHub account of the person signed in with the session cookie.",
     })
     .output(Viewer),
-  library: procedure
+  library: withServices
+    .errors(Struct.pick(errors, ["UNAUTHORIZED"]))
     .meta(sessionRequired)
     .route({
       method: "GET",
@@ -325,7 +339,8 @@ export const contract = {
       description: "Returns every repo the signed-in account starred, newest star first.",
     })
     .output(Library),
-  stars: procedure
+  stars: withServices
+    .errors(Struct.pick(errors, ["ACCOUNT_NOT_SYNCED", "TOO_MANY_REQUESTS"]))
     .route({
       method: "GET",
       path: "/stars/{login}",

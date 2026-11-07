@@ -2,11 +2,9 @@ import { middlewareGen } from "@orpc/effect";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type { ApiServices } from "./services.ts";
 
 export interface StoredAnswer {
   readonly storedAt: number;
@@ -43,8 +41,8 @@ export const memory = () => {
 // What a cached procedure needs from its request.
 export interface AnswerContext {
   readonly answerCache: AnswerCache;
-  // Runs after the response, with services of its own, because the request's services close when it returns.
-  readonly background: (run: Effect.Effect<void, never, ApiServices>) => Effect.Effect<void>;
+  readonly execution: "request" | "refresh";
+  readonly background: (run: Effect.Effect<void>) => Effect.Effect<void>;
   // oRPC's ResponseHeadersHandlerPlugin sets this on the HTTP transports.
   readonly resHeaders?: Headers | undefined;
 }
@@ -96,6 +94,10 @@ export const answerCache = <I, A, C extends AnswerContext>(
   const decode = Schema.decodeEffect(policy.json);
   const encode = Schema.encodeEffect(policy.json);
   const keepFor = Duration.sum(policy.fresh, policy.stale);
+  const refreshContext = { execution: "refresh", resHeaders: undefined } satisfies Pick<
+    AnswerContext,
+    "execution" | "resHeaders"
+  >;
   return middlewareGen<C, object, I, A>(function* ({ context, next }, input, done) {
     const keyOption = keyOf(input, context);
     // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC erases downstream failures to unknown.
@@ -122,10 +124,9 @@ export const answerCache = <I, A, C extends AnswerContext>(
         if (claimRefresh(refreshStarts, key, now, policy.fresh)) {
           yield* context.background(
             Effect.gen(function* () {
-              const built = yield* Effect.context<ApiServices>();
               // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC erases downstream failures to unknown.
               const fresh = yield* next({
-                context: { serviceLayer: Layer.succeedContext(built), execution: "refresh", resHeaders: undefined },
+                context: refreshContext,
                 signal: refreshSignal,
               });
               return fresh.output;

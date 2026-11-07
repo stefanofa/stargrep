@@ -4,14 +4,12 @@ import { describe, expect } from "bun:test";
 import { middlewareGen, type WithEffectContext } from "@orpc/effect";
 import { createRouterClient, os } from "@orpc/server";
 import * as it from "@stargrep/testing";
-import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as AnswerCache from "./answer-cache.ts";
-import type { ApiServices } from "./services.ts";
 
 const Answer = Schema.Struct({ value: Schema.Finite, planned: Schema.Boolean });
 type Answer = typeof Answer.Type;
@@ -30,11 +28,10 @@ class Refused extends Schema.TaggedError<Refused, { readonly brand: unique symbo
 const harness = (planned: () => boolean = () => true) => {
   const memory = AnswerCache.memory();
   const counts = { computed: 0, builds: 0, admitted: 0 };
-  const refreshes: Array<Effect.Effect<void, never, ApiServices>> = [];
+  const refreshes: Array<Effect.Effect<void>> = [];
   const resHeaders = new Headers();
   interface CacheContext extends AnswerCache.AnswerContext, WithEffectContext<never> {
     readonly admission: Effect.Effect<void, Refused>;
-    readonly execution: "request" | "refresh";
   }
   const cached = AnswerCache.answerCache(policy, (key: string, _context: CacheContext) => Option.some(key));
   const compute = os
@@ -74,9 +71,7 @@ const harness = (planned: () => boolean = () => true) => {
       });
       return { value: found.value, cache: resHeaders.get("x-answer-cache") };
     });
-  const runRefreshes = Effect.suspend(() =>
-    Effect.forEach(refreshes.splice(0), (run) => Effect.provideContext(run, Context.empty() as never)),
-  );
+  const runRefreshes = Effect.suspend(() => Effect.all(refreshes.splice(0)));
   return { memory, counts, refreshes, answer, runRefreshes };
 };
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { githubLogin } from "@stargrep/github/login";
+import { isGitHubLogin } from "@stargrep/github/login";
 import { reservedLogin } from "../src/lib/search-params.ts";
 
 const read = (path: string) => Bun.file(new URL(path, import.meta.url)).text();
@@ -32,8 +32,7 @@ describe("logins that share a name with a stargrep path", () => {
   test("every path the Worker or the router answers first is reserved", async () => {
     const names = await answered();
     expect(names).toEqual(expect.arrayContaining(["rpc", "api", "mcp", "health", "auth", "icons", "search"]));
-    for (const name of names.filter((each) => githubLogin.test(each)))
-      expect([name, reservedLogin(name)]).toEqual([name, true]);
+    for (const name of names.filter(isGitHubLogin)) expect([name, reservedLogin(name)]).toEqual([name, true]);
   });
 
   test("reserved names match in any case, and other logins are not reserved", () => {

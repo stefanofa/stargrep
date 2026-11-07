@@ -1,5 +1,5 @@
 import { Popover } from "@base-ui/react/popover";
-import { githubLogin, loginKey } from "@stargrep/github/login";
+import { isGitHubLogin, loginKey } from "@stargrep/github/login";
 import { Avatar, cn, popupSurface } from "@stargrep/ui";
 import { useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
@@ -31,7 +31,7 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
   const field = useId();
 
   const login = typed.trim().replace(/^@/, "");
-  const valid = githubLogin.test(login);
+  const valid = isGitHubLogin(login);
   const people = [...(viewer === null ? [] : [viewer.login]), ...config.featured].filter(
     (person, index, all) => all.findIndex((other) => same(other, person)) === index,
   );

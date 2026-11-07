@@ -1,5 +1,4 @@
 import * as Schema from "effect/Schema";
-import { githubLogin } from "./login.ts";
 
 const makeGitHubId = <Brand extends string>(brand: Parameters<typeof Schema.brand<Brand>>[0]) =>
   Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0)), Schema.brand<Brand>(brand));
@@ -13,7 +12,7 @@ export type GitHubAccountId = typeof GitHubAccountId.Type;
 export const RepoNodeId = Schema.NonEmptyString.pipe(Schema.brand("RepoNodeId"));
 export type RepoNodeId = typeof RepoNodeId.Type;
 
-export const Login = Schema.String.check(Schema.isPattern(githubLogin)).pipe(Schema.brand("Login"));
+export const Login = Schema.NonEmptyString.pipe(Schema.brand("Login"));
 export type Login = typeof Login.Type;
 
 export const RepoName = Schema.NonEmptyString.pipe(Schema.brand("RepoName"));

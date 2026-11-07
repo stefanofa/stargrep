@@ -181,16 +181,7 @@ const publicConfig: PublicConfig = {
 };
 
 // Runs a background refresh before it returns, with services of its own, so a TestClock test sees what it stored.
-const runNow =
-  (
-    servicesEffect: Effect.Effect<Context.Context<ApiServices>, ApiServicesUnavailable>,
-    started?: Array<"refresh">,
-  ): ApiContext["background"] =>
-  (run) =>
-    Effect.sync(() => started?.push("refresh")).pipe(
-      Effect.andThen(Effect.flatMap(servicesEffect, (built) => Effect.provideContext(run, built))),
-      Effect.catch((error) => Effect.logWarning("Refresh could not start", { error: error._tag })),
-    );
+const runNow: ApiContext["background"] = (run) => run;
 
 const contextFor = (
   transport: Transport,
@@ -204,7 +195,7 @@ const contextFor = (
   serviceLayer: Layer.unwrap(Effect.map(servicesEffect, Layer.succeedContext)),
   execution: "request",
   answerCache: AnswerCache.disabled,
-  background: runNow(servicesEffect),
+  background: runNow,
 });
 
 const client = (fakes: Fakes = {}, transport: Transport = "rpc") => {
@@ -327,6 +318,13 @@ describe("search", () => {
 });
 
 describe("sync", () => {
+  test("accepts real legacy GitHub logins at the API input boundary", async () => {
+    const { api } = client();
+    for (const login of ["Nek-", "john--", "foo--bar"]) {
+      expect(await api.syncStatus({ login })).toMatchObject({ login, state: "failed" });
+    }
+  });
+
   test("queues a signed-in import as that user's work, and a broken session as a signed-out one", async () => {
     const sent: Array<readonly [Login, SyncRequests.Requester]> = [];
     const caller = Db.CallerKey.make("caller-test");
