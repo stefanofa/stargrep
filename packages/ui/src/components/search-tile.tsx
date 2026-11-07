@@ -1,34 +1,8 @@
 import { Input } from "@base-ui/react/input";
-import {
-  type FormEvent,
-  type KeyboardEvent,
-  type ReactNode,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { type FormEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "../lib/cn.ts";
-import { Badge } from "./badge.tsx";
-import { Button } from "./button.tsx";
-import { CloseIcon, SearchIcon } from "./icons.tsx";
+import { SearchIcon } from "./icons.tsx";
 import { Tile } from "./tile.tsx";
-
-export type Filter = {
-  readonly id: string;
-  readonly label: string;
-};
-
-export function FilterChip({ filter, onRemove }: { filter: Filter; onRemove: (filter: Filter) => void }) {
-  return (
-    <Badge variant="chip">
-      {filter.label}
-      <Button variant="bare" size="xs" aria-label={`Remove ${filter.label}`} onClick={() => onRemove(filter)}>
-        <CloseIcon />
-      </Button>
-    </Badge>
-  );
-}
 
 const typing = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
@@ -67,11 +41,7 @@ function Rail({ progress, className }: { progress: TileProgress; className?: str
 
 export function SearchTile({
   query,
-  defaultQuery = "",
   onQueryChange,
-  onSubmit,
-  filters = [],
-  onRemoveFilter,
   label = "Search your stars",
   placeholder,
   owner,
@@ -80,12 +50,8 @@ export function SearchTile({
   progress,
   className,
 }: {
-  query?: string | undefined;
-  defaultQuery?: string;
+  query: string;
   onQueryChange?: (query: string) => void;
-  onSubmit?: (query: string) => void;
-  filters?: ReadonlyArray<Filter>;
-  onRemoveFilter?: (filter: Filter) => void;
   label?: string;
   placeholder?: string | undefined;
   owner?: ReactNode;
@@ -95,18 +61,12 @@ export function SearchTile({
   className?: string;
 }) {
   const input = useRef<HTMLInputElement>(null);
-  const [own, setOwn] = useState(defaultQuery);
-  const current = query ?? own;
-  const change = (next: string) => {
-    setOwn(next);
-    onQueryChange?.(next);
-  };
 
   // A server-rendered tile takes typing before its script arrives, so it adopts what the input holds when it hydrates.
-  const typedEarly = useRef({ current, change });
+  const typedEarly = useRef({ query, onQueryChange });
   useLayoutEffect(() => {
     const typed = input.current?.value;
-    if (typed !== undefined && typed !== typedEarly.current.current) typedEarly.current.change(typed);
+    if (typed !== undefined && typed !== typedEarly.current.query) typedEarly.current.onQueryChange?.(typed);
   }, []);
 
   useEffect(() => {
@@ -119,18 +79,7 @@ export function SearchTile({
     return () => window.removeEventListener("keydown", focusOnSlash);
   }, []);
 
-  const removeLastOnBackspace = (event: KeyboardEvent<HTMLInputElement>) => {
-    const last = filters.at(-1);
-    if (event.key === "Backspace" && current === "" && last && onRemoveFilter) {
-      event.preventDefault();
-      onRemoveFilter(last);
-    }
-  };
-
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    onSubmit?.(current);
-  };
+  const submit = (event: FormEvent<HTMLFormElement>) => event.preventDefault();
 
   const strip = status !== undefined || controls !== undefined;
 
@@ -151,24 +100,14 @@ export function SearchTile({
               type="search"
               aria-label={label}
               placeholder={placeholder}
-              value={current}
-              onValueChange={change}
-              onKeyDown={removeLastOnBackspace}
+              value={query}
+              onValueChange={(next) => onQueryChange?.(next)}
               className="min-w-0 flex-1 bg-transparent font-sans text-ellipsis outline-none text-[16px] leading-6 font-medium text-foreground placeholder:text-muted-foreground sm:text-xl sm:tracking-snug [&::-webkit-search-cancel-button]:appearance-none"
             />
             <kbd className="flex h-[30px] shrink-0 items-center rounded-xs bg-muted px-2.5 font-sans text-sm font-semibold text-secondary-foreground max-sm:hidden">
               /
             </kbd>
           </form>
-          {filters.length > 0 && (
-            <ul aria-label="Filters" className="flex flex-wrap gap-2 sm:pl-[42px]">
-              {filters.map((filter) => (
-                <li key={filter.id}>
-                  <FilterChip filter={filter} onRemove={(removed) => onRemoveFilter?.(removed)} />
-                </li>
-              ))}
-            </ul>
-          )}
         </search>
         {strip && (
           <div className="max-sm:order-first sm:pr-5 sm:pb-1.5 sm:pl-8">

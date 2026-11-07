@@ -31,7 +31,6 @@ const detail: RepoDetail = {
   stars: 16_400,
   activity: { state: "alive", label: "pushed 2 days ago" },
   network: [],
-  alsoStarred: [],
   githubUrl: "https://github.com/ratatui/ratatui",
   visual: { kind: "monogram", letters: "ra" },
 };

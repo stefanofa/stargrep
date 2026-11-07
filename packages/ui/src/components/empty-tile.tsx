@@ -1,31 +1,9 @@
 import type { ReactNode } from "react";
 import { cn } from "../lib/cn.ts";
 import { Pip, type PipPose } from "../mark/pip.tsx";
+import { Chip } from "./chip.tsx";
+import { ProgressRing } from "./progress-ring.tsx";
 import { Tile } from "./tile.tsx";
-
-const circumference = 2 * Math.PI * 78;
-
-function Ring({ progress }: { progress: number }) {
-  const length = Math.min(1, Math.max(0, progress)) * circumference;
-  return (
-    <svg aria-hidden viewBox="0 0 168 168" className="absolute inset-0 size-full" fill="none">
-      <circle cx="84" cy="84" r="78" stroke="var(--color-accent-soft)" strokeWidth="7" />
-      {length > 0 && (
-        <circle
-          cx="84"
-          cy="84"
-          r="78"
-          transform="rotate(-90 84 84)"
-          stroke="var(--color-accent)"
-          strokeWidth="7"
-          strokeLinecap="round"
-          strokeDasharray={`${length} ${circumference}`}
-          className="transition-[stroke-dasharray] duration-500 ease-out motion-reduce:transition-none"
-        />
-      )}
-    </svg>
-  );
-}
 
 export function EmptyTile({
   pose,
@@ -50,7 +28,7 @@ export function EmptyTile({
           ring === undefined && "bg-accent-soft",
         )}
       >
-        {ring !== undefined && <Ring progress={ring} />}
+        {ring !== undefined && <ProgressRing progress={ring} on="card" />}
         <Pip pose={pose} size={132} className="sm:size-[150px]" />
       </div>
       <div className="flex min-w-0 flex-1 flex-col items-center gap-2.5 sm:items-start">
@@ -80,13 +58,9 @@ export function RephraseChips({
     <ul aria-label="Try other words" className="flex flex-wrap justify-center gap-2 pt-2 sm:justify-start">
       {phrases.map((phrase) => (
         <li key={phrase}>
-          <button
-            type="button"
-            onClick={() => onPick(phrase)}
-            className="relative after:absolute after:inset-x-0 after:-inset-y-1 flex h-9 items-center rounded-full bg-accent-soft px-4 font-sans text-meta font-semibold text-accent-strong transition-[color,background-color,scale] duration-120 motion-safe:active:scale-[0.96] hover:bg-accent/30"
-          >
+          <Chip type="button" onClick={() => onPick(phrase)}>
             {phrase}
-          </button>
+          </Chip>
         </li>
       ))}
     </ul>

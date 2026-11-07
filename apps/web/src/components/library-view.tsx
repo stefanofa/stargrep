@@ -1,5 +1,6 @@
 import {
   Button,
+  Chip,
   cn,
   Digits,
   LanguageBar,
@@ -92,10 +93,6 @@ function LanguagesTile({
   shares: ReadonlyArray<LanguageShare> | undefined;
   language: string | undefined;
 }) {
-  const chip = (active: boolean) =>
-    `relative after:absolute after:inset-x-0 after:-inset-y-1 flex h-9 items-center rounded-full px-4 font-sans text-meta font-medium transition-[color,background-color,scale] duration-120 motion-safe:active:scale-[0.96] ${
-      active ? "bg-accent font-semibold text-ink" : "bg-accent-soft text-foreground hover:bg-accent-soft/70"
-    }`;
   return (
     <Tile className="flex flex-col justify-between gap-6 pt-tile-top pb-6 pl-tile-lg">
       <h2 className="font-display text-2xl font-semibold tracking-snug">languages</h2>
@@ -108,19 +105,21 @@ function LanguagesTile({
         shares.length > 0 && <LanguageBar languages={shares} />
       )}
       <nav aria-label="Filter by language" className="flex flex-wrap gap-2">
-        <Link to="." search={(previous) => ({ ...previous, lang: undefined })} className={chip(language === undefined)}>
+        <Chip
+          active={language === undefined}
+          render={<Link to="." search={(previous) => ({ ...previous, lang: undefined })} />}
+        >
           All
-        </Link>
+        </Chip>
         {shares === undefined && waitingChips.map((width) => <Skeleton key={width} className={`h-9 ${width}`} />)}
         {(shares ?? []).slice(0, 3).map((share) => (
-          <Link
+          <Chip
             key={share.name}
-            to="."
-            search={(previous) => ({ ...previous, lang: share.name })}
-            className={chip(language === share.name)}
+            active={language === share.name}
+            render={<Link to="." search={(previous) => ({ ...previous, lang: share.name })} />}
           >
             {share.name} {Math.round(share.share * 100)}%
-          </Link>
+          </Chip>
         ))}
       </nav>
     </Tile>

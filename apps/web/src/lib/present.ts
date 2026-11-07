@@ -94,7 +94,6 @@ export const toDetail = (repo: LibraryEntry, at: number, whose: Whose): RepoDeta
   activity: activity(repo, at),
   ...(repo.license === null ? {} : { license: repo.license }),
   network: [],
-  alsoStarred: [],
   githubUrl: repo.url,
   visual: repoVisual(repo),
 });

@@ -1,5 +1,5 @@
 import { Menu } from "@base-ui/react/menu";
-import { Avatar } from "@stargrep/ui";
+import { Avatar, cn, popupSurface } from "@stargrep/ui";
 import { signOut } from "../lib/auth-client.ts";
 
 export function AccountMenu({ login, avatarUrl }: { login: string; avatarUrl: string | null }) {
@@ -10,7 +10,7 @@ export function AccountMenu({ login, avatarUrl }: { login: string; avatarUrl: st
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner sideOffset={8} align="end" className="z-50 outline-none">
-          <Menu.Popup className="flex min-w-48 flex-col rounded-md border-[1.5px] border-border bg-card p-1.5 font-sans text-meta font-medium text-foreground outline-none transition-opacity duration-120 data-ending-style:opacity-0 data-starting-style:opacity-0">
+          <Menu.Popup className={cn(popupSurface, "flex min-w-48 flex-col")}>
             <span className="px-3 pt-1.5 pb-2 text-sm text-muted-foreground">@{login}</span>
             <Menu.Item
               onClick={() => {

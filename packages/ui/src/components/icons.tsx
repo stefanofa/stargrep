@@ -68,14 +68,6 @@ export function ExternalIcon(props: IconProps) {
   );
 }
 
-export function PlusIcon(props: IconProps) {
-  return (
-    <svg aria-hidden viewBox="0 0 14 14" {...base} {...props}>
-      <path d="M7 2.5v9M2.5 7h9" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 export function SortIcon(props: IconProps) {
   return (
     <svg aria-hidden viewBox="0 0 16 16" {...base} {...props}>

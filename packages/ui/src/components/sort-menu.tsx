@@ -1,5 +1,7 @@
 import { Menu } from "@base-ui/react/menu";
+import { cn } from "../lib/cn.ts";
 import { CheckIcon, ChevronIcon, SortIcon } from "./icons.tsx";
+import { popupSurface } from "./popup.ts";
 
 export const sorts = [
   { value: "best", label: "best match" },
@@ -34,7 +36,7 @@ export function SortMenu({
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner sideOffset={6} align="end" className="z-50 outline-none">
-          <Menu.Popup className="min-w-52 rounded-md border-[1.5px] border-border bg-card p-1.5 font-sans text-meta font-medium text-foreground transition-opacity duration-120 outline-none data-ending-style:opacity-0 data-starting-style:opacity-0">
+          <Menu.Popup className={cn(popupSurface, "min-w-52")}>
             <Menu.RadioGroup
               value={value}
               onValueChange={(next) => {
