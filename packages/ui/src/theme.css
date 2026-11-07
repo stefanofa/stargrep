@@ -165,6 +165,8 @@
   --color-muted-foreground: var(--color-ink-secondary);
   --color-accent-strong: var(--color-ink-accent);
   --color-ring: var(--color-ink-accent);
+  --color-primary: var(--color-ink);
+  --color-primary-foreground: #ffffff;
   --color-card: var(--color-highlight);
   background-color: var(--color-highlight);
   color: var(--color-foreground);

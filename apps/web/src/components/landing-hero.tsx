@@ -85,7 +85,7 @@ function ButterTile({ butter, pose }: { butter: Butter; pose: PipPose }) {
       <SignInButton
         variant="primary"
         size="lg"
-        className="h-10 shrink-0 bg-ink px-3.5 text-meta text-[#ffffff] hover:bg-ink/85 lg:h-11 lg:self-start lg:px-[18px]"
+        className="h-10 shrink-0 px-3.5 text-meta lg:h-11 lg:self-start lg:px-[18px]"
         markClassName="size-[18px] max-lg:hidden"
         label={
           <>
@@ -102,7 +102,7 @@ export function Hero({ subtitle, butter, pose }: { subtitle: string; butter: But
   return (
     <section className="flex flex-col gap-3.5 pt-1.5 sm:pt-5 lg:flex-row lg:gap-gap">
       <div className="flex min-w-0 flex-1 flex-col justify-end gap-3.5 lg:pb-1.5">
-        <h1 className="font-display text-[36px] leading-10 font-semibold tracking-tight text-balance sm:text-[64px] sm:leading-[68px]">
+        <h1 className="font-display text-3xl leading-10 font-semibold tracking-tight text-balance sm:text-[64px] sm:leading-[68px]">
           search anyone's github stars in plain words
         </h1>
         {/* Two lines whatever the state says, so the search below never moves when the state changes. */}
