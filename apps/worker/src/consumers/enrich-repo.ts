@@ -3,6 +3,7 @@ import type { UserId } from "@stargrep/db/auth-schema";
 import type { RepoId } from "@stargrep/github/schemas";
 import * as TokenGate from "@stargrep/github/token-gate";
 import * as Arr from "effect/Array";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
@@ -23,6 +24,15 @@ const settlementOf = EnrichRepo.Enrichment.$match({
   Embedded: done,
 });
 
+// Ten repos of one user need at most three rounds of four model calls, and a chunk's users run one after another, so
+// ten users can need ten rounds. Cloudflare ends a queue invocation at 15 minutes, so the deadline leaves time to
+// settle the messages it stopped.
+export const chunks: Settle.Chunks<EnrichQueue.EnrichRepo> = {
+  size: 10,
+  deadline: Duration.minutes(10),
+  gate: (body) => body.userId ?? "",
+};
+
 interface Group {
   readonly userId: UserId | undefined;
   readonly positions: Array<number>;
@@ -39,7 +49,7 @@ export const pipeline = <R>(enrichers: Layer.Layer<EnrichRepo.EnrichRepo, never,
       const users = yield* UserGates;
       const groups = new Map<string, Group>();
       deliveries.forEach(({ body }, position) => {
-        const key = body.userId ?? "";
+        const key = chunks.gate(body);
         const group = groups.get(key) ?? { userId: body.userId, positions: [], repoIds: [] };
         group.positions.push(position);
         group.repoIds.push(body.repoId);
@@ -64,4 +74,5 @@ export const pipeline = <R>(enrichers: Layer.Layer<EnrichRepo.EnrichRepo, never,
       return settled;
     }),
     describe: (body) => ({ repoId: body.repoId }),
+    chunks,
   });

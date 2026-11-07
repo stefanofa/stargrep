@@ -20,6 +20,7 @@ import * as Metric from "effect/Metric";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as Corpus from "./corpus.ts";
 import { embeddingLatencyBudgetMillis, type Row, rankEmbeddings, rankSummaries } from "./rank.ts";
 
@@ -258,12 +259,16 @@ const scoreSummaryModel = Effect.fn("Bakeoff.scoreSummaryModel")(function* (mode
   const { result: summaries, cost } = yield* withCost(
     pricing,
     model,
-    Summarize.summarizeBatch(corpus).pipe(Effect.provide(providers.text(model))),
+    Summarize.summarizeBatch(corpus, (repo) => repo).pipe(
+      Stream.runCollect,
+      Effect.map((answers) => new Map(answers)),
+      Effect.provide(providers.text(model)),
+    ),
   );
-  const texts = corpus.map((repo, index) =>
+  const texts = corpus.map((repo) =>
     Summarize.embeddingText(
       repo,
-      Result.getOrElse(summaries[index] ?? Result.succeed(emptySummary), () => emptySummary),
+      Result.getOrElse(summaries.get(repo) ?? Result.succeed(emptySummary), () => emptySummary),
     ),
   );
   const score = yield* scoreRetrieval(corpus, texts, queries).pipe(
@@ -276,7 +281,7 @@ const scoreSummaryModel = Effect.fn("Bakeoff.scoreSummaryModel")(function* (mode
       recall: score.recall,
       medianMillis: Number.NaN,
       cost,
-      failures: summaries.filter(Result.isFailure).length,
+      failures: [...summaries.values()].filter(Result.isFailure).length,
     }),
   );
 });

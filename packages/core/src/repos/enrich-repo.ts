@@ -19,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { IconQueue, iconRequest, needsIconCheck } from "../icons/icon-queue.ts";
 import * as BlobStore from "./blob-store.ts";
 import * as EnrichRetry from "./enrich-retry.ts";
@@ -109,6 +110,7 @@ type Step<A> = Result.Result<A, Enrichment>;
 const batchSize = 250;
 const batchConcurrency = 4;
 const planConcurrency = 4;
+const saveConcurrency = 4;
 const embedBatchSize = 128;
 
 const decodeEmbedding = Schema.decodeUnknownEffect(Embedding);
@@ -138,8 +140,6 @@ const storedFacts = (facts: RepoFacts): Db.RepoFacts => ({
 });
 
 const fullName = (facts: RepoFacts) => `${facts.owner}/${facts.name}`;
-
-const answerAt = <A>(answers: ReadonlyArray<A>, index: number) => Effect.orDie(Effect.fromNullishOr(answers[index]));
 
 const guarded = <A, E>(id: RepoId, save: Effect.Effect<boolean, E | RepoNotFound>, saved: A) =>
   save.pipe(
@@ -248,23 +248,21 @@ const make = Effect.gen(function* () {
           summary: answer.success,
         });
 
-  const summarizeAll = Effect.fn("EnrichRepo.summarizeAll")(function* (steps: ReadonlyArray<Step<Job>>) {
-    const asked = steps.flatMap((step) =>
-      Result.isSuccess(step) && step.success.work._tag === "Summarize" ? [step.success.work.prompt] : [],
+  // Each summary is saved as its answer arrives, so work cut short keeps every summary already paid for.
+  const summarizeAll = Effect.fn("EnrichRepo.summarizeAll")(function* (jobs: ReadonlyArray<Job>) {
+    const stored = jobs.flatMap((job) =>
+      job.work._tag === "Embed" ? [Result.succeed<Embeddable>({ job, summary: job.work.summary })] : [],
     );
-    const answers =
-      asked.length === 0
-        ? []
-        : yield* Summarize.summarizeBatch(asked).pipe(
-            Effect.provideService(TextGeneration.TextGeneration, textGeneration),
-          );
-    let next = 0;
-    return yield* Effect.forEach(steps, (step): Effect.Effect<Step<Embeddable>, DbQueryFailed> => {
-      if (Result.isFailure(step)) return Effect.succeed(Result.fail(step.failure));
-      const job = step.success;
-      if (job.work._tag === "Embed") return Effect.succeed(Result.succeed({ job, summary: job.work.summary }));
-      return Effect.flatMap(answerAt(answers, next++), (answer) => keepSummary(job, answer));
-    });
+    const asked = jobs.flatMap((job) => (job.work._tag === "Summarize" ? [{ job, facts: job.work.prompt }] : []));
+    const answered = yield* Summarize.summarizeBatch(asked, ({ facts }) => facts).pipe(
+      Stream.mapEffect(([{ job }, answer]) => keepSummary(job, answer), {
+        concurrency: saveConcurrency,
+        unordered: true,
+      }),
+      Stream.runCollect,
+      Effect.provideService(TextGeneration.TextGeneration, textGeneration),
+    );
+    return [...stored, ...answered];
   });
 
   const keepEmbedding = (item: Embeddable, vector: Result.Result<Embedding, AiError>) => {
@@ -287,35 +285,28 @@ const make = Effect.gen(function* () {
     );
   };
 
-  const embedAll = Effect.fn("EnrichRepo.embedAll")(function* (steps: ReadonlyArray<Step<Embeddable>>) {
-    const open = steps.flatMap((step) => (Result.isSuccess(step) ? [step.success] : []));
-    const vectors = (yield* Effect.forEach(Arr.chunksOf(open, embedBatchSize), (chunk) =>
-      embeddings
-        .embed(
-          chunk.map(({ job, summary }) =>
-            Summarize.embeddingText({ fullName: fullName(job.facts), description: job.facts.description }, summary),
-          ),
-        )
-        .pipe(
-          Effect.flatMap((output) => Effect.forEach(output, (vector) => Effect.orDie(decodeEmbedding(vector)))),
-          Effect.map((output) => output.map((vector) => Result.succeed<Embedding>(vector))),
-          Effect.catch((error) => Effect.succeed(chunk.map(() => Result.fail<AiError>(error)))),
+  // embed answers one vector per text, in text order, or fails the whole call.
+  const embedChunk = (chunk: ReadonlyArray<Embeddable>) =>
+    embeddings
+      .embed(
+        chunk.map(({ job, summary }) =>
+          Summarize.embeddingText({ fullName: fullName(job.facts), description: job.facts.description }, summary),
         ),
-    )).flat();
-    let next = 0;
-    return yield* Effect.forEach(
-      steps,
-      (step): Effect.Effect<Step<Enrichment>, DbQueryFailed | EmbeddingModelMismatch> =>
-        Result.isFailure(step)
-          ? Effect.succeed(Result.fail(step.failure))
-          : Effect.flatMap(answerAt(vectors, next++), (vector) => keepEmbedding(step.success, vector)),
-    );
-  });
+      )
+      .pipe(
+        Effect.flatMap((output) => Effect.forEach(output, (vector) => Effect.orDie(decodeEmbedding(vector)))),
+        Effect.map((output) => output.map((vector): Result.Result<Embedding, AiError> => Result.succeed(vector))),
+        Effect.catch((error) => Effect.succeed(chunk.map((): Result.Result<Embedding, AiError> => Result.fail(error)))),
+        Effect.flatMap((vectors) =>
+          Effect.forEach(Arr.zip(chunk, vectors), ([item, vector]) => keepEmbedding(item, vector)),
+        ),
+      );
 
   const enrichChunk = Effect.fn("EnrichRepo.enrichChunk")(function* (ids: ReadonlyArray<RepoId>) {
-    const planned = yield* plan(ids);
-    const summarized = yield* summarizeAll(planned);
-    const outcomes = (yield* embedAll(summarized)).map(Result.merge);
+    const [jobs, skipped] = Arr.separate(yield* plan(ids));
+    const [summarized, unsummarized] = Arr.separate(yield* summarizeAll(jobs));
+    const embedded = yield* Effect.forEach(Arr.chunksOf(summarized, embedBatchSize), embedChunk);
+    const outcomes = [...skipped, ...unsummarized, ...embedded.flat().map(Result.merge)];
     yield* db.repos.recordEnrichFailures({
       ids: outcomes.flatMap((outcome) => (repoFailed(outcome) ? [outcome.id] : [])),
       at: yield* DateTime.now,

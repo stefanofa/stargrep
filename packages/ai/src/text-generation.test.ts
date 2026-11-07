@@ -1,11 +1,13 @@
 import { describe, expect } from "bun:test";
 import * as it from "@stargrep/testing";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Metric from "effect/Metric";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { AiRequestFailed, AiUnavailable } from "./errors.ts";
 import * as Port from "./port.ts";
@@ -18,6 +20,16 @@ const service = (run: (request: TextGeneration.RunRequest) => Effect.Effect<Text
   TextGeneration.make({ provider: "test", model: "seam/model", timeout: Duration.seconds(10), run });
 
 const usage = { inputTokens: 7, outputTokens: 3 };
+
+// Each prompt's answer, in prompt order.
+const answers = (generation: TextGeneration.TextGeneration["Service"], prompts: ReadonlyArray<string>) =>
+  generation.generateBatch({ schema: Answer, system: "s", items: prompts, prompt: (prompt) => prompt }).pipe(
+    Stream.runCollect,
+    Effect.map((answered) => {
+      const byPrompt = new Map(answered);
+      return prompts.map((prompt) => byPrompt.get(prompt));
+    }),
+  );
 
 describe("TextGeneration.make", () => {
   it.effect("hands the adapter the JSON schema and decodes its output", () =>
@@ -64,15 +76,27 @@ describe("TextGeneration.make", () => {
           return { output: { answer: request.prompt === "bad" ? "nope" : request.prompt.length }, usage };
         }),
       );
-      const results = yield* generation.generateBatch({
-        schema: Answer,
-        system: "s",
-        prompts: ["one", "bad"],
-      });
+      const results = yield* answers(generation, ["one", "bad"]);
       expect(prompts.toSorted()).toEqual(["bad", "one"]);
       const [ok, failed] = results;
       expect(ok).toEqual(Result.succeed({ answer: 3 }));
       expect(failed && Result.isFailure(failed) && failed.failure._tag).toBe("AiOutputInvalid");
+    }),
+  );
+
+  it.effect("sends each batch answer as soon as it is ready, before a slower prompt answers", () =>
+    Effect.gen(function* () {
+      const slow = yield* Deferred.make<void>();
+      const generation = service((request) =>
+        Effect.as(request.prompt === "slow" ? Deferred.await(slow) : Effect.void, {
+          output: { answer: request.prompt.length },
+          usage,
+        }),
+      );
+      const first = yield* generation
+        .generateBatch({ schema: Answer, system: "s", items: ["slow", "fast"], prompt: (prompt) => prompt })
+        .pipe(Stream.take(1), Stream.runCollect);
+      expect(first).toEqual([["fast", Result.succeed({ answer: 4 })]]);
     }),
   );
 
@@ -119,9 +143,8 @@ describe("TextGeneration.make", () => {
             ]),
         },
       });
-      const request = { schema: Answer, system: "s", prompts: ["one", "two"] };
       for (const _ of [1, 2]) {
-        expect(yield* generation.generateBatch(request)).toEqual([
+        expect(yield* answers(generation, ["one", "two"])).toEqual([
           Result.succeed({ answer: 1 }),
           Result.succeed({ answer: 2 }),
         ]);
@@ -147,9 +170,11 @@ describe("TextGeneration.make", () => {
           run: () => Effect.succeed([Result.succeed({ output: { answer: 1 }, usage })]),
         },
       });
-      expect(
-        yield* generation.generateBatch({ schema: Answer, system: "s", prompts: ["one", "two", "three"] }),
-      ).toEqual([Result.succeed({ answer: 1 }), Result.succeed({ answer: 2 }), Result.succeed({ answer: 2 })]);
+      expect(yield* answers(generation, ["one", "two", "three"])).toEqual([
+        Result.succeed({ answer: 1 }),
+        Result.succeed({ answer: 2 }),
+        Result.succeed({ answer: 2 }),
+      ]);
       expect(direct).toBe(2);
     }),
   );
@@ -172,9 +197,8 @@ describe("TextGeneration.make", () => {
             Effect.fail(new AiRequestFailed({ operation: "generate", model: "seam/model", detail: "batch failed" })),
         },
       });
-      const request = { schema: Answer, system: "s", prompts: ["one", "two"] };
       for (const _ of [1, 2]) {
-        expect(yield* generation.generateBatch(request)).toEqual([
+        expect(yield* answers(generation, ["one", "two"])).toEqual([
           Result.succeed({ answer: 2 }),
           Result.succeed({ answer: 2 }),
         ]);

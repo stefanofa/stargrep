@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { toAiSchema } from "../schema-bridge.ts";
 import * as TextGeneration from "../text-generation.ts";
 
@@ -141,14 +142,12 @@ export const summarize = Effect.fnUntraced(function* (repo: RepoFacts) {
   return yield* textGeneration.generate({ schema: repoSummarySchema, system, prompt: prompt(repo) });
 });
 
-export const summarizeBatch = Effect.fnUntraced(function* (repos: ReadonlyArray<RepoFacts>) {
-  const textGeneration = yield* TextGeneration.TextGeneration;
-  return yield* textGeneration.generateBatch({
-    schema: repoSummarySchema,
-    system,
-    prompts: repos.map(prompt),
-  });
-});
+export const summarizeBatch = <I>(items: ReadonlyArray<I>, facts: (item: I) => RepoFacts) =>
+  Stream.unwrap(
+    Effect.map(TextGeneration.TextGeneration, (textGeneration) =>
+      textGeneration.generateBatch({ schema: repoSummarySchema, system, items, prompt: (item) => prompt(facts(item)) }),
+    ),
+  );
 
 export const embeddingText = (
   repo: Pick<RepoFacts, "fullName" | "description">,
