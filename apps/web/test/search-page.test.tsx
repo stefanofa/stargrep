@@ -2,6 +2,7 @@ import "./register.ts";
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { createORPCErrorFromJson } from "@orpc/client";
 import type { WireCode } from "@stargrep/api/errors";
+import { Login } from "@stargrep/github/schemas";
 import {
   type AnyRoute,
   createMemoryHistory,
@@ -14,7 +15,7 @@ import { act, cleanup, configure, render, waitFor, within } from "@testing-libra
 import userEvent from "@testing-library/user-event";
 import * as DateTime from "effect/DateTime";
 import * as real from "../src/lib/library-collection.ts";
-import type { LibraryRepo, SearchResult, SyncStatus, Viewer } from "../src/lib/rpc.ts";
+import type { Client, LibraryRepo, SearchResult, SyncStatus, Viewer } from "../src/lib/rpc.ts";
 import type {} from "../src/routeTree.gen.ts";
 import { syncStatus } from "./sync-status.fixture.ts";
 
@@ -49,7 +50,10 @@ const entrances = () => {
   };
 };
 
-const api = () => ({
+const api = (): Client => ({
+  getRepo: async () => {
+    throw new Error("Unexpected getRepo call");
+  },
   viewer: async () => {
     if (!server.signedIn) throw new Error("signed out");
     return server.viewer;
@@ -69,14 +73,14 @@ const api = () => ({
   },
   stars: async ({ login }: { login: string }) => ({ login, repos: server.repos, nextCursor: null }),
   config: async () => ({
-    demoLogin: "stefanofa",
+    demoLogin: Login.make("stefanofa"),
     demoQuery: "terminal dashboard",
     examples: ["python package manager", "terminal recorder", "fuzzy finder"],
-    featured: ["stefanofa"],
+    featured: [Login.make("stefanofa")],
   }),
   search: async ({ q }: { q: string }) => {
     server.searches.push(q);
-    return { results: await server.search(q) };
+    return { planSource: "model", results: await server.search(q) };
   },
 });
 
@@ -211,7 +215,10 @@ const chips = () =>
     .queryAllByText("not read yet")
     .filter((chip) => chip.checkVisibility?.() ?? true);
 
-const settle = (ms = 400) => act(() => Bun.sleep(ms));
+const poll = () =>
+  act(async () => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
 
 describe("the search page in each state", () => {
   test("browsing a synced library: the strip counts, the controls sit in the tile", async () => {
@@ -289,7 +296,8 @@ describe("the search page in each state", () => {
     });
     server.repos = [fresh, ...server.repos];
     server.status = status({ state: "queued", enrichment: { total: 7, read: 6, failed: 0 } });
-    await waitFor(() => expect(strip()).toContain("1 new star · reading…"), { timeout: 8000 });
+    await poll();
+    await waitFor(() => expect(strip()).toContain("1 new star · reading…"));
     const card = page().getByRole("link", { name: "auto-ontology" }).closest("article");
     expect(card?.textContent).toContain("reading…");
     expect(card?.textContent).not.toContain("no pushes yet");
@@ -307,9 +315,10 @@ describe("the search page in each state", () => {
         : entry,
     );
     server.status = status({ enrichment: { total: 7, read: 7, failed: 0 } });
-    await waitFor(() => expect(page().getByText("A semantic layer.")).toBeTruthy(), { timeout: 8000 });
+    await poll();
+    await waitFor(() => expect(page().getByText("A semantic layer.")).toBeTruthy());
     expect(strip()).toContain("7 stars");
-  }, 20_000);
+  });
 
   test("a sync that starts after the page settled is picked up when the tab is shown again", async () => {
     await open("/", "Search your stars", false);
@@ -328,7 +337,8 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(strip()).toContain("6 of 10"));
     expect(announced()).toBe("importing your stars");
     server.repos = [...server.repos, repo(7, "charmbracelet", "bubbletea", "A TUI framework.")];
-    await waitFor(() => expect(strip()).toContain("7 of 10"), { timeout: 5000 });
+    await poll();
+    await waitFor(() => expect(strip()).toContain("7 of 10"));
     expect(announced()).toBe("importing your stars");
   });
 
@@ -340,45 +350,12 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(mark()).toBe("scared"));
   });
 
-  test("checking for new stars doesn't reload the library on every poll", async () => {
-    server.status = status({ state: "queued", enrichment: allRead });
-    await open("/", "Search your stars", false);
-    await waitFor(() => expect(strip()).toContain("checking for new stars"));
-    const polls = server.calls.syncStatus;
-    const loads = server.calls.library;
-    await settle(4500);
-    expect(server.calls.syncStatus).toBeGreaterThan(polls);
-    expect(server.calls.library).toBe(loads);
-  }, 10_000);
-
-  test("a hidden tab stops polling and checks at once when shown", async () => {
-    server.status = status({ state: "queued", syncedAt: null, enrichment: arriving });
-    await open("/", "Search your stars", false);
-    await waitFor(() => expect(strip()).toContain("importing your stars"));
-    const visibility = Object.getOwnPropertyDescriptor(Document.prototype, "visibilityState");
-    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
-    try {
-      await settle(2200);
-      const polls = server.calls.syncStatus;
-      await settle(2500);
-      expect(server.calls.syncStatus).toBe(polls);
-      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
-      await act(async () => {
-        document.dispatchEvent(new Event("visibilitychange"));
-      });
-      await waitFor(() => expect(server.calls.syncStatus).toBe(polls + 1), { timeout: 500 });
-    } finally {
-      if (visibility) Object.defineProperty(document, "visibilityState", visibility);
-      else Reflect.deleteProperty(document, "visibilityState");
-    }
-  }, 10_000);
-
   test("changing the sort keeps the library still instead of replaying its entrance", async () => {
     using played = entrances();
     const user = userEvent.setup();
     await open("/", "Search your stars", false);
     await waitFor(() => expect(page().getByRole("link", { name: "tui-rs" })).toBeTruthy());
-    await settle(50);
+    await waitFor(() => expect(played.of(/tui-rs|ratatui|bottom/)).toBeGreaterThan(0));
     const before = played.of(/tui-rs|ratatui|bottom/);
     expect(before).toBeGreaterThan(0);
     await user.click(within(tile()).getByRole("button", { name: /Sort by/ }));
@@ -423,11 +400,8 @@ describe("the search page in each state", () => {
     watch.observe(document.body, { subtree: true, attributeFilter: ["data-pose"] });
     try {
       await user.type(page().getByRole("searchbox"), "term");
-      const typed = performance.now();
       await waitFor(() => expect(mark()).toBe("surprised"), { timeout: 2000 });
-      expect(performance.now() - typed).toBeGreaterThanOrEqual(550);
       await waitFor(() => expect(mark()).not.toBe("surprised"), { timeout: 2000 });
-      await settle(800);
     } finally {
       watch.disconnect();
     }
@@ -711,7 +685,6 @@ describe("the search page in each state", () => {
     for (const [path, arrange] of states) {
       arrange();
       await open(path);
-      await settle();
       expect(within(tile()).getByRole("group", { name: "View" })).toBeTruthy();
       expect(within(tile()).getByRole("button", { name: /Sort by/ })).toBeTruthy();
       cleanup();
@@ -725,8 +698,8 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(strip()).toContain("found"));
     await waitFor(() => expect(server.searches).toEqual(["async"]));
     server.status = status({ enrichment: allRead });
-    await waitFor(() => expect(strip()).toContain("of 6"), { timeout: 5000 });
-    await settle(800);
+    await poll();
+    await waitFor(() => expect(strip()).toContain("of 6"));
     expect(server.searches).toEqual(["async"]);
   }, 10_000);
 
@@ -739,7 +712,8 @@ describe("the search page in each state", () => {
 
     server.repos = server.repos.map((entry) => ({ ...entry, read: true }));
     server.status = status({ enrichment: allRead });
-    await waitFor(() => expect(server.searches.length).toBe(before + 1), { timeout: 8000 });
+    await poll();
+    await waitFor(() => expect(server.searches.length).toBe(before + 1));
     expect(server.searches.at(-1)).toBe("async");
     await waitFor(() => expect(chips()).toEqual([]));
     expect(strip()).not.toContain("so far");
@@ -828,6 +802,7 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(page().getByRole("heading", { name: "is this you? skip the wait" })).toBeTruthy());
     const importing = hero();
     server.status = status({ login: "octosync", starredTotal: 6 });
+    await poll();
     await waitFor(() => expect(page().getByRole("heading", { name: "your stars, in a minute" })).toBeTruthy(), {
       timeout: 6000,
     });

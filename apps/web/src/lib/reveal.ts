@@ -1,10 +1,9 @@
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { useEffect, useLayoutEffect, useState } from "react";
 import { revealedKey } from "./reveal-script.ts";
+import { playReveal } from "./reveal-timing.ts";
 
-const perCharacter = Duration.millis(20);
 const ease = "cubic-bezier(0.2, 0, 0, 1)";
 const lifted = 6;
 
@@ -35,6 +34,7 @@ const interactions = ["keydown", "pointerdown", "focusin"] as const;
 export function useReveal(query: string, eligible: boolean) {
   const [typed, setTyped] = useState<string>();
   const [phase, setPhase] = useState<RevealPhase>("done");
+  const running = phase !== "done";
 
   useLayoutEffect(() => {
     if (root().dataset.reveal !== "pending") return;
@@ -54,26 +54,22 @@ export function useReveal(query: string, eligible: boolean) {
   }, [eligible]);
 
   useEffect(() => {
-    if (phase !== "typing") return;
-    const play = Effect.gen(function* () {
-      for (let length = 1; length <= query.length; length++) {
-        yield* Effect.sleep(perCharacter);
-        setTyped(query.slice(0, length));
-      }
-      yield* Effect.sync(() => {
+    if (!running) return;
+    const play = playReveal(query, {
+      typed: setTyped,
+      settled: () => {
         delete root().dataset.reveal;
         emphasize();
         setTyped(undefined);
         setPhase("settled");
-      });
-      yield* Effect.sleep(Duration.millis(400));
-      yield* Effect.sync(() => setPhase("done"));
+      },
+      done: () => setPhase("done"),
     });
     const fiber = Effect.runFork(play);
     return () => {
       Effect.runFork(Fiber.interrupt(fiber));
     };
-  }, [phase, query]);
+  }, [running, query]);
 
   // Any key, click or focus on the page jumps to the end, and so does leaving the tab.
   useEffect(() => {

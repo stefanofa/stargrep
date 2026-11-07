@@ -5,7 +5,8 @@ import { QueryPlan, Search } from "@stargrep/core/search";
 import { OwnerLookup, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import { DbQueryFailed, RepoNotFound } from "@stargrep/db/errors";
-import type { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
+import { accountRow, makeDb, repo as repoRow } from "@stargrep/db/testing";
+import { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -15,32 +16,24 @@ import { withHealth } from "../src/server/health.ts";
 import { layerRateLimiter } from "../src/server/rate-limiter.ts";
 import { testServer } from "./serve.ts";
 
-export const repo: Db.Repo = {
-  id: 42 as RepoId,
-  owner: "ratatui" as Login,
-  name: "ratatui" as RepoName,
+export const repo = repoRow(RepoId.make(42), {
+  owner: Login.make("ratatui"),
+  name: RepoName.make("ratatui"),
   nodeId: null,
   description: "Rust library for terminal user interfaces",
   topics: ["tui"],
   language: "Rust",
   license: "MIT",
-  homepage: null,
   kind: "library",
-  createdAt: null,
   pushedAt: DateTime.makeUnsafe("2026-10-01T08:00:00Z"),
-  archived: false,
-  readmeOid: null,
   summary: "A Rust library for terminal dashboards.",
-  summaryReadmeOid: null,
   keywords: ["tui"],
-  embeddingModel: null,
   icon: { key: "v1/git/abc.webp", source: "repo-file", plate: "none", size: 128 },
-  iconCheckedAt: null,
   ownerType: "org",
   ownerAvatarUrl: "https://avatars.githubusercontent.com/u/1",
-};
+});
 
-const ada = { id: 7 as GitHubAccountId, login: "ada" as Login, type: "user", starredCount: 1, starsSyncedAt: null };
+const ada = accountRow(GitHubAccountId.make(7), { login: Login.make("ada"), starredCount: 1 });
 
 const starredAt = DateTime.makeUnsafe("2026-03-01T00:00:00Z");
 
@@ -105,7 +98,7 @@ const search = Search.Search.of({
   }),
 });
 
-const db = {
+const db = makeDb({
   accounts: {
     byLogin: (login: Login) => Effect.succeed(login === ada.login ? Option.some(ada) : Option.none()),
   },
@@ -117,7 +110,7 @@ const db = {
     enrichment: (login: Login) =>
       Effect.succeed(login === ada.login ? { total: 1, read: 1, failed: 0 } : { total: 0, read: 0, failed: 0 }),
   },
-} as unknown as Db.Db["Service"];
+});
 
 const serve = testServer((request) =>
   Layer.mergeAll(

@@ -15,7 +15,6 @@ import {
 } from "@stargrep/ui";
 import { useLiveQuery } from "@tanstack/react-db";
 import { Link, useHydrated, useNavigate, useRouter, useSearch } from "@tanstack/react-router";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { useEffect, useRef, useState } from "react";
@@ -27,6 +26,7 @@ import { closesBack } from "../lib/panel-history.ts";
 import { now, startsIn, toDetail, withLinks } from "../lib/present.ts";
 import { withReply } from "../lib/results.ts";
 import { useReveal } from "../lib/reveal.ts";
+import { playSurprise } from "../lib/reveal-timing.ts";
 import type { Viewer } from "../lib/rpc.ts";
 import { librarySorts, type Params, searchSorts, validateParams } from "../lib/search-params.ts";
 import { type Arriving, type Body, pageView, type Retry, type Stage, stageOf } from "../lib/search-state.ts";
@@ -146,13 +146,7 @@ function useSurprise(query: string, landed: boolean) {
   useEffect(() => {
     if (!landed) return;
     const wait = Math.max(0, quiet - (now() - typedAt.current));
-    const fiber = Effect.runFork(
-      Effect.sleep(Duration.millis(wait)).pipe(
-        Effect.andThen(Effect.sync(() => setSurprised(true))),
-        Effect.andThen(Effect.sleep(Duration.millis(1200))),
-        Effect.ensuring(Effect.sync(() => setSurprised(false))),
-      ),
-    );
+    const fiber = Effect.runFork(playSurprise(wait, setSurprised));
     return () => {
       Effect.runFork(Fiber.interrupt(fiber));
     };
