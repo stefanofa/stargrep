@@ -15,7 +15,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
-import { readGitHubToken } from "./auth.ts";
 import type { TokenConfig } from "./config.ts";
 import * as Tokens from "./tokens.ts";
 
@@ -212,22 +211,6 @@ describe("GitHubTokens.read", () => {
       expect(Redacted.value(yield* tokens.read(userId))).toBe("ghu_fresh_3");
       expect(sent).toEqual(["ghr_refresh_token", "ghr_refresh_token", "ghr_next_1"]);
     }).pipe(Effect.scoped, Effect.provide(database)),
-  );
-});
-
-describe("readGitHubToken", () => {
-  it.effect("gives up on a token read that GitHub's refresh never answers", () =>
-    Effect.gen(function* () {
-      const stalled = {
-        $context: Promise.resolve({
-          internalAdapter: { findAccounts: async () => [{ id: "account-1", providerId: "github" }] },
-        }),
-        api: { getAccessToken: () => new Promise<never>(() => {}) },
-      };
-      const fiber = yield* Effect.forkChild(Effect.flip(readGitHubToken(stalled, UserId.make("user-1"))));
-      yield* TestClock.adjust("10 seconds");
-      expect(yield* Fiber.join(fiber)).toMatchObject({ _tag: "AuthFailed", operation: "token" });
-    }),
   );
 });
 

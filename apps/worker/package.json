@@ -10,7 +10,8 @@
     "./queues": "./src/queues.ts",
     "./readmes": "./src/readmes.ts",
     "./icons": "./src/icons/bucket.ts",
-    "./auth": "./src/auth.ts"
+    "./auth": "./src/auth.ts",
+    "./stage": "./src/stage.ts"
   },
   "scripts": {
     "test": "vitest run",

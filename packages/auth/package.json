@@ -13,7 +13,8 @@
     "better-auth": "1.7.17",
     "drizzle-orm": "1.0.0-rc.5",
     "effect": "catalog:",
-    "pg": "catalog:"
+    "pg": "catalog:",
+    "@stargrep/runtime": "workspace:*"
   },
   "devDependencies": {
     "@effect/tsgo": "catalog:",

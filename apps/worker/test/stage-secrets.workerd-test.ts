@@ -1,7 +1,8 @@
 import * as Embeddings from "@stargrep/ai/embeddings";
 import * as Summarize from "@stargrep/ai/summarize";
-import * as Share from "@stargrep/runtime/budget-share";
-import { aiGatewayKey } from "@stargrep/runtime/config";
+import { aiGatewayKey } from "@stargrep/runtime/ai-key";
+import * as Share from "@stargrep/runtime/server-token";
+import * as Secrets from "@stargrep/runtime/server-token";
 import { serverTokenKind } from "@stargrep/runtime/server-token";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -9,7 +10,6 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import { describe, expect, it } from "vitest";
 import * as Layers from "../src/layers.ts";
-import * as Secrets from "../src/secrets.ts";
 
 const withEnv = (env: Record<string, string>) => Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env })));
 

@@ -1,4 +1,6 @@
-import { names, optionalSecret, required, tokenClientBindings } from "@stargrep/auth/config";
+import { names, tokenClientBindings } from "@stargrep/auth/config";
+import { optionalSecret, requiredSecret } from "@stargrep/runtime/config";
+import { stageSettings } from "@stargrep/runtime/stage";
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -8,7 +10,7 @@ const BetterAuthSecret = Alchemy.makeRandom("BetterAuthSecret");
 // Both Workers decrypt the tokens Better Auth stores, so they bind the same secret. Prod reads it from its environment,
 // and a preview stage makes a random one unless its environment sets one.
 export const betterAuthSecret = Effect.fn("betterAuthSecret")(function* (stage: string) {
-  if (stage === "prod") return yield* required(names.secret);
+  if (stageSettings(stage).production) return yield* requiredSecret(names.secret);
   const secret = yield* optionalSecret(names.secret);
   return Option.isSome(secret) ? secret.value : yield* BetterAuthSecret;
 });

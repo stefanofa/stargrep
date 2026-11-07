@@ -4,8 +4,7 @@ import * as FallbackGate from "@stargrep/github/fallback-gate";
 import type { BudgetShare } from "@stargrep/github/schemas";
 import * as TokenBudget from "@stargrep/github/token-budget";
 import * as TokenGate from "@stargrep/github/token-gate";
-import { budgetShare } from "@stargrep/runtime/budget-share";
-import { serverTokenKind } from "@stargrep/runtime/server-token";
+import { type ServerToken, serverTokenConfig } from "@stargrep/runtime/server-token";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -14,16 +13,15 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
 import { inRuntime } from "./layers.ts";
-import { serverToken } from "./secrets.ts";
 
 const windowsKey = "windows";
 
-const configuredToken = Effect.flatMap(Effect.orDie(serverTokenKind), (kind) => Effect.orDie(serverToken(kind)));
+const configuredToken = Effect.map(Effect.orDie(serverTokenConfig), ({ credential }) => credential);
 
 // The App's installation token is minted and refreshed in a scope that lives as long as the object.
-const serverSource = Effect.gen(function* () {
+const serverSource = Effect.fn("GitHubGate.serverSource")(function* (credential: Option.Option<ServerToken>) {
   const server = yield* Effect.flatMap(
-    configuredToken,
+    Effect.succeed(credential),
     Option.match({
       onNone: () => Effect.die("GitHubGate is bound only when the server has a GitHub token"),
       onSome: Effect.succeed,
@@ -58,8 +56,9 @@ export class GitHubGate extends Cloudflare.DurableObject<GitHubGate>()(
   Effect.gen(function* () {
     const state = yield* Cloudflare.DurableObjectState;
     return Effect.gen(function* () {
-      const serveWith = yield* persistedGate(state, yield* Effect.orDie(budgetShare));
-      return { execute: serveWith(yield* serverSource) };
+      const config = yield* Effect.orDie(serverTokenConfig);
+      const serveWith = yield* persistedGate(state, config.share);
+      return { execute: serveWith(yield* serverSource(config.credential)) };
     });
   }),
 ) {}

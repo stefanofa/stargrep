@@ -1,14 +1,16 @@
+import { githubClientIdName, optionalSecret, optionalText, requiredSecret } from "@stargrep/runtime/config";
 import * as Config from "effect/Config";
 import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
+import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 export const names = {
-  clientId: "STARGREP_GITHUB_APP_CLIENT_ID",
+  clientId: githubClientIdName,
   clientSecret: "STARGREP_GITHUB_APP_CLIENT_SECRET",
   proxyOrigin: "AUTH_PROXY_ORIGIN",
   proxySecret: "AUTH_PROXY_SECRET",
   secret: "BETTER_AUTH_SECRET",
+  previewHost: "AUTH_PREVIEW_HOST",
 } as const;
 
 export type GitHubSignIn =
@@ -28,16 +30,8 @@ export type GitHubSignIn =
 export interface AuthConfig {
   readonly secret: Redacted.Redacted<string>;
   readonly github: GitHubSignIn;
+  readonly previewHost?: RegExp;
 }
-
-export const required = (name: string) => Config.schema(Schema.Redacted(Schema.NonEmptyString), name);
-
-// Actions passes a secret or variable that is not set as an empty string.
-const optionalText = (name: string) =>
-  Config.String(name).pipe(Config.option, Config.map(Option.filter((value) => value !== "")));
-
-export const optionalSecret = (name: string) =>
-  Config.Redacted(name).pipe(Config.option, Config.map(Option.filter((value) => Redacted.value(value) !== "")));
 
 // A proxy origin is where GitHub sends previews back, so it is an https origin with nothing after the host.
 const Origin = Schema.String.check(
@@ -57,14 +51,14 @@ const optionalOrigin = (name: string) =>
   );
 
 const direct = (clientId: string) =>
-  Config.all({ clientSecret: required(names.clientSecret), proxySecret: optionalSecret(names.proxySecret) }).pipe(
+  Config.all({ clientSecret: requiredSecret(names.clientSecret), proxySecret: optionalSecret(names.proxySecret) }).pipe(
     Config.map(
       ({ clientSecret, proxySecret }): GitHubSignIn => ({ _tag: "direct", clientId, clientSecret, proxySecret }),
     ),
   );
 
 const proxied = (clientId: string, productionOrigin: string) =>
-  required(names.proxySecret).pipe(
+  requiredSecret(names.proxySecret).pipe(
     Config.map((proxySecret): GitHubSignIn => ({ _tag: "proxied", clientId, productionOrigin, proxySecret })),
   );
 
@@ -85,10 +79,17 @@ export const githubSignIn: Config.Config<Option.Option<GitHubSignIn>> = Config.a
 
 export const authConfig: Config.Config<Option.Option<AuthConfig>> = Config.all({
   github: githubSignIn,
+  previewHost: Config.schema(Schema.fromJsonString(Schema.toCodecJson(Schema.RegExp)), names.previewHost).pipe(
+    Config.option,
+  ),
   secret: optionalSecret(names.secret),
 }).pipe(
-  Config.map(({ github, secret }) =>
-    Option.zipWith(github, secret, (signIn, key) => ({ github: signIn, secret: key })),
+  Config.map(({ github, secret, previewHost }) =>
+    Option.zipWith(github, secret, (signIn, key) => ({
+      github: signIn,
+      secret: key,
+      ...Option.match(previewHost, { onNone: () => ({}), onSome: (previewHost) => ({ previewHost }) }),
+    })),
   ),
 );
 

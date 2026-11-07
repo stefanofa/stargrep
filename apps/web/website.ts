@@ -2,15 +2,16 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
 import { apiKeyName } from "@stargrep/ai/gateway";
 import { demoLoginName } from "@stargrep/api/public-config";
 import { bindings, githubSignIn, names } from "@stargrep/auth/config";
-import { budgetShareName, stageBudgetShare } from "@stargrep/runtime/budget-share";
-import { aiGatewayKey } from "@stargrep/runtime/config";
-import { serverTokenKind, serverTokenName } from "@stargrep/runtime/server-token";
+import { aiGatewayKey } from "@stargrep/runtime/ai-key";
+import { budgetShareName, serverTokenName, serverTokenPolicy } from "@stargrep/runtime/server-token";
+import { webResourceId } from "@stargrep/runtime/stage";
 import MainWorker from "@stargrep/worker";
 import { betterAuthSecret } from "@stargrep/worker/auth";
 import { Database, DatabaseMigrations } from "@stargrep/worker/database";
 import { prodWebHosting } from "@stargrep/worker/domain";
 import { Icons } from "@stargrep/worker/icons";
 import { SyncStars } from "@stargrep/worker/queues";
+import { previewHostBinding, settings } from "@stargrep/worker/stage";
 import * as Alchemy from "alchemy";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -24,19 +25,19 @@ const SearchCache = Cloudflare.KV.Namespace("SearchCache");
 const CallerKey = Alchemy.makeRandom("CallerKey");
 
 const signInBindings = Effect.gen(function* () {
-  const { stage } = yield* Alchemy.Stack;
+  const { stage, production } = yield* settings;
   const signIn = yield* githubSignIn;
-  if (stage === "prod") {
+  if (production) {
     const github = Option.filter(signIn, (config) => config._tag === "direct" && Option.isSome(config.proxySecret));
     if (Option.isNone(github)) {
       return yield* Effect.die(
         `prod signs in directly and forwards previews' sign-ins, so it needs ${names.clientId}, ${names.proxySecret}, and no ${names.proxyOrigin}`,
       );
     }
-    return { ...bindings(github.value), [names.secret]: yield* betterAuthSecret(stage) };
+    return { ...previewHostBinding, ...bindings(github.value), [names.secret]: yield* betterAuthSecret(stage) };
   }
   if (Option.isNone(signIn)) return {};
-  return { ...bindings(signIn.value), [names.secret]: yield* betterAuthSecret(stage) };
+  return { ...previewHostBinding, ...bindings(signIn.value), [names.secret]: yield* betterAuthSecret(stage) };
 });
 
 // Cloudflare counts a rate limit per namespace ID across the whole account, so each stage gets its own IDs.
@@ -47,19 +48,19 @@ const namespaceId = (stage: string, name: string) => {
 };
 
 export class Website extends Cloudflare.Website.Vite<Website>()(
-  "Web",
+  webResourceId,
   Effect.gen(function* () {
-    const { stage } = yield* Alchemy.Stack;
-    const kind = yield* serverTokenKind;
+    const { stage, production, placement } = yield* settings;
+    const { kind, share } = yield* serverTokenPolicy(stage);
     const key = yield* aiGatewayKey;
     const demoLogin = yield* Config.option(Config.String(demoLoginName));
     return {
       rootDir: new URL(".", import.meta.url).pathname,
       memo: { include: ["**/*", "../../packages/*/src/**", "../../packages/*/package.json"], lockfile: true },
-      placement: { region: "aws:us-east-1" },
+      placement,
       dev: { port: 1340 },
       observability: { enabled: true, logs: { enabled: true, invocationLogs: true }, traces: { enabled: true } },
-      ...(stage === "prod" ? prodWebHosting : {}),
+      ...(production ? prodWebHosting : {}),
       env: {
         DATABASE: Database,
         DATABASE_MIGRATIONS: yield* DatabaseMigrations,
@@ -67,7 +68,7 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
         SYNC_STARS: SyncStars,
         WORKER: MainWorker,
         CALLER_KEY: yield* CallerKey,
-        [budgetShareName]: String(yield* stageBudgetShare(stage, kind)),
+        [budgetShareName]: String(share),
         [serverTokenName]: kind,
         ICONS: yield* Icons,
         ...Record.map(rateLimitPolicy, (policy, name) =>

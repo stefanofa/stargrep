@@ -17,12 +17,14 @@
     "@stargrep/web": "workspace:*",
     "@stargrep/worker": "workspace:*",
     "alchemy": "2.0.0-beta.85",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "@stargrep/runtime": "workspace:*"
   },
   "devDependencies": {
     "@effect/tsgo": "catalog:",
     "@stargrep/config": "workspace:*",
     "@types/bun": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "@stargrep/auth": "workspace:*"
   }
 }
