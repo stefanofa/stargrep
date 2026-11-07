@@ -410,11 +410,11 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         ]);
 
       expect(yield* named("REUSED")).toEqual([older, 1]);
-      yield* db.accounts.recordStarSync({ accountId: newer, etag: null, at: at("2026-05-01T00:00:00Z") });
+      yield* db.accounts.recordStarSync({ accountId: newer, at: at("2026-05-01T00:00:00Z") });
       expect(yield* named("reused")).toEqual([newer, 2]);
-      yield* db.accounts.recordStarSync({ accountId: older, etag: null, at: at("2026-05-02T00:00:00Z") });
+      yield* db.accounts.recordStarSync({ accountId: older, at: at("2026-05-02T00:00:00Z") });
       expect(yield* named("Reused")).toEqual([older, 1]);
-      yield* db.accounts.recordStarSync({ accountId: newer, etag: null, at: at("2026-05-02T00:00:00Z") });
+      yield* db.accounts.recordStarSync({ accountId: newer, at: at("2026-05-02T00:00:00Z") });
       expect(yield* named("reused")).toEqual([older, 1]);
     }),
   );
