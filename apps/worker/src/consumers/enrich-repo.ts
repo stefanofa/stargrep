@@ -30,7 +30,7 @@ const settlementOf = EnrichRepo.Enrichment.$match({
 export const chunks: Settle.Chunks<EnrichQueue.EnrichRepo> = {
   size: 10,
   deadline: Duration.minutes(10),
-  gate: (body) => body.userId ?? "",
+  gate: (body) => (body.userId === undefined ? "server" : undefined),
 };
 
 interface Group {
@@ -48,7 +48,7 @@ export const pipeline = <R>(enrichers: Layer.Layer<EnrichRepo.EnrichRepo, never,
       const users = yield* UserGates;
       const groups = new Map<string, Group>();
       deliveries.forEach(({ body }, position) => {
-        const key = chunks.gate(body);
+        const key = body.userId ?? "";
         const group = groups.get(key) ?? { userId: body.userId, positions: [], repoIds: [] };
         group.positions.push(position);
         group.repoIds.push(body.repoId);

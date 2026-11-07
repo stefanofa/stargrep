@@ -190,9 +190,8 @@ export interface Chunks<A> {
   // How long after the batch starts a chunk may still run. A chunk still running then stops, and its messages and
   // every later one retry, well before Cloudflare ends the invocation at 15 minutes.
   readonly deadline: Duration.Duration;
-  // The gate a message starts on. Once a message on a gate is deferred, that gate's messages in later chunks defer to
-  // the same time without running, so the batch does not ask GitHub again during the wait.
-  readonly gate: (body: A) => string;
+  // A known token can skip later chunks. Jobs that select a token at runtime cache the resolved token in their gate.
+  readonly gate: (body: A) => string | undefined;
 }
 
 export interface Pipeline<A, R, D = never> {
@@ -239,6 +238,10 @@ export const processBatch = Effect.fn("Consumer.processBatch")(function* <A, R, 
   const deadline = Option.map(pipeline.chunks, (chunks) => started + Duration.toMillis(chunks.deadline));
   const gateOf = Option.match(pipeline.chunks, { onNone: () => () => "", onSome: (chunks) => chunks.gate });
   const waits = new Map<string, Settlement>();
+  const waitFor = (body: A) => {
+    const key = gateOf(body);
+    return key === undefined ? undefined : waits.get(key);
+  };
   const decoded = messages.map((message) => ({ message, body: pipeline.decode(message.body) }));
   const valid = decoded.flatMap(({ message, body }) =>
     Result.isSuccess(body) ? [{ message, body: body.success }] : [],
@@ -257,10 +260,10 @@ export const processBatch = Effect.fn("Consumer.processBatch")(function* <A, R, 
     chunk: ReadonlyArray<{ readonly message: Message; readonly body: A }>,
   ) {
     const waiting = chunk.flatMap((entry) => {
-      const wait = waits.get(gateOf(entry.body));
+      const wait = waitFor(entry.body);
       return wait === undefined ? [] : [{ ...entry, settlement: wait }];
     });
-    const ready = chunk.filter(({ body }) => !waits.has(gateOf(body)));
+    const ready = chunk.filter(({ body }) => waitFor(body) === undefined);
     const outcomes = yield* runUntilDeadline(
       pipeline.run(ready.map(({ message, body }) => ({ body, attempts: message.attempts }))),
     );
@@ -276,7 +279,10 @@ export const processBatch = Effect.fn("Consumer.processBatch")(function* <A, R, 
         ),
     });
     const ran = Arr.zipWith(ready, settlements, (entry, settlement) => ({ ...entry, settlement }));
-    for (const { body, settlement } of ran) if (settlement._tag === "Defer") waits.set(gateOf(body), settlement);
+    for (const { body, settlement } of ran) {
+      const key = gateOf(body);
+      if (settlement._tag === "Defer" && key !== undefined) waits.set(key, settlement);
+    }
     yield* Effect.forEach([...ran, ...waiting], ({ message, body, settlement }) =>
       settle(
         queues,
