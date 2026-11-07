@@ -1,0 +1,21 @@
+{
+  "name": "@stargrep/knowledge",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "generate": "bun scripts/generate.ts",
+    "typecheck": "effect-tsgo tsc -p ."
+  },
+  "dependencies": {
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "catalog:",
+    "@stargrep/config": "workspace:*",
+    "@types/bun": "catalog:",
+    "typescript": "catalog:"
+  }
+}

@@ -142,6 +142,7 @@
       "name": "@stargrep/ai",
       "dependencies": {
         "@ai-sdk/gateway": "4.0.135",
+        "@stargrep/knowledge": "workspace:*",
         "ai": "7.0.162",
         "effect": "catalog:",
       },
@@ -250,6 +251,18 @@
         "@stargrep/config": "workspace:*",
         "@stargrep/telemetry": "workspace:*",
         "@stargrep/testing": "workspace:*",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
+    "packages/knowledge": {
+      "name": "@stargrep/knowledge",
+      "dependencies": {
+        "effect": "catalog:",
+      },
+      "devDependencies": {
+        "@effect/tsgo": "catalog:",
+        "@stargrep/config": "workspace:*",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
       },
@@ -812,6 +825,8 @@
     "@stargrep/github": ["@stargrep/github@workspace:packages/github"],
 
     "@stargrep/infra": ["@stargrep/infra@workspace:infra"],
+
+    "@stargrep/knowledge": ["@stargrep/knowledge@workspace:packages/knowledge"],
 
     "@stargrep/runtime": ["@stargrep/runtime@workspace:packages/runtime"],
 

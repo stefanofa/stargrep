@@ -1,7 +1,8 @@
-import { RepoKind } from "@stargrep/ai/summarize";
 import * as Schema from "effect/Schema";
 import { MetricId } from "./metric-registry.ts";
 import * as Vocabulary from "./vocabulary.ts";
+
+const PlannedKind = Schema.Literals(Vocabulary.plannedKinds);
 
 const Day = Schema.DateTimeUtcFromString.annotate({ description: "A date as YYYY-MM-DD." });
 
@@ -16,7 +17,7 @@ export const Filters = Schema.Struct({
   languages: Schema.Array(Schema.String).annotate({
     description: "GitHub language names, matched against a repo's language and topics.",
   }),
-  kinds: Schema.Array(RepoKind),
+  kinds: Schema.Array(PlannedKind),
   licenses: Schema.Array(Schema.String).annotate({ description: "SPDX license identifiers, such as MIT." }),
   archived: Schema.NullOr(Schema.Boolean),
   starredAfter: Schema.NullOr(Day),

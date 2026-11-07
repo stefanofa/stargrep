@@ -1,4 +1,20 @@
-import { RepoKind } from "@stargrep/ai/summarize";
+// Search keeps today's kinds, language names, and topics, with node and nodejs on JavaScript, until its filters read
+// atoms. The kinds are part of PlannerPrompt.version, which keys the plan and answer caches. The audited closed values
+// live in @stargrep/knowledge/registry.
+export const plannedKinds = [
+  "app",
+  "library",
+  "framework",
+  "cli",
+  "plugin",
+  "template",
+  "list",
+  "learning",
+  "dataset",
+  "model",
+  "config",
+  "other",
+] as const;
 
 interface Language {
   readonly aliases: ReadonlyArray<string>;
@@ -149,7 +165,7 @@ const licenseWords = [
   "unlicense",
 ];
 
-const kindWords = RepoKind.literals
+const kindWords = plannedKinds
   .filter((kind) => kind !== "other")
   .flatMap((kind) => [kind, kind.endsWith("y") ? `${kind.slice(0, -1)}ies` : `${kind}s`]);
 
