@@ -19,7 +19,7 @@ import {
   unreadEnrichment,
 } from "../schema.ts";
 
-// Private curation arrives with Pro. Until then every vocabulary write is in the public namespace.
+// Nothing writes a private namespace yet, so every vocabulary write here is public.
 const namespace = "public";
 
 // One advisory lock per namespace guards the vocabulary. Mints and decisions take it exclusively, and projections take
@@ -33,7 +33,7 @@ export type DecisionKind = (typeof decisionKind.enumValues)[number];
 export type SubjectStatus = (typeof subjectStatus.enumValues)[number];
 export type ClosureVia = (typeof closureVia.enumValues)[number];
 
-// One paid or stand-in answer, as commit A saves it.
+// One model or stand-in answer, as commit A saves it.
 export interface Answer {
   readonly receiptId: ReceiptId;
   readonly repoId: RepoId;

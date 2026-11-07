@@ -43,7 +43,7 @@ const tsvector = customType<{ data: string }>({ dataType: () => "tsvector" });
 
 // The closed dimensions of packages/knowledge. The knowledge migration creates these types from registry.sql, and a
 // registry change ships "alter type ... add value" (docs/knowledge.md).
-// Every closed dimension has at least one value, which the registry's tests check.
+// The registry lists at least one value for every closed dimension.
 const closedEnum = <Id extends string>(name: string, ids: ReadonlyArray<Id>) =>
   pgEnum(name, ids as readonly [Id, ...Array<Id>]);
 export const knowledgeKind = closedEnum("knowledge_kind", KindId.literals);
