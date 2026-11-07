@@ -254,6 +254,18 @@
         "typescript": "catalog:",
       },
     },
+    "packages/knowledge": {
+      "name": "@stargrep/knowledge",
+      "dependencies": {
+        "effect": "catalog:",
+      },
+      "devDependencies": {
+        "@effect/tsgo": "catalog:",
+        "@stargrep/config": "workspace:*",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
     "packages/runtime": {
       "name": "@stargrep/runtime",
       "dependencies": {
@@ -812,6 +824,8 @@
     "@stargrep/github": ["@stargrep/github@workspace:packages/github"],
 
     "@stargrep/infra": ["@stargrep/infra@workspace:infra"],
+
+    "@stargrep/knowledge": ["@stargrep/knowledge@workspace:packages/knowledge"],
 
     "@stargrep/runtime": ["@stargrep/runtime@workspace:packages/runtime"],
 

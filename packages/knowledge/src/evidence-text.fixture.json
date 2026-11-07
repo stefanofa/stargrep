@@ -1,0 +1,522 @@
+[
+  {
+    "repo": "unjs/untun",
+    "role": "for",
+    "term": "cloudflared",
+    "quote": "cloudflared integration based on a fork of JacobLinCool/node-cloudflared",
+    "input": "cloudflared integration based on a fork of [JacobLinCool/node-cloudflared](https://github.com/JacobLinCool/node-cloudflared)",
+    "matches": true
+  },
+  {
+    "repo": "unjs/untun",
+    "role": "for",
+    "term": "Cloudflare Quick Tunnels",
+    "quote": "Powered by 🔥 Cloudflare Quick Tunnels",
+    "input": "Powered by 🔥 [Cloudflare Quick Tunnels](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/) and used by 👂 [unjs/listhen](https://github.com/unjs/listhen).",
+    "matches": true
+  },
+  {
+    "repo": "collabs-inc/collab-public",
+    "role": "for",
+    "term": "Electron",
+    "quote": "Electron 40 — desktop shell with multi-webview architecture",
+    "input": "* **Electron 40** — desktop shell with multi-webview architecture",
+    "matches": true
+  },
+  {
+    "repo": "different-ai/openwork",
+    "role": "trait",
+    "term": "local-first",
+    "quote": "Your files stay local. Cloud is optional.",
+    "input": "- **Your files stay local.** Cloud is optional.",
+    "matches": true
+  },
+  {
+    "repo": "Infisical/infisical",
+    "role": "trait",
+    "term": "self-hosted",
+    "quote": "Self-hosting: Deploy Infisical on-prem or cloud with ease; keep data on your own infrastructure.",
+    "input": "- **[Self-hosting](https://infisical.com/docs/self-hosting/overview)**: Deploy Infisical on-prem or cloud with ease; keep data on your own infrastructure.",
+    "matches": true
+  },
+  {
+    "repo": "Infisical/infisical",
+    "role": "for",
+    "term": "Kubernetes",
+    "quote": "Infisical Kubernetes Operator: Deliver secrets to your Kubernetes workloads",
+    "input": "- **[Infisical Kubernetes Operator](https://infisical.com/docs/documentation/guides/kubernetes-operator)**: Deliver secrets to your Kubernetes workloads and automatically reload deployments.",
+    "matches": true
+  },
+  {
+    "repo": "Infisical/infisical",
+    "role": "alternative_to",
+    "term": "HashiCorp Vault",
+    "quote": "topics: vault",
+    "input": "Repository: Infisical/infisical\nDescription: Infisical is the open-source platform for securing secrets, certificates, access, and AI Agents.\nTopics: environment-variables, secret-management, secrets, security, open-source, secret-manager, postgres, security-tools, certificate-management, private-ca, pki, acme, secrets-management, vault, agents, pam, devsecops, ai-agents, kubernetes, privileged-access-management\nLanguage: TypeScript\nREADME:",
+    "matches": false
+  },
+  {
+    "repo": "maybe-finance/maybe",
+    "role": "trait",
+    "term": "self-hosted",
+    "quote": "can be self hosted with Docker",
+    "input": "Maybe is a fully working personal finance app that can be [self hosted with Docker](docs/hosting/docker.md).",
+    "matches": true
+  },
+  {
+    "repo": "Kong/insomnia",
+    "role": "trait",
+    "term": "local-first",
+    "quote": "Local Vault: for 100% local storage of collections, design specs and every other resource.",
+    "input": "- **Local Vault**: for 100% local storage of collections, design specs and every other resource.",
+    "matches": true
+  },
+  {
+    "repo": "Dokploy/dokploy",
+    "role": "trait",
+    "term": "self-hosted",
+    "quote": "Self-Hosted: Self-host Dokploy on your VPS.",
+    "input": "- **Self-Hosted**: Self-host Dokploy on your VPS.",
+    "matches": true
+  },
+  {
+    "repo": "plausible/analytics",
+    "role": "trait",
+    "term": "cookie-free",
+    "quote": "Lightweight, cookie-free alternative to Google Analytics",
+    "input": "[Plausible Analytics](https://plausible.io/) is an open source, privacy-first web analytics tool. Lightweight, cookie-free [alternative to Google Analytics](https://plausible.io/blog/remove-google-analytics). Available in managed cloud or self-hosted community edition.",
+    "matches": true
+  },
+  {
+    "repo": "anyproto/anytype-ts",
+    "role": "alternative_to",
+    "term": "Notion",
+    "quote": "Anytype is a personal knowledge base—your digital brain",
+    "input": "Anytype is a **personal knowledge base**—your digital brain—that lets you gather, connect and remix all kinds of information. Create pages, tasks, wikis, journals—even entire apps—and *define your own data model* while your data stays **offline‑first, private and encrypted** across devices.",
+    "matches": true
+  },
+  {
+    "repo": "tauri-apps/tauri",
+    "role": "about",
+    "term": "application bundling",
+    "quote": "Built-in app bundler to create app bundles in formats like .app, .dmg, .deb, .rpm, .AppImage",
+    "input": "- Built-in app bundler to create app bundles in formats like `.app`, `.dmg`, `.deb`, `.rpm`, `.AppImage` and Windows installers like `.exe` (via NSIS) and `.msi` (via WiX).",
+    "matches": true
+  },
+  {
+    "repo": "EpicenterHQ/epicenter",
+    "role": "trait",
+    "term": "self-hosted",
+    "quote": "Self-host | Reference deployable",
+    "input": "| [Self-host](apps/self-host) | Reference deployable | Community-supported single-partition instance without hosted billing. |",
+    "matches": true
+  },
+  {
+    "repo": "RocketChat/Rocket.Chat",
+    "role": "alternative_to",
+    "term": "Slack",
+    "quote": "topics: slack",
+    "input": "Repository: RocketChat/Rocket.Chat\nDescription: The Secure CommsOS™ for mission-critical operations\nTopics: chat, meteor, javascript, collaboration, webrtc, real-time, slack, foss, free, mit, hacktoberfest\nLanguage: TypeScript\nREADME:",
+    "matches": false
+  },
+  {
+    "repo": "vitejs/vite",
+    "role": "alternative_to",
+    "term": "webpack",
+    "quote": "Vite is a build tool that aims to provide a faster and leaner development experience for modern web projects.",
+    "input": "- 🔑 Fully Typed APIs\n\nVite (French word for \"quick\", pronounced [`/viːt/`](https://cdn.jsdelivr.net/gh/vitejs/vite@main/docs/public/vite.mp3), like \"veet\") is a build tool that aims to provide a faster and leaner development experience for modern web projects. It consists of two major parts:\n\n- A dev server that provides [rich feature enhancements](https://vite.dev/guide/features) over [native ES modules](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Modules), for example extremely fast [Hot Module Replacement (HMR)](https://vite.dev/guide/features#hot-module-replacement).",
+    "matches": false
+  },
+  {
+    "repo": "n8n-io/n8n",
+    "role": "alternative_to",
+    "term": "Zapier",
+    "quote": "Combine a visual canvas with custom code, run it self-hosted or in the cloud",
+    "input": "Fair-code platform to build and deploy AI agents and workflows. Combine a visual canvas with custom code, run it self-hosted or in the [cloud](https://app.n8n.cloud/login), and connect to 1500+ integrations. AI automation you can trust with real work, from prototype to production.",
+    "matches": true
+  },
+  {
+    "repo": "n8n-io/n8n",
+    "role": "alternative_to",
+    "term": "Make",
+    "quote": "Combine a visual canvas with custom code, run it self-hosted or in the cloud",
+    "input": "Fair-code platform to build and deploy AI agents and workflows. Combine a visual canvas with custom code, run it self-hosted or in the [cloud](https://app.n8n.cloud/login), and connect to 1500+ integrations. AI automation you can trust with real work, from prototype to production.",
+    "matches": true
+  },
+  {
+    "repo": "formbricks/formbricks",
+    "role": "trait",
+    "term": "self-hosted",
+    "quote": "All open source, transparent and self-hostable.",
+    "input": "- 🔒 All **open source**, transparent and self-hostable.",
+    "matches": true
+  },
+  {
+    "repo": "JuneYaooo/rea-video",
+    "role": "alternative_to",
+    "term": "Hypit",
+    "quote": "Hypit takes a reference video and makes a new one",
+    "input": "[Hypit](https://github.com/hypit-ai/hypit) takes a reference video and makes a new one: the agent reads frame grids to understand the original, generates footage with the models it supports (Seedance, PixVerse, MiniMax, Wan and others), and renders captions and motion graphics in HTML.",
+    "matches": true
+  },
+  {
+    "repo": "alibaba/ice",
+    "role": "trait",
+    "term": "zero config",
+    "quote": "Zero Config: Out of the box support for ES6+, TypeScript, Less, Sass, CSS Modules",
+    "input": "- 🐒 **Zero Config**: Out of the box support for ES6+, TypeScript, Less, Sass, CSS Modules，etc",
+    "matches": true
+  },
+  {
+    "repo": "alibaba/ice",
+    "role": "alternative_to",
+    "term": "Next.js",
+    "quote": "Hybrid: pre-render pages at build time (SSG) or request time (SSR) for default",
+    "input": "- 🦁 **Hybrid**: pre-render pages at build time (SSG) or request time (SSR) for default",
+    "matches": true
+  },
+  {
+    "repo": "PaddlePaddle/PaddleSpeech",
+    "role": "alternative_to",
+    "term": "ESPnet",
+    "quote": "ESPnet",
+    "input": "Repository: PaddlePaddle/PaddleSpeech\nDescription: Easy-to-use Speech Toolkit including Self-Supervised Learning model, SOTA/Streaming ASR with punctuation, Streaming TTS with text frontend, Speaker Verification System, End-to-End Speech Translation and Keyword Spotting. Won NAACL2022 Best Demo Award.\nTopics: transformer, conformer, speech-translation, streaming-asr, speech-alignment, punctuation-restoration, streaming-tts, speech-synthesis, tts, asr, kws, speech-recognition, sound-classification, voice-cloning, vocoder, voice-recognition, self-supervised-learning, wav2vec2, whisper, code-switch",
+    "matches": false
+  },
+  {
+    "repo": "jamesx0416/ChatLink",
+    "role": "alternative_to",
+    "term": "youtubei",
+    "quote": "uses YouTube's internal youtubei/v1/live_chat/get_live_chat feed instead of scraping rendered DOM nodes",
+    "input": "- The collector uses YouTube's internal `youtubei/v1/live_chat/get_live_chat` feed instead of scraping rendered DOM nodes.",
+    "matches": true
+  },
+  {
+    "repo": "mjackson/remix-the-web",
+    "role": "status",
+    "term": "moved",
+    "quote": "This repository has moved! Development continues at remix-run/remix.",
+    "input": "> **📦 This repository has moved!**\n> Development continues at [remix-run/remix](https://github.com/remix-run/remix).",
+    "matches": true
+  },
+  {
+    "repo": "colinhacks/zshy",
+    "role": "trait",
+    "term": "bundler-free",
+    "quote": "Bundler-free — No bundler or bundler configs involved",
+    "input": "- 📦 **Bundler-free** — No bundler or bundler configs involved",
+    "matches": true
+  },
+  {
+    "repo": "colinhacks/zshy",
+    "role": "trait",
+    "term": "no config file",
+    "quote": "No config file — Reads from your package.json and tsconfig.json",
+    "input": "- 🟦 **No config file** — Reads from your `package.json` and `tsconfig.json`",
+    "matches": true
+  },
+  {
+    "repo": "colinhacks/zshy",
+    "role": "alternative_to",
+    "term": "tshy",
+    "quote": "The DX of zshy was heavily inspired by tshy",
+    "input": "The DX of `zshy` was heavily inspired by [tshy](https://github.com/isaacs/tshy) by [@isaacs](https://x.com/izs), particularly its declarative entrypoint map and auto-updating of `package.json#/exports`. It proved that there's a modern way to transpile libraries using pure `tsc` (and various `package.json` hacks). Unfortunately its approach necessarily involved certain constraints that made it unworkable for Zod (described in the FAQ in more detail). `zshy` borrows elements of `tshy`'s DX while using the Compiler API to relax these constraints and provide a more \"batteries included\" experience.",
+    "matches": true
+  },
+  {
+    "repo": "colinhacks/zshy",
+    "role": "alternative_to",
+    "term": "tsup",
+    "quote": "bundler-powered tools like tsup, tsdown, or unbuild",
+    "input": "Node.js loads an ES module's relative imports by exact path, so `from \"./util\"` has to reach your users as `from \"./util.js\"`. Vanilla `tsc` won't write that for you: under `\"moduleResolution\": \"bundler\"` it emits the specifier exactly as you wrote it, and under `\"nodenext\"` it makes you write `.js` throughout your source. This is the limitation that pushes library authors toward bundlers or bundler-powered tools like `tsup`, `tsdown`, or `unbuild`...",
+    "matches": true
+  },
+  {
+    "repo": "colinhacks/zshy",
+    "role": "alternative_to",
+    "term": "tsdown",
+    "quote": "bundler-powered tools like tsup, tsdown, or unbuild",
+    "input": "Node.js loads an ES module's relative imports by exact path, so `from \"./util\"` has to reach your users as `from \"./util.js\"`. Vanilla `tsc` won't write that for you: under `\"moduleResolution\": \"bundler\"` it emits the specifier exactly as you wrote it, and under `\"nodenext\"` it makes you write `.js` throughout your source. This is the limitation that pushes library authors toward bundlers or bundler-powered tools like `tsup`, `tsdown`, or `unbuild`...",
+    "matches": true
+  },
+  {
+    "repo": "MineDojo/MineDojo",
+    "role": "is",
+    "term": "dataset",
+    "quote": "provides open access to an internet-scale knowledge base",
+    "input": "MineDojo features a **massive simulation suite** built on Minecraft with 1000s of diverse tasks, and provides **open access to an internet-scale knowledge base** of 730K YouTube videos, 7K Wiki pages, 340K Reddit posts.",
+    "matches": true
+  },
+  {
+    "repo": "MineDojo/MineDojo",
+    "role": "about",
+    "term": "reinforcement learning",
+    "quote": "Gym-style interface for developing embodied agents that interact with the simulator in a loop",
+    "input": "MineDojo provides a [Gym-style](https://www.gymlibrary.dev/) interface for developing embodied agents that interact with the simulator in a loop.  Here is a very simple code snippet of a hardcoded agent that runs forward and jumps every 10 steps in the \"Harvest Wool\" task:",
+    "matches": true
+  },
+  {
+    "repo": "mhart/aws4fetch",
+    "role": "for",
+    "term": "AWS",
+    "quote": "A compact [AWS] client",
+    "input": "Description: A compact AWS client and signing utility for modern JS environments",
+    "matches": true
+  },
+  {
+    "repo": "mhart/aws4fetch",
+    "role": "about",
+    "term": "exponential backoff",
+    "quote": "retries requests with an exponential backoff with full jitter",
+    "input": "JS platforms like [Cloudflare Workers](https://www.cloudflare.com/products/cloudflare-workers/). Also retries\nrequests with an [exponential backoff with full jitter](https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/)",
+    "matches": true
+  },
+  {
+    "repo": "CompVis/stable-diffusion",
+    "role": "is",
+    "term": "model",
+    "quote": "Stable Diffusion is a latent text-to-image diffusion",
+    "input": "[Stable Diffusion](#stable-diffusion-v1) is a latent text-to-image diffusion",
+    "matches": true
+  },
+  {
+    "repo": "imputnet/helium",
+    "role": "alternative_to",
+    "term": "ungoogled-chromium",
+    "quote": "Helium originally branched off ungoogled-chromium",
+    "input": "Helium originally branched off\n[ungoogled-chromium](https://github.com/ungoogled-software/ungoogled-chromium).",
+    "matches": true
+  },
+  {
+    "repo": "ItzCrazyKns/Vane",
+    "role": "for",
+    "term": "Ollama",
+    "quote": "support for local LLMs (Ollama)",
+    "input": "Vane is a **privacy-focused AI answering engine** that runs entirely on your own hardware. It combines knowledge from the vast internet with support for **local LLMs** (Ollama) and cloud providers (OpenAI, Claude, Groq), delivering accurate answers with **cited sources** while keeping your searches completely private.",
+    "matches": true
+  },
+  {
+    "repo": "timescale/pg-aiguide",
+    "role": "is",
+    "term": "plugin",
+    "quote": "a Claude Code plugin optimized for use with Claude's native skill support",
+    "input": "- a **Claude Code plugin** optimized for use with Claude's native skill support.",
+    "matches": true
+  },
+  {
+    "repo": "timescale/pg-aiguide",
+    "role": "for",
+    "term": "MCP",
+    "quote": "a public MCP server that can be used with any AI coding agent",
+    "input": "- a **public MCP server** that can be used with any AI coding agent, or",
+    "matches": true
+  },
+  {
+    "repo": "timescale/pg-aiguide",
+    "role": "for",
+    "term": "Claude Code",
+    "quote": "a Claude Code plugin optimized for use with Claude's native skill support",
+    "input": "- a **Claude Code plugin** optimized for use with Claude's native skill support.",
+    "matches": true
+  },
+  {
+    "repo": "timescale/pg-aiguide",
+    "role": "for",
+    "term": "TimescaleDB",
+    "quote": "TimescaleDB (docs + skills)",
+    "input": "- **TimescaleDB** (docs + skills)",
+    "matches": true
+  },
+  {
+    "repo": "timescale/pg-aiguide",
+    "role": "about",
+    "term": "PostgreSQL documentation search",
+    "quote": "Semantic search across the official PostgreSQL manual",
+    "input": "- **Semantic search** across the official PostgreSQL manual (version-aware)",
+    "matches": true
+  },
+  {
+    "repo": "timescale/pg-aiguide",
+    "role": "trait",
+    "term": "version-aware",
+    "quote": "Semantic search across the official PostgreSQL manual (version-aware)",
+    "input": "- **Semantic search** across the official PostgreSQL manual (version-aware)",
+    "matches": true
+  },
+  {
+    "repo": "fuma-nama/fumapress",
+    "role": "for",
+    "term": "Fumadocs",
+    "quote": "A site generator powered by Fumadocs & Waku.js.",
+    "input": "A site generator powered by [Fumadocs](https://fumadocs.dev) & [Waku.js](https://waku.gg).",
+    "matches": true
+  },
+  {
+    "repo": "fuma-nama/fumapress",
+    "role": "for",
+    "term": "Waku",
+    "quote": "A site generator powered by Fumadocs & Waku.js.",
+    "input": "A site generator powered by [Fumadocs](https://fumadocs.dev) & [Waku.js](https://waku.gg).",
+    "matches": true
+  },
+  {
+    "repo": "elevenlabs/ui",
+    "role": "for",
+    "term": "Tailwind CSS",
+    "quote": "Tailwind CSS configured",
+    "input": "- **Tailwind CSS** configured",
+    "matches": true
+  },
+  {
+    "repo": "cosscom/ui",
+    "role": "alternative_to",
+    "term": "shadcn/ui",
+    "quote": "Special thanks to: ... shadcn/ui ... For inspiring our copy-paste approach and component philosophy",
+    "input": "- **[Tailwind CSS](https://tailwindcss.com/)** - For the utility-first CSS framework that powers our design system\n- **[Base UI](https://base-ui.com/)** - For providing the robust, accessible primitives that form the foundation of our components\n- **[shadcn/ui](https://ui.shadcn.com/)** - For inspiring our copy-paste approach and component philosophy\n- **[Fumadocs](https://fumadocs.dev/)** - For providing the documentation framework that powers our component docs",
+    "matches": false
+  },
+  {
+    "repo": "runs-on/runs-on",
+    "role": "trait",
+    "term": "spot instances",
+    "quote": "Use spot instances with on-demand fallback",
+    "input": "- **Cut compute costs without making jobs fragile.** Use [spot instances with on-demand fallback](https://runs-on.com/docs/costs/spot-pricing/).",
+    "matches": true
+  },
+  {
+    "repo": "yairEO/tagify",
+    "role": "about",
+    "term": "form validation",
+    "quote": "Validate tags by Regex pattern or by function",
+    "input": "* Validate tags by Regex *pattern* or by function",
+    "matches": true
+  },
+  {
+    "repo": "vercel-labs/workflow-builder-template",
+    "role": "alternative_to",
+    "term": "Zapier",
+    "quote": "Visual Workflow Builder - Drag-and-drop interface powered by React Flow",
+    "input": "- **Visual Workflow Builder** - Drag-and-drop interface powered by React Flow",
+    "matches": true
+  },
+  {
+    "repo": "BuilderIO/mitosis",
+    "role": "for",
+    "term": "Figma",
+    "quote": "Sync your design systems from Figma to code and publish them to npm across frameworks",
+    "input": "- Sync your [design systems from Figma to code](https://mitosis.builder.io/docs/figma/) and publish them to npm across frameworks",
+    "matches": true
+  },
+  {
+    "repo": "BuilderIO/mitosis",
+    "role": "about",
+    "term": "code generation",
+    "quote": "Sync your design systems from Figma to code",
+    "input": "- Sync your [design systems from Figma to code](https://mitosis.builder.io/docs/figma/) and publish them to npm across frameworks",
+    "matches": true
+  },
+  {
+    "repo": "BuilderIO/mitosis",
+    "role": "trait",
+    "term": "compiles to native framework code",
+    "quote": "Avoid the pitfalls of web components by compiling to native framework code",
+    "input": "- Avoid the [pitfalls of web components](https://mitosis.builder.io/docs/overview/) by compiling to native framework code",
+    "matches": true
+  },
+  {
+    "repo": "docling-project/docling",
+    "role": "for",
+    "term": "LangChain",
+    "quote": "Plug-and-play integrations incl. LangChain, LlamaIndex, Crew AI & Haystack",
+    "input": "- 🤖 Plug-and-play [integrations][integrations] incl. LangChain, LlamaIndex, Crew AI & Haystack for agentic AI",
+    "matches": true
+  },
+  {
+    "repo": "docling-project/docling",
+    "role": "for",
+    "term": "LlamaIndex",
+    "quote": "Plug-and-play integrations incl. LangChain, LlamaIndex, Crew AI & Haystack",
+    "input": "- 🤖 Plug-and-play [integrations][integrations] incl. LangChain, LlamaIndex, Crew AI & Haystack for agentic AI",
+    "matches": true
+  },
+  {
+    "repo": "neovim/neovim",
+    "role": "trait",
+    "term": "embedded terminal",
+    "quote": "Embedded, scriptable terminal emulator",
+    "input": "- Embedded, scriptable [terminal emulator](https://neovim.io/doc/user/terminal.html)",
+    "matches": true
+  },
+  {
+    "repo": "photoprism/photoprism",
+    "role": "about",
+    "term": "automatic image labeling",
+    "quote": "Automatically labels your pictures based on content and location",
+    "input": "* [Automatically labels your pictures](https://try.photoprism.app/library/labels) based on content and location, and recognizes the faces of [your family and friends](https://try.photoprism.app/library/people/new)",
+    "matches": true
+  },
+  {
+    "repo": "openai/whisper",
+    "role": "written_in",
+    "term": "Python",
+    "quote": "We used Python 3.9.9 and PyTorch 1.10.1 to train and test our models",
+    "input": "We used Python 3.9.9 and [PyTorch](https://pytorch.org/) 1.10.1 to train and test our models, but the codebase is expected to be compatible with Python 3.8-3.11 and recent PyTorch versions. The codebase also depends on a few Python packages, most notably [OpenAI's tiktoken](https://github.com/openai/tiktoken) for their fast tokenizer implementation. You can download and install (or update to) the latest release of Whisper with the following command:",
+    "matches": true
+  },
+  {
+    "repo": "openai/whisper",
+    "role": "for",
+    "term": "PyTorch",
+    "quote": "We used Python 3.9.9 and PyTorch 1.10.1 to train and test our models",
+    "input": "We used Python 3.9.9 and [PyTorch](https://pytorch.org/) 1.10.1 to train and test our models, but the codebase is expected to be compatible with Python 3.8-3.11 and recent PyTorch versions. The codebase also depends on a few Python packages, most notably [OpenAI's tiktoken](https://github.com/openai/tiktoken) for their fast tokenizer implementation. You can download and install (or update to) the latest release of Whisper with the following command:",
+    "matches": true
+  },
+  {
+    "repo": "zulip/zulip",
+    "role": "alternative_to",
+    "term": "Slack",
+    "quote": "Zulip is the only modern team chat app",
+    "input": "Zulip every day. Zulip is the only [modern team chat app][features] that is",
+    "matches": true
+  },
+  {
+    "repo": "toeverything/AFFiNE",
+    "role": "about",
+    "term": "knowledge management",
+    "quote": "AFFiNE is an open-source, all-in-one workspace and an operating system for all the building blocks that assemble your knowledge base",
+    "input": "[AFFiNE](https://affine.pro) is an open-source, all-in-one workspace and an operating system for all the building blocks that assemble your knowledge base and much more -- wiki, knowledge management, presentation and digital assets. It's a better alternative to Notion and Miro.",
+    "matches": true
+  },
+  {
+    "repo": "SigNoz/signoz",
+    "role": "trait",
+    "term": "self-hosted",
+    "quote": "Community: Free open-source SigNoz that runs in your own infrastructure.",
+    "input": "#### Community\n\nFree open-source SigNoz that runs in your own infrastructure. Deploy with Docker, Kubernetes, or Linux and keep full control of your data plane.\n\n[**Install SigNoz →**](https://signoz.io/docs/install/self-host/)",
+    "matches": false
+  },
+  {
+    "repo": "grafana/grafana",
+    "role": "about",
+    "term": "alerting",
+    "quote": "Alerting: Visually define alert rules for your most important metrics.",
+    "input": "- **Alerting:** Visually define alert rules for your most important metrics. Grafana will continuously evaluate and send notifications to systems like Slack, PagerDuty, VictorOps, OpsGenie.",
+    "matches": true
+  },
+  {
+    "repo": "Caldis/Mos",
+    "role": "alternative_to",
+    "term": "Logi Options+",
+    "quote": "Logi/HID++ 支持：支持 Bolt、Unifying 接收器和蓝牙直连设备上的 Logitech 按钮事件",
+    "input": "- **Logi/HID++ 支持**：支持 Bolt、Unifying 接收器和蓝牙直连设备上的 Logitech 按钮事件，并可处理 Logi 专有动作。",
+    "matches": true
+  },
+  {
+    "repo": "Meituan-Dianping/mpvue",
+    "role": "is",
+    "term": "framework",
+    "quote": "使用 Vue.js 开发小程序的前端框架",
+    "input": "`mpvue` 是一个使用 [Vue.js](https://vuejs.org) 开发小程序的前端框架，目前支持 `微信小程序`、`百度智能小程序`，`头条小程序` 和 `支付宝小程序`。 框架基于 `Vue.js`，修改了的运行时框架 runtime 和代码编译器 compiler 实现，使其可运行在小程序环境中，从而为小程序开发引入了 `Vue.js` 开发体验。",
+    "matches": true
+  }
+]
