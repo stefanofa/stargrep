@@ -19,7 +19,7 @@ export type Client = ContractRouterClient<typeof contract>;
 let browser: Client | undefined;
 
 export const api = createIsomorphicFn()
-  .server(inProcess)
+  .server(() => inProcess())
   .client((): Client => {
     browser ??= createORPCClient(new RPCLink({ url: "/rpc", origin: location.origin }));
     return browser;
