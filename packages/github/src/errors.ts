@@ -36,6 +36,8 @@ export class RateLimited extends Schema.TaggedError<RateLimited, { readonly bran
   operation: Operation,
   resource: Schema.String,
   retryAfterMillis: Schema.Int,
+  // A previous job in this invocation already waited through the client's short retries.
+  deferredUntil: Schema.optionalKey(Schema.Int),
 }) {
   override get message(): string {
     return `GitHub rate limited '${this.operation}' on '${this.resource}' for ${this.retryAfterMillis} ms`;

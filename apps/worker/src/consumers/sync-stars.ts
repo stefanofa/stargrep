@@ -1,7 +1,7 @@
 import { StarSync, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import type { BudgetShare } from "@stargrep/github/schemas";
-import * as TokenGate from "@stargrep/github/token-gate";
+import type * as TokenGate from "@stargrep/github/token-gate";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -40,7 +40,6 @@ export const pipeline = <R>(
   Settle.pipeline({
     schema: StarSync.LoginSyncRequest,
     run: Effect.fn("SyncStarsConsumer.run")(function* (deliveries) {
-      const gate = yield* TokenGate.TokenGate;
       const users = yield* UserGates;
       return yield* Effect.forEach(
         deliveries,
@@ -48,8 +47,7 @@ export const pipeline = <R>(
           Effect.gen(function* () {
             const sent = yield* Ref.make(0);
             const { body } = delivery;
-            const server = TokenGate.counting(gate, sent);
-            const counted = Settle.onGate(syncs, yield* users.gate(body.userId, server));
+            const counted = Settle.onGate(syncs, yield* users.forJob({ paidBy: body.userId, sent }));
             const synced = yield* StarSync.StarSync.use((starSync) => starSync.syncLogin(body)).pipe(
               Effect.provide(counted),
               Effect.result,

@@ -1,7 +1,7 @@
 import { EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
 import type { UserId } from "@stargrep/db/auth-schema";
 import type { RepoId } from "@stargrep/github/schemas";
-import * as TokenGate from "@stargrep/github/token-gate";
+import type * as TokenGate from "@stargrep/github/token-gate";
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -45,7 +45,6 @@ export const pipeline = <R>(enrichers: Layer.Layer<EnrichRepo.EnrichRepo, never,
   Settle.pipeline({
     schema: EnrichQueue.EnrichRepo,
     run: Effect.fn("EnrichRepoConsumer.run")(function* (deliveries) {
-      const server = yield* TokenGate.TokenGate;
       const users = yield* UserGates;
       const groups = new Map<string, Group>();
       deliveries.forEach(({ body }, position) => {
@@ -59,7 +58,8 @@ export const pipeline = <R>(enrichers: Layer.Layer<EnrichRepo.EnrichRepo, never,
       yield* Effect.forEach(
         groups.values(),
         Effect.fnUntraced(function* ({ userId, positions, repoIds }) {
-          const enricher = Settle.onGate(enrichers, yield* users.gate(userId, server));
+          const gate = yield* users.forJob({ paidBy: userId });
+          const enricher = Settle.onGate(enrichers, gate);
           const enriched = yield* EnrichRepo.EnrichRepo.use((service) => service.enrichRepos(repoIds)).pipe(
             Effect.provide(enricher),
             Effect.result,
@@ -67,7 +67,13 @@ export const pipeline = <R>(enrichers: Layer.Layer<EnrichRepo.EnrichRepo, never,
           const outcomes = Result.isFailure(enriched)
             ? repoIds.map(() => Result.fail(enriched.failure))
             : enriched.success.map(settlementOf);
-          for (const [position, outcome] of Arr.zip(positions, outcomes)) settled[position] = outcome;
+          for (const [position, outcome] of Arr.zip(positions, outcomes)) {
+            settled[position] =
+              Result.isFailure(outcome) &&
+              (outcome.failure._tag === "RateLimited" || outcome.failure._tag === "TokenBudgetExhausted")
+                ? Result.fail(yield* gate.defer(outcome.failure))
+                : outcome;
+          }
         }),
         { discard: true },
       );

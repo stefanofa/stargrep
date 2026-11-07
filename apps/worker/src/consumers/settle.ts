@@ -42,7 +42,8 @@ const deadLetter = (error: Failure) => Settlement.DeadLetter({ error: error._tag
 export const afterFailure = (error: Failure, now: number): Settlement =>
   Match.valueTags(error, {
     TokenBudgetExhausted: (failure) => Settlement.Defer({ error: failure._tag, until: failure.resetAt }),
-    RateLimited: (failure) => Settlement.Defer({ error: failure._tag, until: now + failure.retryAfterMillis }),
+    RateLimited: (failure) =>
+      Settlement.Defer({ error: failure._tag, until: failure.deferredUntil ?? now + failure.retryAfterMillis }),
     Unauthorized: deadLetter,
     GitHubTokenMissing: deadLetter,
     AiKeyMissing: deadLetter,
