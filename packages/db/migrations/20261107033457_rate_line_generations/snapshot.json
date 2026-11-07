@@ -1,0 +1,56 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "c51b88a3-c9e0-4f23-ad03-9cd60b6c3426",
+  "prevIds": [
+    "2a0aadd7-d1cb-4b03-8fa3-e214e31d2301"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "rate_lines",
+        "generation"
+      ],
+      "writes": [
+        "s|col|public.rate_lines.generation",
+        "n|col|public.rate_lines.generation",
+        "e|col|public.rate_lines.generation"
+      ],
+      "reads": [
+        "n|tbl|public.rate_lines",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "rate_lines",
+        "name": "generation",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": {
+          "type": "always",
+          "name": "rate_lines_generation_seq",
+          "increment": "1",
+          "startWith": "1",
+          "minValue": "1",
+          "maxValue": "9223372036854775807",
+          "cache": 1,
+          "cycle": false
+        },
+        "entityType": "columns"
+      }
+    }
+  ]
+}

@@ -16,8 +16,17 @@ const start = at("2026-11-06T09:00:00Z");
 const all = Db.LineKey.make("all");
 const later = (count: number) => DateTime.addDuration(start, units(count));
 
-const reserve = (time: DateTime.Utc, cost: number, force = false) =>
+const take = (time: DateTime.Utc, cost: number, force = false) =>
   Db.Db.use((db) => db.rateLines.reserve({ line: all, at: time, cost: units(cost), tolerance, maxWait, force }));
+
+const reserve = (time: DateTime.Utc, cost: number, force = false) =>
+  Effect.map(
+    take(time, cost, force),
+    Option.map((reserved) => reserved.startsAt),
+  );
+
+const release = (reserved: Option.Option<Db.Reserved>, time: DateTime.Utc) =>
+  Db.Db.use((db) => db.rateLines.release(Option.getOrThrow(reserved), time));
 
 const busyFor = (time: DateTime.Utc, line = all) => Db.Db.use((db) => db.rateLines.wait(line, time, Duration.zero));
 
@@ -34,7 +43,7 @@ const reserveNew = (name: string, time: DateTime.Utc) =>
       maxWait: Duration.zero,
       force: false,
     }),
-  );
+  ).pipe(Effect.map(Option.map((reserved) => reserved.startsAt)));
 
 const adjust = (time: DateTime.Utc, count: number) => Db.Db.use((db) => db.rateLines.adjust(all, time, units(count)));
 
@@ -152,6 +161,110 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | Test
       expect(yield* busyFor(later(150))).toEqual(Duration.zero);
       yield* adjust(later(150), 2);
       expect(yield* busyFor(later(150))).toEqual(units(2));
+    }),
+  );
+
+  test.effect("releases a reservation the line still owes in full, which moves later ones earlier", () =>
+    Effect.gen(function* () {
+      yield* clear;
+      const first = yield* take(start, 10);
+      yield* take(start, 20);
+      yield* release(first, start);
+      expect(yield* busyFor(start)).toEqual(units(20));
+    }),
+  );
+
+  test.effect("releases only the part of a reservation the line has not paid out", () =>
+    Effect.gen(function* () {
+      yield* clear;
+      const first = yield* take(start, 10);
+      yield* take(start, 5);
+      yield* release(first, later(4));
+      expect(yield* busyFor(later(4))).toEqual(units(5));
+    }),
+  );
+
+  test.effect("releases nothing for a reservation the line has paid out, so later work keeps its debt", () =>
+    Effect.gen(function* () {
+      yield* clear;
+      const first = yield* take(start, 10);
+      yield* take(later(12), 5);
+      yield* release(first, later(12));
+      expect(yield* busyFor(later(12))).toEqual(units(5));
+    }),
+  );
+
+  test.effect("releases what is left of a reservation after an earlier one was given back", () =>
+    Effect.gen(function* () {
+      yield* clear;
+      const first = yield* take(start, 10);
+      const second = yield* take(start, 20);
+      yield* release(first, start);
+      yield* release(second, later(5));
+      expect(yield* busyFor(later(5))).toEqual(Duration.zero);
+      yield* release(second, later(6));
+      expect(yield* busyFor(later(6))).toEqual(Duration.zero);
+    }),
+  );
+
+  test.effect(
+    "releases only what is left of a reservation an earlier release moved, so later work keeps its debt",
+    () =>
+      Effect.gen(function* () {
+        yield* clear;
+        const first = yield* take(start, 10);
+        const second = yield* take(start, 20);
+        yield* take(start, 5);
+        yield* release(first, start);
+        yield* release(second, later(9));
+        expect(yield* busyFor(later(9))).toEqual(units(5));
+      }),
+  );
+
+  test.effect("counts time a bill gave back as moving the reservations behind it", () =>
+    Effect.gen(function* () {
+      yield* clear;
+      yield* take(start, 10);
+      const second = yield* take(start, 20);
+      yield* take(start, 5);
+      yield* adjust(start, -10);
+      yield* release(second, later(9));
+      expect(yield* busyFor(later(9))).toEqual(units(5));
+    }),
+  );
+
+  test.effect("gives back too little rather than too much when time behind a reservation was given back first", () =>
+    Effect.gen(function* () {
+      yield* clear;
+      yield* take(start, 10);
+      const second = yield* take(start, 20);
+      const third = yield* take(start, 5);
+      yield* release(third, start);
+      yield* release(second, later(15));
+      expect(yield* busyFor(later(15))).toEqual(units(5));
+    }),
+  );
+
+  test.effect("releases nothing into a line new work recreated after the prune deleted the old one", () =>
+    Effect.gen(function* () {
+      yield* clear;
+      const first = yield* take(start, 10);
+      const second = yield* take(start, 20);
+      yield* release(first, start);
+      yield* Db.Db.use((db) => db.rateLines.prune(later(21)));
+      yield* take(later(21), 5);
+      yield* release(second, later(22));
+      expect(yield* busyFor(later(22))).toEqual(units(4));
+    }),
+  );
+
+  test.effect("releases nothing once the prune deleted a paid-out line", () =>
+    Effect.gen(function* () {
+      yield* clear;
+      const first = yield* take(start, 10);
+      yield* Db.Db.use((db) => db.rateLines.prune(later(11)));
+      yield* release(first, later(11));
+      expect(yield* lines).toEqual([]);
     }),
   );
 

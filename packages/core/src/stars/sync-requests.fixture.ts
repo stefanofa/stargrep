@@ -58,6 +58,8 @@ export interface Hooks {
   readonly duringLookup?: (db: Db.Db["Service"]) => Effect.Effect<void, OwnerLookup.OwnerLookupFailed>;
   // Runs each claim, so a test can line the claims up.
   readonly claiming?: (claim: Effect.Effect<boolean, DbQueryFailed>) => Effect.Effect<boolean, DbQueryFailed>;
+  // Wraps the database admission reads and writes, so a test can fail a query.
+  readonly queries?: (db: Db.Db["Service"]) => Db.Db["Service"];
 }
 
 // What a test sees of the queue and of GitHub.
@@ -80,7 +82,7 @@ const layerOf = (
   options: Options,
 ) => {
   const hooks: Hooks = options.hooks ?? {};
-  const { duringLookup = () => Effect.void, claiming = (claim) => claim } = hooks;
+  const { duringLookup = () => Effect.void, claiming = (claim) => claim, queries = (db) => db } = hooks;
   const lookups = Layer.effect(
     OwnerLookup.OwnerLookup,
     Effect.gen(function* () {
@@ -96,12 +98,13 @@ const layerOf = (
   ).pipe(Layer.provide(github.layer));
   const claims = Layer.effect(
     Db.Db,
-    Effect.map(Db.Db, (db) =>
-      Db.Db.of({
+    Effect.map(Db.Db, (stored) => {
+      const db = queries(stored);
+      return Db.Db.of({
         ...db,
         syncRequests: { ...db.syncRequests, claim: (claim) => claiming(db.syncRequests.claim(claim)) },
-      }),
-    ),
+      });
+    }),
   );
   return SyncRequests.layer(options.share ?? share).pipe(
     Layer.provide(claims),

@@ -1,16 +1,21 @@
 import * as Db from "@stargrep/db";
 import type { UserId } from "@stargrep/db/auth-schema";
 import type { DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
-import type { BudgetShare, Login } from "@stargrep/github/schemas";
+import type { BudgetShare, GitHubAccountId, Login } from "@stargrep/github/schemas";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
-import * as Result from "effect/Result";
+import * as Predicate from "effect/Predicate";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as Struct from "effect/Struct";
 import * as RateLine from "../limits/rate-line.ts";
 import * as OwnerLookup from "./owner-lookup.ts";
@@ -86,8 +91,6 @@ export type SyncRequestError =
   | SyncBusy
   | NewAccountLimited;
 
-// A signed-in requester's own token pays for the sync, so it takes no turn in the line all. Signed in or not, a request
-// for another login still pays its network's line.
 export type Requester =
   | { readonly _tag: "owner"; readonly userId: UserId }
   | { readonly _tag: "signed-in"; readonly userId: UserId; readonly caller: Db.CallerKey }
@@ -215,17 +218,69 @@ const decide = (
   }
 };
 
-// Anyone can ask for any login, so their cooldown is long. It also covers a queued sync still reading pages.
-const anyoneCooldown = Duration.minutes(10);
-
-// The owner asks on every library open, and a weekly full read is the only sync that finds the stars they removed.
-// Owners pay into the line but never wait in it.
-const ownerCooldown = Duration.minutes(1);
+// A queued sync may still be reading pages. An account's first sync has no stop line, so a second request would read
+// every star again. Every requester waits this long for a queued request.
+const queuedWait = Duration.minutes(10);
 const fullReadEvery = Duration.days(7);
 
-// A queued sync may still be reading pages. An account's first sync has no stop line, so a second request would read
-// every star again. The owner waits this long for a queued request, and a cooldown counts from a finished or failed one.
-const queuedWait = Duration.minutes(10);
+// What sets one kind of requester apart in admission. A new kind of requester is a new case of policyOf.
+interface Policy {
+  // The signed-in user whose token pays for the sync. Without one the server's token pays, so the sync first takes its
+  // turn in githubAll. A requester whose own token pays never waits, so they take over a request still waiting in line.
+  readonly paidBy: UserId | undefined;
+  // The network that pays for looking the login up and for its first read. The owner has none, because sign-in already
+  // read their account.
+  readonly network: Db.CallerKey | undefined;
+  // How long a finished or failed sync holds the login against this requester.
+  readonly cooldown: Duration.Duration;
+  // Whether a due weekly full read runs, the only sync that finds removed stars.
+  readonly fullReads: boolean;
+}
+
+// Anyone can ask for any login, so they wait 10 minutes. The owner asks on every library open, so they wait a minute,
+// and their library open is the one that runs the weekly full read.
+const policyOf = (by: Requester): Policy => {
+  switch (by._tag) {
+    case "owner":
+      return { paidBy: by.userId, network: undefined, cooldown: Duration.minutes(1), fullReads: true };
+    case "signed-in":
+      return { paidBy: by.userId, network: by.caller, cooldown: Duration.minutes(10), fullReads: false };
+    case "anyone":
+      return { paidBy: undefined, network: by.caller, cooldown: Duration.minutes(10), fullReads: false };
+  }
+};
+
+// What a request's lookup paid into githubAll. The owner looks nothing up.
+const lookupPaidBy = (policy: Policy) => (policy.network === undefined ? 0 : lookupCost);
+
+// What a request knows about the login when it claims it: what a lookup found, or for the owner, their stored account.
+type Found =
+  | { readonly _tag: "Missing" }
+  | { readonly _tag: "Org"; readonly accountId: GitHubAccountId; readonly looked: Looked }
+  | { readonly _tag: "User"; readonly looked: Looked };
+
+// A sync whose message went out, for its row to be scheduled.
+interface Sent {
+  readonly _tag: "Sent";
+  readonly startsAt: DateTime.Utc;
+  readonly cost: number;
+  readonly fields: Looked & { readonly syncedAt: DateTime.Utc | null };
+}
+
+// Ends admission early with a refusal decided inside a step. Inside a claim, the claim and every charge go back first.
+class Refused extends Data.TaggedError("Refused")<{ readonly admission: Admission }> {}
+
+const refusedByQueue = (exit: Exit.Exit<unknown, unknown>) =>
+  Exit.isFailure(exit) && Option.exists(Cause.findErrorOption(exit.cause), Predicate.isTagged("SyncQueueFailed"));
+
+// Whether a request that ended with this exit stopped before its sync could have gone out. Once the send starts, the
+// message is queued unless the queue refused it.
+type Stopped = (exit: Exit.Exit<unknown, unknown>) => Effect.Effect<boolean>;
+
+const stoppedBefore =
+  (sending: Ref.Ref<boolean>): Stopped =>
+  (exit) =>
+    Effect.map(Ref.get(sending), (started) => Exit.isFailure(exit) && (!started || refusedByQueue(exit)));
 
 export const requestLifetime = Duration.days(1);
 
@@ -308,177 +363,189 @@ const make = Effect.fnUntraced(function* (share: BudgetShare) {
           ({ total }): StarRead => ({ _tag: "since", starredTotal, storedStars: total }),
         );
 
-  // A signed-out request that loses the claim answers from the row that won it.
-  const fromWinner = Effect.fnUntraced(function* (login: Login, now: DateTime.Utc) {
+  // A request that loses the claim answers from the row that won it. cost is what its own lookup paid.
+  const fromWinner = Effect.fnUntraced(function* (login: Login, now: DateTime.Utc, cost: number) {
     const winner = yield* read(login, now);
     return Option.exists(winner.stored, (row) => row.outcome === "missing")
-      ? ({ _tag: "NotFound", cost: lookupCost } satisfies Admission)
+      ? ({ _tag: "NotFound", cost } satisfies Admission)
       : ({ _tag: "Deduped", status: winner.status } satisfies Admission);
+  });
+
+  // Looks the login up before the claim, so the claim already knows whether the login exists, and no request ever waits
+  // on another's lookup. Requests for the same login at once each pay a lookup on their network's line.
+  const lookUp = Effect.fnUntraced(function* (login: Login, network: RateLine.Line, now: DateTime.Utc) {
+    if (Option.isNone(yield* RateLine.reserve(db.rateLines, network, now, lookupCost))) {
+      return yield* new Refused({ admission: { _tag: "CallerLimit" } });
+    }
+    const found = yield* owners.lookup(login).pipe(
+      Effect.catchTags({
+        OwnerLookupFailed: (error) => Effect.fail(new Refused({ admission: { _tag: "LookupFailed", error } })),
+      }),
+    );
+    // GitHub answered, so the lookup spent a request whatever comes of the sync.
+    yield* RateLine.reserve(db.rateLines, all, now, lookupCost, true);
+    if (Option.isNone(found)) return { _tag: "Missing" } satisfies Found;
+    const owner = found.value;
+    yield* db.accounts.upsertLooked(owner);
+    const looked: Looked = { starredTotal: owner.starredTotal, accountType: owner.account.type };
+    return owner.account.type === "org"
+      ? ({ _tag: "Org", accountId: owner.account.id, looked } satisfies Found)
+      : ({ _tag: "User", looked } satisfies Found);
+  });
+
+  // A won claim holds the login until its sync goes out. If the request stops first, the row is released, or marked
+  // failed when the queue refused the message, so no login reads as queued with no job behind it.
+  const claim = (login: Login, now: DateTime.Utc, claimed: Omit<Db.SyncClaim, "login" | "at">, stopped: Stopped) =>
+    Effect.acquireRelease(db.syncRequests.claim({ login, at: now, ...claimed }), (won, exit) =>
+      Effect.flatMap(stopped(exit), (stop) =>
+        won && stop
+          ? db.syncRequests.settle(login, now, refusedByQueue(exit) ? "failed" : "released").pipe(Effect.ignore)
+          : Effect.void,
+      ),
+    );
+
+  // When the request stops before its sync goes out, a charge after the claim gives back what its line still owes for
+  // it when the stop lands, so a late stop never credits work charged after it. A refused charge stops the request
+  // with the decision it gives.
+  const charge = (line: RateLine.Line, now: DateTime.Utc, units: number, refused: Admission, stopped: Stopped) =>
+    Effect.acquireRelease(
+      RateLine.reserve(db.rateLines, line, now, units).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.fail(new Refused({ admission: refused })),
+            onSome: Effect.succeed,
+          }),
+        ),
+      ),
+      (reserved, exit) =>
+        Effect.flatMap(stopped(exit), (stop) =>
+          stop
+            ? DateTime.now.pipe(
+                Effect.flatMap((at) => db.rateLines.release(reserved, at)),
+                Effect.ignore,
+              )
+            : Effect.void,
+        ),
+    );
+
+  // A first read goes on its network's line, refused once the network owes its burst, so a network starts one huge
+  // import and not several at once. A takeover runs the import a waiting request's network already paid for, so it pays
+  // no first read again. A sync on the server's token then takes its turn in githubAll, and its message goes out at the
+  // start of that turn. An unknown starred total prices the smallest read, and the sync bills the rest after it runs.
+  const send = Effect.fnUntraced(function* (
+    login: Login,
+    now: DateTime.Utc,
+    policy: Policy,
+    takesOver: boolean,
+    current: { readonly status: SyncStatus; readonly fullSyncedAt: Option.Option<DateTime.Utc> },
+    looked: Looked,
+    sending: Ref.Ref<boolean>,
+  ) {
+    const stopped = stoppedBefore(sending);
+    const syncedAt = syncedAtOf(current.status);
+    const firstReadOn =
+      policy.network !== undefined && syncedAt === null && !takesOver ? RateLine.githubNetwork(policy.network) : null;
+    const waitsInLine = policy.paidBy === undefined;
+    const work =
+      firstReadOn !== null || waitsInLine
+        ? costOf(yield* starRead(login, syncedAt === null, looked.starredTotal ?? 0))
+        : 0;
+    if (firstReadOn !== null) yield* charge(firstReadOn, now, work, { _tag: "CallerLimit" }, stopped);
+    const startsAt = waitsInLine
+      ? (yield* charge(all, now, work, { _tag: "LineFull", cost: lookupCost, wait: all.rate.maxWait }, stopped))
+          .startsAt
+      : now;
+    const reserved = waitsInLine ? work : 0;
+    const fullReadDue =
+      policy.fullReads &&
+      current.status.state !== "queued" &&
+      Option.match(current.fullSyncedAt, {
+        onNone: () => true,
+        onSome: (at) => Duration.isGreaterThanOrEqualTo(DateTime.distance(at, now), fullReadEvery),
+      });
+    const wait = DateTime.isGreaterThan(startsAt, now) ? DateTime.distance(now, startsAt) : Duration.zero;
+    const paidBy = policy.paidBy === undefined ? {} : { userId: policy.paidBy };
+    const mode: Mode = fullReadDue ? "full" : "incremental";
+    // An interruption lands before the send or after it finishes, so the flag says whether the message may be queued.
+    yield* Ref.set(sending, true).pipe(
+      Effect.andThen(queue.send({ login, mode, requestedAt: now, reserved, ...paidBy }, wait)),
+      Effect.uninterruptible,
+    );
+    const cost = lookupPaidBy(policy) + reserved;
+    return { _tag: "Sent", startsAt, cost, fields: { ...looked, syncedAt } } satisfies Sent;
   });
 
   // The message goes out before the row is scheduled. A crash in between leaves a claimed row, which reads as queued
   // while its job waits in the queue, instead of a login held until starts_at with no job behind it.
-  const start = Effect.fn("SyncRequests.start")(function* (
-    login: Login,
-    at: DateTime.Utc,
-    sync: {
-      readonly mode: Mode;
-      readonly reserved: number;
-      readonly startsAt: DateTime.Utc;
-      readonly cost: number;
-      readonly userId: UserId | undefined;
-    },
-    fields: Looked & { readonly syncedAt: DateTime.Utc | null },
-  ) {
-    const { mode, reserved, startsAt, cost, userId } = sync;
-    const wait = DateTime.isGreaterThan(startsAt, at) ? DateTime.distance(at, startsAt) : Duration.zero;
-    const paidBy = userId === undefined ? {} : { userId };
-    // A refused message runs no sync, so the units reserved for it go back to the line.
-    yield* queue
-      .send({ login, mode, requestedAt: at, reserved, ...paidBy }, wait)
-      .pipe(
-        Effect.tapError(() =>
-          Effect.all([
-            db.syncRequests.settle(login, at, "failed"),
-            RateLine.bill(db.rateLines, all, at, -reserved),
-          ]).pipe(Effect.ignore),
-        ),
-      );
-    yield* db.syncRequests.schedule(login, at, startsAt);
-    if (Duration.isZero(wait)) {
-      return { _tag: "Started", cost, status: { state: "queued", requestedAt: at, ...fields } } satisfies Admission;
+  const start = Effect.fn("SyncRequests.start")(function* (login: Login, now: DateTime.Utc, sent: Sent) {
+    const { startsAt, cost, fields } = sent;
+    yield* db.syncRequests.schedule(login, now, startsAt);
+    if (!DateTime.isGreaterThan(startsAt, now)) {
+      return { _tag: "Started", cost, status: { state: "queued", requestedAt: now, ...fields } } satisfies Admission;
     }
-    const ahead = yield* db.syncRequests.ahead(startsAt, at);
-    const status: SyncStatus = { state: "waiting", requestedAt: at, startsAt, ahead, ...fields };
-    return { _tag: "Waiting", cost, wait, status } satisfies Admission;
+    const ahead = yield* db.syncRequests.ahead(startsAt, now);
+    const status: SyncStatus = { state: "waiting", requestedAt: now, startsAt, ahead, ...fields };
+    return { _tag: "Waiting", cost, wait: DateTime.distance(now, startsAt), status } satisfies Admission;
   });
 
-  // The owner's sync runs on their own token, so it reserves nothing in the line all and never waits. It needs no lookup,
-  // because sign-in already read their account. The owner's claim takes over a request still waiting in line, and runs
-  // a full read when one is due.
-  const admitOwner = Effect.fnUntraced(function* (
+  const admit = Effect.fnUntraced(function* (
     login: Login,
-    userId: UserId,
-  ): Effect.fn.Return<Admission, SyncRequestError> {
+    policy: Policy,
+  ): Effect.fn.Return<Admission, SyncRequestError | Refused> {
     const now = yield* DateTime.now;
     const { account, stored, status: current, fullSyncedAt } = yield* read(login, now);
-    if (current.state === "done" && within(ownerCooldown, now)(current.syncedAt)) {
+    const cooldown = current.state === "queued" || current.state === "waiting" ? queuedWait : policy.cooldown;
+    if (current.state === "done" && within(cooldown, now)(current.syncedAt)) {
       return { _tag: "Deduped", status: current };
     }
-    const cooldown = current.state === "queued" || current.state === "waiting" ? queuedWait : ownerCooldown;
-    if (current.state !== "waiting" && Option.exists(stored, holds(cooldown, now))) {
-      return { _tag: "Deduped", status: current };
-    }
-    const claim = { login, at: now, cooldown, overtakesWaiting: true, outcome: "claimed" } as const;
-    if (!(yield* db.syncRequests.claim(claim))) return { _tag: "Deduped", status: (yield* read(login, now)).status };
-
-    const syncedAt = syncedAtOf(current);
-    const fullReadDue =
-      current.state !== "queued" &&
-      Option.match(fullSyncedAt, {
-        onNone: () => true,
-        onSome: (at) => Duration.isGreaterThanOrEqualTo(DateTime.distance(at, now), fullReadEvery),
-      });
-    const mode = fullReadDue ? "full" : "incremental";
-    return yield* start(
-      login,
-      now,
-      { mode, reserved: 0, startsAt: now, cost: 0, userId },
-      { ...lookedOf(account), syncedAt },
-    );
-  });
-
-  // A request for another login looks it up before it claims it, so its claim already knows whether the login exists,
-  // and no request ever waits on another's lookup. Requests for the same login at once each pay a lookup. A signed-in
-  // requester's token pays for the sync, so it skips the line all and starts now.
-  const admitAnyone = Effect.fnUntraced(function* (
-    login: Login,
-    caller: Db.CallerKey,
-    userId: UserId | undefined,
-  ): Effect.fn.Return<Admission, SyncRequestError> {
-    const now = yield* DateTime.now;
-    const { stored, status: current } = yield* read(login, now);
-    if (current.state === "done" && within(anyoneCooldown, now)(current.syncedAt)) {
-      return { _tag: "Deduped", status: current };
-    }
-    // A signed-in requester never waits, so a request still waiting in line does not hold the login for them.
-    const overtakes = userId !== undefined && current.state === "waiting";
-    const held = overtakes ? Option.none() : Option.filter(stored, holds(anyoneCooldown, now));
+    const waitsInLine = policy.paidBy === undefined;
+    const takesOver = !waitsInLine && current.state === "waiting";
+    const held = takesOver ? Option.none() : Option.filter(stored, holds(cooldown, now));
     if (Option.isSome(held)) {
       return held.value.outcome === "missing" ? { _tag: "NotFound", cost: 0 } : { _tag: "Deduped", status: current };
     }
-
-    if (userId === undefined) {
+    if (waitsInLine) {
       const wait = yield* RateLine.wait(db.rateLines, all, now);
       if (Duration.isGreaterThan(wait, all.rate.maxWait)) return { _tag: "LineFull", cost: 0, wait };
     }
-    const network = RateLine.githubNetwork(caller);
-    const charge = (units: number) => RateLine.reserve(db.rateLines, network, now, units);
-    if (Option.isNone(yield* charge(lookupCost))) return { _tag: "CallerLimit" };
+    const found: Found =
+      policy.network === undefined
+        ? { _tag: "User", looked: lookedOf(account) }
+        : yield* lookUp(login, RateLine.githubNetwork(policy.network), now);
 
-    const found = yield* Effect.result(owners.lookup(login));
-    if (Result.isFailure(found)) return { _tag: "LookupFailed", error: found.failure };
-    // GitHub answered, so the lookup spent a request whatever comes of the sync.
-    yield* RateLine.reserve(db.rateLines, all, now, lookupCost, true);
-    const claim = (outcome: "claimed" | "missing") =>
-      db.syncRequests.claim({ login, at: now, cooldown: anyoneCooldown, overtakesWaiting: overtakes, outcome });
+    // A takeover pays no first read, so a requester whose network pays one takes over only a request it read as
+    // waiting. The owner pays none, so their claim takes over whatever waits when it lands.
+    const overtakesWaiting = !waitsInLine && (takesOver || policy.network === undefined);
 
-    if (Option.isNone(found.success)) {
-      if (!(yield* claim("missing"))) return yield* fromWinner(login, now);
-      return { _tag: "NotFound", cost: lookupCost };
-    }
-    const owner = found.success.value;
-    yield* db.accounts.upsertLooked(owner);
-    const looked: Looked = { starredTotal: owner.starredTotal, accountType: owner.account.type };
-    if (!(yield* claim("claimed"))) return yield* fromWinner(login, now);
-
-    if (owner.account.type === "org") {
-      // The facts were written just above, so the account row exists.
-      yield* db.accounts
-        .recordStarSync({ accountId: owner.account.id, at: now })
-        .pipe(Effect.catchTags({ AccountNotFound: Effect.die }));
-      // An org has nothing to send, so its claim starts now.
-      yield* db.syncRequests.schedule(login, now, now);
-      return { _tag: "Org", status: { state: "done", syncedAt: now, ...looked } };
-    }
-
-    const syncedAt = syncedAtOf(current);
-    const work = costOf(yield* starRead(login, syncedAt === null, owner.starredTotal));
-    // A first read goes on its network's line too, refused once the network owes its burst, so a network starts one
-    // huge import and not several at once. A takeover runs the import a waiting request's network already paid for, so
-    // it pays no first read again, and a takeover is never refused after it replaced the waiting request.
-    const networkWork = syncedAt === null && !overtakes ? work : 0;
-    if (networkWork > 0 && Option.isNone(yield* charge(networkWork))) {
-      yield* db.syncRequests.settle(login, now, "released");
-      return { _tag: "CallerLimit" };
-    }
-    if (userId !== undefined) {
-      return yield* start(
-        login,
-        now,
-        { mode: "incremental", reserved: 0, startsAt: now, cost: lookupCost, userId },
-        { ...looked, syncedAt },
-      );
-    }
-    const startsAt = yield* RateLine.reserve(db.rateLines, all, now, work);
-    if (Option.isNone(startsAt)) {
-      yield* db.syncRequests.settle(login, now, "released");
-      if (networkWork > 0) yield* RateLine.bill(db.rateLines, network, now, -networkWork);
-      return { _tag: "LineFull", cost: lookupCost, wait: all.rate.maxWait };
-    }
-    return yield* start(
-      login,
-      now,
-      { mode: "incremental", reserved: work, startsAt: startsAt.value, cost: lookupCost + work, userId: undefined },
-      { ...looked, syncedAt },
+    const claimed = yield* Effect.scoped(
+      Effect.gen(function* (): Effect.fn.Return<Admission | Sent, SyncRequestError | Refused, Scope.Scope> {
+        const sending = yield* Ref.make(false);
+        const outcome = found._tag === "Missing" ? "missing" : "claimed";
+        if (!(yield* claim(login, now, { cooldown, overtakesWaiting, outcome }, stoppedBefore(sending)))) {
+          return yield* fromWinner(login, now, lookupPaidBy(policy));
+        }
+        switch (found._tag) {
+          case "Missing":
+            return { _tag: "NotFound", cost: lookupCost };
+          case "Org":
+            // The lookup wrote the account, and an org has nothing to send, so its claim records an empty sync now.
+            yield* db.accounts
+              .recordStarSync({ accountId: found.accountId, at: now })
+              .pipe(Effect.catchTags({ AccountNotFound: Effect.die }));
+            yield* db.syncRequests.schedule(login, now, now);
+            return { _tag: "Org", status: { state: "done", syncedAt: now, ...found.looked } };
+          case "User":
+            return yield* send(login, now, policy, takesOver, { status: current, fullSyncedAt }, found.looked, sending);
+        }
+      }),
     );
+    return claimed._tag === "Sent" ? yield* start(login, now, claimed) : claimed;
   });
 
   const request = Effect.fn("SyncRequests.request")(function* (login: Login, by: Requester) {
-    const admission =
-      by._tag === "owner"
-        ? yield* admitOwner(login, by.userId)
-        : yield* admitAnyone(login, by.caller, by._tag === "signed-in" ? by.userId : undefined);
+    const admission = yield* admit(login, policyOf(by)).pipe(
+      Effect.catchTags({ Refused: (refused) => Effect.succeed(refused.admission) }),
+    );
     return yield* decide(login, admission);
   });
 
