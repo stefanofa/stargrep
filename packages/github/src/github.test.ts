@@ -17,7 +17,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Fake from "./github.fixture.ts";
 import * as GitHub from "./github.ts";
-import type { BudgetShare, Login, ObjectId, RepoName, RepoNodeId } from "./schemas.ts";
+import { type BudgetShare, Login, ObjectId, RepoName, type RepoNodeId } from "./schemas.ts";
 
 const login = "octocat" as Login;
 
@@ -180,80 +180,6 @@ describe("stars", () => {
       const error = yield* Effect.flip(collectStars);
       expect(error._tag).toBe("GitHubResponseInvalid");
       expect(fake.sent).toHaveLength(1);
-    }).pipe(Effect.provide(fake.layer));
-  });
-});
-
-describe("account", () => {
-  const user = {
-    login: "octocat",
-    id: 583231,
-    type: "User",
-    name: "The Octocat",
-    avatar_url: null,
-    followers: 9,
-    public_repos: 8,
-  };
-
-  effect("reads an account by login", () => {
-    const fake = Fake.layer(() => ({ body: { ...user, site_admin: false } }));
-    return Effect.gen(function* () {
-      const account = yield* (yield* GitHub.GitHub).account(login);
-      expect(account).toEqual({
-        id: 583231,
-        login: "octocat",
-        type: "user",
-        name: "The Octocat",
-        avatarUrl: null,
-        followers: 9,
-        publicRepos: 8,
-      } as never);
-      expect(fake.sent.map((sent) => sent.url.pathname)).toEqual(["/users/octocat"]);
-    }).pipe(Effect.provide(fake.layer));
-  });
-
-  effect("reads an organization as an org", () => {
-    const fake = Fake.layer(() => ({ body: { ...user, type: "Organization" } }));
-    return Effect.gen(function* () {
-      expect((yield* (yield* GitHub.GitHub).account(login)).type).toBe("org");
-    }).pipe(Effect.provide(fake.layer));
-  });
-
-  effect("fails with NotFound for an unknown login", () => {
-    const fake = Fake.layer(() => ({ status: 404, body: { message: "Not Found" } }));
-    return Effect.gen(function* () {
-      const error = yield* Effect.flip((yield* GitHub.GitHub).account(login));
-      expect(error).toMatchObject({ _tag: "NotFound", operation: "account", path: "/users/octocat" });
-    }).pipe(Effect.provide(fake.layer));
-  });
-});
-
-describe("starCount", () => {
-  effect("reads a user's starred repository total through GraphQL", () => {
-    const fake = Fake.layer(() => Fake.starCountReply(2936));
-    return Effect.gen(function* () {
-      expect(yield* (yield* GitHub.GitHub).starCount(login)).toBe(2936);
-      expect(fake.sent.map((sent) => [sent.url.pathname, JSON.parse(sent.body ?? "{}").variables])).toEqual([
-        ["/graphql", { login: "octocat" }],
-      ]);
-    }).pipe(Effect.provide(fake.layer));
-  });
-
-  effect("fails with NotFound when GraphQL has no such user", () => {
-    const fake = Fake.layer(() => ({
-      body: { data: { user: null }, errors: [{ type: "NOT_FOUND", message: "Could not resolve" }] },
-    }));
-    return Effect.gen(function* () {
-      const error = yield* Effect.flip((yield* GitHub.GitHub).starCount(login));
-      expect(error).toMatchObject({ _tag: "NotFound", operation: "star-count" });
-    }).pipe(Effect.provide(fake.layer));
-  });
-
-  effect("fails with GitHubRequestFailed on other GraphQL errors", () => {
-    const fake = Fake.layer(() => ({ body: { data: null, errors: [{ type: "INTERNAL", message: "boom" }] } }));
-    return Effect.gen(function* () {
-      const error = yield* Effect.flip((yield* GitHub.GitHub).starCount(login));
-      expect(error).toMatchObject({ _tag: "GitHubRequestFailed", operation: "star-count", reason: "graphql-errors" });
     }).pipe(Effect.provide(fake.layer));
   });
 });
@@ -601,6 +527,22 @@ describe("repoFacts", () => {
 });
 
 describe("readme", () => {
+  effect("returns GraphQL rate-limit envelope text as an ordinary README", () => {
+    const text = '{"errors":[{"type":"RATE_LIMITED","message":"x"}]}';
+    const fake = Fake.layer(() => ({ body: text }));
+    return Effect.gen(function* () {
+      const github = yield* GitHub.GitHub;
+      expect(
+        yield* github.readme({
+          owner: Login.make("owner"),
+          name: RepoName.make("repo"),
+          oid: ObjectId.make("a".repeat(40)),
+        }),
+      ).toBe(text);
+      expect(fake.sent).toHaveLength(1);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
   effect("fetches the blob by object id as raw text, with no conditional header", () => {
     const oid = "a".repeat(40) as ObjectId;
     const fake = Fake.layer(() => ({ body: "# Hello", headers: { ...Fake.rateLimitHeaders(3999), etag: `"blob"` } }));

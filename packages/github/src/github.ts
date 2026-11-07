@@ -10,7 +10,6 @@ import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import type * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as AccountLookup from "./account.ts";
 import {
   type GitHubError,
   GitHubRequestFailed,
@@ -20,16 +19,17 @@ import {
   RateLimited,
   Unauthorized,
 } from "./errors.ts";
+import * as GraphQL from "./graphql.ts";
 import { apiHeaders } from "./headers.ts";
 import * as Owner from "./owner.ts";
 import * as RateLimit from "./rate-limit.ts";
 import * as Readme from "./readme.ts";
 import * as Facts from "./repo-facts.ts";
-import type { Account, GraphQLError, Login, ObjectId, RepoFacts, RepoName, RepoNodeId, Star } from "./schemas.ts";
-import * as StarCount from "./star-count.ts";
+import type { GraphQLError, Login, ObjectId, RepoFacts, RepoName, RepoNodeId, Star } from "./schemas.ts";
 import * as StarList from "./star-list.ts";
 import * as TokenBudget from "./token-budget.ts";
 import * as TokenGate from "./token-gate.ts";
+import * as Viewer from "./viewer.ts";
 
 const MAX_RETRY_WAIT = Duration.minutes(1);
 const MAX_RETRIES = 3;
@@ -61,12 +61,11 @@ const isRetryable = (error: GitHubError) => {
 export class GitHub extends Context.Service<
   GitHub,
   {
-    readonly account: (login: Login) => Effect.Effect<Account, GitHubError>;
+    readonly viewer: Effect.Effect<Viewer.SignedInViewer, GitHubError>;
     // None when GitHub has no user or org with the login.
     readonly owner: (login: Login) => Effect.Effect<Option.Option<Owner.Owner>, GitHubError>;
     readonly starPages: (login: Login) => Stream.Stream<ReadonlyArray<Star>, GitHubError>;
     readonly stars: (login: Login) => Stream.Stream<Star, GitHubError>;
-    readonly starCount: (login: Login) => Effect.Effect<number, GitHubError>;
     readonly repoFacts: (ids: ReadonlyArray<RepoNodeId>) => Effect.Effect<ReadonlyArray<RepoFacts>, GitHubError>;
     readonly readme: (input: {
       readonly owner: Login;
@@ -78,42 +77,44 @@ export class GitHub extends Context.Service<
 
 type Endpoint = TokenGate.Endpoint;
 
-const rateLimited = (endpoint: Endpoint, reply: TokenGate.Reply, now: number) =>
-  new RateLimited({
-    operation: endpoint.operation,
-    resource: Option.getOrElse(reply.rateLimit.resource, () => TokenBudget.resourceOf(endpoint.path)),
-    retryAfterMillis: RateLimit.retryAfterMillis(reply, now),
-  });
-
 const classify = (endpoint: Endpoint, reply: TokenGate.Reply, now: number): Result.Result<string, GitHubError> => {
-  if (TokenGate.isSuccess(reply.status)) {
-    return Option.match(reply.body, {
-      onNone: () => Result.fail(new GitHubResponseInvalid({ ...endpoint, reason: "unreadable-body" })),
-      onSome: Result.succeed,
-    });
+  const meaning = RateLimit.classify(reply, now, endpoint.path);
+  switch (meaning._tag) {
+    case "Ok":
+      return Option.match(reply.body, {
+        onNone: () => Result.fail(new GitHubResponseInvalid({ ...endpoint, reason: "unreadable-body" })),
+        onSome: Result.succeed,
+      });
+    case "Unauthorized":
+      return Result.fail(new Unauthorized({ operation: endpoint.operation }));
+    case "NotFound":
+      return Result.fail(new NotFound({ operation: endpoint.operation, path: endpoint.path }));
+    case "RateLimited":
+      return Result.fail(
+        new RateLimited({
+          operation: endpoint.operation,
+          resource: Option.getOrElse(reply.rateLimit.resource, () => TokenBudget.resourceOf(endpoint.path)),
+          retryAfterMillis: meaning.retryAfterMillis,
+        }),
+      );
+    case "Failed":
+      return Result.fail(new GitHubRequestFailed({ ...endpoint, status: reply.status, reason: "status" }));
   }
-  if (reply.status === 401) return Result.fail(new Unauthorized({ operation: endpoint.operation }));
-  if (reply.status === 404) return Result.fail(new NotFound({ operation: endpoint.operation, path: endpoint.path }));
-  if (RateLimit.isRateLimit(reply, now)) return Result.fail(rateLimited(endpoint, reply, now));
-  return Result.fail(new GitHubRequestFailed({ ...endpoint, status: reply.status, reason: "status" }));
 };
 
-const graphQLFailure = (
-  endpoint: Endpoint,
-  reply: TokenGate.Reply,
-  now: number,
-  errors: ReadonlyArray<GraphQLError>,
-): Effect.Effect<never, GitHubError> =>
-  errors.some((error) => error.type === "RATE_LIMITED")
-    ? Effect.fail(rateLimited(endpoint, reply, now))
-    : Effect.logWarning("GitHub GraphQL errors", {
-        count: errors.length,
-        types: errors.flatMap((error) =>
-          error.type !== undefined && graphQLErrorType.test(error.type) ? [error.type] : [],
-        ),
-      }).pipe(
-        Effect.andThen(Effect.fail(new GitHubRequestFailed({ ...endpoint, status: null, reason: "graphql-errors" }))),
-      );
+const graphQLFailure = (endpoint: Endpoint, errors: ReadonlyArray<GraphQLError>): Effect.Effect<never, GitHubError> =>
+  Effect.logWarning("GitHub GraphQL errors", {
+    count: errors.length,
+    types: errors.flatMap((error) =>
+      error.type !== undefined && graphQLErrorType.test(error.type) ? [error.type] : [],
+    ),
+  }).pipe(
+    Effect.andThen(Effect.fail(new GitHubRequestFailed({ ...endpoint, status: null, reason: "graphql-errors" }))),
+  );
+
+const ownerQuery = GraphQL.operation(Owner.query, Owner.Data);
+const viewerQuery = GraphQL.operation(Viewer.query, Viewer.Data);
+const factsQuery = GraphQL.operation(Facts.query, Facts.Data);
 
 const make = Effect.gen(function* () {
   const gate = yield* TokenGate.TokenGate;
@@ -145,24 +146,40 @@ const make = Effect.gen(function* () {
     );
   };
 
-  const account = Effect.fn("GitHub.account")(function* (login: Login) {
-    return yield* exchange("account", AccountLookup.request(login), (body) =>
-      Effect.map(AccountLookup.decodeUser(body), AccountLookup.toAccount),
-    );
-  });
-
-  const owner = Effect.fn("GitHub.owner")(function* (login: Login) {
-    return yield* exchange("owner", Owner.request(login), (raw, reply, endpoint, now) =>
+  const graphql = <A>(
+    operation: Operation,
+    query: ReturnType<typeof GraphQL.operation<A>>,
+    variables: Readonly<Record<string, unknown>>,
+    handled: (error: GraphQLError) => boolean = () => false,
+  ) =>
+    exchange(operation, query.request(variables), (raw, _reply, endpoint) =>
       Effect.gen(function* () {
-        const body = yield* Owner.decodeResponse(raw);
+        const body = yield* query.decode(raw);
         const errors = body.errors ?? [];
-        const found = body.data?.repositoryOwner;
-        if (found === null && errors.every((error) => error.type === "NOT_FOUND")) return Option.none();
-        if (errors.length > 0 || !found) return yield* graphQLFailure(endpoint, reply, now, errors);
-        return Option.some(Owner.toOwner(found));
+        const notFound = errors.every((error) => error.type === "NOT_FOUND");
+        const unhandled = errors.filter((error) => !handled(error));
+        if (unhandled.length > 0 || body.data === undefined || body.data === null) {
+          return yield* graphQLFailure(endpoint, unhandled);
+        }
+        return { data: body.data, errors, notFound };
       }),
     );
+
+  const owner = Effect.fn("GitHub.owner")(function* (login: Login) {
+    const { data, notFound, errors } = yield* graphql(
+      "owner",
+      ownerQuery,
+      { login },
+      (error) => error.type === "NOT_FOUND",
+    );
+    if (data.repositoryOwner === null && notFound) return Option.none();
+    if (errors.length > 0 || data.repositoryOwner === null) {
+      return yield* graphQLFailure({ operation: "owner", method: "POST", path: "/graphql" }, errors);
+    }
+    return Option.some(Owner.toOwner(data.repositoryOwner));
   });
+
+  const viewer = Effect.map(graphql("viewer", viewerQuery, {}), ({ data }) => Viewer.toViewer(data.viewer));
 
   const starPage = Effect.fn("GitHub.starPage")(function* (login: Login, page: number) {
     return yield* exchange("list-stars", StarList.request(login, page), (body, reply, endpoint) =>
@@ -183,29 +200,10 @@ const make = Effect.gen(function* () {
   const stars = (login: Login) => Stream.flattenIterable(starPages(login));
 
   const factsBatch = Effect.fn("GitHub.factsBatch")(function* (ids: ReadonlyArray<RepoNodeId>) {
-    return yield* exchange("repo-facts", Facts.request(ids), (raw, reply, endpoint, now) =>
-      Effect.gen(function* () {
-        const body = yield* Facts.decodeResponse(raw);
-        const { facts, forbidden, errors } = Facts.settle(ids, body);
-        if (errors.length > 0 || !body.data) return yield* graphQLFailure(endpoint, reply, now, errors);
-        if (forbidden.length > 0) yield* Effect.logWarning("GitHub forbade repos to the token", { nodeIds: forbidden });
-        return facts;
-      }),
-    );
-  });
-
-  const starCount = Effect.fn("GitHub.starCount")(function* (login: Login) {
-    return yield* exchange("star-count", StarCount.request(login), (raw, reply, endpoint, now) =>
-      Effect.gen(function* () {
-        const body = yield* StarCount.decodeResponse(raw);
-        const errors = body.errors ?? [];
-        if (body.data?.user === null && errors.every((error) => error.type === "NOT_FOUND")) {
-          return yield* new NotFound({ operation: "star-count", path: `/users/${login}` });
-        }
-        if (errors.length > 0 || !body.data?.user) return yield* graphQLFailure(endpoint, reply, now, errors);
-        return body.data.user.starredRepositories.totalCount;
-      }),
-    );
+    const body = yield* graphql("repo-facts", factsQuery, { ids }, (error) => Facts.nodeError(error) !== null);
+    const { facts, forbidden } = Facts.settle(ids, body);
+    if (forbidden.length > 0) yield* Effect.logWarning("GitHub forbade repos to the token", { nodeIds: forbidden });
+    return facts;
   });
 
   const repoFacts = Effect.fn("GitHub.repoFacts")(function* (ids: ReadonlyArray<RepoNodeId>) {
@@ -221,7 +219,7 @@ const make = Effect.gen(function* () {
     return yield* exchange("readme", Readme.request(input), (body) => Effect.succeed(body));
   });
 
-  return GitHub.of({ account, owner, starPages, stars, starCount, repoFacts, readme });
+  return GitHub.of({ viewer, owner, starPages, stars, repoFacts, readme });
 });
 
 export const layer = Layer.effect(GitHub, make);

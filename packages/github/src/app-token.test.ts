@@ -86,13 +86,13 @@ describe("AppToken.makeInstallationTokens", () => {
     return Effect.gen(function* () {
       yield* TestClock.setTime(now);
       const tokens = yield* tokensOver(fake);
-      expect(Redacted.value(yield* tokens.current("account"))).toBe("ghs_minted_1");
+      expect(Redacted.value(yield* tokens.current("owner"))).toBe("ghs_minted_1");
       yield* TestClock.adjust("54 minutes");
-      expect(Redacted.value(yield* tokens.current("account"))).toBe("ghs_minted_1");
+      expect(Redacted.value(yield* tokens.current("owner"))).toBe("ghs_minted_1");
       yield* TestClock.adjust("2 minutes");
-      expect(Redacted.value(yield* tokens.current("account"))).toBe("ghs_minted_1");
+      expect(Redacted.value(yield* tokens.current("owner"))).toBe("ghs_minted_1");
       yield* tokens.refreshed;
-      expect(Redacted.value(yield* tokens.current("account"))).toBe("ghs_minted_2");
+      expect(Redacted.value(yield* tokens.current("owner"))).toBe("ghs_minted_2");
       expect(fake.sent.map((sent) => sent.url.pathname)).toEqual([
         ...discovery,
         "/app/installations/42/access_tokens",
@@ -108,7 +108,7 @@ describe("AppToken.makeInstallationTokens", () => {
     );
     return Effect.gen(function* () {
       yield* TestClock.setTime(now);
-      yield* (yield* tokensOver(fake)).current("account");
+      yield* (yield* tokensOver(fake)).current("owner");
       expect(fake.sent.map((sent) => sent.url.pathname)).toEqual([...discovery, "/app/installations/42/access_tokens"]);
     });
   });
@@ -123,12 +123,12 @@ describe("AppToken.makeInstallationTokens", () => {
     return Effect.gen(function* () {
       yield* TestClock.setTime(now);
       const tokens = yield* tokensOver(fake);
-      yield* tokens.current("account");
+      yield* tokens.current("owner");
       state.reinstalled = true;
       yield* TestClock.adjust("56 minutes");
-      yield* tokens.current("account");
+      yield* tokens.current("owner");
       yield* tokens.refreshed;
-      expect(Redacted.value(yield* tokens.current("account"))).toBe("ghs_minted_2");
+      expect(Redacted.value(yield* tokens.current("owner"))).toBe("ghs_minted_2");
       expect(fake.sent.map((sent) => sent.url.pathname).slice(3)).toEqual([
         "/app/installations/42/access_tokens",
         ...discovery,
@@ -145,15 +145,15 @@ describe("AppToken.makeInstallationTokens", () => {
     return Effect.gen(function* () {
       yield* TestClock.setTime(now);
       const tokens = yield* tokensOver(fake);
-      yield* tokens.current("account");
+      yield* tokens.current("owner");
       state.hang = true;
       yield* TestClock.adjust("56 minutes");
-      const served = yield* Effect.all(Array.from({ length: 4 }, () => tokens.current("account")));
+      const served = yield* Effect.all(Array.from({ length: 4 }, () => tokens.current("owner")));
       expect(served.map(Redacted.value)).toEqual(Array.from({ length: 4 }, () => "ghs_minted_1"));
       yield* TestClock.adjust("30 seconds");
       yield* tokens.refreshed;
       expect(mintsOf(fake)).toBe(2);
-      expect(Redacted.value(yield* tokens.current("account"))).toBe("ghs_minted_1");
+      expect(Redacted.value(yield* tokens.current("owner"))).toBe("ghs_minted_1");
     });
   });
 
@@ -166,7 +166,7 @@ describe("AppToken.makeInstallationTokens", () => {
     return Effect.gen(function* () {
       yield* TestClock.setTime(now);
       const tokens = yield* tokensOver(fake, sign);
-      yield* tokens.current("account");
+      yield* tokens.current("owner");
       yield* TestClock.adjust("56 minutes");
       // The request yields once it has run `steps` operations, and the interrupt lands there, so the sweep covers every
       // step until a request finishes first. A budget of one yields before any operation, so the sweep starts at two. A
@@ -175,7 +175,7 @@ describe("AppToken.makeInstallationTokens", () => {
       while (!sweep.stuck && !sweep.finished) {
         sweep.steps++;
         const request = yield* Effect.forkChild(
-          tokens.current("account").pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, sweep.steps)),
+          tokens.current("owner").pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, sweep.steps)),
           { startImmediately: true },
         );
         sweep.finished = request.pollUnsafe() !== undefined;
@@ -200,17 +200,17 @@ describe("AppToken.makeInstallationTokens", () => {
     return Effect.gen(function* () {
       yield* TestClock.setTime(now);
       const tokens = yield* tokensOver(fake);
-      yield* tokens.current("account");
+      yield* tokens.current("owner");
       state.limited = true;
       yield* TestClock.adjust("56 minutes");
       for (let second = 0; second < 20; second++) {
-        expect(Redacted.value(yield* tokens.current("account"))).toBe("ghs_minted_1");
+        expect(Redacted.value(yield* tokens.current("owner"))).toBe("ghs_minted_1");
         yield* tokens.refreshed;
         yield* TestClock.adjust("1 second");
       }
       expect(mintsOf(fake)).toBe(2);
       yield* TestClock.adjust("41 seconds");
-      yield* tokens.current("account");
+      yield* tokens.current("owner");
       yield* tokens.refreshed;
       expect(mintsOf(fake)).toBe(3);
     });
@@ -225,7 +225,7 @@ describe("AppToken.makeInstallationTokens", () => {
       const tokens = yield* tokensOver(fake);
       const gate = yield* TokenGate.makeMemory({ share: 1 as BudgetShare }).pipe(Effect.provide(fake.client));
       const errors = yield* Effect.all(
-        Array.from({ length: 4 }, () => Effect.flip(gate.execute(tokens)("account", read))),
+        Array.from({ length: 4 }, () => Effect.flip(gate.execute(tokens)("owner", read))),
         { concurrency: "unbounded" },
       );
       expect(errors).toMatchObject(
@@ -254,7 +254,7 @@ describe("AppToken.makeInstallationTokens", () => {
       const waits: Array<unknown> = [];
       for (const reply of replies) {
         const fake = github((sent) => (sent.url.pathname.endsWith("/access_tokens") ? reply : undefined));
-        waits.push(yield* Effect.flip((yield* tokensOver(fake)).current("account")));
+        waits.push(yield* Effect.flip((yield* tokensOver(fake)).current("owner")));
       }
       expect(waits).toMatchObject([
         { _tag: "TokenBudgetExhausted", resetAt: now + minute },
@@ -274,7 +274,7 @@ describe("AppToken.makeInstallationTokens", () => {
       yield* TestClock.setTime(now);
       const tokens = yield* tokensOver(fake);
       const gate = yield* TokenGate.makeMemory({ share: 1 as BudgetShare }).pipe(Effect.provide(fake.client));
-      expect((yield* gate.execute(tokens)("account", read)).status).toBe(200);
+      expect((yield* gate.execute(tokens)("owner", read)).status).toBe(200);
       expect(fake.sent.map((sent) => sent.url.pathname)).toEqual([
         ...discovery,
         "/app/installations/42/access_tokens",
@@ -302,8 +302,8 @@ describe("AppToken.makeInstallationTokens", () => {
     return Effect.gen(function* () {
       yield* TestClock.setTime(now);
       for (const [sign, reply] of cases) {
-        const error = yield* Effect.flip((yield* tokensOver(github(reply), sign)).current("star-count"));
-        expect(error).toMatchObject({ _tag: "GitHubTokenMissing", operation: "star-count" });
+        const error = yield* Effect.flip((yield* tokensOver(github(reply), sign)).current("owner"));
+        expect(error).toMatchObject({ _tag: "GitHubTokenMissing", operation: "owner" });
       }
       expect(logs.map((message) => (message as Array<{ reason?: string }>)[1]?.reason)).toEqual([
         "jwt-rejected",

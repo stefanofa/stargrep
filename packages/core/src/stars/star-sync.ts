@@ -1,7 +1,7 @@
 import * as Db from "@stargrep/db";
 import { UserId } from "@stargrep/db/auth-schema";
 import type { AccountNotFound, DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
-import type { GitHubError } from "@stargrep/github/errors";
+import { type GitHubError, NotFound } from "@stargrep/github/errors";
 import * as GitHub from "@stargrep/github/github";
 import { type GitHubAccountId, Login, type Star } from "@stargrep/github/schemas";
 import * as Arr from "effect/Array";
@@ -71,7 +71,11 @@ const make = Effect.gen(function* () {
     return { page: { ...page, starred, enqueued: pending.length }, pending };
   });
 
-  const sync = Effect.fn("StarSync.sync")(function* (accountId: GitHubAccountId, request: LoginSyncRequest) {
+  const sync = Effect.fn("StarSync.sync")(function* (
+    accountId: GitHubAccountId,
+    request: LoginSyncRequest,
+    initialCount: number,
+  ) {
     const account = yield* db.accounts.require(accountId);
     // The run's start, not its end: the snapshot unstars rows observed before it, and the next run's
     // stop line is this time, so a star added while the pages are read must land after it.
@@ -80,8 +84,16 @@ const make = Effect.gen(function* () {
     const stored = DiffPage.stored(yield* db.stars.list(account.id), stopLine);
     // GitHub pages the list by offset, so a star added or removed mid-read shifts later pages. Equal
     // counts before and after the read are what lets a full read stand as a snapshot.
-    const countStars = account.type === "org" ? Effect.succeed(0) : github.starCount(account.login);
-    const countBefore = Option.isNone(stopLine) ? Option.some(yield* countStars) : Option.none<number>();
+    const countStars =
+      account.type === "org"
+        ? Effect.succeed(0)
+        : Effect.flatMap(github.owner(account.login), (owner) =>
+            Option.match(owner, {
+              onNone: () => Effect.fail(new NotFound({ operation: "owner", path: `/users/${account.login}` })),
+              onSome: (found) => Effect.succeed(found.starredTotal),
+            }),
+          );
+    const countBefore = Option.isNone(stopLine) ? Option.some(initialCount) : Option.none<number>();
 
     const written = yield* github.starPages(account.login).pipe(
       Stream.mapAccum(
@@ -123,9 +135,11 @@ const make = Effect.gen(function* () {
   });
 
   const syncLogin = Effect.fn("StarSync.syncLogin")(function* (request: LoginSyncRequest) {
-    const account = yield* github.account(request.login);
+    const found = yield* github.owner(request.login);
+    if (Option.isNone(found)) return yield* new NotFound({ operation: "owner", path: `/users/${request.login}` });
+    const { account, starredTotal } = found.value;
     yield* db.accounts.upsert(account);
-    return yield* sync(account.id, request);
+    return yield* sync(account.id, request, starredTotal);
   });
 
   return StarSync.of({ syncLogin });

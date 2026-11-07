@@ -65,8 +65,10 @@ export const starPage = (stars: ReadonlyArray<FakeStar>, sent: Sent): Reply => {
   };
 };
 
-export const starCountReply = (totalCount: number): Reply => ({
-  body: { data: { user: { starredRepositories: { totalCount } } } },
+export const ownerCountReply = (totalCount: number): Reply => ({
+  body: {
+    data: { repositoryOwner: { ...ownerBodies.user.data.repositoryOwner, starredRepositories: { totalCount } } },
+  },
   headers: rateLimitHeaders(4000, 3600, "graphql"),
 });
 

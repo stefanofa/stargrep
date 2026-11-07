@@ -1,47 +1,26 @@
-import { NotSignedIn, requestOwnerSync, type Viewer, Viewers, ViewerUnavailable } from "@stargrep/api/viewers";
+import { NotSignedIn, type Viewer, Viewers, ViewerUnavailable } from "@stargrep/api/viewers";
 import * as Auth from "@stargrep/auth/auth";
 import type { AuthConfig } from "@stargrep/auth/config";
 import type { SyncRequests } from "@stargrep/core/stars";
+import { OwnerAccount } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import type { UserId } from "@stargrep/db/auth-schema";
-import * as GitHubViewer from "@stargrep/github/viewer";
-import * as Duration from "effect/Duration";
+import { userShare } from "@stargrep/github/fallback-gate";
+import * as GitHub from "@stargrep/github/github";
+import * as TokenGate from "@stargrep/github/token-gate";
 import * as Effect from "effect/Effect";
-import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import type * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
-
-const githubTimeout = Duration.seconds(5);
+import type * as Redacted from "effect/Redacted";
 
 const unavailable = (step: ViewerUnavailable["step"]) => () => Effect.fail(new ViewerUnavailable({ step }));
 
-const readViewer = (token: Redacted.Redacted<string>) =>
-  HttpClient.execute(GitHubViewer.request.pipe(HttpClientRequest.bearerToken(Redacted.value(token)))).pipe(
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.flatMap((response) => response.text),
-    Effect.flatMap(GitHubViewer.decodeResponse),
-    Effect.timeout(githubTimeout),
+export const importViewer = (userId: UserId, token: Redacted.Redacted<string>) =>
+  OwnerAccount.importViewer(userId).pipe(
+    Effect.provide(GitHub.layer.pipe(Layer.provide(TokenGate.layerMemory({ token, share: userShare })))),
+    Effect.catchTags({ OwnerImportFailed: unavailable("github") }),
   );
-
-export const importViewer = Effect.fn("Viewers.import")(
-  function* (userId: UserId, token: Redacted.Redacted<string>) {
-    const read = yield* readViewer(token);
-    if (!read.data) return yield* new ViewerUnavailable({ step: "github" });
-    const { account: facts, starredCount } = GitHubViewer.toViewer(read.data.viewer);
-    const db = yield* Db.Db;
-    yield* db.accounts.claim({ facts, userId, starredCount });
-    yield* requestOwnerSync(facts.login, userId, "sign-in");
-    return yield* db.accounts.require(facts.id).pipe(Effect.catchTags({ AccountNotFound: Effect.die }));
-  },
-  Effect.catchTags({
-    HttpClientError: unavailable("github"),
-    SchemaError: unavailable("github"),
-    TimeoutError: unavailable("github"),
-  }),
-);
 
 type ImportServices = Db.Db | SyncRequests.SyncRequests | HttpClient.HttpClient;
 

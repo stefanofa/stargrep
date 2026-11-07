@@ -1,14 +1,13 @@
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schema from "effect/Schema";
 import { rankIconFiles } from "./icon-files.ts";
 import { pickReadme, TreeEntry } from "./readme.ts";
-import { GraphQLError, Login, type RepoFacts, RepoId, RepoName, RepoNodeId } from "./schemas.ts";
+import { type GraphQLError, Login, type RepoFacts, RepoId, RepoName, RepoNodeId } from "./schemas.ts";
 
 // GitHub cuts a GraphQL query off at 10 s. With topics and the root tree,
 // 25 repos measured 2.4 s and 100 repos timed out.
 export const batchSize = 25;
 
-const query = `query RepoFacts($ids: [ID!]!) {
+export const query = `query RepoFacts($ids: [ID!]!) {
   nodes(ids: $ids) {
     ... on Repository {
       databaseId
@@ -57,18 +56,7 @@ const RepoNode = Schema.Struct({
 });
 type RepoNode = typeof RepoNode.Type;
 
-const Response = Schema.Struct({
-  data: Schema.optionalKey(Schema.NullOr(Schema.Struct({ nodes: Schema.Array(Schema.NullOr(RepoNode)) }))),
-  errors: Schema.optionalKey(Schema.Array(GraphQLError)),
-});
-type Response = typeof Response.Type;
-
-export const decodeResponse = Schema.decodeEffect(Schema.fromJsonString(Response));
-
-export const request = (ids: ReadonlyArray<RepoNodeId>) =>
-  HttpClientRequest.post("https://api.github.com/graphql").pipe(
-    HttpClientRequest.bodyJsonUnsafe({ query, variables: { ids } }),
-  );
+export const Data = Schema.Struct({ nodes: Schema.Array(Schema.NullOr(RepoNode)) });
 
 const toFacts = (node: RepoNode): RepoFacts => ({
   id: node.databaseId,
@@ -97,13 +85,16 @@ interface NodeError {
   readonly index: number;
 }
 
-const nodeError = (error: GraphQLError): NodeError | null => {
+export const nodeError = (error: GraphQLError): NodeError | null => {
   const [field, index] = error.path ?? [];
   if (field !== "nodes" || typeof index !== "number") return null;
   return error.type === "NOT_FOUND" || error.type === "FORBIDDEN" ? { kind: error.type, index } : null;
 };
 
-export const settle = (ids: ReadonlyArray<RepoNodeId>, body: Response) => {
+export const settle = (
+  ids: ReadonlyArray<RepoNodeId>,
+  body: { readonly data?: typeof Data.Type | null; readonly errors?: ReadonlyArray<GraphQLError> },
+) => {
   const classified = (body.errors ?? []).map((error) => ({ error, node: nodeError(error) }));
   const forbidden = new Set(classified.flatMap(({ node }) => (node?.kind === "FORBIDDEN" ? [node.index] : [])));
   return {

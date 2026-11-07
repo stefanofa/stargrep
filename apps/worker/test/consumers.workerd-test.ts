@@ -713,12 +713,12 @@ describe("settlement table", () => {
   const cases = {
     TokenBudgetExhausted: [[budgetExhausted, "Defer"]],
     RateLimited: [[rateLimited, "Defer"]],
-    Unauthorized: [[new Unauthorized({ operation: "account" }), "DeadLetter"]],
-    GitHubTokenMissing: [[new GitHubTokenMissing({ operation: "account" }), "DeadLetter"]],
+    Unauthorized: [[new Unauthorized({ operation: "owner" }), "DeadLetter"]],
+    GitHubTokenMissing: [[new GitHubTokenMissing({ operation: "owner" }), "DeadLetter"]],
     AiKeyMissing: [[new AiKeyMissing({ operation: "generate", model: "m" }), "DeadLetter"]],
     AccountNotFound: [[new AccountNotFound({ accountId: Schema.decodeSync(GitHubAccountId)(7) }), "DeadLetter"]],
     EmbeddingModelMismatch: [[new EmbeddingModelMismatch({ expected: model, received: model }), "DeadLetter"]],
-    NotFound: [[new NotFound({ operation: "account", path: "/users/ghost" }), "DeadLetter"]],
+    NotFound: [[new NotFound({ operation: "owner", path: "/users/ghost" }), "DeadLetter"]],
     GitHubRequestFailed: [
       [new GitHubRequestFailed({ ...endpoint, status: null, reason: "transport" }), "Retry"],
       [new GitHubRequestFailed({ ...endpoint, status: null, reason: "timeout" }), "Retry"],

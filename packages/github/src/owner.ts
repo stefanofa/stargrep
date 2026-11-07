@@ -1,20 +1,21 @@
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schema from "effect/Schema";
-import { Account, GitHubAccountId, GraphQLError, Login } from "./schemas.ts";
+import { Account, GitHubAccountId, Login } from "./schemas.ts";
 
-// One request answers whether the login exists, whether it is a user or an org, its facts, and its starred total.
-// GraphQL's Organization has no follower count.
-const query = `query Owner($login: String!) {
-  repositoryOwner(login: $login) {
-    __typename
-    ... on User {
-      databaseId
+export const userFields = `databaseId
       login
       name
       avatarUrl
       followers { totalCount }
       repositories(ownerAffiliations: OWNER, privacy: PUBLIC) { totalCount }
-      starredRepositories { totalCount }
+      starredRepositories { totalCount }`;
+
+// One request answers whether the login exists, whether it is a user or an org, its facts, and its starred total.
+// GraphQL's Organization has no follower count.
+export const query = `query Owner($login: String!) {
+  repositoryOwner(login: $login) {
+    __typename
+    ... on User {
+      ${userFields}
     }
     ... on Organization {
       databaseId
@@ -36,7 +37,7 @@ const Facts = {
   repositories: Count,
 };
 
-const User = Schema.Struct({
+export const User = Schema.Struct({
   __typename: Schema.Literal("User"),
   ...Facts,
   followers: Count,
@@ -45,16 +46,7 @@ const User = Schema.Struct({
 
 const Organization = Schema.Struct({ __typename: Schema.Literal("Organization"), ...Facts });
 
-export const decodeResponse = Schema.decodeEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      data: Schema.optionalKey(
-        Schema.NullOr(Schema.Struct({ repositoryOwner: Schema.NullOr(Schema.Union([User, Organization])) })),
-      ),
-      errors: Schema.optionalKey(Schema.Array(GraphQLError)),
-    }),
-  ),
-);
+export const Data = Schema.Struct({ repositoryOwner: Schema.NullOr(Schema.Union([User, Organization])) });
 
 export const Owner = Schema.Struct({ account: Account, starredTotal: Schema.Int });
 export type Owner = typeof Owner.Type;
@@ -81,8 +73,3 @@ export const toOwner = (node: typeof User.Type | typeof Organization.Type): Owne
   },
   starredTotal: node.__typename === "User" ? node.starredRepositories.totalCount : 0,
 });
-
-export const request = (login: Login) =>
-  HttpClientRequest.post("https://api.github.com/graphql").pipe(
-    HttpClientRequest.bodyJsonUnsafe({ query, variables: { login } }),
-  );

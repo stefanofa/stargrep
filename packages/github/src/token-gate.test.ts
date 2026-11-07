@@ -85,13 +85,13 @@ describe("TokenGate.layerRemote", () => {
   effect("lists stars and counts them through a remote gate, with query and body intact", () => {
     const stars = Array.from({ length: 150 }, (_, i) => ({ repo: i + 1, starredAt: "2026-01-01T00:00:00Z" }));
     const fake = viaRemote((sent) =>
-      sent.url.pathname === "/graphql" ? Fake.starCountReply(150) : Fake.starPage(stars, sent),
+      sent.url.pathname === "/graphql" ? Fake.ownerCountReply(150) : Fake.starPage(stars, sent),
     );
     return Effect.gen(function* () {
       const github = yield* GitHub.GitHub;
       const listed = yield* Stream.runCollect(github.stars(login));
       expect(listed.map((star) => `${star.repo.id}`)).toEqual(stars.map((star) => `${star.repo}`));
-      expect(yield* github.starCount(login)).toBe(150);
+      expect(yield* Effect.map(github.owner(login), (owner) => Option.getOrThrow(owner).starredTotal)).toBe(150);
       expect(fake.sent.map((sent) => sent.url.searchParams.get("page"))).toEqual(["1", "2", null]);
       expect(JSON.parse(fake.sent[2]?.body ?? "null")).toMatchObject({ variables: { login } });
       expect(fake.sent.every((sent) => sent.headers.authorization === `Bearer ${Fake.token}`)).toBe(true);
@@ -116,7 +116,7 @@ describe("TokenGate.layerRemote", () => {
     return Effect.gen(function* () {
       const gate = yield* TokenGate.TokenGate;
       const error = yield* Effect.flip(
-        gate.execute("account", HttpClientRequest.get("https://api.github.com/users/octocat")),
+        gate.execute("owner", HttpClientRequest.get("https://api.github.com/users/octocat")),
       );
       expect(error).toBeInstanceOf(GitHubRequestFailed);
       expect(error).toMatchObject({ reason: "transport", path: "/users/octocat", status: null });
@@ -132,7 +132,7 @@ describe("TokenGate.layerRemote", () => {
     }));
     return Effect.gen(function* () {
       const gate = yield* TokenGate.TokenGate;
-      const forbidden = yield* gate.execute("account", HttpClientRequest.get("https://api.github.com/users/octocat"));
+      const forbidden = yield* gate.execute("owner", HttpClientRequest.get("https://api.github.com/users/octocat"));
       const invalid = yield* gate.execute("list-stars", HttpClientRequest.get("https://api.github.com/user/1/starred"));
       expect(Option.map(forbidden.body, (body) => body.length)).toEqual(Option.some(1024));
       expect(Option.exists(forbidden.body, (body) => body.includes("secondary rate limit"))).toBe(true);
@@ -144,7 +144,7 @@ describe("TokenGate.layerRemote", () => {
     Effect.gen(function* () {
       const gate = yield* TokenGate.TokenGate;
       const error = yield* Effect.flip(
-        gate.execute("account", HttpClientRequest.get("https://api.github.com/users/octocat")),
+        gate.execute("owner", HttpClientRequest.get("https://api.github.com/users/octocat")),
       );
       expect(error).toMatchObject({ _tag: "GitHubRequestFailed", reason: "transport" });
     }).pipe(Effect.provide(TokenGate.layerRemote({ execute: () => Effect.die(new Error("RPC receiver went away")) }))),
@@ -194,16 +194,16 @@ describe("TokenGate.layerMissing", () => {
     Effect.gen(function* () {
       const github = yield* GitHub.GitHub;
       const errors = yield* Effect.all([
-        Effect.flip(github.account(login)),
+        Effect.flip(github.owner(login)),
         Effect.flip(Stream.runCollect(github.stars(login))),
-        Effect.flip(github.starCount(login)),
+        Effect.flip(Effect.map(github.owner(login), (owner) => Option.getOrThrow(owner).starredTotal)),
         Effect.flip(github.repoFacts(["R_1" as RepoNodeId])),
       ]);
       expect(errors.map((error) => error._tag)).toEqual(Array.from({ length: 4 }, () => "GitHubTokenMissing"));
       expect(errors.map((error) => error._tag === "GitHubTokenMissing" && error.operation)).toEqual([
-        "account",
+        "owner",
         "list-stars",
-        "star-count",
+        "owner",
         "repo-facts",
       ]);
     }).pipe(Effect.provide(GitHub.layer.pipe(Layer.provide(TokenGate.layerMissing)))),
@@ -221,12 +221,12 @@ describe("TokenGate.counting", () => {
       const github = yield* Effect.map(Layer.build(GitHub.layer.pipe(Layer.provide(counted))), (context) =>
         Context.get(context, GitHub.GitHub),
       );
-      const fiber = yield* Effect.forkChild(Effect.result(github.account("octocat" as Login)));
+      const fiber = yield* Effect.forkChild(Effect.result(github.owner("octocat" as Login)));
       yield* TestClock.adjust("1 second");
       yield* Fiber.join(fiber);
       expect(fake.sent).toHaveLength(2);
       expect(yield* Ref.get(sent)).toBe(2);
-      yield* Effect.flip(github.account("ghost" as Login));
+      yield* Effect.flip(github.owner("ghost" as Login));
       expect(yield* Ref.get(sent)).toBe(3);
 
       const refusing = TokenGate.counting(
@@ -235,7 +235,7 @@ describe("TokenGate.counting", () => {
         }),
         sent,
       );
-      yield* Effect.flip(refusing.execute("account", HttpClientRequest.get("https://api.github.com/users/octocat")));
+      yield* Effect.flip(refusing.execute("owner", HttpClientRequest.get("https://api.github.com/users/octocat")));
       expect(yield* Ref.get(sent)).toBe(3);
     }).pipe(
       Effect.scoped,
@@ -265,8 +265,8 @@ describe("TokenGate.makeMemory with a renewable source", () => {
           rejected: Effect.sync(() => tokens.shift() !== undefined),
         };
         const request = HttpClientRequest.get("https://api.github.com/users/octocat");
-        expect((yield* gate.execute(renewable)("account", request)).status).toBe(200);
-        expect((yield* gate.execute(TokenGate.fixed(Redacted.make("stale")))("account", request)).status).toBe(401);
+        expect((yield* gate.execute(renewable)("owner", request)).status).toBe(200);
+        expect((yield* gate.execute(TokenGate.fixed(Redacted.make("stale")))("owner", request)).status).toBe(401);
         expect(fake.sent.map((sent) => sent.headers.authorization)).toEqual([
           "Bearer stale",
           "Bearer fresh",

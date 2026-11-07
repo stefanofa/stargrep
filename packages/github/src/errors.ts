@@ -1,15 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
-export const Operation = Schema.Literals([
-  "account",
-  "owner",
-  "list-stars",
-  "star-count",
-  "repo-facts",
-  "readme",
-  "app-token",
-]);
+export const Operation = Schema.Literals(["viewer", "owner", "list-stars", "repo-facts", "readme", "app-token"]);
 export type Operation = typeof Operation.Type;
 
 export class NotFound extends Schema.TaggedError<NotFound, { readonly brand: unique symbol }>()("NotFound", {
@@ -104,3 +96,13 @@ export const GitHubError = Schema.Union([
   GitHubResponseInvalid,
 ]);
 export type GitHubError = typeof GitHubError.Type;
+
+// Queue retries and repo failure caps share this classification. In-process retries have a shorter policy.
+export const isPermanent = (error: GitHubRequestFailed | GitHubResponseInvalid): boolean => {
+  switch (error._tag) {
+    case "GitHubRequestFailed":
+      return error.reason === "status" && error.status !== null && error.status < 500 && error.status !== 403;
+    case "GitHubResponseInvalid":
+      return error.reason !== "unreadable-body";
+  }
+};

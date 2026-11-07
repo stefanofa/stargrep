@@ -2,7 +2,7 @@ import "@orpc/effect/extensions/effect";
 import { middlewareGen, type WithEffectContext } from "@orpc/effect";
 import { implement } from "@orpc/server";
 import { MetricRegistry, QueryPlan, type QueryPlanner, Search } from "@stargrep/core/search";
-import { SyncRequests } from "@stargrep/core/stars";
+import { OwnerAccount, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import type { DbQueryFailed, DbRowInvalid, RepoNotFound } from "@stargrep/db/errors";
 import { loginKey } from "@stargrep/github/login";
@@ -44,7 +44,7 @@ import { instrumentation, type ProcedureTime, type Transport } from "./middlewar
 import { type RateLimited, RateLimiter, type RateLimiterUnavailable, type RateLimitKind } from "./rate-limiter.ts";
 import type { ApiServices, ApiServicesUnavailable } from "./services.ts";
 import * as Services from "./services.ts";
-import { NotSignedIn, requestOwnerSync, type Viewer, type ViewerError, Viewers } from "./viewers.ts";
+import { NotSignedIn, type Viewer, type ViewerError, Viewers } from "./viewers.ts";
 
 export interface ApiContext extends WithEffectContext<never>, AnswerContext {
   readonly transport: Transport;
@@ -351,7 +351,7 @@ export const router = implementer.router({
   // The page reads syncStatus only after viewer answers, so a sync claimed here is already queued when it looks.
   viewer: withServices.viewer.effect(function* ({ context }): ApiResult<"viewer", typeof WireViewer.Type> {
     const { userId, account } = yield* context.viewer;
-    yield* requestOwnerSync(account.login, userId, "library open");
+    yield* OwnerAccount.requestOwnerSync(account.login, userId, "library open");
     return {
       login: account.login,
       name: account.name,

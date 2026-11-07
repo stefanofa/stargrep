@@ -6,6 +6,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Metric from "effect/Metric";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
 import { GitHubTokenMissing } from "./errors.ts";
@@ -92,7 +93,7 @@ describe("FallbackGate.prefer", () => {
 
   effect("moves a job to the server's token after GitHub rejects the user's token, and logs it once", () => {
     const fake = github(4000, (token) =>
-      token === "user" ? { status: 401, body: { message: "Bad credentials" } } : Fake.starCountReply(150),
+      token === "user" ? { status: 401, body: { message: "Bad credentials" } } : Fake.ownerCountReply(150),
     );
     const logs: Array<unknown> = [];
     return Effect.gen(function* () {
@@ -103,12 +104,15 @@ describe("FallbackGate.prefer", () => {
         GitHub.GitHub,
         GitHub.layer.pipe(Layer.provide(Layer.succeed(TokenGate.TokenGate, job))),
       );
-      const counts = yield* Effect.all([client.starCount("octocat" as Login), client.starCount("hubot" as Login)]);
+      const counts = yield* Effect.all([
+        Effect.map(client.owner("octocat" as Login), (owner) => Option.getOrThrow(owner).starredTotal),
+        Effect.map(client.owner("hubot" as Login), (owner) => Option.getOrThrow(owner).starredTotal),
+      ]);
       expect(counts).toEqual([150, 150]);
       expect(fake.sent.map(tokenOf)).toEqual(["user", "server", "server"]);
       expect((yield* fallbacksFor("unauthorized")) - before).toBe(1);
       expect(logs).toEqual([
-        ["A user's job moved to the server's GitHub token", { reason: "unauthorized", operation: "star-count" }],
+        ["A user's job moved to the server's GitHub token", { reason: "unauthorized", operation: "owner" }],
       ]);
       expect(JSON.stringify(logs)).not.toContain(userToken);
     }).pipe(Effect.provide(Logger.layer([Logger.make(({ message }) => logs.push(message))])));
@@ -151,7 +155,7 @@ describe("FallbackGate.prefer", () => {
             body: { data: null, errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }] },
             headers: Fake.rateLimitHeaders(0, 5400, "graphql"),
           }
-        : Fake.starCountReply(150),
+        : Fake.ownerCountReply(150),
     );
     return Effect.gen(function* () {
       const { user, server } = yield* gates(fake);
@@ -161,7 +165,9 @@ describe("FallbackGate.prefer", () => {
         GitHub.layer.pipe(Layer.provide(Layer.succeed(TokenGate.TokenGate, job))),
       );
       const before = yield* fallbacksFor("rate-limited");
-      expect(yield* client.starCount("octocat" as Login)).toBe(150);
+      expect(
+        yield* Effect.map(client.owner("octocat" as Login), (owner) => Option.getOrThrow(owner).starredTotal),
+      ).toBe(150);
       expect(fake.sent.map(tokenOf)).toEqual(["user", "server"]);
       expect((yield* fallbacksFor("rate-limited")) - before).toBe(1);
     });
@@ -175,7 +181,7 @@ describe("FallbackGate.prefer", () => {
             body: { message: "You have exceeded a secondary rate limit" },
             headers: Fake.rateLimitHeaders(remaining),
           }
-        : Fake.starCountReply(150),
+        : Fake.ownerCountReply(150),
     );
     return Effect.gen(function* () {
       const { user, server } = yield* gates(fake);
@@ -184,7 +190,9 @@ describe("FallbackGate.prefer", () => {
         GitHub.GitHub,
         GitHub.layer.pipe(Layer.provide(Layer.succeed(TokenGate.TokenGate, job))),
       );
-      const fiber = yield* Effect.forkChild(client.starCount("octocat" as Login));
+      const fiber = yield* Effect.forkChild(
+        Effect.map(client.owner("octocat" as Login), (owner) => Option.getOrThrow(owner).starredTotal),
+      );
       yield* TestClock.adjust("1 minute");
       expect(yield* Fiber.join(fiber)).toBe(150);
       expect(fake.sent.map(tokenOf)).toEqual(["user", "user"]);

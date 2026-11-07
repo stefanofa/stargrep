@@ -2,6 +2,7 @@ import type * as Cloudflare from "@alchemy.run/cloudflare";
 import type { FetchIcon } from "@stargrep/core/icons";
 import type { EnrichRepo } from "@stargrep/core/repos";
 import type { StarSync } from "@stargrep/core/stars";
+import { isPermanent } from "@stargrep/github/errors";
 import * as TokenGate from "@stargrep/github/token-gate";
 import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
@@ -51,14 +52,8 @@ export const afterFailure = (error: Failure, now: number): Settlement =>
     // The login, repo, or README is gone. EnrichRepo has already counted a repo's own failure, so the sweep,
     // not the queue, sends the repo again after its backoff.
     NotFound: deadLetter,
-    // GraphQL errors other than NOT_FOUND and RATE_LIMITED include GitHub's transient INTERNAL errors.
-    // A 403 can be a rate limit GitHub words in a way the client does not recognize, so it gets the queue's retries.
-    GitHubRequestFailed: (failure) =>
-      failure.reason === "status" && failure.status !== null && failure.status < 500 && failure.status !== 403
-        ? deadLetter(failure)
-        : retry(failure),
-    // A body that broke while it was read can arrive whole next time. A body with the wrong shape cannot.
-    GitHubResponseInvalid: (failure) => (failure.reason === "unreadable-body" ? retry(failure) : deadLetter(failure)),
+    GitHubRequestFailed: (failure) => (isPermanent(failure) ? deadLetter(failure) : retry(failure)),
+    GitHubResponseInvalid: (failure) => (isPermanent(failure) ? deadLetter(failure) : retry(failure)),
     // A conflict or a constraint error can come from a race with another message's writes. A query error repeats.
     DbQueryFailed: (failure) => (failure.reason === "query" ? deadLetter(failure) : retry(failure)),
     DbRowInvalid: deadLetter,

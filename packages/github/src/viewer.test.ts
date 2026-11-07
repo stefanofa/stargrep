@@ -1,52 +1,48 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import * as it from "@stargrep/testing";
 import * as Effect from "effect/Effect";
-import { GitHubAccountId, Login } from "./schemas.ts";
-import * as Viewer from "./viewer.ts";
+import * as Fake from "./github.fixture.ts";
+import { GitHub } from "./github.ts";
 
-describe("viewer", () => {
-  it.effect("reads the signed-in account and its starred count from one query", () =>
-    Effect.gen(function* () {
-      const decoded = yield* Viewer.decodeResponse(
-        JSON.stringify({
-          data: {
-            viewer: {
-              databaseId: 7,
-              login: "ada",
-              name: null,
-              avatarUrl: "https://avatars.githubusercontent.com/u/7",
-              followers: { totalCount: 10 },
-              repositories: { totalCount: 3 },
-              starredRepositories: { totalCount: 1775 },
-            },
-          },
-        }),
-      );
-      expect(decoded.data && Viewer.toViewer(decoded.data.viewer)).toEqual({
-        account: {
-          id: GitHubAccountId.make(7),
-          login: Login.make("ada"),
-          type: "user",
-          name: null,
-          avatarUrl: "https://avatars.githubusercontent.com/u/7",
-          followers: 10,
-          publicRepos: 3,
-        },
+const viewer = {
+  ...Fake.ownerBodies.user.data.repositoryOwner,
+  login: "ada",
+  databaseId: 7,
+  starredRepositories: { totalCount: 1775 },
+};
+
+describe("GitHub.viewer", () => {
+  it.effect("reads the signed-in account and its starred count through the client with the API headers", () => {
+    const fake = Fake.layer(() => ({ body: { data: { viewer } } }));
+    return Effect.gen(function* () {
+      expect(yield* (yield* GitHub).viewer).toMatchObject({
+        account: { id: 7, login: "ada", type: "user" },
         starredCount: 1775,
       });
-    }),
-  );
+      expect(fake.sent).toHaveLength(1);
+      expect(fake.sent[0]?.url.pathname).toBe("/graphql");
+      expect(fake.sent[0]?.headers).toMatchObject({ "x-github-api-version": "2022-11-28", "user-agent": "stargrep" });
+    }).pipe(Effect.provide(fake.layer));
+  });
 
-  it.effect("keeps GraphQL errors instead of inventing a viewer", () =>
-    Effect.gen(function* () {
-      const decoded = yield* Viewer.decodeResponse(
-        JSON.stringify({ data: null, errors: [{ type: "FORBIDDEN", message: "Resource not accessible" }] }),
-      );
-      expect(decoded.data).toBeNull();
-    }),
-  );
+  it.effect("rejects GraphQL errors even when the response contains viewer data", () => {
+    const fake = Fake.layer(() => ({
+      body: { data: { viewer }, errors: [{ type: "FORBIDDEN", message: "Resource not accessible" }] },
+    }));
+    return Effect.gen(function* () {
+      expect(yield* Effect.flip((yield* GitHub).viewer)).toMatchObject({
+        _tag: "GitHubRequestFailed",
+        operation: "viewer",
+        reason: "graphql-errors",
+      });
+    }).pipe(Effect.provide(fake.layer));
+  });
 
-  test("sends the API headers", () => {
-    expect(Viewer.request.headers).toMatchObject({ "x-github-api-version": "2022-11-28", "user-agent": "stargrep" });
+  it.effect("uses the shared unauthorized classification for a rejected user token", () => {
+    const fake = Fake.layer(() => ({ status: 401 }));
+    return Effect.gen(function* () {
+      expect(yield* Effect.flip((yield* GitHub).viewer)).toMatchObject({ _tag: "Unauthorized", operation: "viewer" });
+      expect(fake.sent).toHaveLength(1);
+    }).pipe(Effect.provide(fake.layer));
   });
 });
