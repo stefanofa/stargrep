@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Redacted from "effect/Redacted";
 import * as Db from "../src/db.ts";
-import { createMigratedDatabase, withClient } from "../src/local-database.ts";
+import { createMigratedDatabase, dropDatabase } from "../src/local-database.ts";
 import * as Memory from "../src/memory.ts";
 import { acquirePool, driver } from "../src/node-postgres.ts";
 import * as Postgres from "../src/postgres.ts";
@@ -55,17 +55,7 @@ export const layerMemory = (options: Db.Options) =>
 
 const freshDatabase = Effect.gen(function* () {
   const name = `stargrep_test_${yield* Random.nextIntBetween(0, 2 ** 31)}`;
-  const url = yield* Effect.acquireRelease(createMigratedDatabase(adminUrl, name), () =>
-    withClient(adminUrl, async (client) => {
-      // DROP waits for disconnected backends to exit. pg_stat_activity can still show them after pool.end resolves.
-      try {
-        await client.query(`drop database ${client.escapeIdentifier(name)}`);
-      } catch (cause) {
-        await client.query(`drop database if exists ${client.escapeIdentifier(name)} with (force)`);
-        throw cause;
-      }
-    }),
-  );
+  const url = yield* Effect.acquireRelease(createMigratedDatabase(adminUrl, name), () => dropDatabase(adminUrl, name));
   const pool = yield* acquirePool(url);
   return { url: Redacted.make(url), pool };
 });

@@ -335,110 +335,112 @@ const fixture = () => {
 }
 
 {
-  const { replies, got, layer, seed, stored, request, fetchIcon, unavailable } = fixture();
+  const f = fixture();
 
-  it.layer(layer, { timeout: 30_000 })("refresh", (it) => {
+  it.layer(f.layer, { timeout: 30_000 })("refresh", (it) => {
     it.effect(
       "keeps an icon found earlier when the homepage times out or answers a bare 429, and drops it once gone",
       () =>
         Effect.gen(function* () {
-          yield* seed([21, 22, 23]);
+          yield* f.seed([21, 22, 23]);
           for (const [n, site] of [
             [21, "https://slow.dev"],
             [22, "https://challenge.dev"],
             [23, "https://gone.dev"],
           ] as const) {
-            replies.set(`${site}/`, got(`<link rel="icon" href="/icon.svg">`, `${site}/`));
-            replies.set(`${site}/icon.svg`, got(`<svg>${site}</svg>`));
-            expect((yield* fetchIcon(request(n, { homepage: site })))._tag).toBe("Found");
+            f.replies.set(`${site}/`, f.got(`<link rel="icon" href="/icon.svg">`, `${site}/`));
+            f.replies.set(`${site}/icon.svg`, f.got(`<svg>${site}</svg>`));
+            expect((yield* f.fetchIcon(f.request(n, { homepage: site })))._tag).toBe("Found");
           }
-          const before = [(yield* stored(idOf(21))).icon, (yield* stored(idOf(22))).icon];
+          const before = [(yield* f.stored(idOf(21))).icon, (yield* f.stored(idOf(22))).icon];
 
-          replies.set(
+          f.replies.set(
             "https://slow.dev/",
             IconHttp.Download.Unavailable({ reason: "timeout", status: null, retryAfterMillis: null }),
           );
-          replies.set("https://challenge.dev/", unavailable(429));
-          replies.set("https://gone.dev/", got("<html><head></head></html>", "https://gone.dev/"));
-          replies.delete("https://gone.dev/icon.svg");
+          f.replies.set("https://challenge.dev/", f.unavailable(429));
+          f.replies.set("https://gone.dev/", f.got("<html><head></head></html>", "https://gone.dev/"));
+          f.replies.delete("https://gone.dev/icon.svg");
 
-          expect(yield* fetchIcon(request(21, { homepage: "https://slow.dev" }))).toMatchObject({ _tag: "Kept" });
-          expect(yield* fetchIcon(request(22, { homepage: "https://challenge.dev" }))).toMatchObject({ _tag: "Kept" });
-          expect((yield* fetchIcon(request(23, { homepage: "https://gone.dev" })))._tag).toBe("NoIcon");
-          expect([(yield* stored(idOf(21))).icon, (yield* stored(idOf(22))).icon]).toEqual(before);
-          expect((yield* stored(idOf(23))).icon).toBeNull();
+          expect(yield* f.fetchIcon(f.request(21, { homepage: "https://slow.dev" }))).toMatchObject({ _tag: "Kept" });
+          expect(yield* f.fetchIcon(f.request(22, { homepage: "https://challenge.dev" }))).toMatchObject({
+            _tag: "Kept",
+          });
+          expect((yield* f.fetchIcon(f.request(23, { homepage: "https://gone.dev" })))._tag).toBe("NoIcon");
+          expect([(yield* f.stored(idOf(21))).icon, (yield* f.stored(idOf(22))).icon]).toEqual(before);
+          expect((yield* f.stored(idOf(23))).icon).toBeNull();
         }),
     );
   });
 }
 
 {
-  const { replies, asked, got, layer, seed, request, fetchIcon } = fixture();
+  const f = fixture();
 
-  it.layer(layer, { timeout: 30_000 })("redirected homepage", (it) => {
+  it.layer(f.layer, { timeout: 30_000 })("redirected homepage", (it) => {
     it.effect("resolves relative icon links against the page the redirect landed on", () =>
       Effect.gen(function* () {
-        yield* seed([8]);
-        replies.set("https://kit.dev/home", got(`<link rel="icon" href="logo.svg">`, "https://kit.dev/docs/"));
-        replies.set("https://kit.dev/docs/logo.svg", got("<svg>docs logo</svg>"));
+        yield* f.seed([8]);
+        f.replies.set("https://kit.dev/home", f.got(`<link rel="icon" href="logo.svg">`, "https://kit.dev/docs/"));
+        f.replies.set("https://kit.dev/docs/logo.svg", f.got("<svg>docs logo</svg>"));
 
-        expect((yield* fetchIcon(request(8, { homepage: "https://kit.dev/home" })))._tag).toBe("Found");
-        expect(asked).toEqual(["https://kit.dev/home", "https://kit.dev/docs/logo.svg"]);
+        expect((yield* f.fetchIcon(f.request(8, { homepage: "https://kit.dev/home" })))._tag).toBe("Found");
+        expect(f.asked).toEqual(["https://kit.dev/home", "https://kit.dev/docs/logo.svg"]);
       }),
     );
 
     it.effect("takes no icon from a page that redirects to a package registry", () =>
       Effect.gen(function* () {
-        yield* seed([9]);
-        replies.set(
+        yield* f.seed([9]);
+        f.replies.set(
           "https://kit.dev/pypi",
-          got(`<link rel="icon" href="/favicon.ico">`, "https://pypi.org/project/kit/"),
+          f.got(`<link rel="icon" href="/favicon.ico">`, "https://pypi.org/project/kit/"),
         );
 
-        expect((yield* fetchIcon(request(9, { homepage: "https://kit.dev/pypi" })))._tag).toBe("NoIcon");
-        expect(asked).toEqual(["https://kit.dev/pypi"]);
+        expect((yield* f.fetchIcon(f.request(9, { homepage: "https://kit.dev/pypi" })))._tag).toBe("NoIcon");
+        expect(f.asked).toEqual(["https://kit.dev/pypi"]);
       }),
     );
   });
 }
 
 {
-  const { replies, got, normalized, store, layer, seed, stored, raw, request, fetchIcon } = fixture();
+  const f = fixture();
 
-  it.layer(layer, { timeout: 30_000 })("stale raw cache", (it) => {
+  it.layer(f.layer, { timeout: 30_000 })("stale raw cache", (it) => {
     it.effect(
       "retries when raw serves bytes that are not the tree's blob, and stores nothing under that blob's key",
       () =>
         Effect.gen(function* () {
-          yield* seed([7]);
+          yield* f.seed([7]);
           const changed = yield* blobOidOf("<svg>new logo</svg>");
-          replies.set(raw(7, "logo.svg"), got("<svg>old logo</svg>"));
-          const error = yield* fetchIcon(request(7, { iconFiles: [{ name: "logo.svg", oid: changed }] })).pipe(
-            Effect.flip,
-          );
+          f.replies.set(f.raw(7, "logo.svg"), f.got("<svg>old logo</svg>"));
+          const error = yield* f
+            .fetchIcon(f.request(7, { iconFiles: [{ name: "logo.svg", oid: changed }] }))
+            .pipe(Effect.flip);
 
           expect(error).toMatchObject({ _tag: "IconFetchFailed", reason: "stale", retryAfterMillis: null });
-          expect(store.objects.has(Keys.gitKey(changed))).toBe(false);
-          expect(normalized).toEqual([]);
-          expect((yield* stored(idOf(7))).iconCheckedAt).toBeNull();
+          expect(f.store.objects.has(Keys.gitKey(changed))).toBe(false);
+          expect(f.normalized).toEqual([]);
+          expect((yield* f.stored(idOf(7))).iconCheckedAt).toBeNull();
         }),
     );
   });
 }
 
 {
-  const { remoteReadmes, github, queue, layer, seed, stored, request } = fixture();
+  const f = fixture();
 
-  it.layer(layer, { timeout: 30_000 })("backfill", (it) => {
+  it.layer(f.layer, { timeout: 30_000 })("backfill", (it) => {
     it.effect(
       "queues facts for due repos, writes owners, settles gone repos, and leaves summaries and embeddings alone",
       () =>
         Effect.gen(function* () {
           const database = yield* TestDatabase.TestDatabase;
           const db = yield* Db.Db;
-          yield* seed([10, 11, 12, 14]);
+          yield* f.seed([10, 11, 12, 14]);
           const [summarized, fresh, checked, gone] = [idOf(10), idOf(11), idOf(12), idOf(14)];
-          remoteReadmes.set(10, { oid: oid("d"), logo: "img/logo.svg" });
+          f.remoteReadmes.set(10, { oid: oid("d"), logo: "img/logo.svg" });
           yield* database.query(
             `update repos set summary = 'kept', summary_readme_oid = $2, readme_oid = $2, embedding_model = $3,
            embedding = ('[' || array_to_string(array_fill(0.5::float4, array[1024]), ',') || ']')::halfvec
@@ -446,23 +448,23 @@ const fixture = () => {
             [summarized, oid("d"), embeddingModel],
           );
           yield* db.repos.saveIcon({ id: checked, icon: null });
-          const before = yield* stored(summarized);
+          const before = yield* f.stored(summarized);
 
           const result = yield* (yield* FetchIcon.FetchIcon).backfill(9);
 
           expect(result).toEqual({ queued: 2, next: null });
-          expect(queue.sent).toEqual([
-            request(10, { readmeOid: oid("d"), homepage: "https://kit.dev" }),
-            request(11, { homepage: "https://kit.dev" }),
+          expect(f.queue.sent).toEqual([
+            f.request(10, { readmeOid: oid("d"), homepage: "https://kit.dev" }),
+            f.request(11, { homepage: "https://kit.dev" }),
           ]);
-          expect(github.sent.map((sent) => sent.url.pathname)).toEqual(["/graphql"]);
-          expect(yield* stored(summarized)).toEqual({
+          expect(f.github.sent.map((sent) => sent.url.pathname)).toEqual(["/graphql"]);
+          expect(yield* f.stored(summarized)).toEqual({
             ...before,
             ownerType: "org",
             ownerAvatarUrl: "https://avatars.githubusercontent.com/u/7",
           });
-          expect((yield* stored(fresh)).ownerType).toBe("org");
-          expect((yield* stored(gone)).iconCheckedAt).not.toBeNull();
+          expect((yield* f.stored(fresh)).ownerType).toBe("org");
+          expect((yield* f.stored(gone)).iconCheckedAt).not.toBeNull();
           expect(
             yield* database.query("select embedding is not null as embedded from repos where id = $1", [summarized]),
           ).toEqual([{ embedded: true }]);
@@ -472,7 +474,7 @@ const fixture = () => {
 
     it.effect("sends a checked repo whose icon key has an older version, and skips one on the current version", () =>
       Effect.gen(function* () {
-        yield* seed([2003, 2004]);
+        yield* f.seed([2003, 2004]);
         const db = yield* Db.Db;
         const icon = { source: "repo-file", plate: "none", size: 64 } as const;
         yield* db.repos.saveIcon({ id: idOf(2003), icon: { ...icon, key: `v1/git/${"a".repeat(40)}.webp` } });
@@ -480,7 +482,7 @@ const fixture = () => {
 
         const backfill = (yield* FetchIcon.FetchIcon).backfill;
         expect(yield* backfill(2002)).toEqual({ queued: 1, next: null });
-        expect(queue.sent).toEqual([request(2003, { homepage: "https://kit.dev" })]);
+        expect(f.queue.sent).toEqual([f.request(2003, { homepage: "https://kit.dev" })]);
 
         yield* db.repos.saveIcon({ id: idOf(2003), icon: { ...icon, key: Keys.gitKey(oid("b")) } });
         expect(yield* backfill(2002)).toEqual({ queued: 0, next: null });
@@ -490,17 +492,17 @@ const fixture = () => {
     it.effect("pages by repo ID and chains the next page until a short page ends it", () =>
       Effect.gen(function* () {
         const numbers = Array.from({ length: FetchIcon.backfillPage + 1 }, (_, index) => 1001 + index);
-        yield* seed(numbers);
+        yield* f.seed(numbers);
         const lastOfPage = idOf(1000 + FetchIcon.backfillPage);
         const backfill = (yield* FetchIcon.FetchIcon).backfill;
 
         const first = yield* backfill(1000);
         expect(first.next).toBe(lastOfPage);
-        expect(queue.sent.at(-1)).toEqual(IconQueue.BackfillIcons.make({ after: lastOfPage }));
+        expect(f.queue.sent.at(-1)).toEqual(IconQueue.BackfillIcons.make({ after: lastOfPage }));
 
-        queue.sent.length = 0;
+        f.queue.sent.length = 0;
         expect(yield* backfill(first.next ?? 0)).toEqual({ queued: 1, next: null });
-        expect(queue.sent).toEqual([expect.objectContaining({ repoId: idOf(1001 + FetchIcon.backfillPage) })]);
+        expect(f.queue.sent).toEqual([expect.objectContaining({ repoId: idOf(1001 + FetchIcon.backfillPage) })]);
       }),
     );
   });

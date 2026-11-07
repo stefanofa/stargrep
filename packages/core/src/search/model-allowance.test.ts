@@ -200,27 +200,27 @@ const fixture = () => {
 };
 
 {
-  const { layerTest, cases } = fixture();
+  const f = fixture();
 
-  it.layer(layerTest(TestDatabase.layerMemory({ embeddingModel: model })), { timeout: 60_000 })(
+  it.layer(f.layerTest(TestDatabase.layerMemory({ embeddingModel: model })), { timeout: 60_000 })(
     "PGlite model allowance",
-    cases,
+    f.cases,
   );
 }
 
 {
-  const { layerTest, cases, clearLines, allowed } = fixture();
+  const f = fixture();
 
-  it.layer(layerTest(TestDatabase.layerNodePostgres({ embeddingModel: model })), { timeout: 60_000 })(
+  it.layer(f.layerTest(TestDatabase.layerNodePostgres({ embeddingModel: model })), { timeout: 60_000 })(
     "node-postgres model allowance",
     (test) => {
-      cases(test);
+      f.cases(test);
 
       test.effect("allows exactly 30 of 45 calls one network makes at once", () =>
         Effect.gen(function* () {
-          yield* clearLines;
+          yield* f.clearLines;
           const answers = yield* Effect.all(
-            Array.from({ length: 45 }, () => allowed("network-h", "embed")),
+            Array.from({ length: 45 }, () => f.allowed("network-h", "embed")),
             { concurrency: "unbounded" },
           );
           expect(answers.filter(Boolean)).toHaveLength(30);
@@ -229,11 +229,11 @@ const fixture = () => {
 
       test.effect("allows exactly the remaining 30 global calls when 21 networks race for them", () =>
         Effect.gen(function* () {
-          yield* clearLines;
+          yield* f.clearLines;
           const db = yield* Db.Db;
           yield* RateLine.bill(db.rateLines, RateLine.modelAll, yield* DateTime.now, 570);
           const answers = yield* Effect.all(
-            Array.from({ length: 63 }, (_, index) => allowed(`network-burst-${index % 21}`, "plan")),
+            Array.from({ length: 63 }, (_, index) => f.allowed(`network-burst-${index % 21}`, "plan")),
             { concurrency: 50 },
           );
           expect(answers.filter(Boolean)).toHaveLength(30);

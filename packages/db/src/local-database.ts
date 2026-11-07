@@ -37,13 +37,13 @@ export const createMigratedDatabase = (adminUrl: string, name: string) =>
     Effect.as(databaseUrl(adminUrl, name)),
   );
 
-// Drops the database even when connections remain, then fails, because each one is a leak.
 export const dropDatabase = (adminUrl: string, name: string) =>
   withClient(adminUrl, async (client) => {
-    const { rows } = await client.query("select count(*)::int as open from pg_stat_activity where datname = $1", [
-      name,
-    ]);
-    const [{ open }] = rows as [{ open: number }];
-    await client.query(`drop database if exists ${client.escapeIdentifier(name)} with (force)`);
-    if (open > 0) throw new Error(`${open} connections were still open on ${name} when it was dropped`);
+    // Disconnected backends can remain visible after pool.end resolves. DROP waits for them to exit.
+    try {
+      await client.query(`drop database if exists ${client.escapeIdentifier(name)}`);
+    } catch (cause) {
+      await client.query(`drop database if exists ${client.escapeIdentifier(name)} with (force)`);
+      throw cause;
+    }
   });
