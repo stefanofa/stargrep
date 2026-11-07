@@ -38,6 +38,26 @@ export const waitUntilReady = <R>(url: string, check: Effect.Effect<void, NotSet
     (lastAnswer) => `${url} was not ready within ${Duration.toSeconds(freshStageWait)} s, last answer: ${lastAnswer}`,
   );
 
+export const waitUntilConsumed = <E extends { readonly _tag: string }, R>(
+  expected: ReadonlyArray<string>,
+  read: Effect.Effect<ReadonlyArray<string>, E, R>,
+) =>
+  untilSettled(
+    read.pipe(
+      Effect.filterOrFail(
+        (consumed) => expected.every((id) => consumed.includes(id)),
+        (consumed) => {
+          const missing = expected.filter((id) => !consumed.includes(id));
+          return new NotSettled({
+            answer: `${expected.length - missing.length}/${expected.length} consumed; missing: ${missing.join(", ")}`,
+          });
+        },
+      ),
+    ),
+    (lastAnswer) =>
+      `Queue consumption did not finish within ${Duration.toSeconds(freshStageWait)} s, last answer: ${lastAnswer}`,
+  );
+
 export type Answer = { readonly status: number; readonly contentType: string; readonly body: string };
 export type Resends = { cloudflare404: number; dropped: number };
 

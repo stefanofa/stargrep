@@ -8,7 +8,14 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as TestClock from "effect/testing/TestClock";
-import { type Answer, NotSettled, type Resends, untilRouted, waitUntilReady } from "./fresh-stage.ts";
+import {
+  type Answer,
+  NotSettled,
+  type Resends,
+  untilRouted,
+  waitUntilConsumed,
+  waitUntilReady,
+} from "./fresh-stage.ts";
 
 const url = "https://stage.example";
 const notReady = new NotSettled({ answer: "GET /budget 500" });
@@ -58,6 +65,42 @@ describe("waitUntilReady", () => {
         yield* TestClock.adjust("5 seconds");
         expect(Exit.isSuccess(yield* Fiber.join(fiber))).toBe(true);
         expect(attempts).toBe(4);
+      }),
+    ));
+});
+
+describe("waitUntilConsumed", () => {
+  const ids = Array.from({ length: 10 }, (_, index) => `job-${index}`);
+
+  test("allows a slow consumer to start with one batch read per check", () =>
+    runOnTestClock(
+      Effect.gen(function* () {
+        let reads = 0;
+        const read = Effect.map(Clock.currentTimeMillis, (now) => {
+          reads++;
+          return now < 45_000 ? [] : ids;
+        });
+        const fiber = yield* Effect.forkChild(waitUntilConsumed(ids, read));
+        yield* TestClock.adjust("45 seconds");
+        expect(yield* Fiber.join(fiber)).toEqual(ids);
+        expect(reads).toBe(46);
+      }),
+    ));
+
+  test("names the missing receipts when consumption misses its deadline", () =>
+    runOnTestClock(
+      Effect.gen(function* () {
+        let reads = 0;
+        const read = Effect.sync(() => {
+          reads++;
+          return ids.slice(0, 8);
+        });
+        const fiber = yield* Effect.forkChild(Effect.exit(waitUntilConsumed(ids, read)));
+        yield* TestClock.adjust("60 seconds");
+        expect(outcome(yield* Fiber.join(fiber))).toBe(
+          "Error: Queue consumption did not finish within 60 s, last answer: 8/10 consumed; missing: job-8, job-9",
+        );
+        expect(reads).toBeLessThanOrEqual(61);
       }),
     ));
 });

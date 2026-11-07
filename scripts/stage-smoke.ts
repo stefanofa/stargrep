@@ -4,7 +4,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schema from "effect/Schema";
-import { NotSettled, untilRouted, waitUntilReady } from "./fresh-stage.ts";
+import { NotSettled, untilRouted, waitUntilConsumed, waitUntilReady } from "./fresh-stage.ts";
 import { publicSmoke } from "./public-smoke.ts";
 import { readStageOutput } from "./stage-output.ts";
 
@@ -22,6 +22,7 @@ const { url: workerUrl, debugUrl, debugToken, webUrl } = await readStageOutput(s
 const Budget = Schema.Struct({ minute: Schema.Int, used: Schema.Int, cap: Schema.Int });
 const Count = Schema.Struct({ count: Schema.Int });
 const Sent = Schema.Struct({ sent: Schema.Array(Schema.String) });
+const Consumed = Schema.Struct({ consumed: Schema.Array(Schema.String) });
 const Refused = Schema.Struct({ budget: Budget });
 const Transaction = Schema.Struct({ pid: Schema.Int, sum: Schema.Int });
 
@@ -121,6 +122,10 @@ const unauthenticated = Effect.gen(function* () {
 
 const traffic = Effect.gen(function* () {
   const queued = yield* read(Sent, "POST", "/queue?count=10");
+  yield* waitUntilConsumed(
+    queued.sent,
+    read(Consumed, "GET", `/queue?ids=${queued.sent.join(",")}`).pipe(Effect.map((receipt) => receipt.consumed)),
+  );
 
   const counter = `parallel-${yield* Clock.currentTimeMillis}`;
   yield* Effect.forEach(Array.from({ length: 5 }), () => read(Count, "POST", `/counter/${counter}`), {
@@ -136,7 +141,7 @@ const traffic = Effect.gen(function* () {
     ({ body }) => decode(Transaction, body),
   );
   return [
-    check("queue accepts 10 jobs", queued.sent.length === 10, { sent: queued.sent }),
+    check("queue consumes 10 jobs", queued.sent.length === 10, { consumed: queued.sent }),
     check("counter ends at 5 after 5 parallel increments", counted.count === 5, counted),
     check("30 parallel transactions commit", committed.length === 30, {
       failures: transactions.filter(({ status }) => status !== 200).map(({ status, body }) => `${status} ${body}`),
@@ -233,14 +238,15 @@ const flood = Effect.gen(function* () {
   ];
 });
 
-const checks = (
-  await Effect.runPromise(
-    ready.pipe(
-      Effect.andThen(Effect.all([publicSmoke(webUrl), web, worker, unauthenticated, traffic, flood])),
-      Effect.provide(FetchHttpClient.layer),
-    ),
-  )
-).flat();
+const checks = await Effect.runPromise(
+  Effect.gen(function* () {
+    yield* ready;
+    const authorization = yield* unauthenticated;
+    const services = yield* Effect.all([publicSmoke(webUrl), web, worker, traffic]);
+    const cap = yield* flood;
+    return [...services.flat(), ...authorization, ...cap];
+  }).pipe(Effect.provide(FetchHttpClient.layer)),
+);
 for (const result of checks) console.log(JSON.stringify(result));
 console.log(JSON.stringify({ resentAfterCloudflare404: resends.cloudflare404, resentAfterDrop: resends.dropped }));
 if (checks.some(({ ok }) => !ok)) process.exit(1);

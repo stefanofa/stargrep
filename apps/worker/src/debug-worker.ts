@@ -20,7 +20,15 @@ export const DebugToken = Alchemy.makeRandom("DebugToken");
 
 const DebugJobs = Cloudflare.Queues.Queue("DebugJobs");
 const DebugCache = Cloudflare.KV.Namespace("DebugCache");
-const DebugBlobs = Cloudflare.R2.Bucket("DebugBlobs");
+const DebugBlobs = Cloudflare.R2.Bucket("DebugBlobs", {
+  lifecycleRules: [
+    {
+      id: "expire-consumption-receipts",
+      prefix: "consumed/",
+      deleteObjectsTransition: { condition: { type: "Age", maxAge: 86400 } },
+    },
+  ],
+});
 
 export class Counter extends Cloudflare.DurableObject<Counter>()(
   "Counter",
@@ -69,6 +77,11 @@ const decodeCount = Schema.decodeUnknownOption(
 const decodeSeconds = Schema.decodeUnknownOption(
   Schema.NumberFromString.pipe(Schema.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 60 }))),
 );
+const decodeIds = Schema.decodeUnknownOption(
+  Schema.Array(Schema.String.pipe(Schema.check(Schema.isUUID(4)))).pipe(
+    Schema.check(Schema.isMinLength(1), Schema.isMaxLength(10)),
+  ),
+);
 const decodeTransactionRow = Schema.decodeUnknownEffect(Schema.Struct({ pid: Schema.Int, sum: Schema.Int }));
 
 const encoder = new TextEncoder();
@@ -93,7 +106,7 @@ export default Cloudflare.Worker(
       [queueNames.fetchIcon, yield* Cloudflare.Queues.WriteQueue(yield* FetchIcons)],
     ]);
     yield* Cloudflare.KV.ReadWriteNamespace(DebugCache);
-    yield* Cloudflare.R2.ReadWriteBucket(DebugBlobs);
+    const blobs = yield* Cloudflare.R2.ReadWriteBucket(DebugBlobs);
     const database = yield* Cloudflare.Hyperdrive.Connect(Database);
     const counters = yield* Counter;
     const budgets = yield* Budget;
@@ -102,7 +115,7 @@ export default Cloudflare.Worker(
     yield* Cloudflare.Queues.consumeQueueMessages(jobs, { batchSize: 10, maxWaitTime: "1 second" }, (stream) =>
       Stream.runForEach(stream, (message) =>
         decodePing(message.body).pipe(
-          Effect.flatMap(({ id }) => Effect.log("consumed job").pipe(Effect.annotateLogs({ id }))),
+          Effect.flatMap(({ id }) => blobs.put(`consumed/${id}`, "consumed")),
           Effect.catchTags({ SchemaError: (error) => Effect.logWarning("dropped malformed job", error.message) }),
         ),
       ),
@@ -155,6 +168,18 @@ export default Cloudflare.Worker(
         return yield* withinBudget(
           count.value,
           sendPings(count.value).pipe(Effect.flatMap((sent) => HttpServerResponse.json({ sent }))),
+        );
+      }
+      if (method === "GET" && url.pathname === "/queue") {
+        const ids = decodeIds(url.searchParams.get("ids")?.split(",") ?? []);
+        if (Option.isNone(ids)) return HttpServerResponse.empty({ status: 400 });
+        return yield* withinBudget(
+          1,
+          Effect.forEach(
+            ids.value,
+            (id) => blobs.head(`consumed/${id}`).pipe(Effect.map((receipt) => (receipt === null ? [] : [id]))),
+            { concurrency: 10 },
+          ).pipe(Effect.flatMap((receipts) => HttpServerResponse.json({ consumed: receipts.flat() }))),
         );
       }
       if (method === "POST" && url.pathname === "/transaction") {
