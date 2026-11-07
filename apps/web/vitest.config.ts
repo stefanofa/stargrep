@@ -1,8 +1,11 @@
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
+import * as Record from "effect/Record";
 import { defineConfig } from "vitest/config";
 import { rateLimitPolicy } from "./rate-limit-policy.ts";
 import { authHyperdrives } from "./test/auth-databases.ts";
 import { fakeGitHub } from "./test/fake-github.ts";
+
+const testNamespaceIds = { SYNC_PER_CALLER: "1", SYNC_OVERALL: "2", SEARCH_PER_CALLER: "3", STARS_PER_CALLER: "7" };
 
 export default defineConfig({
   plugins: [
@@ -15,12 +18,10 @@ export default defineConfig({
         r2Buckets: ["ICONS"],
         hyperdrives: { DATABASE: "postgres://stargrep:stargrep@127.0.0.1:1/stargrep", ...authHyperdrives },
         queueProducers: { SYNC_STARS: "sync-stars" },
-        ratelimits: Object.fromEntries(
-          Object.entries(rateLimitPolicy).map(([name, policy]) => [
-            name,
-            { namespace_id: policy.testNamespaceId, simple: policy.simple },
-          ]),
-        ),
+        ratelimits: Record.map(rateLimitPolicy, (policy, name) => ({
+          namespace_id: testNamespaceIds[name],
+          simple: policy.simple,
+        })),
         bindings: { CALLER_KEY: "test-caller-key", GITHUB_BUDGET_SHARE: "0.5" },
         serviceBindings: { WORKER: "main-worker" },
         workers: [

@@ -2,18 +2,36 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-type Step = { readonly run?: string; readonly shell?: string };
+type Step = {
+  readonly id?: string;
+  readonly run?: string;
+  readonly shell?: string;
+  readonly uses?: string;
+  readonly with?: Readonly<Record<string, string>>;
+  readonly if?: string;
+};
 type Concurrency = {
   readonly group: string;
   readonly queue?: string;
   readonly "cancel-in-progress"?: boolean | string;
 };
 type Job = {
+  readonly if?: string;
+  readonly env?: Readonly<Record<string, string>>;
   readonly environment?: string | { readonly name: string };
   readonly concurrency?: Concurrency;
   readonly steps: ReadonlyArray<Step>;
 };
 type Workflow = {
+  readonly on?: {
+    readonly workflow_run?: {
+      readonly workflows: ReadonlyArray<string>;
+      readonly types: ReadonlyArray<string>;
+      readonly branches: ReadonlyArray<string>;
+    };
+    readonly workflow_dispatch?: null;
+    readonly push?: unknown;
+  };
   readonly concurrency?: Concurrency;
   readonly defaults?: { readonly run?: { readonly shell?: string } };
   readonly env?: Record<string, string>;
@@ -99,29 +117,33 @@ describe("workflow concurrency", () => {
 
 describe("production validation", () => {
   test("automatic deploys follow completed main CI and checkout its exact SHA", () => {
-    const source = readFileSync(join(workflows, "deploy.yml"), "utf8");
-    expect(source).toContain("workflow_run:");
-    expect(source).toContain("workflows: [ci]");
-    expect(source).toContain("types: [completed]");
-    expect(source).not.toContain("  push:");
-    for (const guard of [
-      "github.event.workflow_run.conclusion == 'success'",
-      "github.event.workflow_run.event == 'push'",
-      "github.event.workflow_run.head_branch == 'main'",
-      "github.event.workflow_run.head_repository.full_name == github.repository",
-      "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
-      "github.event.workflow_run.head_sha || github.sha",
-      "ref: ${{ env.DEPLOY_SHA }}",
-    ])
-      expect(source).toContain(guard);
-    const run = load("deploy.yml").jobs.prod?.steps.find((step) => step.run?.includes("commits/main"))?.run ?? "";
+    const workflow = load("deploy.yml");
+    expect(workflow.on?.workflow_run).toEqual({ workflows: ["ci"], types: ["completed"], branches: ["main"] });
+    expect(workflow.on).toHaveProperty("workflow_dispatch");
+    expect(workflow.on).not.toHaveProperty("push");
+    const prod = workflow.jobs.prod;
+    expect(prod?.if?.replace(/\s+/g, " ").trim()).toBe(
+      "vars.CLOUDFLARE_ACCOUNT_ID != '' && " +
+        "((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || " +
+        "(github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && " +
+        "github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && " +
+        "github.event.workflow_run.head_repository.full_name == github.repository))",
+    );
+    expect(prod?.env?.DEPLOY_SHA).toBe(
+      "${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}",
+    );
+    expect(prod?.steps.find((step) => step.uses?.startsWith("actions/checkout@"))?.with?.ref).toBe(
+      "${{ env.DEPLOY_SHA }}",
+    );
+    const run = prod?.steps.find((step) => step.id === "deploy")?.run ?? "";
     expect(run).toContain('if [ "$head" != "$DEPLOY_SHA" ]');
     expect(run).toContain('if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]');
     expect(run).toContain("branch=main&event=push&head_sha=$DEPLOY_SHA&status=success");
     expect(run).toContain('if [ "$passed" -eq 0 ]');
     expect(run.indexOf('if [ "$head"')).toBeLessThan(run.indexOf("bun run --cwd infra deploy"));
-    expect(source).toContain("if: steps.deploy.outputs.deployed == 'true'");
-    expect(source).toContain("bun scripts/stage-smoke.ts --public https://stargrep.com");
+    expect(
+      prod?.steps.find((step) => step.run === "bun scripts/stage-smoke.ts --public https://stargrep.com")?.if,
+    ).toBe("steps.deploy.outputs.deployed == 'true'");
   });
 
   test("CI checks lint fixtures", () => {

@@ -18,8 +18,9 @@ export const EnrichedRepo = Schema.Struct({
 });
 export type EnrichedRepo = typeof EnrichedRepo.Type;
 
-// Bump when RepoSummary's output contract changes.
-const summarySchemaVersion = 1;
+const summarySchema = Schema.toStandardJSONSchemaV1(Summarize.RepoSummary)["~standard"].jsonSchema.input({
+  target: "draft-07",
+});
 export const summaryFingerprint = (repo: Summarize.RepoFacts): string =>
   new Bun.CryptoHasher("sha256")
     .update(
@@ -33,7 +34,7 @@ export const summaryFingerprint = (repo: Summarize.RepoFacts): string =>
         },
         system: Summarize.system,
         prompt: Summarize.prompt(repo),
-        schemaVersion: summarySchemaVersion,
+        schema: summarySchema,
       }),
     )
     .digest("hex");
