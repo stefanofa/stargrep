@@ -41,6 +41,7 @@ describe("the stored view", () => {
 
   test("an unreadable cookie value is no view", () => {
     expect(storedView("stargrep-view=carousel")).toBeUndefined();
+    expect(storedView("stargrep-view=%")).toBeUndefined();
     expect(storedView(null)).toBeUndefined();
   });
 });

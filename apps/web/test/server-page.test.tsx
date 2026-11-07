@@ -207,6 +207,12 @@ describe("a stars page from the Worker to the browser", () => {
     expect(errors).toEqual([]);
   }, 60_000);
 
+  test("a cookie with a broken percent escape counts as no choice, not a failed page", async () => {
+    const page = await renderOnServer("/stefanofa?q=terminal", "stargrep-view=%; stargrep-refused=%E0%A4%A");
+    expect(page.status).toBe(200);
+    expect(page.html).toContain("view-tiles");
+  }, 60_000);
+
   test("the view this browser picked paints from the server, so the page does not switch on hydration", async () => {
     const page = await renderOnServer("/", "stargrep-view=list");
     expect(page.html).toContain("view-list");
