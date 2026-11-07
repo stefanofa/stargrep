@@ -23,6 +23,8 @@ export interface PageData extends Session {
   readonly owner: string;
   readonly own: boolean;
   readonly query: string;
+  // What the page searches when its address has no q.
+  readonly defaultQuery: string;
   readonly first: FirstAnswer | null;
   // What the server learned about the owner's sync, so the first paint already shows an import, or a refusal this
   // browser remembers.
@@ -49,5 +51,6 @@ export const pageOwner = (viewer: Viewer | null, config: PublicConfig, { login, 
   const own = viewer !== null && same(viewer.login, asked);
   const showcase = !own && same(asked, config.demoLogin);
   const owner = showcase ? config.demoLogin : asked;
-  return { owner, own, query: q ?? (showcase ? config.demoQuery : ""), showcase };
+  const defaultQuery = showcase ? config.demoQuery : "";
+  return { owner, own, query: q ?? defaultQuery, defaultQuery, showcase };
 };

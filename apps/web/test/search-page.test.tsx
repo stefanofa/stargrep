@@ -521,6 +521,49 @@ describe("the search page in each state", () => {
     expect(page().getByRole<HTMLInputElement>("searchbox", { hidden: true }).value).toBe("terminal");
   });
 
+  test("on the demo page an emptied search stays empty across Back and Forward", async () => {
+    const user = userEvent.setup();
+    server.signedIn = false;
+    server.status = status({ login: "stefanofa" });
+    const router = await open("/", "Search @stefanofa's stars");
+    const box = () => page().getByRole<HTMLInputElement>("searchbox", { hidden: true });
+    expect(box().value).toBe("terminal dashboard");
+    await user.type(box(), "{Backspace}".repeat(box().value.length));
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: "" }));
+    await user.click(await page().findByRole("link", { name: "bottom" }));
+    await page().findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
+    await user.type(box(), "async");
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: "async" }));
+    await act(async () => router.history.back());
+    await page().findByRole("dialog");
+    expect(box().value).toBe("");
+    await act(async () => router.history.forward());
+    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
+    expect(box().value).toBe("async");
+  });
+
+  test("Back to the demo page's own address brings its query back, and Forward the one typed over it", async () => {
+    const user = userEvent.setup();
+    server.signedIn = false;
+    server.status = status({ login: "stefanofa" });
+    const router = await open("/", "Search @stefanofa's stars");
+    const box = () => page().getByRole<HTMLInputElement>("searchbox", { hidden: true });
+    await user.click(await page().findByRole("link", { name: "bottom" }));
+    await page().findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
+    await user.type(box(), `${"{Backspace}".repeat(box().value.length)}async`);
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: "async" }));
+    await act(async () => router.history.back());
+    await page().findByRole("dialog");
+    expect(box().value).toBe("terminal dashboard");
+    await act(async () => router.history.forward());
+    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
+    expect(box().value).toBe("async");
+  });
+
   test("results once everything is read: one list, a plain count, no rail", async () => {
     server.search = () => [hit(server.repos[4] as Repo)];
     await open("/?q=terminal");

@@ -43,8 +43,8 @@ import { OwnerPill } from "./owner-pill.tsx";
 
 // A navigation in the browser starts from the session the server loaded. The page reads the rest once it mounts.
 export const pageFor = (request: PageRequest, { viewer, config }: Session): PageData => {
-  const { owner, own, query } = pageOwner(viewer, config, request);
-  return { viewer, owner, own, config, query, first: null, sync: null, refusal: null };
+  const { owner, own, query, defaultQuery } = pageOwner(viewer, config, request);
+  return { viewer, owner, own, config, query, defaultQuery, first: null, sync: null, refusal: null };
 };
 
 const scopes = [{ value: "stars", label: "Your stars", href: "/" }];
@@ -182,9 +182,9 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     () =>
       router.history.subscribe(({ location, action }) => {
         if (action.type === "PUSH" || action.type === "REPLACE") return;
-        setQuery(validateParams(router.parseLocation(location).search).q ?? data.query);
+        setQuery(validateParams(router.parseLocation(location).search).q ?? data.defaultQuery);
       }),
-    [router, data.query],
+    [router, data.defaultQuery],
   );
   const [opener, setOpener] = useState<HTMLElement | null>(null);
   const terms = useMemo(() => keywordTerms(query), [query]);
@@ -267,7 +267,11 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   const tryAgain: Record<Retry, () => void> = { sync: retry, library: retryLibrary, search: retrySearch };
   const search = (next: string) => {
     setQuery(next);
-    navigate({ to: ".", search: (previous) => ({ ...previous, q: next === "" ? undefined : next }), replace: true });
+    navigate({
+      to: ".",
+      search: (previous) => ({ ...previous, q: next === data.defaultQuery ? undefined : next }),
+      replace: true,
+    });
   };
   const open: OpenResult = (result, link) => {
     setOpener(link);
