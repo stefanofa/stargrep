@@ -63,9 +63,11 @@ const repo = Command.make(
       ]);
       yield* Runtime.storeRefs([resolved]);
       const started = yield* Clock.currentTimeMillis;
-      const outcome = yield* enricher.enrichRepo(resolved.id);
+      const outcomes = yield* enricher.enrichRepos([resolved.id]);
       const elapsed = (yield* Clock.currentTimeMillis) - started;
-      yield* Console.log(describe(`${resolved.owner}/${resolved.name}`, outcome, embeddings.model.dimensions));
+      for (const outcome of outcomes) {
+        yield* Console.log(describe(`${resolved.owner}/${resolved.name}`, outcome, embeddings.model.dimensions));
+      }
       yield* Console.log(`  enrichment: ${elapsed} ms`);
     },
     report,
