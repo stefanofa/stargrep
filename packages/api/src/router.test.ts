@@ -7,14 +7,8 @@ import { UserId } from "@stargrep/db/auth-schema";
 import type { EmbeddingModelId } from "@stargrep/db/embedding";
 import { DbQueryFailed, RepoNotFound } from "@stargrep/db/errors";
 import * as TestDatabase from "@stargrep/db/test-database";
-import {
-  BudgetShare,
-  type GitHubAccountId,
-  type Login,
-  type RepoId,
-  type RepoName,
-  type RepoNodeId,
-} from "@stargrep/github/schemas";
+import { accountRow, makeDb, repo as repoRow } from "@stargrep/db/testing";
+import { BudgetShare, GitHubAccountId, Login, RepoId, RepoName, type RepoNodeId } from "@stargrep/github/schemas";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
 import * as Context from "effect/Context";
@@ -40,30 +34,23 @@ import { NotSignedIn, type Viewer, type ViewerError, Viewers, ViewerUnavailable 
 const canary = "PRIVATE_QUERY_CANARY";
 const pushedAt = DateTime.makeUnsafe("2026-10-01T08:00:00Z");
 
-const repo: Db.Repo = {
-  id: 42 as RepoId,
-  owner: "ratatui" as Login,
-  name: "ratatui" as RepoName,
+const repo = repoRow(RepoId.make(42), {
+  owner: Login.make("ratatui"),
+  name: RepoName.make("ratatui"),
   nodeId: null,
   description: "Rust library for terminal user interfaces",
   topics: ["tui"],
   language: "Rust",
   license: "MIT",
-  homepage: null,
   kind: "library",
-  createdAt: null,
   pushedAt,
-  archived: false,
-  readmeOid: null,
   summary: `A Rust library for dashboards. ${canary}`,
-  summaryReadmeOid: null,
   keywords: ["tui"],
-  embeddingModel: null,
   icon: { key: "v1/git/abc.webp", source: "repo-file", plate: "dark", size: 96 },
   iconCheckedAt: pushedAt,
   ownerType: "org",
   ownerAvatarUrl: "https://avatars.githubusercontent.com/u/1",
-};
+});
 
 const unchecked: Db.Repo = {
   ...repo,
@@ -85,20 +72,13 @@ interface Fakes {
 
 const ada: Viewer = {
   userId: UserId.make("user-ada"),
-  account: {
-    id: 7 as GitHubAccountId,
-    type: "user",
-    login: "ada" as Login,
+  account: accountRow(GitHubAccountId.make(7), {
+    login: Login.make("ada"),
     name: "Ada",
     avatarUrl: "https://avatars.githubusercontent.com/u/7",
-    followers: null,
-    publicRepos: null,
-    ownedRepoStars: null,
     claimedBy: UserId.make("user-ada"),
     starredCount: 2431,
-    starsSyncedAt: null,
-    starsFullSyncedAt: null,
-  },
+  }),
 };
 
 const starredAt = DateTime.makeUnsafe("2025-03-14T10:00:00Z");
@@ -119,7 +99,7 @@ const searchAda = (request: Search.SearchRequest) =>
 const reading = { total: 1776, read: 412, failed: 3 };
 
 const services = (fakes: Fakes): Context.Context<ApiServices> => {
-  const db = {
+  const db = makeDb({
     repos: {
       require: (id: RepoId) =>
         id === repo.id
@@ -133,7 +113,7 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
       library: (accountId: GitHubAccountId) =>
         Effect.succeed(accountId === ada.account.id ? [{ repo, starredAt, stars: 16_400, read: false }] : []),
     },
-  } as unknown as Db.Db["Service"];
+  });
   const requests =
     fakes.requests ??
     SyncRequests.SyncRequests.of({

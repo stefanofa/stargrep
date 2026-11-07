@@ -14,6 +14,7 @@ import { StarSync } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import { EmbeddingModelId, EmbeddingModelMismatch } from "@stargrep/db/embedding";
 import { AccountNotFound, DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
+import { makeDb } from "@stargrep/db/testing";
 import {
   GitHubRequestFailed,
   GitHubResponseInvalid,
@@ -39,7 +40,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { assert, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import * as EnrichRepoConsumer from "../src/consumers/enrich-repo.ts";
 import * as FetchIconConsumer from "../src/consumers/fetch-icon.ts";
 import * as Settle from "../src/consumers/settle.ts";
@@ -167,7 +168,7 @@ describe("sync-stars consumer", () => {
     expect(result.retryMessages).toEqual([]);
   });
 
-  const unusedDb = Layer.succeed(Db.Db, Db.Db.of({} as Db.Db["Service"]));
+  const unusedDb = Layer.succeed(Db.Db, makeDb({}));
 
   it("dead-letters a sync on a stage with no GitHub token on its first attempt", async () => {
     const { queues, deadLetters } = recordingQueues();
@@ -643,10 +644,7 @@ describe("enrichment outcome table", () => {
 
 describe("enrich sweep cron", () => {
   const sweepRuntime = (sweepable: Db.Db["Service"]["repos"]["sweepable"]) =>
-    Layer.merge(
-      Layer.succeed(Db.Db, Db.Db.of({ repos: { sweepable } } as unknown as Db.Db["Service"])),
-      EnrichQueue.layerMemory().layer,
-    );
+    Layer.merge(Layer.succeed(Db.Db, makeDb({ repos: { sweepable } })), EnrichQueue.layerMemory().layer);
   const capture = () => {
     const logs: Array<{ readonly level: string; readonly message: unknown }> = [];
     const layer = Logger.layer([Logger.make(({ logLevel, message }) => logs.push({ level: logLevel, message }))]);
@@ -886,14 +884,14 @@ describe("dead letters", () => {
     const failed: Array<[string, number]> = [];
     const layer = Layer.succeed(
       Db.Db,
-      Db.Db.of({
+      makeDb({
         syncRequests: {
           settle: (login: string, requestedAt: DateTime.Utc) =>
             fail
               ? Effect.fail(dropped)
               : Effect.sync(() => void failed.push([login, DateTime.toEpochMillis(requestedAt)])),
         },
-      } as unknown as Db.Db["Service"]),
+      }),
     );
     return { failed, layer };
   };
@@ -925,7 +923,7 @@ describe("dead letters", () => {
 
   it("logs an enrich dead letter without counting it against the repo", async () => {
     const logs: Array<unknown> = [];
-    const touched = Layer.succeed(Db.Db, new Proxy({}, { get: () => assert.fail("no Db access") }) as Db.Db["Service"]);
+    const touched = Layer.succeed(Db.Db, makeDb());
     await Effect.runPromise(
       Settle.handleDeadLetters(
         "enrich-repo",

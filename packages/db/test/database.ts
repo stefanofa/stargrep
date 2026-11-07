@@ -7,7 +7,8 @@ import * as Redacted from "effect/Redacted";
 import * as Db from "../src/db.ts";
 import { createMigratedDatabase, dropDatabase } from "../src/local-database.ts";
 import * as Memory from "../src/memory.ts";
-import { acquirePool } from "../src/node-postgres.ts";
+import { acquirePool, driver } from "../src/node-postgres.ts";
+import * as Postgres from "../src/postgres.ts";
 
 const adminUrl = process.env.DATABASE_URL ?? "postgres://stargrep:stargrep@127.0.0.1:54317/stargrep";
 
@@ -61,14 +62,12 @@ const freshDatabase = Effect.gen(function* () {
 
 export const layerNodePostgres = (options: Db.Options) =>
   Layer.unwrap(
-    Effect.map(freshDatabase, ({ url, pool }) =>
-      Layer.merge(
-        Db.layerNodePostgres({ ...options, connectionString: url }),
-        testDatabase(
-          (text, values) => pool.query(text, values),
-          (connectOptions) => Db.layerNodePostgres({ ...connectOptions, connectionString: url }),
-          Option.some(Redacted.value(url)),
-        ),
-      ),
-    ),
+    Effect.map(freshDatabase, ({ url, pool }) => {
+      const connect = (settings: Db.Options) =>
+        Db.layer(settings).pipe(Layer.provide(Layer.succeed(Postgres.Postgres, Postgres.make(driver(pool)))));
+      return Layer.merge(
+        connect(options),
+        testDatabase((text, values) => pool.query(text, values), connect, Option.some(Redacted.value(url))),
+      );
+    }),
   );

@@ -4,6 +4,7 @@ import { RateLine } from "@stargrep/core/limits";
 import { StarSync } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import { DbQueryFailed } from "@stargrep/db/errors";
+import { makeDb } from "@stargrep/db/testing";
 import { BudgetShare, RepoId } from "@stargrep/github/schemas";
 import * as TokenGate from "@stargrep/github/token-gate";
 import { RuntimeContext } from "alchemy/RuntimeContext";
@@ -58,14 +59,14 @@ export const recordingLine = (fail = false) => {
   const adjusted: Array<{ readonly line: string; readonly units: number }> = [];
   const layer = Layer.succeed(
     Db.Db,
-    Db.Db.of({
+    makeDb({
       rateLines: {
         adjust: (line: Db.LineKey, _: DateTime.Utc, by: Duration.Duration) =>
           fail
             ? Effect.fail(new DbQueryFailed({ operation: "rateLines.adjust", reason: "transport", sqlState: null }))
             : Effect.sync(() => void adjusted.push({ line, units: Duration.toMillis(by) / unit })),
       },
-    } as unknown as Db.Db["Service"]),
+    }),
   );
   return { adjusted, layer };
 };
