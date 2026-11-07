@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { highlights, keywordTerms, type Searchable, score, searchText } from "../src/lib/keyword.ts";
+import { highlights, keywordTerms, matchesEvery, type Searchable, score, searchText } from "../src/lib/keyword.ts";
 
 const repo = (owner: string, name: string, topics: ReadonlyArray<string> = []): Searchable => ({
   owner,
@@ -17,8 +17,32 @@ describe("keywordTerms", () => {
     expect(keywordTerms("in")).toEqual(["in"]);
   });
 
-  test("drops stopwords, wildcards, and extra spaces from a phrase", () => {
-    expect(keywordTerms("  The Rust library for  50%_tui ")).toEqual(["rust", "library", "50tui"]);
+  test("drops stopwords and extra spaces from a phrase", () => {
+    expect(keywordTerms("  The Rust library for  50%_tui ")).toEqual(["rust", "library", "50%_tui"]);
+  });
+});
+
+describe("matchesEvery", () => {
+  const entries = [
+    { name: "bottom", text: "a system monitor dashboard for the terminal" },
+    { name: "console", text: "terminal dashboard for async rust tasks" },
+    { name: "ratatui", text: "widgets for terminal apps" },
+    { name: "sweep", text: "deletes node_modules folders" },
+    { name: "nodemodules", text: "nodemodules helper" },
+  ];
+  const names = (query: string) => matchesEvery(entries, keywordTerms(query)).map((entry) => entry.name);
+
+  test("keeps the entries that contain every term, in any case", () => {
+    expect(names("Terminal Dashboard")).toEqual(["bottom", "console"]);
+  });
+
+  test("reads a percent sign or an underscore as itself", () => {
+    expect(names("node_modules")).toEqual(["sweep"]);
+    expect(names("50%")).toEqual([]);
+  });
+
+  test("matches nothing for an empty query", () => {
+    expect(names("  ")).toEqual([]);
   });
 });
 
@@ -64,6 +88,24 @@ describe("highlights", () => {
       [0, 2],
       [12, 14],
     ]);
+  });
+
+  test("reads a letter outside the Basic Multilingual Plane as part of a word", () => {
+    expect(highlights("\u{10428}rust rust", ["rust"])).toEqual([[7, 11]]);
+    expect(highlights("rust\u{20000} rust", ["rust"])).toEqual([
+      [0, 4],
+      [7, 11],
+    ]);
+  });
+
+  test("reads a combining mark as part of the letter before it", () => {
+    expect(highlights("cafe\u0301ai AI", ["ai"])).toEqual([[8, 10]]);
+  });
+
+  test("counts letters, not UTF-16 units, for the whole-word rule", () => {
+    expect(highlights("\u{20000}\u{20001} \u{20000}", ["\u{20000}"])).toEqual([[5, 7]]);
+    expect(highlights("\u{20000}\u{20001}\u{20002} x", ["\u{20000}\u{20001}"])).toEqual([]);
+    expect(highlights("\u{20000}\u{20001}\u{20002}\u{20003} x", ["\u{20000}\u{20001}\u{20002}"])).toEqual([[0, 6]]);
   });
 
   test("marks a term that starts with punctuation wherever it appears", () => {

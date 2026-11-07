@@ -1,10 +1,7 @@
-import { createORPCClient } from "@orpc/client";
-import { RPCLink } from "@orpc/client/fetch";
 import { isNotFound, isRedirect } from "@tanstack/react-router";
 import { getRequest } from "@tanstack/react-start/server";
 import * as Effect from "effect/Effect";
-import { keywordTerms, searchText } from "../lib/keyword.ts";
-import type { ServerLoads } from "../lib/load-page.ts";
+import { searchText } from "../lib/keyword.ts";
 import {
   type Asked,
   type FirstAnswer,
@@ -13,34 +10,13 @@ import {
   pageOwner,
   type Session,
 } from "../lib/page-data.ts";
-import { liveView, matchesEvery } from "../lib/page-view.ts";
+import { liveView } from "../lib/page-view.ts";
 import { now } from "../lib/present.ts";
-import type { Client, Viewer } from "../lib/rpc.ts";
+import { api, type Client, type Viewer } from "../lib/rpc.ts";
 import { validateParams } from "../lib/search-params.ts";
 import { stageOf } from "../lib/search-state.ts";
 import { allStars } from "../lib/stars-pages.ts";
 import { rememberedRefusal } from "../lib/trouble.ts";
-import { serveApi } from "./app.ts";
-
-const forwarded = ["cookie", "cf-connecting-ip", "user-agent"];
-
-// The page calls the API in this Worker, with the visitor's cookie and address, so no request leaves it.
-const inProcess = (request: Request): Client => {
-  const headers = Object.fromEntries(
-    forwarded.flatMap((name) => {
-      const value = request.headers.get(name);
-      return value === null ? [] : [[name, value]];
-    }),
-  );
-  return createORPCClient(
-    new RPCLink({
-      url: "/rpc",
-      origin: new URL(request.url).origin,
-      headers,
-      fetch: (url, init) => serveApi(new Request(url, init)) ?? Promise.resolve(new Response(null, { status: 404 })),
-    }),
-  );
-};
 
 const hasSession = (request: Request) =>
   /(^|;\s*)(__Secure-)?better-auth\.session_token=/.test(request.headers.get("cookie") ?? "");
@@ -64,14 +40,13 @@ const firstAnswer = async (client: Client, login: string, query: string, sort: A
     query,
     stage: stageOf({ sync, entries, starred: sync.starredTotal }),
     entries,
-    matched: matchesEvery(entries, keywordTerms(query)),
     find: (id) => byId.get(id),
     sync,
     semantic: { kind: "answered", results: hits },
     sort: sort ?? "best",
     at,
     timeLeft: undefined,
-    whose: login,
+    whose: { own: false, login },
   });
   return { query, at, sync, hits, view } satisfies FirstAnswer;
 };
@@ -89,16 +64,16 @@ const syncOf = async (
   return { sync, refusal: refusal ?? null };
 };
 
-export const loadSession = async (): Promise<Session> => {
+const loadSession = async (): Promise<Session> => {
   const request = getRequest();
-  const client = inProcess(request);
+  const client = api();
   const [viewer, config] = await Promise.all([viewerOf(client, request), client.config()]);
   return { viewer, config };
 };
 
-export const loadPage = async ({ login }: PageRequest, { viewer, config }: Session): Promise<PageData> => {
+const loadPage = async ({ login }: PageRequest, { viewer, config }: Session): Promise<PageData> => {
   const request = getRequest();
-  const client = inProcess(request);
+  const client = api();
   const { q, sort } = validateParams(Object.fromEntries(new URL(request.url).searchParams));
   const { owner, own, query, defaultQuery, showcase } = pageOwner(viewer, config, { login, q });
   const first =
@@ -119,5 +94,4 @@ const shielded =
       throw new Error("stargrep could not load this page");
     });
 
-// The loaders the Worker hands to the router.
-export const serverLoads: ServerLoads = { session: shielded("session", loadSession), page: shielded("page", loadPage) };
+export const serverLoads = { session: shielded("session", loadSession), page: shielded("page", loadPage) };

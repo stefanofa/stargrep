@@ -3,10 +3,7 @@ import { keywordTerms, normalize } from "./keyword.ts";
 import type { LibraryRepo, SyncStatus } from "./rpc.ts";
 import { readingIncomplete } from "./sync-status.ts";
 import type { Trouble } from "./trouble.ts";
-
-const count = new Intl.NumberFormat("en");
-const n = (value: number) => count.format(value);
-const stars = (value: number) => `${n(value)} ${value === 1 ? "star" : "stars"}`;
+import { formatCount, sameLogin, starCount, theirs, type Whose, whoseOf } from "./whose.ts";
 
 export const factsPending = (repo: Pick<LibraryRepo, "stars" | "pushedAt">) =>
   repo.stars === null && repo.pushedAt === null;
@@ -174,16 +171,11 @@ const missedStatus: Record<Missed, { readonly label: string; readonly phoneLabel
 };
 
 const unreadDetail = (stage: Stage) => {
-  if (stage.name === "reading") return `${stars(stage.total - stage.read)} not read yet`;
+  if (stage.name === "reading") return `${starCount(stage.total - stage.read)} not read yet`;
   if (stage.name === "importing")
-    return stage.total === null ? "more stars still arriving" : `${stars(stage.total - stage.done)} still arriving`;
+    return stage.total === null ? "more stars still arriving" : `${starCount(stage.total - stage.done)} still arriving`;
   return undefined;
 };
-
-// Whose stars the page shows: undefined for the viewer's own, a login for anyone else's.
-export type Whose = string | undefined;
-
-const theirs = (whose: Whose) => (whose === undefined ? "your stars" : `@${whose}'s stars`);
 
 const progressOf = (stage: Stage, whose: Whose): TileProgress | undefined => {
   if (stage.name === "importing" && stage.total !== null)
@@ -191,14 +183,14 @@ const progressOf = (stage: Stage, whose: Whose): TileProgress | undefined => {
       value: stage.done,
       max: stage.total,
       label: `importing ${theirs(whose)}`,
-      text: `${n(stage.done)} of ${n(stage.total)} imported`,
+      text: `${formatCount(stage.done)} of ${formatCount(stage.total)} imported`,
     };
   if (stage.name === "reading")
     return {
       value: stage.settled,
       max: stage.total,
       label: `reading ${theirs(whose)}`,
-      text: `${n(stage.read)} of ${n(stage.total)} read`,
+      text: `${formatCount(stage.read)} of ${formatCount(stage.total)} read`,
     };
   return undefined;
 };
@@ -212,23 +204,23 @@ const importingStatus = (stage: Importing, timeLeft: string | undefined, whose: 
       return {
         icon: "paused",
         label: `ready to import ${theirs(whose)}`,
-        ...(whose === undefined ? {} : { phoneLabel: "ready to import" }),
+        ...(whose.own ? {} : { phoneLabel: "ready to import" }),
       };
     case "in-line":
       return {
         icon: "busy",
         label: "in line to import",
-        detail: withTime(stage.phase.ahead === 0 ? "next up" : `${n(stage.phase.ahead)} ahead`, timeLeft),
+        detail: withTime(stage.phase.ahead === 0 ? "next up" : `${formatCount(stage.phase.ahead)} ahead`, timeLeft),
       };
     case "running":
       return {
         icon: "busy",
         label: `importing ${theirs(whose)}`,
-        ...(whose === undefined ? {} : { phoneLabel: "importing" }),
+        ...(whose.own ? {} : { phoneLabel: "importing" }),
         detail:
           stage.total === null
-            ? `${n(stage.done)} imported so far`
-            : withTime(`${n(stage.done)} of ${n(stage.total)}`, timeLeft),
+            ? `${formatCount(stage.done)} imported so far`
+            : withTime(`${formatCount(stage.done)} of ${formatCount(stage.total)}`, timeLeft),
       };
   }
 };
@@ -242,22 +234,27 @@ const browsing = (stage: Stage, synced: string | undefined, timeLeft: string | u
         ? { icon: "busy", label: "checking for new stars" }
         : {
             icon: "busy",
-            label: `${n(stage.arriving)} new ${stage.arriving === 1 ? "star" : "stars"}`,
+            label: `${formatCount(stage.arriving)} new ${stage.arriving === 1 ? "star" : "stars"}`,
             detail: "reading…",
           };
     case "reading":
       return {
         icon: "busy",
         label: `reading ${theirs(whose)}`,
-        ...(whose === undefined ? {} : { phoneLabel: "reading" }),
-        detail: `${n(stage.read)} of ${n(stage.total)} understood · names and descriptions already searchable`,
+        ...(whose.own ? {} : { phoneLabel: "reading" }),
+        detail: `${formatCount(stage.read)} of ${formatCount(stage.total)} understood · names and descriptions already searchable`,
       };
     case "ready":
       if (stage.lastSync === "failed-refresh")
         return { icon: "failed", label: "couldn't check", detail: "for new stars", continues: true, retry: "sync" };
       if (stage.lastSync === "failed-first")
-        return { icon: "failed", label: "sync didn't finish", detail: `${stars(stage.total)} so far`, retry: "sync" };
-      return { icon: "synced", label: stars(stage.total), ...(synced === undefined ? {} : { detail: synced }) };
+        return {
+          icon: "failed",
+          label: "sync didn't finish",
+          detail: `${starCount(stage.total)} so far`,
+          retry: "sync",
+        };
+      return { icon: "synced", label: starCount(stage.total), ...(synced === undefined ? {} : { detail: synced }) };
   }
 };
 
@@ -272,18 +269,23 @@ const answered = (stage: Stage, answer: Exclude<Answer, { kind: "browsing" }>, w
         return {
           icon: answer.missed === "limited" ? "paused" : "failed",
           ...missedStatus[answer.missed],
-          detail: `found ${n(answer.count)}`,
+          detail: `found ${formatCount(answer.count)}`,
           retry: "search",
         };
       return partial(stage)
-        ? { icon: "busy", label: `found ${n(answer.count)} so far`, ...rest }
-        : whose === undefined
-          ? { icon: "found", label: `found ${n(answer.count)}`, detail: `of ${n(stage.total)}`, continues: true }
+        ? { icon: "busy", label: `found ${formatCount(answer.count)} so far`, ...rest }
+        : whose.own
+          ? {
+              icon: "found",
+              label: `found ${formatCount(answer.count)}`,
+              detail: `of ${formatCount(stage.total)}`,
+              continues: true,
+            }
           : {
               icon: "found",
-              label: `found ${n(answer.count)}!`,
-              detail: `in @${whose}'s ${stars(stage.total)}`,
-              phoneDetail: `of ${stars(stage.total)}`,
+              label: `found ${formatCount(answer.count)}!`,
+              detail: `in @${whose.login}'s ${starCount(stage.total)}`,
+              phoneDetail: `of ${starCount(stage.total)}`,
             };
     case "none":
       if (partial(stage)) return { icon: "busy", label: "nothing yet", ...rest };
@@ -292,8 +294,8 @@ const answered = (stage: Stage, answer: Exclude<Answer, { kind: "browsing" }>, w
         label: "nothing found",
         detail:
           stage.name === "ready" && stage.failed > 0
-            ? `${n(stage.total - stage.failed)} of ${n(stage.total)} stars read`
-            : `all ${stars(stage.total)} read`,
+            ? `${formatCount(stage.total - stage.failed)} of ${formatCount(stage.total)} stars read`
+            : `all ${starCount(stage.total)} read`,
       };
     case "failed":
       return answer.missed === "limited"
@@ -322,15 +324,15 @@ const groupsOf = (stage: Stage, { words, meaning, semantic }: Search): ReadonlyA
     label: "matching words",
     detail:
       stage.name === "importing"
-        ? `${n(words.length)} from the ${n(stage.done)} imported so far`
-        : `${n(words.length)} from all ${n(stage.total)}`,
+        ? `${formatCount(words.length)} from the ${formatCount(stage.done)} imported so far`
+        : `${formatCount(words.length)} from all ${formatCount(stage.total)}`,
   };
   const meaningHeading = {
     label: "matching meaning",
     detail:
       stage.read === null
-        ? `${n(meaning.length)} so far`
-        : `${n(meaning.length)} from the ${n(stage.read)} read so far`,
+        ? `${formatCount(meaning.length)} so far`
+        : `${formatCount(meaning.length)} from the ${formatCount(stage.read)} read so far`,
   };
   return [
     ...(words.length > 0 ? [{ key: "words", heading: wordsHeading, results: words }] : []),
@@ -362,11 +364,11 @@ const notYetCopy = (stage: Underway, timeLeft: string | undefined, whose: Whose)
     };
   const unread = stage.total === null ? undefined : stage.total - read;
   return {
-    heading: `not in the ${n(read)} i've read yet`,
+    heading: `not in the ${formatCount(read)} i've read yet`,
     body:
       unread === undefined
         ? "it might be in the stars still arriving."
-        : `it might be in the ${stars(unread)} i'm still reading.`,
+        : `it might be in the ${starCount(unread)} i'm still reading.`,
     meta,
   };
 };
@@ -375,8 +377,8 @@ const nothingCopy = (stage: Exclude<Stage, Underway>, rephrased: boolean, whose:
   const read = stage.name === "ready" && stage.failed > 0 ? "i've read every one i could" : "i've read all of them";
   const others = rephrased ? " try one of these:" : "";
   return {
-    heading: `nothing in all ${stars(stage.total)}`,
-    body: `${read}, and none matches that. maybe ${whose === undefined ? "you" : `@${whose}`} starred it under different words.${others}`,
+    heading: `nothing in all ${starCount(stage.total)}`,
+    body: `${read}, and none matches that. maybe ${whose.own ? "you" : `@${whose.login}`} starred it under different words.${others}`,
   };
 };
 
@@ -428,7 +430,7 @@ export const searchView = ({
   search: Search;
   synced: string | undefined;
   timeLeft: string | undefined;
-  whose?: Whose;
+  whose: Whose;
 }): SearchView => {
   const answer = answerOf(search);
   const progress = progressOf(stage, whose);
@@ -530,10 +532,9 @@ const heroCopy = (stage: Stage, troubled: boolean, owner: string, demoLogin: str
     return { subtitle, butter: { kind: "claim", progress } };
   }
   return {
-    subtitle:
-      owner.toLowerCase() === demoLogin.toLowerCase()
-        ? `live results from @${owner}, our demo account. try any username.`
-        : `@${owner}'s stars, searched in plain words. try any username.`,
+    subtitle: sameLogin(owner, demoLogin)
+      ? `live results from @${owner}, our demo account. try any username.`
+      : `@${owner}'s stars, searched in plain words. try any username.`,
     butter: { kind: "join" },
   };
 };
@@ -581,7 +582,7 @@ export const pageView = ({
   trouble,
   surprised,
 }: PageInputs): PageView => {
-  const whose = own ? undefined : owner;
+  const whose = whoseOf({ owner, own });
   const painted =
     first !== undefined && !(library.ready && library.whole) && normalize(query) === normalize(first.query);
   const shown = painted ? first.view : library.ready ? live : undefined;

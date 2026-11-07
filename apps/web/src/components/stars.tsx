@@ -13,13 +13,12 @@ import {
   type View,
   ViewToggle,
 } from "@stargrep/ui";
-import { and, ilike } from "@tanstack/db";
 import { useLiveQuery } from "@tanstack/react-db";
 import { Link, useHydrated, useNavigate, useRouter, useSearch } from "@tanstack/react-router";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { keywordTerms, normalize } from "../lib/keyword.ts";
 import { getLibrary, type Library } from "../lib/library-collection.ts";
 import { type PageData, type PageRequest, pageOwner, type Session } from "../lib/page-data.ts";
@@ -35,6 +34,7 @@ import { nothingSynced } from "../lib/sync-status.ts";
 import { libraryTrouble, type Trouble } from "../lib/trouble.ts";
 import { useSemanticSearch } from "../lib/use-semantic.ts";
 import { useSync } from "../lib/use-sync.ts";
+import { theirs, whoseOf } from "../lib/whose.ts";
 import { AccountMenu } from "./account-menu.tsx";
 import { Hero, TryChips } from "./landing-hero.tsx";
 import { LibraryPlaceholder, LibraryView } from "./library-view.tsx";
@@ -52,7 +52,8 @@ export function HeaderControls({ viewer }: { viewer: Viewer }) {
     <>
       <nav aria-label="Scope" className="flex items-center rounded-full bg-card p-1 max-sm:hidden">
         <Link
-          to="/"
+          to="/{-$login}"
+          params={{ login: undefined }}
           activeOptions={{ exact: true, includeSearch: false }}
           className="flex h-9 items-center rounded-full px-[18px] font-sans text-meta font-medium text-muted-foreground transition-[color,background-color] duration-120 hover:text-foreground aria-[current=page]:bg-accent aria-[current=page]:font-semibold aria-[current=page]:text-ink"
         >
@@ -99,14 +100,6 @@ function Waiting({
     <LibraryPlaceholder view={view} arriving={arriving} butter={!visitor} />
   );
 }
-
-type Text = Parameters<typeof ilike>[0];
-
-const containsEvery = (text: Text, [first, ...rest]: readonly [string, ...Array<string>]) => {
-  const [second, ...others] = rest.map((term) => ilike(text, `%${term}%`));
-  const head = ilike(text, `%${first}%`);
-  return second === undefined ? head : and(head, second, ...others);
-};
 
 const measured = (stage: Stage) => {
   if (stage.name === "importing") return { done: stage.done, total: stage.total };
@@ -173,6 +166,7 @@ function useWhole(library: Library | undefined) {
 // state: ready to import, in line, or the first stars on their way.
 export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose) => void }) {
   const { owner, first } = data;
+  const whose = whoseOf(data);
   const hydrated = useHydrated();
   const empty = nothingSynced(first?.sync ?? data.sync);
   const library = hydrated ? getLibrary(owner, data.own, empty) : undefined;
@@ -193,19 +187,12 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     [router, data.defaultQuery],
   );
   const [opener, setOpener] = useState<HTMLElement | null>(null);
-  const terms = useMemo(() => keywordTerms(query), [query]);
 
   const {
     data: entries = [],
     isReady: queried,
     isLoadingError,
   } = useLiveQuery((q) => (collection === undefined ? undefined : q.from({ repo: collection })));
-  const { data: matched = [] } = useLiveQuery((q) => {
-    const [head, ...rest] = terms;
-    return head === undefined || collection === undefined
-      ? undefined
-      : q.from({ repo: collection }).where(({ repo }) => containsEvery(repo.text, [head, ...rest]));
-  });
   const whole = useWhole(library);
   const { watch, retry } = useSync(
     owner,
@@ -229,7 +216,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   });
 
   const hits = hitsOf(semantic);
-  const searching = terms.length > 0 || semantic.kind === "pending" || hits.length > 0;
+  const searching = keywordTerms(query).length > 0 || semantic.kind === "pending" || hits.length > 0;
   const { view, sort, setView, setSort } = useArrangement(searching);
   // A result's link carries what the page shows, including a view this browser saved, so it opens the same way
   // anywhere. The default view and sort stay out, so a link doesn't override the opener's own choice.
@@ -253,14 +240,13 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
       query,
       stage,
       entries,
-      matched,
       find: (id) => collection?.get(id),
       sync,
       semantic,
       sort,
       at,
       timeLeft,
-      whose: data.own ? undefined : owner,
+      whose,
     }),
     first: first ?? undefined,
     // A login with nothing synced has nothing to load, so its page shows its import before the library loads.
@@ -363,7 +349,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
         <SearchTile
           query={reveal.typed ?? query}
           onQueryChange={search}
-          label={data.own ? "Search your stars" : `Search @${owner}'s stars`}
+          label={`Search ${theirs(whose)}`}
           placeholder={page.placeholder}
           className={dock}
           owner={data.own ? undefined : <OwnerPill owner={owner} viewer={data.viewer} config={data.config} />}
@@ -407,7 +393,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
         {body(page.body)}
       </div>
       <RepoPanel
-        repo={opened && toDetail(opened, at, data.own ? undefined : owner)}
+        repo={opened && toDetail(opened, at, whose)}
         open={params.repo !== undefined && opened !== undefined}
         onOpenChange={(next) => {
           if (!next) navigate({ to: ".", search: (previous) => ({ ...previous, repo: undefined }) });

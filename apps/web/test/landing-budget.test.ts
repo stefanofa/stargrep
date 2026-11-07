@@ -18,7 +18,7 @@ describe("the landing budget", () => {
     const report = audit([
       chunk("index.js", [`${app}/router.tsx`], { isEntry: true, imports: ["shared.js"] }),
       chunk("shared.js", ["/repo/packages/ui/src/mark/pip.tsx"]),
-      chunk("routes.js", [`${app}/routes/index.tsx?tsr-split=component`], { imports: ["shared.js"] }),
+      chunk("routes.js", [`${app}/routes/{-$login}.tsx?tsr-split=component`], { imports: ["shared.js"] }),
       chunk("settings.js", [`${app}/routes/settings.tsx?tsr-split=component`, effect]),
     ]);
     expect(report.chunks.map((entry) => entry.fileName)).toEqual(["index.js", "shared.js", "routes.js"]);
@@ -28,7 +28,10 @@ describe("the landing budget", () => {
 
   test("home hydration loads the engine and its dependencies while the landing budget stays light", () => {
     const chunks = [
-      chunk("index.js", [`${app}/router.tsx`, `${app}/routes/index.tsx`], { isEntry: true, imports: ["runtime.js"] }),
+      chunk("index.js", [`${app}/router.tsx`, `${app}/routes/{-$login}.tsx`], {
+        isEntry: true,
+        imports: ["runtime.js"],
+      }),
       chunk("runtime.js", ["/runtime.js"]),
       chunk("stars.js", [`${app}/components/stars.tsx`, effect], { imports: ["index.js", "db.js"] }),
       chunk("db.js", ["/repo/node_modules/@tanstack/db/index.js"], { imports: ["runtime.js"] }),
@@ -49,7 +52,7 @@ describe("the landing budget", () => {
         "/repo/node_modules/.bun/skullet@0.0.3/node_modules/skullet/dist/react/index.mjs",
         "/repo/node_modules/.bun/@orpc+client@2.0.0/node_modules/@orpc/client/dist/index.mjs",
       ]),
-      chunk("routes.js", [`${app}/routes/index.tsx`]),
+      chunk("routes.js", [`${app}/routes/{-$login}.tsx`]),
     ]);
     expect(report.found.map((hit) => [hit.name, hit.fileName])).toEqual([
       ["Effect", "index.js"],
@@ -69,19 +72,19 @@ describe("the landing budget", () => {
         ],
         { isEntry: true },
       ),
-      chunk("routes.js", [`${app}/routes/index.tsx`]),
+      chunk("routes.js", [`${app}/routes/{-$login}.tsx`]),
     ]);
     expect(report.found).toEqual([]);
   });
 
   test("fails when no chunk holds the index route, so a renamed route can't pass on the entry alone", () => {
     expect(() => audit([chunk("index.js", [`${app}/router.tsx`], { isEntry: true })])).toThrow(
-      "no chunk holds src/routes/index.tsx",
+      "no chunk holds src/routes/{-$login}.tsx",
     );
   });
 
   test("fails unless there is exactly one entry chunk", () => {
-    const route = chunk("routes.js", [`${app}/routes/index.tsx`]);
+    const route = chunk("routes.js", [`${app}/routes/{-$login}.tsx`]);
     expect(() => audit([route])).toThrow("expected one entry chunk, found 0");
     expect(() =>
       audit([

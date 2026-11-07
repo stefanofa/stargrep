@@ -31,7 +31,11 @@ export function NotFound() {
       heading="no page here"
       body="nothing lives at this address. search anyone's stars from the home page."
       action={
-        <Link to="/" className={buttonVariants({ variant: "primary", size: "lg" })}>
+        <Link
+          to="/{-$login}"
+          params={{ login: undefined }}
+          className={buttonVariants({ variant: "primary", size: "lg" })}
+        >
           Go home
         </Link>
       }

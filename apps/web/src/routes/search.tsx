@@ -5,6 +5,6 @@ import { validateParams } from "../lib/search-params.ts";
 export const Route = createFileRoute("/search")({
   validateSearch: validateParams,
   beforeLoad: ({ search }) => {
-    throw redirect({ to: "/", search, replace: true, statusCode: 301 });
+    throw redirect({ to: "/{-$login}", params: { login: undefined }, search, replace: true, statusCode: 301 });
   },
 });

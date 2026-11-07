@@ -1,3 +1,4 @@
+import { loginKey } from "@stargrep/github/login";
 import { createCollection } from "@tanstack/db";
 import { searchText } from "./keyword.ts";
 import { api, type LibraryRepo } from "./rpc.ts";
@@ -103,7 +104,7 @@ export type Library = ReturnType<typeof makeLibrary>;
 const libraries = new Map<string, Library>();
 
 export const getLibrary = (login: string, own: boolean, empty: boolean) => {
-  const key = `${own ? "own" : "public"}:${login.toLowerCase()}`;
+  const key = `${own ? "own" : "public"}:${loginKey(login)}`;
   const known = libraries.get(key);
   if (known !== undefined) return known;
   const client = api();

@@ -3,6 +3,8 @@ import { RPCLink } from "@orpc/client/fetch";
 import type { ContractRouterClient, InferContractRouterOutputs } from "@orpc/contract";
 import type { contract } from "@stargrep/api/contract";
 import type { WireCode } from "@stargrep/api/errors";
+import { createIsomorphicFn } from "@tanstack/react-start";
+import { inProcess } from "../server/in-process.ts";
 
 type Outputs = InferContractRouterOutputs<typeof contract>;
 export type Viewer = Outputs["viewer"];
@@ -14,12 +16,14 @@ export type EnrichmentProgress = SyncStatus["enrichment"];
 export type OwnerType = NonNullable<LibraryRepo["ownerType"]>;
 export type Client = ContractRouterClient<typeof contract>;
 
-let client: Client | undefined;
+let browser: Client | undefined;
 
-export const api = () => {
-  client ??= createORPCClient(new RPCLink({ url: "/rpc", origin: location.origin }));
-  return client;
-};
+export const api = createIsomorphicFn()
+  .server(inProcess)
+  .client((): Client => {
+    browser ??= createORPCClient(new RPCLink({ url: "/rpc", origin: location.origin }));
+    return browser;
+  });
 
 // The contract's code for a failure the API answered, or undefined for any other failure, such as a dropped connection.
 // Only an error the contract defines arrives marked as defined.

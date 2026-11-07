@@ -1,5 +1,5 @@
-// Renders one request the way the Worker renders a page: the real route tree, the server loaders handed over with
-// provideServerLoads, the in-process API client and TanStack's SSR handler, with fake services behind the API. A test
+// Renders one request the way the Worker renders a page: the real route tree, the server branch of the page loaders,
+// the in-process API client and TanStack's SSR handler, with fake services behind the API. A test
 // runs this in its own process with SSR set, so the server's module state never leaks into the hydrating browser. With
 // STARGREP_API_FAILURE set, the API's config call fails with that message, so the session loader fails. With
 // STARGREP_PAGE_FAILURE set, the page loader fails with that message after the session loaded.
@@ -30,13 +30,9 @@ mock.module("@tanstack/react-start/server", () => ({
   },
 }));
 
-const { provideServerLoads } = await import("../src/lib/load-page.ts");
-const { serverLoads } = await import("../src/server/page-data.ts");
 const { routeTree } = await import("../src/routeTree.gen.ts");
 const { createRouter } = await import("@tanstack/react-router");
 const { createRequestHandler, RouterServer, renderRouterToString } = await import("@tanstack/react-router/ssr/server");
-
-provideServerLoads(serverLoads);
 
 const handler = createRequestHandler({ request, createRouter: () => createRouter({ routeTree, isServer: true }) });
 const response = await handler(({ router, responseHeaders }) =>
