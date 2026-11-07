@@ -507,6 +507,20 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(mark()).toBe("unsure"));
   });
 
+  test("Back puts the query of the page it returns to back in the search box", async () => {
+    const user = userEvent.setup();
+    const router = await open("/?q=terminal");
+    await user.click(await page().findByRole("link", { name: "bottom" }));
+    await page().findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
+    await user.type(page().getByRole("searchbox"), "s");
+    await waitFor(() => expect(router.state.location.search).toMatchObject({ q: "terminals" }));
+    await act(async () => router.history.back());
+    await page().findByRole("dialog");
+    expect(page().getByRole<HTMLInputElement>("searchbox", { hidden: true }).value).toBe("terminal");
+  });
+
   test("results once everything is read: one list, a plain count, no rail", async () => {
     server.search = () => [hit(server.repos[4] as Repo)];
     await open("/?q=terminal");

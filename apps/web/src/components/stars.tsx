@@ -16,7 +16,7 @@ import {
 } from "@stargrep/ui";
 import { and, ilike } from "@tanstack/db";
 import { useLiveQuery } from "@tanstack/react-db";
-import { useHydrated, useNavigate, useSearch } from "@tanstack/react-router";
+import { useHydrated, useNavigate, useRouter, useSearch } from "@tanstack/react-router";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -29,7 +29,7 @@ import { now, startsIn, toDetail } from "../lib/present.ts";
 import { withReply } from "../lib/results.ts";
 import { useReveal } from "../lib/reveal.ts";
 import type { Viewer } from "../lib/rpc.ts";
-import { librarySorts, type Params, searchSorts } from "../lib/search-params.ts";
+import { librarySorts, type Params, searchSorts, validateParams } from "../lib/search-params.ts";
 import { type Arriving, type Body, pageView, type Retry, type Stage, stageOf } from "../lib/search-state.ts";
 import { useStoredView } from "../lib/stored-view.ts";
 import { nothingSynced } from "../lib/sync-status.ts";
@@ -175,7 +175,17 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   const [at] = useState(() => first?.at ?? now());
   const params: Params = useSearch({ strict: false });
   const navigate = useNavigate();
+  const router = useRouter();
   const [query, setQuery] = useState(params.q ?? data.query);
+  // Typing replaces ?q= as it goes, so only Back and Forward bring another query into the search box.
+  useEffect(
+    () =>
+      router.history.subscribe(({ location, action }) => {
+        if (action.type === "PUSH" || action.type === "REPLACE") return;
+        setQuery(validateParams(router.parseLocation(location).search).q ?? data.query);
+      }),
+    [router, data.query],
+  );
   const [opener, setOpener] = useState<HTMLElement | null>(null);
   const terms = useMemo(() => keywordTerms(query), [query]);
 
