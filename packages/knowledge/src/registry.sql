@@ -4,6 +4,7 @@
 create type knowledge_kind as enum (
   'app', 'library', 'framework', 'cli', 'plugin', 'template', 'list', 'learning', 'dataset', 'model', 'config'
 );
+--> statement-breakpoint
 
 create type knowledge_language as enum (
   'abap', 'ada', 'apex', 'assembly', 'astro', 'blade', 'c', 'clojure', 'cobol', 'coffeescript', 'common-lisp', 'cpp',
@@ -14,25 +15,30 @@ create type knowledge_language as enum (
   'racket', 'rescript', 'ruby', 'rust', 'scala', 'scheme', 'scss', 'shell', 'smalltalk', 'solidity', 'sql', 'stata',
   'svelte', 'swift', 'tcl', 'typescript', 'v', 'vala', 'verilog', 'vhdl', 'vim-script', 'visual-basic', 'vue', 'zig'
 );
+--> statement-breakpoint
 
 create type knowledge_license as enum (
   'MIT', 'Apache-2.0', 'AGPL-3.0', 'GPL-3.0', 'GPL-2.0', 'LGPL-2.1', 'LGPL-3.0', 'BSD-3-Clause', 'BSD-2-Clause',
   '0BSD', 'MPL-2.0', 'ISC', 'CC0-1.0', 'CC-BY-4.0', 'CC-BY-SA-4.0', 'Unlicense', 'OFL-1.1', 'EPL-2.0', 'OSL-3.0',
   'PostgreSQL', 'WTFPL', 'EUPL-1.1', 'EUPL-1.2', 'MS-PL', 'Zlib', 'BSL-1.0', 'MIT-0', 'Artistic-2.0'
 );
+--> statement-breakpoint
 
 create type knowledge_platform as enum (
   'linux', 'macos', 'windows', 'ios', 'android', 'browser', 'terminal', 'node', 'deno', 'bun', 'wasm',
   'cloudflare-workers', 'jvm', 'dotnet', 'embedded'
 );
+--> statement-breakpoint
 
 create type knowledge_status as enum ('deprecated', 'unmaintained');
+--> statement-breakpoint
 
 -- A filter on from_id also matches to_id, written out as a transitive closure.
 create function knowledge_closed_expansions()
 returns table (dim text, from_id text, to_id text)
 language sql immutable parallel safe
 as $$ values ('language'::text, 'javascript'::text, 'typescript'::text) $$;
+--> statement-breakpoint
 
 -- The label key of every id, label, and alias of a kind, language, platform, or status. No subject label may use one,
 -- so "about: rust" cannot mint a subject that competes with the language. License keys and the names that only imply
@@ -62,6 +68,7 @@ as $$
     'workerd', 'zig', 'zsh'
   ])
 $$;
+--> statement-breakpoint
 
 -- The key a consumer counts an atom by. A role that bare atoms match gives the bare key, "lang:rust" or
 -- "subject:4127". Any other role keeps its name, as "with:subject:812" or "alt:platform:node".
@@ -76,6 +83,7 @@ as $$
       else '' end)
     || (case dim when 'language' then 'lang' else dim end) || ':' || value
 $$;
+--> statement-breakpoint
 
 -- The role-qualified key of an atom in a role that bare atoms match, as "for:subject:812" or "written-in:lang:rust".
 -- Null when no other role of the dimension is matched by bare atoms, as for kinds, because the bare key already means
@@ -96,6 +104,7 @@ as $$
       || ':subject:' || value
   end
 $$;
+--> statement-breakpoint
 
 create function knowledge_no_nulls(anyarray)
 returns boolean

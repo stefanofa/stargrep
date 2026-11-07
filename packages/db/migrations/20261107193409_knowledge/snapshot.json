@@ -1,0 +1,5275 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "260cd7f4-761a-4c06-920a-68d03a11f7c7",
+  "prevIds": [
+    "c51b88a3-c9e0-4f23-ad03-9cd60b6c3426"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "batch_state"
+      ],
+      "writes": [
+        "s|enum|public.batch_state",
+        "n|enum|public.batch_state",
+        "e|enum|public.batch_state",
+        "n|type|public.batch_state"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "closure_via"
+      ],
+      "writes": [
+        "s|enum|public.closure_via",
+        "n|enum|public.closure_via",
+        "e|enum|public.closure_via",
+        "n|type|public.closure_via"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "decision_kind"
+      ],
+      "writes": [
+        "s|enum|public.decision_kind",
+        "n|enum|public.decision_kind",
+        "e|enum|public.decision_kind",
+        "n|type|public.decision_kind"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "knowledge_kind"
+      ],
+      "writes": [
+        "s|enum|public.knowledge_kind",
+        "n|enum|public.knowledge_kind",
+        "e|enum|public.knowledge_kind",
+        "n|type|public.knowledge_kind"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "knowledge_language"
+      ],
+      "writes": [
+        "s|enum|public.knowledge_language",
+        "n|enum|public.knowledge_language",
+        "e|enum|public.knowledge_language",
+        "n|type|public.knowledge_language"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "knowledge_license"
+      ],
+      "writes": [
+        "s|enum|public.knowledge_license",
+        "n|enum|public.knowledge_license",
+        "e|enum|public.knowledge_license",
+        "n|type|public.knowledge_license"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "knowledge_platform"
+      ],
+      "writes": [
+        "s|enum|public.knowledge_platform",
+        "n|enum|public.knowledge_platform",
+        "e|enum|public.knowledge_platform",
+        "n|type|public.knowledge_platform"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "knowledge_status"
+      ],
+      "writes": [
+        "s|enum|public.knowledge_status",
+        "n|enum|public.knowledge_status",
+        "e|enum|public.knowledge_status",
+        "n|type|public.knowledge_status"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "receipt_source"
+      ],
+      "writes": [
+        "s|enum|public.receipt_source",
+        "n|enum|public.receipt_source",
+        "e|enum|public.receipt_source",
+        "n|type|public.receipt_source"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "subject_status"
+      ],
+      "writes": [
+        "s|enum|public.subject_status",
+        "n|enum|public.subject_status",
+        "e|enum|public.subject_status",
+        "n|type|public.subject_status"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "decisions"
+      ],
+      "writes": [
+        "s|tbl|public.decisions",
+        "n|tbl|public.decisions",
+        "e|tbl|public.decisions",
+        "n|rel|public.decisions",
+        "n|type|public.decisions",
+        "n|rel|public.decisions_pkey"
+      ],
+      "reads": [
+        "n|sch|public",
+        "n|enum|public.decision_kind"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "extraction_batches"
+      ],
+      "writes": [
+        "s|tbl|public.extraction_batches",
+        "n|tbl|public.extraction_batches",
+        "e|tbl|public.extraction_batches",
+        "n|rel|public.extraction_batches",
+        "n|type|public.extraction_batches",
+        "n|rel|public.extraction_batches_pkey",
+        "n|rel|public.extraction_batches_request_key_key"
+      ],
+      "reads": [
+        "n|sch|public",
+        "n|enum|public.batch_state"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "receipts"
+      ],
+      "writes": [
+        "s|tbl|public.receipts",
+        "n|tbl|public.receipts",
+        "e|tbl|public.receipts",
+        "n|rel|public.receipts",
+        "n|type|public.receipts",
+        "n|rel|public.receipts_pkey",
+        "n|rel|public.receipts_answer_key",
+        "n|rel|public.receipts_id_repo_key"
+      ],
+      "reads": [
+        "n|sch|public",
+        "n|enum|public.receipt_source"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "repo_facets"
+      ],
+      "writes": [
+        "s|tbl|public.repo_facets",
+        "n|tbl|public.repo_facets",
+        "e|tbl|public.repo_facets",
+        "n|rel|public.repo_facets",
+        "n|type|public.repo_facets",
+        "n|rel|public.repo_facets_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "subject_canonical"
+      ],
+      "writes": [
+        "s|tbl|public.subject_canonical",
+        "n|tbl|public.subject_canonical",
+        "e|tbl|public.subject_canonical",
+        "n|rel|public.subject_canonical",
+        "n|type|public.subject_canonical",
+        "n|rel|public.subject_canonical_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "subject_closure"
+      ],
+      "writes": [
+        "s|tbl|public.subject_closure",
+        "n|tbl|public.subject_closure",
+        "e|tbl|public.subject_closure",
+        "n|rel|public.subject_closure",
+        "n|type|public.subject_closure",
+        "n|rel|public.subject_closure_pkey"
+      ],
+      "reads": [
+        "n|sch|public",
+        "n|enum|public.closure_via"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "subject_labels"
+      ],
+      "writes": [
+        "s|tbl|public.subject_labels",
+        "n|tbl|public.subject_labels",
+        "e|tbl|public.subject_labels",
+        "n|rel|public.subject_labels",
+        "n|type|public.subject_labels",
+        "n|rel|public.subject_labels_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "subject_matches"
+      ],
+      "writes": [
+        "s|tbl|public.subject_matches",
+        "n|tbl|public.subject_matches",
+        "e|tbl|public.subject_matches",
+        "n|rel|public.subject_matches",
+        "n|type|public.subject_matches",
+        "n|rel|public.subject_matches_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "subjects"
+      ],
+      "writes": [
+        "s|tbl|public.subjects",
+        "n|tbl|public.subjects",
+        "e|tbl|public.subjects",
+        "n|rel|public.subjects",
+        "n|type|public.subjects",
+        "n|rel|public.subjects_pkey",
+        "n|rel|public.subjects_id_namespace_key"
+      ],
+      "reads": [
+        "n|sch|public",
+        "n|enum|public.subject_status"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "input_hash"
+      ],
+      "writes": [
+        "s|col|public.repos.input_hash",
+        "n|col|public.repos.input_hash",
+        "e|col|public.repos.input_hash"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "summary_input_hash"
+      ],
+      "writes": [
+        "s|col|public.repos.summary_input_hash",
+        "n|col|public.repos.summary_input_hash",
+        "e|col|public.repos.summary_input_hash"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "receipt_id"
+      ],
+      "writes": [
+        "s|col|public.repos.receipt_id",
+        "n|col|public.repos.receipt_id",
+        "e|col|public.repos.receipt_id"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "gone_at"
+      ],
+      "writes": [
+        "s|col|public.repos.gone_at",
+        "n|col|public.repos.gone_at",
+        "e|col|public.repos.gone_at"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "kinds"
+      ],
+      "writes": [
+        "s|col|public.repos.kinds",
+        "n|col|public.repos.kinds",
+        "e|col|public.repos.kinds"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|enum|public.knowledge_kind"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "statuses"
+      ],
+      "writes": [
+        "s|col|public.repos.statuses",
+        "n|col|public.repos.statuses",
+        "e|col|public.repos.statuses"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|enum|public.knowledge_status"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "written_in"
+      ],
+      "writes": [
+        "s|col|public.repos.written_in",
+        "n|col|public.repos.written_in",
+        "e|col|public.repos.written_in"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|enum|public.knowledge_language"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "runs_on"
+      ],
+      "writes": [
+        "s|col|public.repos.runs_on",
+        "n|col|public.repos.runs_on",
+        "e|col|public.repos.runs_on"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|enum|public.knowledge_platform"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "for_languages"
+      ],
+      "writes": [
+        "s|col|public.repos.for_languages",
+        "n|col|public.repos.for_languages",
+        "e|col|public.repos.for_languages"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|enum|public.knowledge_language"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "for_platforms"
+      ],
+      "writes": [
+        "s|col|public.repos.for_platforms",
+        "n|col|public.repos.for_platforms",
+        "e|col|public.repos.for_platforms"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|enum|public.knowledge_platform"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "built_with_languages"
+      ],
+      "writes": [
+        "s|col|public.repos.built_with_languages",
+        "n|col|public.repos.built_with_languages",
+        "e|col|public.repos.built_with_languages"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|enum|public.knowledge_language"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "built_with_platforms"
+      ],
+      "writes": [
+        "s|col|public.repos.built_with_platforms",
+        "n|col|public.repos.built_with_platforms",
+        "e|col|public.repos.built_with_platforms"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|enum|public.knowledge_platform"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "licensed"
+      ],
+      "writes": [
+        "s|col|public.repos.licensed",
+        "n|col|public.repos.licensed",
+        "e|col|public.repos.licensed"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|enum|public.knowledge_license"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "alt_languages"
+      ],
+      "writes": [
+        "s|col|public.repos.alt_languages",
+        "n|col|public.repos.alt_languages",
+        "e|col|public.repos.alt_languages"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|enum|public.knowledge_language"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "alt_platforms"
+      ],
+      "writes": [
+        "s|col|public.repos.alt_platforms",
+        "n|col|public.repos.alt_platforms",
+        "e|col|public.repos.alt_platforms"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|enum|public.knowledge_platform"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "replaced_by_languages"
+      ],
+      "writes": [
+        "s|col|public.repos.replaced_by_languages",
+        "n|col|public.repos.replaced_by_languages",
+        "e|col|public.repos.replaced_by_languages"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|enum|public.knowledge_language"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "replaced_by_platforms"
+      ],
+      "writes": [
+        "s|col|public.repos.replaced_by_platforms",
+        "n|col|public.repos.replaced_by_platforms",
+        "e|col|public.repos.replaced_by_platforms"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|enum|public.knowledge_platform"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "decisions",
+        "decisions_kind_idx"
+      ],
+      "writes": [
+        "s|idx|public.decisions_kind_idx",
+        "n|idx|public.decisions_kind_idx",
+        "e|idx|public.decisions_kind_idx",
+        "n|rel|public.decisions_kind_idx"
+      ],
+      "reads": [
+        "n|tbl|public.decisions",
+        "n|sch|public",
+        "n|col|public.decisions.namespace",
+        "n|col|public.decisions.kind",
+        "n|col|public.decisions.revision"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "extraction_batches",
+        "extraction_batches_open_idx"
+      ],
+      "writes": [
+        "s|idx|public.extraction_batches_open_idx",
+        "n|idx|public.extraction_batches_open_idx",
+        "e|idx|public.extraction_batches_open_idx",
+        "n|rel|public.extraction_batches_open_idx"
+      ],
+      "reads": [
+        "n|tbl|public.extraction_batches",
+        "n|sch|public",
+        "n|col|public.extraction_batches.created_at"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "receipts",
+        "receipts_repo_idx"
+      ],
+      "writes": [
+        "s|idx|public.receipts_repo_idx",
+        "n|idx|public.receipts_repo_idx",
+        "e|idx|public.receipts_repo_idx",
+        "n|rel|public.receipts_repo_idx"
+      ],
+      "reads": [
+        "n|tbl|public.receipts",
+        "n|sch|public",
+        "n|col|public.receipts.repo_id",
+        "n|col|public.receipts.captured_at"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "receipts",
+        "receipts_batch_idx"
+      ],
+      "writes": [
+        "s|idx|public.receipts_batch_idx",
+        "n|idx|public.receipts_batch_idx",
+        "e|idx|public.receipts_batch_idx",
+        "n|rel|public.receipts_batch_idx"
+      ],
+      "reads": [
+        "n|tbl|public.receipts",
+        "n|sch|public",
+        "n|col|public.receipts.batch_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repo_facets",
+        "repo_facets_members_idx"
+      ],
+      "writes": [
+        "s|idx|public.repo_facets_members_idx",
+        "n|idx|public.repo_facets_members_idx",
+        "e|idx|public.repo_facets_members_idx",
+        "n|rel|public.repo_facets_members_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repo_facets",
+        "n|sch|public",
+        "n|col|public.repo_facets.members"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repo_facets",
+        "repo_facets_built_with_idx"
+      ],
+      "writes": [
+        "s|idx|public.repo_facets_built_with_idx",
+        "n|idx|public.repo_facets_built_with_idx",
+        "e|idx|public.repo_facets_built_with_idx",
+        "n|rel|public.repo_facets_built_with_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repo_facets",
+        "n|sch|public",
+        "n|col|public.repo_facets.built_with"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repo_facets",
+        "repo_facets_alternative_to_idx"
+      ],
+      "writes": [
+        "s|idx|public.repo_facets_alternative_to_idx",
+        "n|idx|public.repo_facets_alternative_to_idx",
+        "e|idx|public.repo_facets_alternative_to_idx",
+        "n|rel|public.repo_facets_alternative_to_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repo_facets",
+        "n|sch|public",
+        "n|col|public.repo_facets.alternative_to"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repo_facets",
+        "repo_facets_replaced_by_idx"
+      ],
+      "writes": [
+        "s|idx|public.repo_facets_replaced_by_idx",
+        "n|idx|public.repo_facets_replaced_by_idx",
+        "e|idx|public.repo_facets_replaced_by_idx",
+        "n|rel|public.repo_facets_replaced_by_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repo_facets",
+        "n|sch|public",
+        "n|col|public.repo_facets.replaced_by"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repo_facets",
+        "repo_facets_unresolved_keys_idx"
+      ],
+      "writes": [
+        "s|idx|public.repo_facets_unresolved_keys_idx",
+        "n|idx|public.repo_facets_unresolved_keys_idx",
+        "e|idx|public.repo_facets_unresolved_keys_idx",
+        "n|rel|public.repo_facets_unresolved_keys_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repo_facets",
+        "n|sch|public",
+        "n|col|public.repo_facets.unresolved_keys"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repo_facets",
+        "repo_facets_stale_idx"
+      ],
+      "writes": [
+        "s|idx|public.repo_facets_stale_idx",
+        "n|idx|public.repo_facets_stale_idx",
+        "e|idx|public.repo_facets_stale_idx",
+        "n|rel|public.repo_facets_stale_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repo_facets",
+        "n|sch|public",
+        "n|col|public.repo_facets.repo_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "subject_canonical",
+        "subject_canonical_canonical_idx"
+      ],
+      "writes": [
+        "s|idx|public.subject_canonical_canonical_idx",
+        "n|idx|public.subject_canonical_canonical_idx",
+        "e|idx|public.subject_canonical_canonical_idx",
+        "n|rel|public.subject_canonical_canonical_idx"
+      ],
+      "reads": [
+        "n|tbl|public.subject_canonical",
+        "n|sch|public",
+        "n|col|public.subject_canonical.canonical_id",
+        "n|col|public.subject_canonical.origin_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "subject_closure",
+        "subject_closure_descendant_idx"
+      ],
+      "writes": [
+        "s|idx|public.subject_closure_descendant_idx",
+        "n|idx|public.subject_closure_descendant_idx",
+        "e|idx|public.subject_closure_descendant_idx",
+        "n|rel|public.subject_closure_descendant_idx"
+      ],
+      "reads": [
+        "n|tbl|public.subject_closure",
+        "n|sch|public",
+        "n|col|public.subject_closure.descendant_id",
+        "n|col|public.subject_closure.ancestor_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "subject_labels",
+        "subject_labels_decision_default_key"
+      ],
+      "writes": [
+        "s|idx|public.subject_labels_decision_default_key",
+        "n|idx|public.subject_labels_decision_default_key",
+        "e|idx|public.subject_labels_decision_default_key",
+        "n|rel|public.subject_labels_decision_default_key"
+      ],
+      "reads": [
+        "n|tbl|public.subject_labels",
+        "n|sch|public",
+        "n|col|public.subject_labels.namespace",
+        "n|col|public.subject_labels.key"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "subject_labels",
+        "subject_labels_minted_default_key"
+      ],
+      "writes": [
+        "s|idx|public.subject_labels_minted_default_key",
+        "n|idx|public.subject_labels_minted_default_key",
+        "e|idx|public.subject_labels_minted_default_key",
+        "n|rel|public.subject_labels_minted_default_key"
+      ],
+      "reads": [
+        "n|tbl|public.subject_labels",
+        "n|sch|public",
+        "n|col|public.subject_labels.namespace",
+        "n|col|public.subject_labels.key"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "subject_labels",
+        "subject_labels_subject_idx"
+      ],
+      "writes": [
+        "s|idx|public.subject_labels_subject_idx",
+        "n|idx|public.subject_labels_subject_idx",
+        "e|idx|public.subject_labels_subject_idx",
+        "n|rel|public.subject_labels_subject_idx"
+      ],
+      "reads": [
+        "n|tbl|public.subject_labels",
+        "n|sch|public",
+        "n|col|public.subject_labels.subject_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "subject_labels",
+        "subject_labels_prefix_idx"
+      ],
+      "writes": [
+        "s|idx|public.subject_labels_prefix_idx",
+        "n|idx|public.subject_labels_prefix_idx",
+        "e|idx|public.subject_labels_prefix_idx",
+        "n|rel|public.subject_labels_prefix_idx"
+      ],
+      "reads": [
+        "n|tbl|public.subject_labels",
+        "n|sch|public",
+        "n|col|public.subject_labels.namespace",
+        "n|col|public.subject_labels.key"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "subject_matches",
+        "subject_matches_origin_idx"
+      ],
+      "writes": [
+        "s|idx|public.subject_matches_origin_idx",
+        "n|idx|public.subject_matches_origin_idx",
+        "e|idx|public.subject_matches_origin_idx",
+        "n|rel|public.subject_matches_origin_idx"
+      ],
+      "reads": [
+        "n|tbl|public.subject_matches",
+        "n|sch|public",
+        "n|col|public.subject_matches.origin_id",
+        "n|col|public.subject_matches.comparison",
+        "n|col|public.subject_matches.subject_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "subjects",
+        "subjects_repo_key"
+      ],
+      "writes": [
+        "s|idx|public.subjects_repo_key",
+        "n|idx|public.subjects_repo_key",
+        "e|idx|public.subjects_repo_key",
+        "n|rel|public.subjects_repo_key"
+      ],
+      "reads": [
+        "n|tbl|public.subjects",
+        "n|sch|public",
+        "n|col|public.subjects.repo_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "subjects",
+        "subjects_status_idx"
+      ],
+      "writes": [
+        "s|idx|public.subjects_status_idx",
+        "n|idx|public.subjects_status_idx",
+        "e|idx|public.subjects_status_idx",
+        "n|rel|public.subjects_status_idx"
+      ],
+      "reads": [
+        "n|tbl|public.subjects",
+        "n|sch|public",
+        "n|col|public.subjects.status",
+        "n|col|public.subjects.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "decisions"
+      ],
+      "writes": [
+        "s|fk|public.decisions.decisions_owner_id_user_id_fkey",
+        "n|fk|public.decisions.decisions_owner_id_user_id_fkey",
+        "e|fk|public.decisions.decisions_owner_id_user_id_fkey",
+        "n|con|public.decisions.decisions_owner_id_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.decisions",
+        "n|sch|public",
+        "n|tbl|public.user",
+        "n|sch|public",
+        "n|col|public.decisions.owner_id",
+        "n|col|public.user.id",
+        "e|uniqueness|public.user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "decisions"
+      ],
+      "writes": [
+        "s|fk|public.decisions.decisions_undoes_fk",
+        "n|fk|public.decisions.decisions_undoes_fk",
+        "e|fk|public.decisions.decisions_undoes_fk",
+        "n|con|public.decisions.decisions_undoes_fk"
+      ],
+      "reads": [
+        "n|tbl|public.decisions",
+        "n|sch|public",
+        "n|tbl|public.decisions",
+        "n|sch|public",
+        "n|col|public.decisions.namespace",
+        "n|col|public.decisions.undoes",
+        "n|col|public.decisions.namespace",
+        "n|col|public.decisions.revision",
+        "e|uniqueness|public.decisions.namespace.revision"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "receipts"
+      ],
+      "writes": [
+        "s|fk|public.receipts.receipts_repo_id_repos_id_fkey",
+        "n|fk|public.receipts.receipts_repo_id_repos_id_fkey",
+        "e|fk|public.receipts.receipts_repo_id_repos_id_fkey",
+        "n|con|public.receipts.receipts_repo_id_repos_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.receipts",
+        "n|sch|public",
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.receipts.repo_id",
+        "n|col|public.repos.id",
+        "e|uniqueness|public.repos.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "receipts"
+      ],
+      "writes": [
+        "s|fk|public.receipts.receipts_batch_id_extraction_batches_id_fkey",
+        "n|fk|public.receipts.receipts_batch_id_extraction_batches_id_fkey",
+        "e|fk|public.receipts.receipts_batch_id_extraction_batches_id_fkey",
+        "n|con|public.receipts.receipts_batch_id_extraction_batches_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.receipts",
+        "n|sch|public",
+        "n|tbl|public.extraction_batches",
+        "n|sch|public",
+        "n|col|public.receipts.batch_id",
+        "n|col|public.extraction_batches.id",
+        "e|uniqueness|public.extraction_batches.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "receipts"
+      ],
+      "writes": [
+        "s|fk|public.receipts.receipts_carried_from_receipts_id_fkey",
+        "n|fk|public.receipts.receipts_carried_from_receipts_id_fkey",
+        "e|fk|public.receipts.receipts_carried_from_receipts_id_fkey",
+        "n|con|public.receipts.receipts_carried_from_receipts_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.receipts",
+        "n|sch|public",
+        "n|tbl|public.receipts",
+        "n|sch|public",
+        "n|col|public.receipts.carried_from",
+        "n|col|public.receipts.id",
+        "e|uniqueness|public.receipts.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "repo_facets"
+      ],
+      "writes": [
+        "s|fk|public.repo_facets.repo_facets_repo_id_repos_id_fkey",
+        "n|fk|public.repo_facets.repo_facets_repo_id_repos_id_fkey",
+        "e|fk|public.repo_facets.repo_facets_repo_id_repos_id_fkey",
+        "n|con|public.repo_facets.repo_facets_repo_id_repos_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.repo_facets",
+        "n|sch|public",
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.repo_facets.repo_id",
+        "n|col|public.repos.id",
+        "e|uniqueness|public.repos.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "repo_facets"
+      ],
+      "writes": [
+        "s|fk|public.repo_facets.repo_facets_receipt_fk",
+        "n|fk|public.repo_facets.repo_facets_receipt_fk",
+        "e|fk|public.repo_facets.repo_facets_receipt_fk",
+        "n|con|public.repo_facets.repo_facets_receipt_fk"
+      ],
+      "reads": [
+        "n|tbl|public.repo_facets",
+        "n|sch|public",
+        "n|tbl|public.receipts",
+        "n|sch|public",
+        "n|col|public.repo_facets.receipt_id",
+        "n|col|public.repo_facets.repo_id",
+        "n|col|public.receipts.id",
+        "n|col|public.receipts.repo_id",
+        "e|uniqueness|public.receipts.id.repo_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "repos"
+      ],
+      "writes": [
+        "s|fk|public.repos.repos_receipt_fk",
+        "n|fk|public.repos.repos_receipt_fk",
+        "e|fk|public.repos.repos_receipt_fk",
+        "n|con|public.repos.repos_receipt_fk"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|tbl|public.receipts",
+        "n|sch|public",
+        "n|col|public.repos.receipt_id",
+        "n|col|public.repos.id",
+        "n|col|public.receipts.id",
+        "n|col|public.receipts.repo_id",
+        "e|uniqueness|public.receipts.id.repo_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "subject_canonical"
+      ],
+      "writes": [
+        "s|fk|public.subject_canonical.subject_canonical_origin_fk",
+        "n|fk|public.subject_canonical.subject_canonical_origin_fk",
+        "e|fk|public.subject_canonical.subject_canonical_origin_fk",
+        "n|con|public.subject_canonical.subject_canonical_origin_fk"
+      ],
+      "reads": [
+        "n|tbl|public.subject_canonical",
+        "n|sch|public",
+        "n|tbl|public.subjects",
+        "n|sch|public",
+        "n|col|public.subject_canonical.origin_id",
+        "n|col|public.subject_canonical.namespace",
+        "n|col|public.subjects.id",
+        "n|col|public.subjects.namespace",
+        "e|uniqueness|public.subjects.id.namespace"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "subject_canonical"
+      ],
+      "writes": [
+        "s|fk|public.subject_canonical.subject_canonical_canonical_fk",
+        "n|fk|public.subject_canonical.subject_canonical_canonical_fk",
+        "e|fk|public.subject_canonical.subject_canonical_canonical_fk",
+        "n|con|public.subject_canonical.subject_canonical_canonical_fk"
+      ],
+      "reads": [
+        "n|tbl|public.subject_canonical",
+        "n|sch|public",
+        "n|tbl|public.subjects",
+        "n|sch|public",
+        "n|col|public.subject_canonical.canonical_id",
+        "n|col|public.subject_canonical.namespace",
+        "n|col|public.subjects.id",
+        "n|col|public.subjects.namespace",
+        "e|uniqueness|public.subjects.id.namespace"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "subject_canonical"
+      ],
+      "writes": [
+        "s|fk|public.subject_canonical.subject_canonical_revision_fk",
+        "n|fk|public.subject_canonical.subject_canonical_revision_fk",
+        "e|fk|public.subject_canonical.subject_canonical_revision_fk",
+        "n|con|public.subject_canonical.subject_canonical_revision_fk"
+      ],
+      "reads": [
+        "n|tbl|public.subject_canonical",
+        "n|sch|public",
+        "n|tbl|public.decisions",
+        "n|sch|public",
+        "n|col|public.subject_canonical.namespace",
+        "n|col|public.subject_canonical.revision",
+        "n|col|public.decisions.namespace",
+        "n|col|public.decisions.revision",
+        "e|uniqueness|public.decisions.namespace.revision"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "subject_closure"
+      ],
+      "writes": [
+        "s|fk|public.subject_closure.subject_closure_ancestor_fk",
+        "n|fk|public.subject_closure.subject_closure_ancestor_fk",
+        "e|fk|public.subject_closure.subject_closure_ancestor_fk",
+        "n|con|public.subject_closure.subject_closure_ancestor_fk"
+      ],
+      "reads": [
+        "n|tbl|public.subject_closure",
+        "n|sch|public",
+        "n|tbl|public.subjects",
+        "n|sch|public",
+        "n|col|public.subject_closure.ancestor_id",
+        "n|col|public.subject_closure.namespace",
+        "n|col|public.subjects.id",
+        "n|col|public.subjects.namespace",
+        "e|uniqueness|public.subjects.id.namespace"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "subject_closure"
+      ],
+      "writes": [
+        "s|fk|public.subject_closure.subject_closure_descendant_fk",
+        "n|fk|public.subject_closure.subject_closure_descendant_fk",
+        "e|fk|public.subject_closure.subject_closure_descendant_fk",
+        "n|con|public.subject_closure.subject_closure_descendant_fk"
+      ],
+      "reads": [
+        "n|tbl|public.subject_closure",
+        "n|sch|public",
+        "n|tbl|public.subjects",
+        "n|sch|public",
+        "n|col|public.subject_closure.descendant_id",
+        "n|col|public.subject_closure.namespace",
+        "n|col|public.subjects.id",
+        "n|col|public.subjects.namespace",
+        "e|uniqueness|public.subjects.id.namespace"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "subject_closure"
+      ],
+      "writes": [
+        "s|fk|public.subject_closure.subject_closure_revision_fk",
+        "n|fk|public.subject_closure.subject_closure_revision_fk",
+        "e|fk|public.subject_closure.subject_closure_revision_fk",
+        "n|con|public.subject_closure.subject_closure_revision_fk"
+      ],
+      "reads": [
+        "n|tbl|public.subject_closure",
+        "n|sch|public",
+        "n|tbl|public.decisions",
+        "n|sch|public",
+        "n|col|public.subject_closure.namespace",
+        "n|col|public.subject_closure.revision",
+        "n|col|public.decisions.namespace",
+        "n|col|public.decisions.revision",
+        "e|uniqueness|public.decisions.namespace.revision"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "subject_labels"
+      ],
+      "writes": [
+        "s|fk|public.subject_labels.subject_labels_subject_fk",
+        "n|fk|public.subject_labels.subject_labels_subject_fk",
+        "e|fk|public.subject_labels.subject_labels_subject_fk",
+        "n|con|public.subject_labels.subject_labels_subject_fk"
+      ],
+      "reads": [
+        "n|tbl|public.subject_labels",
+        "n|sch|public",
+        "n|tbl|public.subjects",
+        "n|sch|public",
+        "n|col|public.subject_labels.subject_id",
+        "n|col|public.subject_labels.namespace",
+        "n|col|public.subjects.id",
+        "n|col|public.subjects.namespace",
+        "e|uniqueness|public.subjects.id.namespace"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "subject_labels"
+      ],
+      "writes": [
+        "s|fk|public.subject_labels.subject_labels_revision_fk",
+        "n|fk|public.subject_labels.subject_labels_revision_fk",
+        "e|fk|public.subject_labels.subject_labels_revision_fk",
+        "n|con|public.subject_labels.subject_labels_revision_fk"
+      ],
+      "reads": [
+        "n|tbl|public.subject_labels",
+        "n|sch|public",
+        "n|tbl|public.decisions",
+        "n|sch|public",
+        "n|col|public.subject_labels.namespace",
+        "n|col|public.subject_labels.revision",
+        "n|col|public.decisions.namespace",
+        "n|col|public.decisions.revision",
+        "e|uniqueness|public.decisions.namespace.revision"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "subject_matches"
+      ],
+      "writes": [
+        "s|fk|public.subject_matches.subject_matches_subject_id_subjects_id_fkey",
+        "n|fk|public.subject_matches.subject_matches_subject_id_subjects_id_fkey",
+        "e|fk|public.subject_matches.subject_matches_subject_id_subjects_id_fkey",
+        "n|con|public.subject_matches.subject_matches_subject_id_subjects_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.subject_matches",
+        "n|sch|public",
+        "n|tbl|public.subjects",
+        "n|sch|public",
+        "n|col|public.subject_matches.subject_id",
+        "n|col|public.subjects.id",
+        "e|uniqueness|public.subjects.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "subject_matches"
+      ],
+      "writes": [
+        "s|fk|public.subject_matches.subject_matches_origin_id_subjects_id_fkey",
+        "n|fk|public.subject_matches.subject_matches_origin_id_subjects_id_fkey",
+        "e|fk|public.subject_matches.subject_matches_origin_id_subjects_id_fkey",
+        "n|con|public.subject_matches.subject_matches_origin_id_subjects_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.subject_matches",
+        "n|sch|public",
+        "n|tbl|public.subjects",
+        "n|sch|public",
+        "n|col|public.subject_matches.origin_id",
+        "n|col|public.subjects.id",
+        "e|uniqueness|public.subjects.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "subjects"
+      ],
+      "writes": [
+        "s|fk|public.subjects.subjects_owner_id_user_id_fkey",
+        "n|fk|public.subjects.subjects_owner_id_user_id_fkey",
+        "e|fk|public.subjects.subjects_owner_id_user_id_fkey",
+        "n|con|public.subjects.subjects_owner_id_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.subjects",
+        "n|sch|public",
+        "n|tbl|public.user",
+        "n|sch|public",
+        "n|col|public.subjects.owner_id",
+        "n|col|public.user.id",
+        "e|uniqueness|public.user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "subjects"
+      ],
+      "writes": [
+        "s|fk|public.subjects.subjects_repo_id_repos_id_fkey",
+        "n|fk|public.subjects.subjects_repo_id_repos_id_fkey",
+        "e|fk|public.subjects.subjects_repo_id_repos_id_fkey",
+        "n|con|public.subjects.subjects_repo_id_repos_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.subjects",
+        "n|sch|public",
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.subjects.repo_id",
+        "n|col|public.repos.id",
+        "e|uniqueness|public.repos.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "subjects"
+      ],
+      "writes": [
+        "s|fk|public.subjects.subjects_origin_receipt_id_receipts_id_fkey",
+        "n|fk|public.subjects.subjects_origin_receipt_id_receipts_id_fkey",
+        "e|fk|public.subjects.subjects_origin_receipt_id_receipts_id_fkey",
+        "n|con|public.subjects.subjects_origin_receipt_id_receipts_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.subjects",
+        "n|sch|public",
+        "n|tbl|public.receipts",
+        "n|sch|public",
+        "n|col|public.subjects.origin_receipt_id",
+        "n|col|public.receipts.id",
+        "e|uniqueness|public.receipts.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "subjects"
+      ],
+      "writes": [
+        "s|fk|public.subjects.subjects_origin_revision_fk",
+        "n|fk|public.subjects.subjects_origin_revision_fk",
+        "e|fk|public.subjects.subjects_origin_revision_fk",
+        "n|con|public.subjects.subjects_origin_revision_fk"
+      ],
+      "reads": [
+        "n|tbl|public.subjects",
+        "n|sch|public",
+        "n|tbl|public.decisions",
+        "n|sch|public",
+        "n|col|public.subjects.namespace",
+        "n|col|public.subjects.origin_revision",
+        "n|col|public.decisions.namespace",
+        "n|col|public.decisions.revision",
+        "e|uniqueness|public.decisions.namespace.revision"
+      ]
+    },
+    {
+      "statementType": "add_check",
+      "statementTarget": [
+        "table",
+        "public",
+        "repos"
+      ],
+      "writes": [
+        "s|ck|public.repos.repos_input_hash_sha256",
+        "n|ck|public.repos.repos_input_hash_sha256",
+        "e|ck|public.repos.repos_input_hash_sha256",
+        "n|con|public.repos.repos_input_hash_sha256"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.repos.input_hash"
+      ]
+    },
+    {
+      "statementType": "add_check",
+      "statementTarget": [
+        "table",
+        "public",
+        "repos"
+      ],
+      "writes": [
+        "s|ck|public.repos.repos_summary_input_hash_sha256",
+        "n|ck|public.repos.repos_summary_input_hash_sha256",
+        "e|ck|public.repos.repos_summary_input_hash_sha256",
+        "n|con|public.repos.repos_summary_input_hash_sha256"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.repos.summary_input_hash"
+      ]
+    },
+    {
+      "statementType": "add_check",
+      "statementTarget": [
+        "table",
+        "public",
+        "repos"
+      ],
+      "writes": [
+        "s|ck|public.repos.repos_closed_atom_limits",
+        "n|ck|public.repos.repos_closed_atom_limits",
+        "e|ck|public.repos.repos_closed_atom_limits",
+        "n|con|public.repos.repos_closed_atom_limits"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.repos.kinds",
+        "n|col|public.repos.statuses",
+        "n|col|public.repos.written_in",
+        "n|col|public.repos.runs_on",
+        "n|col|public.repos.for_languages",
+        "n|col|public.repos.for_platforms",
+        "n|col|public.repos.built_with_languages",
+        "n|col|public.repos.built_with_platforms",
+        "n|col|public.repos.licensed",
+        "n|col|public.repos.alt_languages",
+        "n|col|public.repos.alt_platforms",
+        "n|col|public.repos.replaced_by_languages",
+        "n|col|public.repos.replaced_by_platforms"
+      ]
+    },
+    {
+      "statementType": "add_check",
+      "statementTarget": [
+        "table",
+        "public",
+        "repos"
+      ],
+      "writes": [
+        "s|ck|public.repos.repos_closed_atom_no_nulls",
+        "n|ck|public.repos.repos_closed_atom_no_nulls",
+        "e|ck|public.repos.repos_closed_atom_no_nulls",
+        "n|con|public.repos.repos_closed_atom_no_nulls"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.repos.kinds",
+        "n|col|public.repos.statuses",
+        "n|col|public.repos.written_in",
+        "n|col|public.repos.runs_on",
+        "n|col|public.repos.for_languages",
+        "n|col|public.repos.for_platforms",
+        "n|col|public.repos.built_with_languages",
+        "n|col|public.repos.built_with_platforms",
+        "n|col|public.repos.licensed",
+        "n|col|public.repos.alt_languages",
+        "n|col|public.repos.alt_platforms",
+        "n|col|public.repos.replaced_by_languages",
+        "n|col|public.repos.replaced_by_platforms"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "decisions",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "extraction_batches",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "receipts",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "repo_facets",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "subject_canonical",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "subject_closure",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "subject_labels",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "subject_matches",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "subjects",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "batch_state",
+        "values": [
+          "prepared",
+          "submitted",
+          "captured",
+          "abandoned"
+        ],
+        "entityType": "enums"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "closure_via",
+        "values": [
+          "split",
+          "parent",
+          "expand"
+        ],
+        "entityType": "enums"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "decision_kind",
+        "values": [
+          "create",
+          "merge",
+          "split",
+          "rename",
+          "alias",
+          "parent",
+          "expand",
+          "keep_apart",
+          "status",
+          "link",
+          "correct",
+          "publish",
+          "retire",
+          "undo"
+        ],
+        "entityType": "enums"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "knowledge_kind",
+        "values": [
+          "app",
+          "library",
+          "framework",
+          "cli",
+          "plugin",
+          "template",
+          "list",
+          "learning",
+          "dataset",
+          "model",
+          "config"
+        ],
+        "entityType": "enums"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "knowledge_language",
+        "values": [
+          "abap",
+          "ada",
+          "apex",
+          "assembly",
+          "astro",
+          "blade",
+          "c",
+          "clojure",
+          "cobol",
+          "coffeescript",
+          "common-lisp",
+          "cpp",
+          "crystal",
+          "csharp",
+          "css",
+          "d",
+          "dart",
+          "delphi",
+          "elixir",
+          "elm",
+          "emacs-lisp",
+          "erlang",
+          "fortran",
+          "fsharp",
+          "gleam",
+          "go",
+          "groovy",
+          "haskell",
+          "hcl",
+          "html",
+          "java",
+          "javascript",
+          "jinja",
+          "julia",
+          "jupyter-notebook",
+          "kotlin",
+          "lua",
+          "luau",
+          "makefile",
+          "markdown",
+          "matlab",
+          "mdx",
+          "nim",
+          "nix",
+          "nushell",
+          "objective-c",
+          "objective-cpp",
+          "ocaml",
+          "pascal",
+          "perl",
+          "php",
+          "pkl",
+          "powershell",
+          "prolog",
+          "purescript",
+          "python",
+          "r",
+          "racket",
+          "rescript",
+          "ruby",
+          "rust",
+          "scala",
+          "scheme",
+          "scss",
+          "shell",
+          "smalltalk",
+          "solidity",
+          "sql",
+          "stata",
+          "svelte",
+          "swift",
+          "tcl",
+          "typescript",
+          "v",
+          "vala",
+          "verilog",
+          "vhdl",
+          "vim-script",
+          "visual-basic",
+          "vue",
+          "zig"
+        ],
+        "entityType": "enums"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "knowledge_license",
+        "values": [
+          "MIT",
+          "Apache-2.0",
+          "AGPL-3.0",
+          "GPL-3.0",
+          "GPL-2.0",
+          "LGPL-2.1",
+          "LGPL-3.0",
+          "BSD-3-Clause",
+          "BSD-2-Clause",
+          "0BSD",
+          "MPL-2.0",
+          "ISC",
+          "CC0-1.0",
+          "CC-BY-4.0",
+          "CC-BY-SA-4.0",
+          "Unlicense",
+          "OFL-1.1",
+          "EPL-2.0",
+          "OSL-3.0",
+          "PostgreSQL",
+          "WTFPL",
+          "EUPL-1.1",
+          "EUPL-1.2",
+          "MS-PL",
+          "Zlib",
+          "BSL-1.0",
+          "MIT-0",
+          "Artistic-2.0"
+        ],
+        "entityType": "enums"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "knowledge_platform",
+        "values": [
+          "linux",
+          "macos",
+          "windows",
+          "ios",
+          "android",
+          "browser",
+          "terminal",
+          "node",
+          "deno",
+          "bun",
+          "wasm",
+          "cloudflare-workers",
+          "jvm",
+          "dotnet",
+          "embedded"
+        ],
+        "entityType": "enums"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "knowledge_status",
+        "values": [
+          "deprecated",
+          "unmaintained"
+        ],
+        "entityType": "enums"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "receipt_source",
+        "values": [
+          "model",
+          "stand-in",
+          "legacy"
+        ],
+        "entityType": "enums"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "subject_status",
+        "values": [
+          "candidate",
+          "accepted",
+          "rejected"
+        ],
+        "entityType": "enums"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "owner_id",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "namespace",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": {
+          "as": "case when owner_id is null then 'public' else 'user:' || owner_id end",
+          "type": "stored"
+        },
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "revision",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "kind",
+        "type": "decision_kind",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "payload",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "undoes",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "actor",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "reason",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "decided_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "adapter",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "model",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "recipe",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "request_key",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "request_object",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "provider_batch_id",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "repo_ids",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 1,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "input_hashes",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 1,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "state",
+        "type": "batch_state",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 0,
+        "default": "'prepared'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "lease_until",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "repo_id",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "source",
+        "type": "receipt_source",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "input_hash",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "recipe",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "model",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "batch_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "captured_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "summary",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "keywords",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "claims",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "lanes",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "dropped",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "'[]'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "carried_from",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "raw_key",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "projected_revision",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "verdicts",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "repo_id",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "receipt_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "revision",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "0",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "stale",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "true",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "projected_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "for_subjects",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "built_with",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "about",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "traits",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "tagged",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "alternative_to",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "replaced_by",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "members",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 1,
+        "default": null,
+        "generated": {
+          "as": "for_subjects || about || traits || tagged",
+          "type": "stored"
+        },
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "unresolved_keys",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "input_hash",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "summary_input_hash",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "receipt_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "gone_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "kinds",
+        "type": "knowledge_kind",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "statuses",
+        "type": "knowledge_status",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "written_in",
+        "type": "knowledge_language",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "runs_on",
+        "type": "knowledge_platform",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "for_languages",
+        "type": "knowledge_language",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "for_platforms",
+        "type": "knowledge_platform",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "built_with_languages",
+        "type": "knowledge_language",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "built_with_platforms",
+        "type": "knowledge_platform",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "licensed",
+        "type": "knowledge_license",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "alt_languages",
+        "type": "knowledge_language",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "alt_platforms",
+        "type": "knowledge_platform",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "replaced_by_languages",
+        "type": "knowledge_language",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "replaced_by_platforms",
+        "type": "knowledge_platform",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_canonical",
+        "name": "namespace",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_canonical",
+        "name": "origin_id",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_canonical",
+        "name": "canonical_id",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_canonical",
+        "name": "revision",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_closure",
+        "name": "namespace",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_closure",
+        "name": "ancestor_id",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_closure",
+        "name": "descendant_id",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_closure",
+        "name": "depth",
+        "type": "smallint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_closure",
+        "name": "via",
+        "type": "closure_via",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_closure",
+        "name": "revision",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_labels",
+        "name": "namespace",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_labels",
+        "name": "key",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_labels",
+        "name": "subject_id",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_labels",
+        "name": "is_default",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_labels",
+        "name": "source",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_labels",
+        "name": "revision",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_labels",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_matches",
+        "name": "subject_id",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_matches",
+        "name": "comparison",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_matches",
+        "name": "origin_id",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "id",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": {
+          "type": "byDefault",
+          "name": "subjects_id_seq",
+          "increment": "1",
+          "startWith": "1",
+          "minValue": "1",
+          "maxValue": "9223372036854775807",
+          "cache": 1,
+          "cycle": false
+        },
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "owner_id",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "namespace",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": {
+          "as": "case when owner_id is null then 'public' else 'user:' || owner_id end",
+          "type": "stored"
+        },
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "label",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "definition",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "status",
+        "type": "subject_status",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 0,
+        "default": "'candidate'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "repo_count",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "0",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "listed",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": {
+          "as": "repo_count >= 2",
+          "type": "stored"
+        },
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "repo_id",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "origin_receipt_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "origin_revision",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "decisions_kind_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "namespace",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "kind",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "revision",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "extraction_batches_open_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "created_at",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": "\"state\" in ('prepared', 'submitted')",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "receipts_repo_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "repo_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "captured_at",
+            "isExpression": false,
+            "asc": false,
+            "nullsFirst": true,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "receipts_batch_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "batch_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": "\"batch_id\" is not null",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "repo_facets_members_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "members",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "gin",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "repo_facets_built_with_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "built_with",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "gin",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "repo_facets_alternative_to_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "alternative_to",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "gin",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "repo_facets_replaced_by_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "replaced_by",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "gin",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "repo_facets_unresolved_keys_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "unresolved_keys",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "gin",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "repo_facets_stale_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "repo_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": "\"stale\"",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_canonical",
+        "name": "subject_canonical_canonical_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "canonical_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "origin_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_closure",
+        "name": "subject_closure_descendant_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "descendant_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "ancestor_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_labels",
+        "name": "subject_labels_decision_default_key",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "namespace",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "key",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": true,
+        "where": "\"is_default\" and \"source\" = 'decision'",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_labels",
+        "name": "subject_labels_minted_default_key",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "namespace",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "key",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": true,
+        "where": "\"is_default\" and \"source\" = 'minted'",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_labels",
+        "name": "subject_labels_subject_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "subject_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_labels",
+        "name": "subject_labels_prefix_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "namespace",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "key",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": {
+              "name": "text_pattern_ops",
+              "default": false
+            }
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_matches",
+        "name": "subject_matches_origin_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "origin_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "comparison",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "subject_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "subjects_repo_key",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "repo_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": true,
+        "where": "\"repo_id\" is not null",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "subjects_status_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "status",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "decisions_owner_id_user_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "owner_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "user",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "decisions_undoes_fk",
+        "nameExplicit": true,
+        "columns": [
+          "namespace",
+          "undoes"
+        ],
+        "schemaTo": "public",
+        "tableTo": "decisions",
+        "columnsTo": [
+          "namespace",
+          "revision"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "receipts_repo_id_repos_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "repo_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "repos",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "receipts_batch_id_extraction_batches_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "batch_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "extraction_batches",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "SET NULL",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "receipts_carried_from_receipts_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "carried_from"
+        ],
+        "schemaTo": "public",
+        "tableTo": "receipts",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "SET NULL",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "repo_facets_repo_id_repos_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "repo_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "repos",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "repo_facets_receipt_fk",
+        "nameExplicit": true,
+        "columns": [
+          "receipt_id",
+          "repo_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "receipts",
+        "columnsTo": [
+          "id",
+          "repo_id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "repos_receipt_fk",
+        "nameExplicit": true,
+        "columns": [
+          "receipt_id",
+          "id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "receipts",
+        "columnsTo": [
+          "id",
+          "repo_id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_canonical",
+        "name": "subject_canonical_origin_fk",
+        "nameExplicit": true,
+        "columns": [
+          "origin_id",
+          "namespace"
+        ],
+        "schemaTo": "public",
+        "tableTo": "subjects",
+        "columnsTo": [
+          "id",
+          "namespace"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_canonical",
+        "name": "subject_canonical_canonical_fk",
+        "nameExplicit": true,
+        "columns": [
+          "canonical_id",
+          "namespace"
+        ],
+        "schemaTo": "public",
+        "tableTo": "subjects",
+        "columnsTo": [
+          "id",
+          "namespace"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_canonical",
+        "name": "subject_canonical_revision_fk",
+        "nameExplicit": true,
+        "columns": [
+          "namespace",
+          "revision"
+        ],
+        "schemaTo": "public",
+        "tableTo": "decisions",
+        "columnsTo": [
+          "namespace",
+          "revision"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_closure",
+        "name": "subject_closure_ancestor_fk",
+        "nameExplicit": true,
+        "columns": [
+          "ancestor_id",
+          "namespace"
+        ],
+        "schemaTo": "public",
+        "tableTo": "subjects",
+        "columnsTo": [
+          "id",
+          "namespace"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_closure",
+        "name": "subject_closure_descendant_fk",
+        "nameExplicit": true,
+        "columns": [
+          "descendant_id",
+          "namespace"
+        ],
+        "schemaTo": "public",
+        "tableTo": "subjects",
+        "columnsTo": [
+          "id",
+          "namespace"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_closure",
+        "name": "subject_closure_revision_fk",
+        "nameExplicit": true,
+        "columns": [
+          "namespace",
+          "revision"
+        ],
+        "schemaTo": "public",
+        "tableTo": "decisions",
+        "columnsTo": [
+          "namespace",
+          "revision"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_labels",
+        "name": "subject_labels_subject_fk",
+        "nameExplicit": true,
+        "columns": [
+          "subject_id",
+          "namespace"
+        ],
+        "schemaTo": "public",
+        "tableTo": "subjects",
+        "columnsTo": [
+          "id",
+          "namespace"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_labels",
+        "name": "subject_labels_revision_fk",
+        "nameExplicit": true,
+        "columns": [
+          "namespace",
+          "revision"
+        ],
+        "schemaTo": "public",
+        "tableTo": "decisions",
+        "columnsTo": [
+          "namespace",
+          "revision"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_matches",
+        "name": "subject_matches_subject_id_subjects_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "subject_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "subjects",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_matches",
+        "name": "subject_matches_origin_id_subjects_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "origin_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "subjects",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "subjects_owner_id_user_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "owner_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "user",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "subjects_repo_id_repos_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "repo_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "repos",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "SET NULL",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "subjects_origin_receipt_id_receipts_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "origin_receipt_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "receipts",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "SET NULL",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "subjects_origin_revision_fk",
+        "nameExplicit": true,
+        "columns": [
+          "namespace",
+          "origin_revision"
+        ],
+        "schemaTo": "public",
+        "tableTo": "decisions",
+        "columnsTo": [
+          "namespace",
+          "revision"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "decisions_pkey",
+        "columns": [
+          "namespace",
+          "revision"
+        ],
+        "nameExplicit": true,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_closure",
+        "name": "subject_closure_pkey",
+        "columns": [
+          "ancestor_id",
+          "descendant_id"
+        ],
+        "nameExplicit": true,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_labels",
+        "name": "subject_labels_pkey",
+        "columns": [
+          "namespace",
+          "key",
+          "subject_id"
+        ],
+        "nameExplicit": true,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_matches",
+        "name": "subject_matches_pkey",
+        "columns": [
+          "subject_id",
+          "comparison",
+          "origin_id"
+        ],
+        "nameExplicit": true,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "extraction_batches_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "receipts_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "repo_facets_pkey",
+        "columns": [
+          "repo_id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_canonical",
+        "name": "subject_canonical_pkey",
+        "columns": [
+          "origin_id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "subjects_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "receipts_answer_key",
+        "nameExplicit": true,
+        "columns": [
+          "repo_id",
+          "source",
+          "input_hash",
+          "recipe"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "receipts_id_repo_key",
+        "nameExplicit": true,
+        "columns": [
+          "id",
+          "repo_id"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "subjects_id_namespace_key",
+        "nameExplicit": true,
+        "columns": [
+          "id",
+          "namespace"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "extraction_batches_request_key_key",
+        "nameExplicit": true,
+        "columns": [
+          "request_key"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "decisions_revision_positive",
+        "value": "\"revision\" > 0",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "decisions_payload_tagged",
+        "value": "jsonb_typeof(\"payload\") = 'object' and \"payload\" ->> '_tag' is not null",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "decisions_actor_length",
+        "value": "length(\"actor\") between 1 and 80",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "decisions_reason_length",
+        "value": "length(\"reason\") between 1 and 1000",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "decisions_undo_names_revision",
+        "value": "(\"kind\" = 'undo') = (\"undoes\" is not null)",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "decisions_undoes_earlier",
+        "value": "\"undoes\" is null or \"undoes\" < \"revision\"",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "decisions",
+        "name": "decisions_private_unpublished",
+        "value": "\"owner_id\" is null or \"kind\" not in ('publish', 'retire')",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "extraction_batches_adapter_known",
+        "value": "\"adapter\" in ('gateway-batch', 'claude-code')",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "extraction_batches_recipe_positive",
+        "value": "\"recipe\" > 0",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "extraction_batches_size",
+        "value": "cardinality(\"repo_ids\") between 1 and 1000",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "extraction_batches_items_paired",
+        "value": "cardinality(\"repo_ids\") = cardinality(\"input_hashes\")",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "extraction_batches_no_nulls",
+        "value": "knowledge_no_nulls(repo_ids) and knowledge_no_nulls(input_hashes)",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "extraction_batches_named_when_submitted",
+        "value": "\"state\" = 'prepared' or \"adapter\" = 'claude-code' or \"provider_batch_id\" is not null",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "receipts_input_hash_sha256",
+        "value": "\"input_hash\" ~ '^[0-9a-f]{64}$'",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "receipts_recipe_positive",
+        "value": "\"recipe\" > 0",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "receipts_model_length",
+        "value": "length(\"model\") between 1 and 120",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "receipts_summary_present",
+        "value": "length(\"summary\") > 0",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "receipts_keywords_array",
+        "value": "jsonb_typeof(\"keywords\") = 'array'",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "receipts_claims_array",
+        "value": "jsonb_typeof(\"claims\") = 'array'",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "receipts_lanes_object",
+        "value": "jsonb_typeof(\"lanes\") = 'object'",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "receipts_dropped_array",
+        "value": "jsonb_typeof(\"dropped\") = 'array'",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "receipts",
+        "name": "receipts_verdicts_array",
+        "value": "\"verdicts\" is null or jsonb_typeof(\"verdicts\") = 'array'",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "repo_facets_subject_limits",
+        "value": "cardinality(\"for_subjects\") <= 16 and cardinality(\"built_with\") <= 8 and cardinality(\"about\") <= 16 and cardinality(\"traits\") <= 16 and cardinality(\"tagged\") <= 20 and cardinality(\"alternative_to\") <= 8 and cardinality(\"replaced_by\") <= 4",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "repo_facets_unresolved_limit",
+        "value": "cardinality(\"unresolved_keys\") <= 64",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_facets",
+        "name": "repo_facets_no_nulls",
+        "value": "knowledge_no_nulls(for_subjects) and knowledge_no_nulls(built_with) and knowledge_no_nulls(about) and knowledge_no_nulls(traits) and knowledge_no_nulls(tagged) and knowledge_no_nulls(alternative_to) and knowledge_no_nulls(replaced_by) and knowledge_no_nulls(unresolved_keys)",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "repos_input_hash_sha256",
+        "value": "\"input_hash\" ~ '^[0-9a-f]{64}$'",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "repos_summary_input_hash_sha256",
+        "value": "\"summary_input_hash\" ~ '^[0-9a-f]{64}$'",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "repos_closed_atom_limits",
+        "value": "cardinality(\"kinds\") <= 2 and cardinality(\"statuses\") <= 2 and cardinality(\"written_in\") <= 4 and cardinality(\"runs_on\") <= 8 and cardinality(\"for_languages\") <= 8 and cardinality(\"for_platforms\") <= 8 and cardinality(\"built_with_languages\") <= 4 and cardinality(\"built_with_platforms\") <= 4 and cardinality(\"licensed\") <= 1 and cardinality(\"alt_languages\") <= 6 and cardinality(\"alt_platforms\") <= 6 and cardinality(\"replaced_by_languages\") <= 2 and cardinality(\"replaced_by_platforms\") <= 2",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "repos_closed_atom_no_nulls",
+        "value": "knowledge_no_nulls(kinds) and knowledge_no_nulls(statuses) and knowledge_no_nulls(written_in) and knowledge_no_nulls(runs_on) and knowledge_no_nulls(for_languages) and knowledge_no_nulls(for_platforms) and knowledge_no_nulls(built_with_languages) and knowledge_no_nulls(built_with_platforms) and knowledge_no_nulls(licensed) and knowledge_no_nulls(alt_languages) and knowledge_no_nulls(alt_platforms) and knowledge_no_nulls(replaced_by_languages) and knowledge_no_nulls(replaced_by_platforms)",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_canonical",
+        "name": "subject_canonical_distinct",
+        "value": "\"origin_id\" <> \"canonical_id\"",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_closure",
+        "name": "subject_closure_depth",
+        "value": "\"depth\" between 1 and 3",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_closure",
+        "name": "subject_closure_distinct",
+        "value": "\"ancestor_id\" <> \"descendant_id\"",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_labels",
+        "name": "subject_labels_key_check",
+        "value": "\"key\" = btrim(\"key\") and length(\"key\") between 1 and 80 and not knowledge_reserved_key(\"key\")",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_labels",
+        "name": "subject_labels_source_known",
+        "value": "\"source\" in ('minted', 'decision')",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subject_labels",
+        "name": "subject_labels_decision_revision",
+        "value": "(\"source\" = 'decision') = (\"revision\" is not null)",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "subjects_label_length",
+        "value": "length(\"label\") between 1 and 120",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "subjects_definition_length",
+        "value": "length(\"definition\") <= 400",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "subjects_repo_count_nonnegative",
+        "value": "\"repo_count\" >= 0",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "subjects",
+        "name": "subjects_private_unlinked",
+        "value": "\"owner_id\" is null or (\"origin_receipt_id\" is null and \"repo_id\" is null)",
+        "entityType": "checks"
+      }
+    }
+  ]
+}

@@ -29,6 +29,9 @@ export const writeEncoder = <S extends Schema.Encoder<unknown>>(schema: S) => {
   return (value: S["Type"]) => encode(value).pipe(Effect.orDie);
 };
 
+// db.execute returns the driver's raw result, which holds the rows.
+export const resultRows = (result: unknown): unknown => (Predicate.hasProperty(result, "rows") ? result.rows : result);
+
 export const requireRow =
   <E>(notFound: () => E) =>
   (rows: ReadonlyArray<unknown>): Effect.Effect<void, E> =>

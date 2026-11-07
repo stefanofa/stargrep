@@ -2,7 +2,7 @@
 
 Stargrep keeps what it knows about a repo as a set of small typed facts. Search filters, topic pages, digests, and the API all read those facts the same way. This page explains the six ideas the model rests on and the registries in `packages/knowledge` that define its closed parts.
 
-`packages/knowledge` is a leaf package that depends only on `effect`. It holds the registries, the atom and selection codecs, `labelKey`, `evidenceText`, and `extractionLines`. `packages/ai` imports it today, and `packages/db` and `packages/core` will. The tables, the extraction step, and the projection that use it are not built yet.
+`packages/knowledge` is a leaf package that depends only on `effect`. It holds the registries, the atom and selection codecs, `labelKey`, `evidenceText`, and `extractionLines`. `packages/ai` and `packages/db` import it, and `packages/core` will. The tables that store atoms exist, with the query module that writes them. The extraction step and the projection that fill them are not built yet, so only the triggers in "Where atoms are stored" write to them.
 
 ## Six primitives
 
@@ -75,8 +75,24 @@ Two artifacts come from the registry, so the prompt, the database, and the decod
 - `packages/knowledge/src/registry.sql` holds the Postgres enums, the closed expansions, the reserved keys, and the functions that turn a stored atom into its key.
 - `extractionLines()` renders the facets block that the summary prompt will carry once the summary call extracts facets. Nothing reads it yet. The kinds are the only list the block carries.
 
-To change a closed value or a role, edit `registry.ts` and run `bun run --cwd packages/knowledge generate`, then review the diff to `registry.sql`. The first migration carries `registry.sql` whole. A later change ships only the delta: `alter type knowledge_<dim> add value '<id>'` for a new id, and `create or replace function` for each function whose body changed. Postgres cannot drop an enum value. Once the summary call extracts facets, a change to a prompt line changes what every new summary says, so from then on it ships with a `summaryRecipe` bump in `packages/ai/src/models.ts`. Tests fail when a generated copy drifts from the registry.
+To change a closed value or a role, edit `registry.ts` and run `bun run --cwd packages/knowledge generate`, then review the diff to `registry.sql`. The migration `20261107193409_knowledge` carries `registry.sql` whole, and a test checks that the migrated database holds exactly the enums and functions the registry generates. The `--> statement-breakpoint` lines in the file split it into the statements Drizzle's migrator runs one at a time. A later change ships only the delta: `alter type knowledge_<dim> add value '<id>'` for a new id, and `create or replace function` for each function whose body changed. Postgres cannot drop an enum value. Once the summary call extracts facets, a change to a prompt line changes what every new summary says, so from then on it ships with a `summaryRecipe` bump in `packages/ai/src/models.ts`. Tests fail when a generated copy drifts from the registry.
 
 Search reads nothing from the registry yet. `packages/core/src/search/vocabulary.ts` keeps a frozen list of twelve kinds and its own language table until search filters read atoms. The planner's schema uses those kinds, and the schema is part of `PlannerPrompt.version`, which keys the plan and answer caches.
 
 `recipes` names the ways a page ranks a selection's members: `top` by stars, and `trending_7d` by stars gained over seven complete days.
+
+## Where atoms are stored
+
+`atomColumns` in `packages/db/src/schema.ts` gives each role one array column per dimension it accepts, and a test checks the map against `roles`. A closed dimension's column is on `repos`, and a subject column is in `repo_facets`.
+
+- **Closed atoms** are typed arrays on the `repos` row, such as `kinds`, `written_in`, and `built_with_platforms`, thirteen in all. A broad closed filter then tests the row personal search already reads. No index sits on them yet.
+- **Subject atoms** are subject IDs in `repo_facets`, one row per live repo, as the IDs claims first resolved to. A merge changes what an ID means, never the row. `members` joins the arrays a bare `subject:N` filter reaches. The schema generates it from the roles bare atoms match, so `built_with` stays out of it. `members` and `built_with` each have a GIN index.
+- **Receipts** keep each answer as it was. A trigger refuses any edit except projection's markers.
+- **Decisions** are the curation log, which only grows. `subjects`, `subject_labels`, `subject_canonical`, `subject_closure`, and `subject_matches` are the vocabulary and the maps the log derives. `subject_matches` stores what a filter on each subject matches. Search reads it by subject and every count reads it by origin, so the two agree by construction.
+- **`extraction_batches`** will hold the bulk run's manifest, so a resumed run resends the request it already paid for.
+
+`repos` also has `input_hash`, `summary_input_hash`, `receipt_id`, and `gone_at`, which marks a repo GitHub stopped serving publicly. A gone repo has no atoms and no `repo_facets` row.
+
+Triggers keep `repo_facets` current. A new repo gets a stale row. A change to a repo's receipt, language, license, topics, or `gone_at` marks it stale again. Four views read the stored atoms: `knowledge_labels` for label resolution, `knowledge_self_origins` for the rule that a repo is never its own alternative, `effective_atoms` for what a repo holds, and `matching_atoms` for every key whose filter matches it. `knowledge_refresh_counts()` recounts each subject's repos from `matching_atoms`, and a subject is listed once two repos hold it.
+
+`packages/db/src/queries/knowledge.ts` is the only writer, and nothing calls it yet. One advisory lock per namespace guards the vocabulary. Minting a subject and recording a decision take it exclusively. Projection takes it shared and locks the `repos` rows it writes `for no key update`, in ID order. Every vocabulary change then calls `knowledge_invalidate`, which marks stale each repo whose projection could now differ. A projection either committed before the change, which then marks its row, or started after it and read it. So the order repos are projected in cannot change what they end up holding.

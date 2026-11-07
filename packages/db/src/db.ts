@@ -8,6 +8,7 @@ import type { DbQueryFailed } from "./errors.ts";
 import * as NodePostgres from "./node-postgres.ts";
 import * as Postgres from "./postgres.ts";
 import * as Accounts from "./queries/accounts.ts";
+import * as Knowledge from "./queries/knowledge.ts";
 import * as RateLines from "./queries/rate-lines.ts";
 import * as Repos from "./queries/repos.ts";
 import * as Search from "./queries/search.ts";
@@ -24,6 +25,22 @@ export type {
   StarredCount,
   StarSync,
 } from "./queries/accounts.ts";
+export type {
+  Answer,
+  Captured,
+  Decided,
+  Decision,
+  Invalidation,
+  Label,
+  LockedRepo,
+  MintClaim,
+  Minted,
+  Projected,
+  Projection,
+  StoredAtom,
+  VocabularyChange,
+} from "./queries/knowledge.ts";
+export { noChange } from "./queries/knowledge.ts";
 export type { Reservation, Reserved } from "./queries/rate-lines.ts";
 export { CallerKey, LineKey } from "./queries/rate-lines.ts";
 export type {
@@ -77,6 +94,7 @@ export class Db extends Context.Service<
     readonly syncRequests: SyncRequests.Queries;
     readonly rateLines: RateLines.Queries;
     readonly usage: Usage.Queries;
+    readonly knowledge: Knowledge.Queries;
   }
 >()("@stargrep/db/db") {}
 
@@ -121,6 +139,7 @@ export const layer = (options: Options) =>
           syncRequests: yield* SyncRequests.make,
           rateLines: yield* RateLines.make,
           usage: yield* Usage.make,
+          knowledge: yield* Knowledge.make,
         });
       }),
     ),

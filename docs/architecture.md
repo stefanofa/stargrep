@@ -90,7 +90,7 @@ Better Auth owns `user`, `session`, `account`, and `verification`, declared in `
 | Table | Key | Holds |
 |---|---|---|
 | `github_accounts` | GitHub account ID | type (`user` or `org`), login, name, avatar, followers, public repos, total stars across owned repos, how many repos it has starred on GitHub as of the latest lookup, sign-in, or full read, `claimed_by` user, star sync state, including the time of the latest full star snapshot |
-| `repos` | GitHub repo ID | owner, name, GitHub node ID, description, topics, language, license, homepage, kind (`app`, `library`, `cli`, `framework`, `list`, and so on), created time, `pushed_at`, archived, README object ID from the latest facts fetch, summary with the README object ID it describes and the summary recipe that made it, keywords, `embedding halfvec`, embedding model, whether the embedding describes an older summary of the same README, full-text column, how many times enrichment failed since the repo was last read and when it last failed |
+| `repos` | GitHub repo ID | owner, name, GitHub node ID, description, topics, language, license, homepage, kind (`app`, `library`, `cli`, `framework`, `list`, and so on), created time, `pushed_at`, archived, README object ID from the latest facts fetch, summary with the README object ID it describes and the summary recipe that made it, keywords, `embedding halfvec`, embedding model, whether the embedding describes an older summary of the same README, full-text column, how many times enrichment failed since the repo was last read and when it last failed, and the knowledge columns: the input hash, the current receipt, `gone_at`, and one array of closed atoms per role and dimension |
 | `repo_metrics` | GitHub repo ID | current totals and 30-day and 90-day changes for stars, forks, commits, active contributors, new contributors, merged pull requests, closed issues, and releases. Enrichment writes star and fork totals. Growth and activity rollups have no producer yet |
 | `stars` | account ID and repo ID | `starred_at`, `unstarred_at`, the time of the latest observation, source (`gharchive` or `api`). Only `api` is written today. Archive star events are planned, see "Planned ingestion". Every star event carries the time it was observed: an API sync's start, or an archive event's own time. An event or snapshot observed at or before the row's latest observation, or at or before the account's latest full snapshot, changes nothing |
 | `follows` | follower ID and followee ID | source (`github` or `stargrep`), created time |
@@ -100,6 +100,8 @@ Better Auth owns `user`, `session`, `account`, and `verification`, declared in `
 | `api_usage` | key and day | request counts per procedure |
 | `sync_requests` | lowercase login | when a sync was last requested, when its sync starts once its message is sent, and its outcome: `claimed` while admission reserves and sends, `pending` once sent, `failed`, or `missing` when GitHub has no such login |
 | `rate_lines` | line key | the row's generation, the time given back from the line in all, and the time until which it is busy: `all` for every signed-out sync, and `caller/<key>` for one network's lookups and first reads, and `model/all` and `model/<key>` for planner and query embedding calls, see "Admission" and "Limits" |
+
+The knowledge tables (`receipts`, `extraction_batches`, `decisions`, `subjects`, `subject_labels`, `subject_canonical`, `subject_closure`, `subject_matches`, and `repo_facets`) hold what the summary model said about each repo, the curated vocabulary, and each repo's subject atoms. `docs/knowledge.md` explains them. Only their triggers write to them so far.
 
 The schema also reserves follows, collections, search events, and API usage. Their presence does not mean the app imports follows, serves collections, or records search analytics.
 
@@ -327,6 +329,8 @@ The repo is the source of truth. Each concern has one file or folder that define
 | GitHub App | Its manifest in the repo. Creating the app from it takes one click in the browser |
 | Design tokens | `packages/ui` |
 | CI and deploys | GitHub Actions workflows. Only CI deploys to production |
+
+A deploy applies each migration in one transaction and sends its statements to Neon one round trip at a time, so a lock on a table the running Workers use lasts until the commit. From `20261107193409_knowledge` on, a migration takes those locks only in its last statement, which can be a `DO` block holding several commands, and `knowledge-migration.test.ts` checks it. On a branch of prod, that migration held `repos` for 3 round trips, 645 ms from a laptop about 200 ms from Neon.
 
 Some things stay outside the repo. Secret values live in Cloudflare secrets and GitHub Actions environment secrets, and the repo holds only their names. Only jobs on `main` can read the `production` environment's secrets. Previews read separate credentials from the `preview` environment. Account creation, billing plans, and domain registration are one-time manual steps, listed in `docs/setup.md`.
 

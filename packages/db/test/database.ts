@@ -10,7 +10,7 @@ import * as Memory from "../src/memory.ts";
 import { acquirePool, driver } from "../src/node-postgres.ts";
 import * as Postgres from "../src/postgres.ts";
 
-const adminUrl = process.env.DATABASE_URL ?? "postgres://stargrep:stargrep@127.0.0.1:54317/stargrep";
+export const adminUrl = process.env.DATABASE_URL ?? "postgres://stargrep:stargrep@127.0.0.1:54317/stargrep";
 
 type DbLayer = ReturnType<typeof Db.layerNodePostgres>;
 
