@@ -44,19 +44,19 @@ const bench = Command.make(
     yield* Runtime.storeRefs(repos);
     const rows: Array<{ readonly single: number; readonly local: number; readonly unchanged: number }> = [];
     for (const repo of repos) {
-      const [single, outcome] = yield* timedRun(enricher.enrichRepo(repo.id));
+      const [single, outcomes] = yield* timedRun(enricher.enrichRepos([repo.id]));
       const summary = Runtime.spentMillis("TextGeneration.generate");
       const embed = Runtime.spentMillis("Embeddings.embed");
       const facts = Runtime.spentMillis("GitHub.repoFacts") + Runtime.spentMillis("GitHub.readme");
       const local = single - summary - embed - facts;
-      const [unchanged, again] = yield* timedRun(enricher.enrichRepo(repo.id));
+      const [unchanged, again] = yield* timedRun(enricher.enrichRepos([repo.id]));
       rows.push({ single, local, unchanged });
       yield* Console.log(
         [
           `${repo.owner}/${repo.name}`,
-          outcome._tag,
+          outcomes.map((outcome) => outcome._tag).join(", "),
           `single ${single.toFixed(0)} ms = summary ${summary} + embed ${embed} + github ${facts} + local ${local.toFixed(0)}`,
-          `${again._tag} ${unchanged.toFixed(0)} ms`,
+          `${again.map((outcome) => outcome._tag).join(", ")} ${unchanged.toFixed(0)} ms`,
         ].join("\t"),
       );
     }

@@ -11,14 +11,13 @@ import * as TestDatabase from "@stargrep/db/test-database";
 import { GitHubTokenMissing } from "@stargrep/github/errors";
 import * as GitHub from "@stargrep/github/github";
 import * as GitHubFake from "@stargrep/github/github.fixture";
-import { ObjectId, Repo } from "@stargrep/github/schemas";
+import { ObjectId, Repo, type RepoId } from "@stargrep/github/schemas";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
-import * as Cause from "effect/Cause";
+import * as Arr from "effect/Array";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -158,11 +157,12 @@ const store = Effect.fn("test.store")(function* (numbers: ReadonlyArray<number>)
   return refs.map((ref) => ref.id);
 });
 
-const enrich = (n: number) =>
-  Effect.gen(function* () {
-    yield* store([n]);
-    return yield* (yield* EnrichRepo.EnrichRepo).enrichRepo(id(n));
-  });
+const enrichOne = (repoId: RepoId) =>
+  Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) =>
+    Effect.map(enricher.enrichRepos([repoId]), (outcomes) => Option.getOrThrow(Arr.head(outcomes))),
+  );
+
+const enrich = (n: number) => Effect.andThen(store([n]), enrichOne(id(n)));
 
 const get = (n: number) => Effect.flatMap(Db.Db, (db) => Effect.map(db.repos.get(id(n)), Option.getOrThrow));
 
@@ -190,307 +190,313 @@ const resummarize = (n: number) =>
     return row;
   });
 
-it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30_000 })("enrichRepo", (it) => {
-  it.effect("stores facts, the README blob, the summary, and its embedding for a new repo", () =>
-    Effect.gen(function* () {
-      remotes.set(1, {
-        description: "Fast log parser",
-        archived: true,
-        readme: { oid: oid("a"), text: "# Parser\n\n![logo](logo.png)\n\nParses web server logs." },
-      });
-      expect(yield* enrich(1)).toMatchObject({ _tag: "Summarized", id: id(1) });
+it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30_000 })(
+  "enrichRepos, one repo at a time",
+  (it) => {
+    it.effect("stores facts, the README blob, the summary, and its embedding for a new repo", () =>
+      Effect.gen(function* () {
+        remotes.set(1, {
+          description: "Fast log parser",
+          archived: true,
+          readme: { oid: oid("a"), text: "# Parser\n\n![logo](logo.png)\n\nParses web server logs." },
+        });
+        expect(yield* enrich(1)).toMatchObject({ _tag: "Summarized", id: id(1) });
 
-      const db = yield* Db.Db;
-      const stored = yield* get(1);
-      expect(stored).toMatchObject({
-        license: "MIT",
-        homepage: "https://repo-1.dev",
-        archived: true,
-        readmeOid: oid("a"),
-        summaryReadmeOid: oid("a"),
-        embeddingModel,
-      });
-      expect(stored.summary).toContain("Parses web server logs.");
-      expect(prompts.at(-1)).not.toContain("logo.png");
-      const blobs = yield* BlobStore.BlobStore;
-      expect(Option.getOrThrow(yield* blobs.get(BlobStore.readmeKey(oid("a"))))).toContain("![logo](logo.png)");
-      expect(yield* db.repos.pendingEnrichment([id(1)])).toEqual([]);
-    }),
-  );
+        const db = yield* Db.Db;
+        const stored = yield* get(1);
+        expect(stored).toMatchObject({
+          license: "MIT",
+          homepage: "https://repo-1.dev",
+          archived: true,
+          readmeOid: oid("a"),
+          summaryReadmeOid: oid("a"),
+          embeddingModel,
+        });
+        expect(stored.summary).toContain("Parses web server logs.");
+        expect(prompts.at(-1)).not.toContain("logo.png");
+        const blobs = yield* BlobStore.BlobStore;
+        expect(Option.getOrThrow(yield* blobs.get(BlobStore.readmeKey(oid("a"))))).toContain("![logo](logo.png)");
+        expect(yield* db.repos.pendingEnrichment([id(1)])).toEqual([]);
+      }),
+    );
 
-  it.effect("keeps the star and fork counts and refreshes them on a retry after their write failed", () =>
-    Effect.gen(function* () {
-      const db = yield* Db.Db;
-      remotes.set(40, { description: "Counter", stars: 100, forks: 2, readme: { oid: oid("a"), text: "# A" } });
-      yield* enrich(40);
-      expect(yield* countsOf(40)).toEqual([{ stars: 100, forks: 2 }]);
+    it.effect("keeps the star and fork counts and refreshes them on a retry after their write failed", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        remotes.set(40, { description: "Counter", stars: 100, forks: 2, readme: { oid: oid("a"), text: "# A" } });
+        yield* enrich(40);
+        expect(yield* countsOf(40)).toEqual([{ stars: 100, forks: 2 }]);
 
-      yield* db.repos.saveFacts({ ...(yield* get(40)), readmeOid: oid("b") });
-      remotes.set(40, { description: "Counter", stars: 200, forks: 3, readme: { oid: oid("a"), text: "# A" } });
-      const failing = Db.Db.of({
-        ...db,
-        repos: {
-          ...db.repos,
-          saveCounts: () =>
-            Effect.fail(new DbQueryFailed({ operation: "repos.saveCounts", reason: "transport", sqlState: null })),
-        },
-      });
-      const withFailingCounts = Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(Layer.succeed(Db.Db, failing)));
-      expect(yield* Effect.flip(enrich(40).pipe(Effect.provide(withFailingCounts)))).toMatchObject({
-        _tag: "DbQueryFailed",
-        operation: "repos.saveCounts",
-      });
-      expect(yield* db.repos.pendingEnrichment([id(40)])).toEqual([id(40)]);
+        yield* db.repos.saveFacts({ ...(yield* get(40)), readmeOid: oid("b") });
+        remotes.set(40, { description: "Counter", stars: 200, forks: 3, readme: { oid: oid("a"), text: "# A" } });
+        const failing = Db.Db.of({
+          ...db,
+          repos: {
+            ...db.repos,
+            saveCounts: () =>
+              Effect.fail(new DbQueryFailed({ operation: "repos.saveCounts", reason: "transport", sqlState: null })),
+          },
+        });
+        const withFailingCounts = Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(Layer.succeed(Db.Db, failing)));
+        expect(yield* Effect.flip(enrich(40).pipe(Effect.provide(withFailingCounts)))).toMatchObject({
+          _tag: "DbQueryFailed",
+          operation: "repos.saveCounts",
+        });
+        expect(yield* db.repos.pendingEnrichment([id(40)])).toEqual([id(40)]);
 
-      expect(yield* enrich(40)).toEqual({ _tag: "Unchanged", id: id(40) });
-      expect(yield* countsOf(40)).toEqual([{ stars: 200, forks: 3 }]);
-    }),
-  );
+        expect(yield* enrich(40)).toEqual({ _tag: "Unchanged", id: id(40) });
+        expect(yield* countsOf(40)).toEqual([{ stars: 200, forks: 3 }]);
+      }),
+    );
 
-  it.effect("skips a repo whose README did not change, with no GitHub or model call", () =>
-    Effect.gen(function* () {
-      remotes.set(2, { description: "Terminal UI", readme: { oid: oid("b"), text: "# TUI" } });
-      yield* enrich(2);
-      const [sent, calls] = [github.sent.length, prompts.length];
-      expect(yield* enrich(2)).toEqual({ _tag: "Unchanged", id: id(2) });
-      expect([github.sent.length, prompts.length]).toEqual([sent, calls]);
-    }),
-  );
+    it.effect("skips a repo whose README did not change, with no GitHub or model call", () =>
+      Effect.gen(function* () {
+        remotes.set(2, { description: "Terminal UI", readme: { oid: oid("b"), text: "# TUI" } });
+        yield* enrich(2);
+        const [sent, calls] = [github.sent.length, prompts.length];
+        expect(yield* enrich(2)).toEqual({ _tag: "Unchanged", id: id(2) });
+        expect([github.sent.length, prompts.length]).toEqual([sent, calls]);
+      }),
+    );
 
-  it.effect("summarizes again once the stored README object ID changes", () =>
-    Effect.gen(function* () {
-      const db = yield* Db.Db;
-      remotes.set(3, { description: "Sync tool", readme: { oid: oid("c"), text: "# Old\n\nSyncs folders." } });
-      yield* enrich(3);
-      remotes.set(3, { description: "Sync tool", readme: { oid: oid("d"), text: "# New\n\nSyncs phones." } });
-      yield* db.repos.saveFacts({ ...(yield* get(3)), readmeOid: oid("d") });
+    it.effect("summarizes again once the stored README object ID changes", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        remotes.set(3, { description: "Sync tool", readme: { oid: oid("c"), text: "# Old\n\nSyncs folders." } });
+        yield* enrich(3);
+        remotes.set(3, { description: "Sync tool", readme: { oid: oid("d"), text: "# New\n\nSyncs phones." } });
+        yield* db.repos.saveFacts({ ...(yield* get(3)), readmeOid: oid("d") });
 
-      expect(yield* enrich(3)).toMatchObject({ _tag: "Summarized" });
-      const after = yield* get(3);
-      expect(after.summaryReadmeOid).toBe(oid("d"));
-      expect(after.summary).toContain("Syncs phones.");
-      expect(after.embeddingModel).toBe(embeddingModel);
-    }),
-  );
+        expect(yield* enrich(3)).toMatchObject({ _tag: "Summarized" });
+        const after = yield* get(3);
+        expect(after.summaryReadmeOid).toBe(oid("d"));
+        expect(after.summary).toContain("Syncs phones.");
+        expect(after.embeddingModel).toBe(embeddingModel);
+      }),
+    );
 
-  it.effect("skips a repo when GitHub reports the README its summary came from, whatever oid was stored", () =>
-    Effect.gen(function* () {
-      const db = yield* Db.Db;
-      remotes.set(6, { description: "Backup tool", readme: { oid: oid("c"), text: "# Backup" } });
-      yield* enrich(6);
-      yield* db.repos.saveFacts({ ...(yield* get(6)), readmeOid: oid("d") });
-      expect(yield* db.repos.pendingEnrichment([id(6)])).toEqual([id(6)]);
+    it.effect("skips a repo when GitHub reports the README its summary came from, whatever oid was stored", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        remotes.set(6, { description: "Backup tool", readme: { oid: oid("c"), text: "# Backup" } });
+        yield* enrich(6);
+        yield* db.repos.saveFacts({ ...(yield* get(6)), readmeOid: oid("d") });
+        expect(yield* db.repos.pendingEnrichment([id(6)])).toEqual([id(6)]);
 
-      const [readmes, calls] = [readmeRequests(), prompts.length];
-      expect(yield* enrich(6)).toEqual({ _tag: "Unchanged", id: id(6) });
-      expect([readmeRequests(), prompts.length]).toEqual([readmes, calls]);
-      expect(yield* get(6)).toMatchObject({ readmeOid: oid("c"), summaryReadmeOid: oid("c"), embeddingModel });
-    }),
-  );
+        const [readmes, calls] = [readmeRequests(), prompts.length];
+        expect(yield* enrich(6)).toEqual({ _tag: "Unchanged", id: id(6) });
+        expect([readmeRequests(), prompts.length]).toEqual([readmes, calls]);
+        expect(yield* get(6)).toMatchObject({ readmeOid: oid("c"), summaryReadmeOid: oid("c"), embeddingModel });
+      }),
+    );
 
-  it.effect("keeps README text and the summary made from it out of every span", () => {
-    const collected = collectSpans();
-    return Effect.gen(function* () {
-      const canary = "PRIVATE_README_CANARY";
-      remotes.set(13, { description: "Notes app", readme: { oid: oid("0"), text: `# Notes\n\n${canary} sync.` } });
-      expect(yield* enrich(13)).toMatchObject({ _tag: "Summarized" });
-      expect(yield* enrich(13)).toEqual({ _tag: "Unchanged", id: id(13) });
-      expect((yield* get(13)).summary).toContain(canary);
+    it.effect("keeps README text and the summary made from it out of every span", () => {
+      const collected = collectSpans();
+      return Effect.gen(function* () {
+        const canary = "PRIVATE_README_CANARY";
+        remotes.set(13, { description: "Notes app", readme: { oid: oid("0"), text: `# Notes\n\n${canary} sync.` } });
+        expect(yield* enrich(13)).toMatchObject({ _tag: "Summarized" });
+        expect(yield* enrich(13)).toEqual({ _tag: "Unchanged", id: id(13) });
+        expect((yield* get(13)).summary).toContain(canary);
 
-      const names = new Set(collected.spans.map((span) => span.name));
-      for (const name of ["EnrichRepo.enrichRepo", "GitHub.readme", "TokenGate.execute", "Db.repos.getMany"]) {
-        expect(names).toContain(name);
-      }
-      expect(collected.text()).not.toContain(canary);
-    }).pipe(Effect.withTracer(collected.tracer));
-  });
+        const names = new Set(collected.spans.map((span) => span.name));
+        for (const name of ["EnrichRepo.enrichRepos", "GitHub.readme", "TokenGate.execute", "Db.repos.getMany"]) {
+          expect(names).toContain(name);
+        }
+        expect(collected.text()).not.toContain(canary);
+      }).pipe(Effect.withTracer(collected.tracer));
+    });
 
-  it.effect("summarizes a repo with no README from its description", () =>
-    Effect.gen(function* () {
-      remotes.set(4, { description: "Dotfiles for macOS" });
-      const readmes = readmeRequests();
-      const outcome = yield* enrich(4);
-      expect(outcome._tag === "Summarized" && outcome.summary.summary).toStartWith("Dotfiles for macOS");
-      expect(prompts.at(-1)).toContain("README:\nnone");
-      expect(readmeRequests()).toBe(readmes);
-    }),
-  );
+    it.effect("summarizes a repo with no README from its description", () =>
+      Effect.gen(function* () {
+        remotes.set(4, { description: "Dotfiles for macOS" });
+        const readmes = readmeRequests();
+        const outcome = yield* enrich(4);
+        expect(outcome._tag === "Summarized" && outcome.summary.summary).toStartWith("Dotfiles for macOS");
+        expect(prompts.at(-1)).toContain("README:\nnone");
+        expect(readmeRequests()).toBe(readmes);
+      }),
+    );
 
-  it.effect("keeps facts and leaves the repo pending when the model output is invalid", () =>
-    Effect.gen(function* () {
-      const db = yield* Db.Db;
-      remotes.set(5, { description: "Image viewer", readme: { oid: oid("e"), text: "# Viewer" } });
-      const invalid = textGeneration(() => Effect.succeed({ output: { summary: "" }, usage }));
-      const failed = yield* Effect.exit(enrich(5).pipe(using(invalid)));
-      expect(Exit.findErrorOption(failed).pipe(Option.map((error) => error._tag))).toEqual(
-        Option.some("AiOutputInvalid"),
-      );
-      expect(Exit.isFailure(failed) && Cause.pretty(failed.cause)).toContain("at EnrichRepo.enrichRepo (definition)");
-      expect(yield* get(5)).toMatchObject({ license: "MIT", readmeOid: oid("e"), summary: null, embeddingModel: null });
-      expect(yield* db.repos.pendingEnrichment([id(5)])).toEqual([id(5)]);
-      expect(yield* failuresOf(5)).toEqual([{ enrich_failures: 1 }]);
+    it.effect("keeps facts and leaves the repo pending when the model output is invalid", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        remotes.set(5, { description: "Image viewer", readme: { oid: oid("e"), text: "# Viewer" } });
+        const invalid = textGeneration(() => Effect.succeed({ output: { summary: "" }, usage }));
+        expect(yield* enrich(5).pipe(using(invalid))).toMatchObject({
+          _tag: "Failed",
+          error: { _tag: "AiOutputInvalid" },
+        });
+        expect(yield* get(5)).toMatchObject({
+          license: "MIT",
+          readmeOid: oid("e"),
+          summary: null,
+          embeddingModel: null,
+        });
+        expect(yield* db.repos.pendingEnrichment([id(5)])).toEqual([id(5)]);
+        expect(yield* failuresOf(5)).toEqual([{ enrich_failures: 1 }]);
 
-      const readmes = readmeRequests();
-      expect(yield* enrich(5)).toMatchObject({ _tag: "Backoff" });
-      yield* TestClock.adjust("10 minutes");
-      expect(yield* enrich(5)).toMatchObject({ _tag: "Summarized" });
-      expect(readmeRequests()).toBe(readmes);
-    }),
-  );
+        const readmes = readmeRequests();
+        expect(yield* enrich(5)).toMatchObject({ _tag: "Backoff" });
+        yield* TestClock.adjust("10 minutes");
+        expect(yield* enrich(5)).toMatchObject({ _tag: "Summarized" });
+        expect(readmeRequests()).toBe(readmes);
+      }),
+    );
 
-  it.effect("embeds a stored summary again without a model call when its embedding is missing", () =>
-    Effect.gen(function* () {
-      remotes.set(7, { description: "HTTP client", readme: { oid: oid("1"), text: "# Client" } });
-      yield* enrich(7);
-      yield* resummarize(7);
-      const calls = prompts.length;
-      expect(yield* enrich(7)).toMatchObject({ _tag: "Embedded" });
-      expect(prompts.length).toBe(calls);
-      expect((yield* get(7)).embeddingModel).toBe(embeddingModel);
-    }),
-  );
+    it.effect("embeds a stored summary again without a model call when its embedding is missing", () =>
+      Effect.gen(function* () {
+        remotes.set(7, { description: "HTTP client", readme: { oid: oid("1"), text: "# Client" } });
+        yield* enrich(7);
+        yield* resummarize(7);
+        const calls = prompts.length;
+        expect(yield* enrich(7)).toMatchObject({ _tag: "Embedded" });
+        expect(prompts.length).toBe(calls);
+        expect((yield* get(7)).embeddingModel).toBe(embeddingModel);
+      }),
+    );
 
-  it.effect("queues icon work when the icon was never checked or its README changed, not on an embed-only rerun", () =>
-    Effect.gen(function* () {
-      const db = yield* Db.Db;
-      remotes.set(50, { description: "Icons", readme: { oid: oid("5"), text: "# Icons" } });
-      iconQueue.sent.length = 0;
-      expect(yield* enrich(50)).toMatchObject({ _tag: "Summarized" });
-      expect(iconQueue.sent).toEqual([
-        IconQueue.IconRequest.make({
-          repoId: id(50),
-          owner: repo(50).owner,
-          name: repo(50).name,
-          homepage: "https://repo-50.dev",
-          iconFiles: [],
-          readmeOid: oid("5"),
+    it.effect(
+      "queues icon work when the icon was never checked or its README changed, not on an embed-only rerun",
+      () =>
+        Effect.gen(function* () {
+          const db = yield* Db.Db;
+          remotes.set(50, { description: "Icons", readme: { oid: oid("5"), text: "# Icons" } });
+          iconQueue.sent.length = 0;
+          expect(yield* enrich(50)).toMatchObject({ _tag: "Summarized" });
+          expect(iconQueue.sent).toEqual([
+            IconQueue.IconRequest.make({
+              repoId: id(50),
+              owner: repo(50).owner,
+              name: repo(50).name,
+              homepage: "https://repo-50.dev",
+              iconFiles: [],
+              readmeOid: oid("5"),
+            }),
+          ]);
+          expect(yield* get(50)).toMatchObject({
+            ownerType: "org",
+            ownerAvatarUrl: "https://avatars.githubusercontent.com/u/9?v=4",
+          });
+
+          yield* db.repos.saveIcon({ id: id(50), icon: null });
+          yield* resummarize(50);
+          expect(yield* enrich(50)).toMatchObject({ _tag: "Embedded" });
+          expect(iconQueue.sent).toHaveLength(1);
+
+          remotes.set(50, { description: "Icons", readme: { oid: oid("6"), text: "# Icons, renamed" } });
+          yield* resummarize(50);
+          expect(yield* enrich(50)).toMatchObject({ _tag: "Summarized" });
+          expect(iconQueue.sent.at(-1)).toMatchObject({ repoId: id(50), readmeOid: oid("6") });
         }),
-      ]);
-      expect(yield* get(50)).toMatchObject({
-        ownerType: "org",
-        ownerAvatarUrl: "https://avatars.githubusercontent.com/u/9?v=4",
-      });
+    );
 
-      yield* db.repos.saveIcon({ id: id(50), icon: null });
-      yield* resummarize(50);
-      expect(yield* enrich(50)).toMatchObject({ _tag: "Embedded" });
-      expect(iconQueue.sent).toHaveLength(1);
+    it.effect("queues icon work for a changed README even when the README read then fails the plan", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        remotes.set(51, { description: "Icons", readme: { oid: wideOid(5101), text: "# Icons" } });
+        yield* enrich(51);
+        yield* db.repos.saveIcon({ id: id(51), icon: null });
+        iconQueue.sent.length = 0;
 
-      remotes.set(50, { description: "Icons", readme: { oid: oid("6"), text: "# Icons, renamed" } });
-      yield* resummarize(50);
-      expect(yield* enrich(50)).toMatchObject({ _tag: "Summarized" });
-      expect(iconQueue.sent.at(-1)).toMatchObject({ repoId: id(50), readmeOid: oid("6") });
-    }),
-  );
+        remotes.set(51, { description: "Icons", readme: { oid: wideOid(5102), text: missingBlob } });
+        yield* resummarize(51);
+        expect(yield* enrich(51)).toMatchObject({ _tag: "Failed", error: { _tag: "NotFound" } });
+        expect(iconQueue.sent).toEqual([expect.objectContaining({ repoId: id(51), readmeOid: wideOid(5102) })]);
+      }),
+    );
 
-  it.effect("queues icon work for a changed README even when the README read then fails the plan", () =>
-    Effect.gen(function* () {
-      const db = yield* Db.Db;
-      remotes.set(51, { description: "Icons", readme: { oid: wideOid(5101), text: "# Icons" } });
-      yield* enrich(51);
-      yield* db.repos.saveIcon({ id: id(51), icon: null });
-      iconQueue.sent.length = 0;
+    it.effect("enriches a repo when the icon send fails, so an icon queue outage never holds up search", () =>
+      Effect.gen(function* () {
+        const failing = Layer.succeed(
+          IconQueue.IconQueue,
+          IconQueue.IconQueue.of({
+            send: (messages) => Effect.fail(new IconQueue.IconQueueFailed({ messages: messages.length, cause: null })),
+          }),
+        );
+        remotes.set(52, { description: "Queue down", readme: { oid: wideOid(5201), text: "# Queue down" } });
+        expect(
+          yield* enrich(52).pipe(Effect.provide(Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(failing)))),
+        ).toMatchObject({ _tag: "Summarized" });
+        expect(yield* get(52)).toMatchObject({ readmeOid: wideOid(5201), iconCheckedAt: null, embeddingModel });
+      }),
+    );
 
-      remotes.set(51, { description: "Icons", readme: { oid: wideOid(5102), text: missingBlob } });
-      yield* resummarize(51);
-      expect((yield* Effect.flip(enrich(51)))._tag).toBe("NotFound");
-      expect(iconQueue.sent).toEqual([expect.objectContaining({ repoId: id(51), readmeOid: wideOid(5102) })]);
-    }),
-  );
+    it.effect("keeps a new summary when its embedding fails, then embeds it with no model call", () =>
+      Effect.gen(function* () {
+        remotes.set(8, { description: "Chat app", readme: { oid: oid("2"), text: "# Chat" } });
+        expect(yield* enrich(8).pipe(using(failingEmbeddings))).toMatchObject({
+          _tag: "Failed",
+          error: { _tag: "AiRequestFailed" },
+        });
+        const kept = yield* get(8);
+        expect(kept).toMatchObject({ summaryReadmeOid: oid("2"), embeddingModel: null });
+        expect(kept.summary).toContain("Chat app");
 
-  it.effect("saves no facts when the icon send fails, so the retry still sees the change", () =>
-    Effect.gen(function* () {
-      const failing = Layer.succeed(
-        IconQueue.IconQueue,
-        IconQueue.IconQueue.of({
-          send: (messages) => Effect.fail(new IconQueue.IconQueueFailed({ messages: messages.length, cause: null })),
-        }),
-      );
-      remotes.set(52, { description: "Queue down", readme: { oid: wideOid(5201), text: "# Queue down" } });
-      expect(
-        (yield* Effect.flip(
-          enrich(52).pipe(Effect.provide(Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(failing)))),
-        ))._tag,
-      ).toBe("IconQueueFailed");
-      expect(yield* get(52)).toMatchObject({ readmeOid: null, summary: null });
+        const calls = prompts.length;
+        expect(yield* enrich(8)).toMatchObject({ _tag: "Embedded" });
+        expect(prompts.length).toBe(calls);
+      }),
+    );
 
-      iconQueue.sent.length = 0;
-      expect(yield* enrich(52)).toMatchObject({ _tag: "Summarized" });
-      expect(iconQueue.sent).toEqual([expect.objectContaining({ repoId: id(52), readmeOid: wideOid(5201) })]);
-    }),
-  );
+    it.effect("reports a stored repo with no node id and makes no GitHub call", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const { id: repoId, owner, name } = repo(9);
+        yield* db.repos.saveFacts({
+          id: repoId,
+          owner,
+          name,
+          description: null,
+          topics: [],
+          language: null,
+          license: null,
+          homepage: null,
+          createdAt: null,
+          pushedAt: null,
+          archived: false,
+          readmeOid: null,
+          ownerType: null,
+          ownerAvatarUrl: null,
+        });
+        const sent = github.sent.length;
+        expect(yield* enrichOne(repoId)).toEqual({ _tag: "NoNodeId", id: repoId });
+        expect(github.sent.length).toBe(sent);
+        expect(yield* failuresOf(9)).toEqual([{ enrich_failures: 1 }]);
+      }),
+    );
 
-  it.effect("keeps a new summary when its embedding fails, then embeds it with no model call", () =>
-    Effect.gen(function* () {
-      remotes.set(8, { description: "Chat app", readme: { oid: oid("2"), text: "# Chat" } });
-      expect((yield* Effect.flip(enrich(8).pipe(using(failingEmbeddings))))._tag).toBe("AiRequestFailed");
-      const kept = yield* get(8);
-      expect(kept).toMatchObject({ summaryReadmeOid: oid("2"), embeddingModel: null });
-      expect(kept.summary).toContain("Chat app");
+    it.effect("reports an id with no stored row as NotFound", () =>
+      Effect.gen(function* () {
+        expect(yield* enrichOne(id(10))).toEqual({ _tag: "NotFound", id: id(10) });
+      }),
+    );
 
-      const calls = prompts.length;
-      expect(yield* enrich(8)).toMatchObject({ _tag: "Embedded" });
-      expect(prompts.length).toBe(calls);
-    }),
-  );
+    it.effect("reports NotFound when the row is deleted while its embedding is made", () =>
+      Effect.gen(function* () {
+        const database = yield* TestDatabase.TestDatabase;
+        remotes.set(12, { description: "Clock app", readme: { oid: oid("4"), text: "# Clock" } });
+        const deleting = embeddingsWith((values) =>
+          database.query("delete from repos where id = $1", [id(12)]).pipe(Effect.as(vectors(values))),
+        );
+        expect(yield* enrich(12).pipe(using(deleting))).toEqual({ _tag: "NotFound", id: id(12) });
+      }),
+    );
 
-  it.effect("reports a stored repo with no node id and makes no GitHub call", () =>
-    Effect.gen(function* () {
-      const db = yield* Db.Db;
-      const { id: repoId, owner, name } = repo(9);
-      yield* db.repos.saveFacts({
-        id: repoId,
-        owner,
-        name,
-        description: null,
-        topics: [],
-        language: null,
-        license: null,
-        homepage: null,
-        createdAt: null,
-        pushedAt: null,
-        archived: false,
-        readmeOid: null,
-        ownerType: null,
-        ownerAvatarUrl: null,
-      });
-      const sent = github.sent.length;
-      expect(yield* (yield* EnrichRepo.EnrichRepo).enrichRepo(repoId)).toEqual({ _tag: "NoNodeId", id: repoId });
-      expect(github.sent.length).toBe(sent);
-      expect(yield* failuresOf(9)).toEqual([{ enrich_failures: 1 }]);
-    }),
-  );
-
-  it.effect("reports an id with no stored row as NotFound", () =>
-    Effect.gen(function* () {
-      expect(yield* (yield* EnrichRepo.EnrichRepo).enrichRepo(id(10))).toEqual({ _tag: "NotFound", id: id(10) });
-    }),
-  );
-
-  it.effect("reports NotFound when the row is deleted while its embedding is made", () =>
-    Effect.gen(function* () {
-      const database = yield* TestDatabase.TestDatabase;
-      remotes.set(12, { description: "Clock app", readme: { oid: oid("4"), text: "# Clock" } });
-      const deleting = embeddingsWith((values) =>
-        database.query("delete from repos where id = $1", [id(12)]).pipe(Effect.as(vectors(values))),
-      );
-      expect(yield* enrich(12).pipe(using(deleting))).toEqual({ _tag: "NotFound", id: id(12) });
-    }),
-  );
-
-  it.effect("reports NotFound when the row is deleted while the model runs", () =>
-    Effect.gen(function* () {
-      const database = yield* TestDatabase.TestDatabase;
-      remotes.set(11, { description: "Note app", readme: { oid: oid("3"), text: "# Notes" } });
-      const deleting = textGeneration((request) =>
-        database
-          .query("delete from repos where id = $1", [id(11)])
-          .pipe(Effect.as({ output: SummarizeFake.respond(request.prompt), usage })),
-      );
-      expect(yield* enrich(11).pipe(using(deleting))).toEqual({ _tag: "NotFound", id: id(11) });
-    }),
-  );
-});
+    it.effect("reports NotFound when the row is deleted while the model runs", () =>
+      Effect.gen(function* () {
+        const database = yield* TestDatabase.TestDatabase;
+        remotes.set(11, { description: "Note app", readme: { oid: oid("3"), text: "# Notes" } });
+        const deleting = textGeneration((request) =>
+          database
+            .query("delete from repos where id = $1", [id(11)])
+            .pipe(Effect.as({ output: SummarizeFake.respond(request.prompt), usage })),
+        );
+        expect(yield* enrich(11).pipe(using(deleting))).toEqual({ _tag: "NotFound", id: id(11) });
+      }),
+    );
+  },
+);
 
 const adapters = [
   ["PGlite", TestDatabase.layerMemory({ embeddingModel })],
@@ -573,7 +579,7 @@ for (const [adapter, database] of adapters) {
     it.effect("converges when a summary was saved without its embedding", () =>
       Effect.gen(function* () {
         remotes.set(23, { description: "Budget tracker", readme: { oid: oid("a"), text: "# Budget" } });
-        yield* Effect.flip(enrich(23).pipe(using(failingEmbeddings)));
+        yield* enrich(23).pipe(using(failingEmbeddings));
         expect(yield* enrich(23)).toMatchObject({ _tag: "Embedded", id: id(23) });
         expect(yield* enrich(23)).toEqual({ _tag: "Unchanged", id: id(23) });
       }),
@@ -747,7 +753,9 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
   it.effect("answers every repo directly when the whole batch job fails", () =>
     Effect.gen(function* () {
       remotes.set(38, { description: "Recipe app", readme: { oid: oid("8"), text: "# Recipes" } });
+      remotes.set(39, { description: "Menu app", readme: { oid: wideOid(39), text: "# Menus" } });
       let direct = 0;
+      let batches = 0;
       const failingBatch = Layer.succeed(
         TextGeneration.TextGeneration,
         TextGeneration.make({
@@ -762,16 +770,21 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
           batch: {
             timeout: Duration.hours(1),
             run: () =>
-              Effect.fail(new AiRequestFailed({ operation: "generate", model: "test/text", detail: "failed" })),
+              Effect.suspend(() => {
+                batches++;
+                return Effect.fail(
+                  new AiRequestFailed({ operation: "generate", model: "test/text", detail: "failed" }),
+                );
+              }),
           },
         }),
       );
-      const ids = yield* store([38]);
+      const ids = yield* store([38, 39]);
       const outcomes = yield* Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) => enricher.enrichRepos(ids)).pipe(
         using(failingBatch),
       );
-      expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Summarized"]);
-      expect(direct).toBe(1);
+      expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Summarized", "Summarized"]);
+      expect({ batches, direct }).toEqual({ batches: 1, direct: 2 });
     }),
   );
 

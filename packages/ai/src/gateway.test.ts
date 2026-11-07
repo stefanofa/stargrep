@@ -453,13 +453,22 @@ describe("gateway batch", () => {
     const keyOf = (start: StartOptions | undefined) =>
       (start?.providerOptions?.gateway as { readonly idempotencyKey?: string } | undefined)?.idempotencyKey;
     return Effect.gen(function* () {
-      yield* Summarize.summarizeBatch([repo]);
-      yield* Summarize.summarizeBatch([repo]);
-      yield* Summarize.summarizeBatch([{ ...repo, readme: "a new README" }]);
+      yield* Summarize.summarizeBatch([repo, repo]);
+      yield* Summarize.summarizeBatch([repo, repo]);
+      yield* Summarize.summarizeBatch([repo, { ...repo, readme: "a new README" }]);
       const [first, again, changed] = fake.starts.map(keyOf);
       expect(first).toMatch(/^stargrep-batch-[0-9a-f]{64}$/);
       expect(again).toBe(first);
       expect(changed).not.toBe(first);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  it.effect("answers a single prompt directly, without starting a batch job", () => {
+    const fake = fakeBatch({ items: [] });
+    return Effect.gen(function* () {
+      expect(yield* Summarize.summarizeBatch([repo])).toEqual([Result.succeed(validSummary)]);
+      expect(fake.starts).toHaveLength(0);
+      expect(fake.direct.calls).toBe(1);
     }).pipe(Effect.provide(fake.layer));
   });
 
@@ -474,14 +483,14 @@ describe("gateway batch", () => {
 
   it.effect("retries a failed start, status check, and result read without starting a second job", () => {
     const fake = fakeBatch({
-      items: [succeeded("0", JSON.stringify(validSummary))],
+      items: [succeeded("0", JSON.stringify(validSummary)), succeeded("1", JSON.stringify(validSummary))],
       throwOnce: ["start", "status", "results"],
     });
     return Effect.gen(function* () {
-      const fiber = yield* Effect.forkChild(Summarize.summarizeBatch([repo]));
+      const fiber = yield* Effect.forkChild(Summarize.summarizeBatch([repo, repo]));
       // The idempotency key's SHA-256 runs on real time, so the clock steps start once the job is first sent.
       yield* Effect.promise(() => fake.firstStart);
-      expect(yield* settle(fiber)).toEqual([Result.succeed(validSummary)]);
+      expect(yield* settle(fiber)).toEqual([Result.succeed(validSummary), Result.succeed(validSummary)]);
       expect(fake.calls).toEqual({ start: 2, status: 2, results: 2 });
       expect(fake.starts).toHaveLength(1);
       expect(fake.direct.calls).toBe(0);
@@ -688,10 +697,11 @@ describe("gateway privacy", () => {
   it.effect("keeps rejected batch output out of every span when the direct fallback recovers", () =>
     throughGateway(JSON.stringify(validSummary), ({ authorized }) =>
       Effect.gen(function* () {
-        expect(yield* Summarize.summarizeBatch([{ ...repo, readme: keyCanary }])).toEqual([
+        expect(yield* Summarize.summarizeBatch([{ ...repo, readme: keyCanary }, repo])).toEqual([
+          Result.succeed(validSummary),
           Result.succeed(validSummary),
         ]);
-        expect(authorized).toEqual([true, true, true]);
+        expect(authorized).toEqual([true, true, true, true]);
       }),
     ),
   );
@@ -699,11 +709,18 @@ describe("gateway privacy", () => {
   it.effect("keeps rejected output out of every span when the direct fallback fails too", () =>
     throughGateway(rejected, ({ spans }) =>
       Effect.gen(function* () {
-        const [answer] = yield* Summarize.summarizeBatch([{ ...repo, readme: keyCanary }]);
-        expect(answer !== undefined && Result.isFailure(answer) && answer.failure._tag).toBe("AiOutputInvalid");
+        const answers = yield* Summarize.summarizeBatch([{ ...repo, readme: keyCanary }, repo]);
+        expect(answers.map((answer) => Result.isFailure(answer) && answer.failure._tag)).toEqual([
+          "AiOutputInvalid",
+          "AiOutputInvalid",
+        ]);
         expect((yield* Effect.flip(Summarize.summarize({ ...repo, readme: keyCanary })))._tag).toBe("AiOutputInvalid");
         const failed = spans.filter((span) => span.status._tag === "Ended" && Exit.isFailure(span.status.exit));
-        expect(failed.map((span) => span.name)).toEqual(["TextGeneration.generate", "TextGeneration.generate"]);
+        expect(failed.map((span) => span.name)).toEqual([
+          "TextGeneration.generate",
+          "TextGeneration.generate",
+          "TextGeneration.generate",
+        ]);
       }),
     ),
   );

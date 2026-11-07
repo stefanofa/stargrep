@@ -206,7 +206,6 @@ describe("enrich-repo consumer for signed-in users", () => {
       EnrichRepo.EnrichRepo,
       Effect.map(TokenGate.TokenGate, (gate) =>
         EnrichRepo.EnrichRepo.of({
-          enrichRepo: () => Effect.die("unused"),
           enrichRepos: (ids) => {
             const paidBy = owners.get(gate) ?? "server";
             asked.push([paidBy, ids]);

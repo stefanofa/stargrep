@@ -19,7 +19,7 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { IconQueue, type IconQueueFailed, iconRequest, needsIconCheck } from "../icons/icon-queue.ts";
+import { IconQueue, iconRequest, needsIconCheck } from "../icons/icon-queue.ts";
 import * as BlobStore from "./blob-store.ts";
 import * as EnrichRetry from "./enrich-retry.ts";
 
@@ -80,14 +80,11 @@ const repoFailed = (outcome: Enrichment): boolean =>
     Embedded: () => false,
   });
 
-export type EnrichRepoAbort = DbQueryFailed | DbRowInvalid | EmbeddingModelMismatch | GitHubError | IconQueueFailed;
+export type EnrichRepoAbort = DbQueryFailed | DbRowInvalid | EmbeddingModelMismatch | GitHubError;
 
 export class EnrichRepo extends Context.Service<
   EnrichRepo,
   {
-    readonly enrichRepo: (
-      id: RepoId,
-    ) => Effect.Effect<Exclude<Enrichment, { readonly _tag: "Failed" }>, EnrichRepoError | EnrichRepoAbort>;
     readonly enrichRepos: (ids: ReadonlyArray<RepoId>) => Effect.Effect<ReadonlyArray<Enrichment>, EnrichRepoAbort>;
   }
 >()("@stargrep/core/repos/enrich-repo/EnrichRepo") {}
@@ -108,10 +105,6 @@ interface Embeddable {
 }
 
 type Step<A> = Result.Result<A, Enrichment>;
-
-type Summarizer = (
-  repos: ReadonlyArray<Summarize.RepoFacts>,
-) => Effect.Effect<TextGeneration.BatchResults<Summarize.RepoSummary>, never, TextGeneration.TextGeneration>;
 
 const batchSize = 250;
 const batchConcurrency = 4;
@@ -220,16 +213,23 @@ const make = Effect.gen(function* () {
     const nodeIds = located.flatMap((step) => (Result.isSuccess(step) ? [step.success.nodeId] : []));
     const facts = nodeIds.length === 0 ? [] : yield* github.repoFacts(nodeIds);
     const factsById = new Map<number, RepoFacts>(facts.map((entry) => [entry.id, entry]));
-    // planOne saves the new README ID and homepage, so the icon work goes out first, decided from the rows as they
-    // were. A failed send stops the chunk before anything is saved or paid for, and the retry sees the same change.
-    yield* icons.send(
-      located.flatMap((step) => {
-        const found = Result.isSuccess(step) ? factsById.get(step.success.id) : undefined;
-        return Result.isSuccess(step) && found !== undefined && needsIconCheck(step.success, found)
-          ? [iconRequest(found)]
-          : [];
-      }),
-    );
+    // planOne saves the new README ID and homepage, so the icon work is decided from the rows as they were. A failed
+    // send only logs, because the icon backfill later checks a never-checked icon and the 30-day refresh a changed one.
+    yield* icons
+      .send(
+        located.flatMap((step) => {
+          const found = Result.isSuccess(step) ? factsById.get(step.success.id) : undefined;
+          return Result.isSuccess(step) && found !== undefined && needsIconCheck(step.success, found)
+            ? [iconRequest(found)]
+            : [];
+        }),
+      )
+      .pipe(
+        Effect.catchTags({
+          IconQueueFailed: (error) =>
+            Effect.logWarning("Icon send failed, enriching anyway", { messages: error.messages }),
+        }),
+      );
     return yield* Effect.forEach(
       located,
       (step) =>
@@ -248,17 +248,16 @@ const make = Effect.gen(function* () {
           summary: answer.success,
         });
 
-  const summarizeAll = Effect.fn("EnrichRepo.summarizeAll")(function* (
-    steps: ReadonlyArray<Step<Job>>,
-    summarizer: Summarizer,
-  ) {
+  const summarizeAll = Effect.fn("EnrichRepo.summarizeAll")(function* (steps: ReadonlyArray<Step<Job>>) {
     const asked = steps.flatMap((step) =>
       Result.isSuccess(step) && step.success.work._tag === "Summarize" ? [step.success.work.prompt] : [],
     );
     const answers =
       asked.length === 0
         ? []
-        : yield* summarizer(asked).pipe(Effect.provideService(TextGeneration.TextGeneration, textGeneration));
+        : yield* Summarize.summarizeBatch(asked).pipe(
+            Effect.provideService(TextGeneration.TextGeneration, textGeneration),
+          );
     let next = 0;
     return yield* Effect.forEach(steps, (step): Effect.Effect<Step<Embeddable>, DbQueryFailed> => {
       if (Result.isFailure(step)) return Effect.succeed(Result.fail(step.failure));
@@ -313,12 +312,9 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const enrichChunk = Effect.fn("EnrichRepo.enrichChunk")(function* (
-    ids: ReadonlyArray<RepoId>,
-    summarizer: Summarizer,
-  ) {
+  const enrichChunk = Effect.fn("EnrichRepo.enrichChunk")(function* (ids: ReadonlyArray<RepoId>) {
     const planned = yield* plan(ids);
-    const summarized = yield* summarizeAll(planned, summarizer);
+    const summarized = yield* summarizeAll(planned);
     const outcomes = (yield* embedAll(summarized)).map(Result.merge);
     yield* db.repos.recordEnrichFailures({
       ids: outcomes.flatMap((outcome) => (repoFailed(outcome) ? [outcome.id] : [])),
@@ -328,27 +324,16 @@ const make = Effect.gen(function* () {
     return outcomes;
   });
 
-  const summarizeEach: Summarizer = (repos) =>
-    Effect.forEach(repos, (facts) => Effect.result(Summarize.summarize(facts)));
-
-  const enrichRepo = Effect.fn("EnrichRepo.enrichRepo")(function* (id: RepoId) {
-    const outcome = yield* answerAt(yield* enrichChunk([id], summarizeEach), 0);
-    if (outcome._tag === "Failed") return yield* outcome.error;
-    return outcome;
-  });
-
   const enrichRepos = Effect.fn("EnrichRepo.enrichRepos")(function* (ids: ReadonlyArray<RepoId>) {
     // Sorting keeps each chunk's contents the same from run to run, so a rerun sends the same batch
     // request and the Gateway's idempotency key finds the job that run already paid for.
     const chunks = Arr.chunksOf(Arr.sort(Arr.dedupe(ids), Order.Number), batchSize);
-    const outcomes = yield* Effect.forEach(chunks, (chunk) => enrichChunk(chunk, Summarize.summarizeBatch), {
-      concurrency: batchConcurrency,
-    });
+    const outcomes = yield* Effect.forEach(chunks, enrichChunk, { concurrency: batchConcurrency });
     const byId = new Map<number, Enrichment>(outcomes.flat().map((outcome) => [outcome.id, outcome]));
     return yield* Effect.forEach(ids, (id) => Effect.orDie(Effect.fromNullishOr(byId.get(id))));
   });
 
-  return EnrichRepo.of({ enrichRepo, enrichRepos });
+  return EnrichRepo.of({ enrichRepos });
 });
 
 export const layer = Layer.effect(EnrichRepo, make);

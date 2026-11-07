@@ -97,8 +97,9 @@ export const make = (options: {
     return Effect.result(answered);
   };
 
+  // A batch job of one prompt only adds minutes of waiting, so that prompt is answered directly.
   const runBatch = (request: RunBatchRequest) =>
-    batch === undefined
+    batch === undefined || request.prompts.length < 2
       ? Effect.succeed([])
       : batch.run(request).pipe(
           Effect.timeoutOrElse({ duration: batch.timeout, orElse: () => Effect.fail(timedOut(batch.timeout)) }),
