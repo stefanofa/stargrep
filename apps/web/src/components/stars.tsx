@@ -22,22 +22,23 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { keywordTerms, normalize } from "../lib/keyword.ts";
-import { getLibrary, type Library, nothingSynced, useRecoveries } from "../lib/library-collection.ts";
+import { getLibrary, type Library, useRecoveries } from "../lib/library-collection.ts";
 import { type PageData, type PageRequest, pageOwner, type Session } from "../lib/page-data.ts";
-import { pageView } from "../lib/page-view.ts";
+import { liveView } from "../lib/page-view.ts";
 import { now, startsIn, toDetail } from "../lib/present.ts";
 import { withReply } from "../lib/results.ts";
 import { useReveal } from "../lib/reveal.ts";
 import type { Viewer } from "../lib/rpc.ts";
 import { librarySorts, type Params, searchSorts } from "../lib/search-params.ts";
-import { type Body, type Stage, stageOf } from "../lib/search-state.ts";
+import { type Arriving, type Body, pageView, type Retry, type Stage, stageOf } from "../lib/search-state.ts";
 import { useStoredView } from "../lib/stored-view.ts";
-import { libraryTrouble, type Trouble, troubleCopy } from "../lib/trouble.ts";
+import { nothingSynced } from "../lib/sync-status.ts";
+import { libraryTrouble, type Trouble } from "../lib/trouble.ts";
 import { useSemanticSearch } from "../lib/use-semantic.ts";
 import { useSync } from "../lib/use-sync.ts";
 import { AccountMenu } from "./account-menu.tsx";
-import { Hero, heroCopy, TryChips } from "./landing-hero.tsx";
-import { type Arriving, LibraryPlaceholder, LibraryView } from "./library-view.tsx";
+import { Hero, TryChips } from "./landing-hero.tsx";
+import { LibraryPlaceholder, LibraryView } from "./library-view.tsx";
 import { OwnerPill } from "./owner-pill.tsx";
 
 // A navigation in the browser starts from the session the server loaded. The page reads the rest once it mounts.
@@ -101,8 +102,6 @@ function Waiting({
     <LibraryPlaceholder view={view} arriving={arriving} butter={!visitor} />
   );
 }
-
-const idlePlaceholder = "the rust tui library I starred last year";
 
 type Text = Parameters<typeof ilike>[0];
 
@@ -223,16 +222,14 @@ function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Li
       ? undefined
       : q.from({ repo: collection }).where(({ repo }) => containsEvery(repo.text, [head, ...rest]));
   });
-  const isReady = collection !== undefined && queried;
-  // The server's first answer read every page, so it stays until the library has every page too. A view of the first
-  // page alone can read differently, such as "found 20 so far" for a library still reading.
   const whole = useWhole(library);
   const { watch, retry } = useSync(owner, reload, first?.sync ?? data.sync ?? undefined, data.refusal ?? undefined);
   const sync = watch.kind === "watching" ? watch.status : undefined;
   const starred = data.own ? (data.viewer?.starredCount ?? null) : (sync?.starredTotal ?? null);
   const stage = stageOf({ sync, entries, starred });
   const estimate = useTimeLeft(stage);
-  const timeLeft = stage.name === "importing" && stage.line !== null ? startsIn(stage.line.startsAt, now()) : estimate;
+  const timeLeft =
+    stage.name === "importing" && stage.phase.kind === "in-line" ? startsIn(stage.phase.startsAt, now()) : estimate;
   const semantic = useSemanticSearch(owner, query, {
     read: sync?.enrichment.read,
     settled: stage.name === "ready",
@@ -241,40 +238,46 @@ function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Li
 
   const searching = terms.length > 0 || semantic.pending || semantic.results.length > 0;
   const { view, sort, controls } = useControls(searching, data.own);
-  const live = pageView({
-    query,
-    entries,
-    matched,
-    find: (id) => collection?.get(id),
-    sync,
-    starred,
-    semantic,
-    sort,
-    at,
-    timeLeft,
-    whose: data.own ? undefined : owner,
-  });
-  const frozen =
-    first !== null && !(isReady && whole) && normalize(query) === normalize(first.query) ? first.view : undefined;
-  const state = frozen ?? live;
-  const ready = isReady || frozen !== undefined || (empty && entries.length === 0);
   const trouble: Trouble | undefined =
     watch.kind !== "watching" ? watch.kind : isLoadingError ? libraryTrouble(library?.failure()) : undefined;
-  const troubled = trouble === undefined ? undefined : troubleCopy(trouble, owner, data.own);
   const surprised = useSurprise(query, !semantic.pending && semantic.results.length > 0);
-  const pose = troubled?.pose ?? (surprised && state.pose === "idle" ? "surprised" : state.pose);
-  useEffect(() => onPose(pose), [onPose, pose]);
-
   const visitor = data.viewer === null;
-  const reveal = useReveal(query, frozen !== undefined);
-  const hero = heroCopy({ stage, troubled: trouble !== undefined, owner, demoLogin: data.config.demoLogin });
+  const page = pageView({
+    owner,
+    own: data.own,
+    visitor,
+    demoLogin: data.config.demoLogin,
+    query,
+    stage,
+    live: liveView({
+      query,
+      stage,
+      entries,
+      matched,
+      find: (id) => collection?.get(id),
+      sync,
+      semantic,
+      sort,
+      at,
+      timeLeft,
+      whose: data.own ? undefined : owner,
+    }),
+    first: first ?? undefined,
+    // A login with nothing synced has nothing to load, so its page shows its import before the library loads.
+    library: { ready: (collection !== undefined && queried) || (empty && entries.length === 0), whole },
+    trouble,
+    surprised,
+  });
+  useEffect(() => onPose(page.pose), [onPose, page.pose]);
+
+  const reveal = useReveal(query, page.painted);
   const butterPose = reveal.phase === "typing" ? "thinking" : reveal.phase === "settled" ? "happy" : "idle";
 
   const retryLibrary = () => {
     setRetrying(true);
     library?.reload().finally(() => setRetrying(false));
   };
-  const tryAgain = troubled?.retry === "sync" ? retry : troubled?.retry === "library" ? retryLibrary : undefined;
+  const tryAgain: Record<Retry, () => void> = { sync: retry, library: retryLibrary };
   const search = (next: string) => {
     setQuery(next);
     navigate({ to: ".", search: (previous) => ({ ...previous, q: next === "" ? undefined : next }), replace: true });
@@ -290,6 +293,24 @@ function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Li
 
   const body = (current: Body) => {
     switch (current.kind) {
+      case "trouble":
+        return (
+          <EmptyTile pose={page.pose} heading={current.heading} body={current.detail}>
+            {current.retry && (
+              <Button
+                variant="primary"
+                size="lg"
+                className="mt-2"
+                disabled={retrying}
+                onClick={tryAgain[current.retry]}
+              >
+                Try again
+              </Button>
+            )}
+          </EmptyTile>
+        );
+      case "loading":
+        return <Waiting view={view} searching={current.searching} arriving={current.arriving} visitor={visitor} />;
       case "library":
         return (
           <LibraryView
@@ -298,8 +319,8 @@ function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Li
             view={view}
             sort={sort}
             language={params.lang}
-            arriving={stage.name === "importing" ? { total: stage.total } : undefined}
-            pose={pose}
+            arriving={current.arriving}
+            pose={page.pose}
             butter={!visitor}
             onOpen={open}
           />
@@ -307,58 +328,48 @@ function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Li
       case "results":
         return <Results view={view} groups={current.groups} hero={visitor ? "card" : "butter"} onOpen={open} />;
       case "empty-reading":
-        return <EmptyTile pose={pose} ring={current.ring} {...current.copy} />;
+        return <EmptyTile pose={page.pose} ring={current.ring} {...current.copy} />;
       case "empty":
         return (
-          <EmptyTile pose={pose} {...current.copy}>
+          <EmptyTile pose={page.pose} {...current.copy}>
             <RephraseChips phrases={current.phrases} onPick={search} />
           </EmptyTile>
         );
       case "failed":
-        return <EmptyTile pose={pose} {...current.copy} />;
+        return <EmptyTile pose={page.pose} {...current.copy} />;
     }
   };
 
+  const { retry: again, ...status } = page.status;
+
   return (
     <>
-      {visitor && <Hero {...hero} pose={butterPose} />}
+      {page.hero && <Hero {...page.hero} pose={butterPose} />}
       <div data-reveal-tile className="contents">
         <SearchTile
           query={reveal.typed ?? query}
           onQueryChange={search}
           label={data.own ? "Search your stars" : `Search @${owner}'s stars`}
-          placeholder={stage.name === "importing" ? "search what has arrived" : idlePlaceholder}
+          placeholder={page.placeholder}
           className={dock}
           owner={data.own ? undefined : <OwnerPill owner={owner} viewer={data.viewer} config={data.config} />}
-          progress={ready ? state.progress : undefined}
+          progress={page.progress}
           status={
-            troubled !== undefined ? (
-              <StatusLine {...troubled.status} />
-            ) : !ready ? (
-              <StatusLine icon="busy" label={`loading ${data.own ? "your stars" : `@${owner}'s stars`}`} />
-            ) : (
-              <StatusLine
-                icon={state.status.icon}
-                label={state.status.label}
-                phoneLabel={state.status.phoneLabel}
-                detail={state.status.detail}
-                phoneDetail={state.status.phoneDetail}
-                continues={state.status.continues}
-                instant={state.status.instant}
-                action={
-                  state.status.retry && (
-                    <Button
-                      variant="bare"
-                      size="default"
-                      className="max-sm:h-[18px] max-sm:px-0 max-sm:text-sm max-sm:after:-inset-x-2 max-sm:after:-inset-y-2.5 max-sm:hover:bg-transparent"
-                      onClick={retry}
-                    >
-                      try again
-                    </Button>
-                  )
-                }
-              />
-            )
+            <StatusLine
+              {...status}
+              action={
+                again && (
+                  <Button
+                    variant="bare"
+                    size="default"
+                    className="max-sm:h-[18px] max-sm:px-0 max-sm:text-sm max-sm:after:-inset-x-2 max-sm:after:-inset-y-2.5 max-sm:hover:bg-transparent"
+                    onClick={tryAgain[again]}
+                  >
+                    try again
+                  </Button>
+                )
+              }
+            />
           }
           controls={controls}
         />
@@ -370,24 +381,7 @@ function OwnerStars({ data, library, empty, onPose }: StarsProps & { library: Li
         />
       )}
       <div data-reveal-results className="flex flex-col gap-gap max-sm:pb-44">
-        {troubled !== undefined ? (
-          <EmptyTile pose={troubled.pose} heading={troubled.heading} body={troubled.detail}>
-            {tryAgain && (
-              <Button variant="primary" size="lg" className="mt-2" disabled={retrying} onClick={tryAgain}>
-                Try again
-              </Button>
-            )}
-          </EmptyTile>
-        ) : !ready ? (
-          <Waiting
-            view={view}
-            searching={terms.length > 0}
-            arriving={stage.name === "importing" ? { total: stage.total } : undefined}
-            visitor={visitor}
-          />
-        ) : (
-          body(state.body)
-        )}
+        {body(page.body)}
       </div>
       <RepoPanel
         repo={opened && toDetail(opened, at, data.own ? undefined : owner)}

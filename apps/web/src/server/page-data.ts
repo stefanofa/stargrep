@@ -10,10 +10,11 @@ import {
   pageOwner,
   type Session,
 } from "../lib/page-data.ts";
-import { matchesEvery, pageView } from "../lib/page-view.ts";
+import { liveView, matchesEvery } from "../lib/page-view.ts";
 import { now } from "../lib/present.ts";
 import type { Client, Viewer } from "../lib/rpc.ts";
 import { validateParams } from "../lib/search-params.ts";
+import { stageOf } from "../lib/search-state.ts";
 import { allStars } from "../lib/stars-pages.ts";
 import { rememberedRefusal } from "../lib/trouble.ts";
 import { serveApi } from "./app.ts";
@@ -56,13 +57,13 @@ const firstAnswer = async (client: Client, login: string, query: string, sort: A
   const entries = repos.map((repo) => ({ ...repo, text: searchText(repo) }));
   const byId = new Map(entries.map((entry) => [entry.id as number, entry]));
   const at = now();
-  const view = pageView({
+  const view = liveView({
     query,
+    stage: stageOf({ sync, entries, starred: sync.starredTotal }),
     entries,
     matched: matchesEvery(entries, keywordTerms(query)),
     find: (id) => byId.get(id),
     sync,
-    starred: sync.starredTotal,
     semantic: { results: hits, pending: false, failed: false },
     sort: sort ?? "best",
     at,

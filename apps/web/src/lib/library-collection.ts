@@ -1,7 +1,7 @@
 import { createCollection } from "@tanstack/db";
 import { useEffect, useState } from "react";
 import { searchText } from "./keyword.ts";
-import { api, type LibraryRepo, type SyncStatus } from "./rpc.ts";
+import { api, type LibraryRepo } from "./rpc.ts";
 import { starsPages } from "./stars-pages.ts";
 
 export interface LibraryEntry extends LibraryRepo {
@@ -95,11 +95,6 @@ export const makeLibrary = (load: () => Pages, id = "library") => {
 export type Library = ReturnType<typeof makeLibrary>;
 
 const libraries = new Map<string, Library>();
-
-// A login whose sync status shows no stars synced yet has an empty library, so its first load asks for nothing. Its
-// import reloads the library as stars land.
-export const nothingSynced = (sync: SyncStatus | null) =>
-  sync !== null && sync.syncedAt === null && sync.enrichment.total === 0;
 
 export const getLibrary = (login: string, own: boolean, empty: boolean) => {
   const key = `${own ? "own" : "public"}:${login.toLowerCase()}`;

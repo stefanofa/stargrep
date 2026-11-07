@@ -1,5 +1,8 @@
-import type { PipPose, Result, ResultGroup, StatusIcon } from "@stargrep/ui";
-import type { EnrichmentProgress, LibraryRepo, SyncStatus } from "./rpc.ts";
+import type { PipPose, Result, ResultGroup, StatusIcon, TileProgress } from "@stargrep/ui";
+import { keywordTerms, normalize } from "./keyword.ts";
+import type { LibraryRepo, SyncStatus } from "./rpc.ts";
+import { readingIncomplete } from "./sync-status.ts";
+import type { Trouble } from "./trouble.ts";
 
 const count = new Intl.NumberFormat("en");
 const n = (value: number) => count.format(value);
@@ -8,12 +11,16 @@ const stars = (value: number) => `${n(value)} ${value === 1 ? "star" : "stars"}`
 export const factsPending = (repo: Pick<LibraryRepo, "stars" | "pushedAt">) =>
   repo.stars === null && repo.pushedAt === null;
 
-export const readingIncomplete = (enrichment: EnrichmentProgress) =>
-  enrichment.read + enrichment.failed < enrichment.total;
-
 export const fewNewStars = 20;
 
 export type LastSync = "done" | "failed-first" | "failed-refresh";
+
+// Where a first import stands. Nobody asks for it until the page is open in a visible tab. Then it waits in line for
+// GitHub budget, or runs.
+export type ImportPhase =
+  | { readonly kind: "not-asked" }
+  | { readonly kind: "in-line"; readonly ahead: number; readonly startsAt: string }
+  | { readonly kind: "running" };
 
 export type Stage =
   | {
@@ -21,13 +28,25 @@ export type Stage =
       readonly done: number;
       readonly total: number | null;
       readonly read: number | null;
-      readonly line: { readonly ahead: number; readonly startsAt: string } | null;
-      // Nobody has asked for the import yet. The page asks once it is open in a visible tab.
-      readonly starting: boolean;
+      readonly phase: ImportPhase;
     }
   | { readonly name: "refreshing"; readonly total: number; readonly arriving: number }
   | { readonly name: "reading"; readonly read: number; readonly settled: number; readonly total: number }
   | { readonly name: "ready"; readonly total: number; readonly failed: number; readonly lastSync: LastSync };
+
+const importPhase = (sync: SyncStatus | undefined): ImportPhase | undefined => {
+  if (sync === undefined || sync.syncedAt !== null) return undefined;
+  switch (sync.state) {
+    case "unknown":
+      return { kind: "not-asked" };
+    case "waiting":
+      return { kind: "in-line", ...sync.waiting };
+    case "queued":
+      return { kind: "running" };
+    default:
+      return undefined;
+  }
+};
 
 export const stageOf = ({
   sync,
@@ -39,16 +58,16 @@ export const stageOf = ({
   starred: number | null;
 }): Stage => {
   const enrichment = sync?.enrichment ?? null;
-  const pending = sync?.state === "queued" || sync?.state === "waiting";
-  if ((pending || sync?.state === "unknown") && sync?.syncedAt === null)
+  const phase = importPhase(sync);
+  if (phase !== undefined)
     return {
       name: "importing",
       done: entries.length,
       total: starred === null ? null : Math.max(starred, entries.length),
       read: enrichment?.read ?? null,
-      line: sync.waiting ?? null,
-      starting: sync.state === "unknown",
+      phase,
     };
+  const pending = sync?.state === "queued" || sync?.state === "waiting";
   const arriving = entries.filter(factsPending).length;
   const backlog = enrichment === null ? 0 : enrichment.total - enrichment.read - enrichment.failed;
   if (pending || (arriving > 0 && backlog > 0 && backlog <= fewNewStars))
@@ -72,6 +91,8 @@ type Answer =
   | { readonly kind: "none" }
   | { readonly kind: "failed" };
 
+export type Retry = "sync" | "library";
+
 export interface Status {
   readonly icon: StatusIcon;
   readonly label: string;
@@ -79,15 +100,9 @@ export interface Status {
   readonly detail?: string;
   readonly phoneDetail?: string;
   readonly continues?: boolean;
-  readonly retry?: boolean;
   readonly instant?: boolean;
-}
-
-export interface Progress {
-  readonly value: number;
-  readonly max: number;
-  readonly label: string;
-  readonly text: string;
+  // The status line offers to try this again.
+  readonly retry?: Retry;
 }
 
 export interface EmptyCopy {
@@ -96,16 +111,22 @@ export interface EmptyCopy {
   readonly meta?: string;
 }
 
+export interface Arriving {
+  readonly total: number | null;
+}
+
 export type Body =
-  | { readonly kind: "library" }
+  | { readonly kind: "loading"; readonly searching: boolean; readonly arriving: Arriving | undefined }
+  | { readonly kind: "library"; readonly arriving: Arriving | undefined }
   | { readonly kind: "results"; readonly groups: ReadonlyArray<ResultGroup> }
   | { readonly kind: "empty-reading"; readonly copy: EmptyCopy; readonly ring: number | undefined }
   | { readonly kind: "empty"; readonly copy: EmptyCopy; readonly phrases: ReadonlyArray<string> }
-  | { readonly kind: "failed"; readonly copy: EmptyCopy };
+  | { readonly kind: "failed"; readonly copy: EmptyCopy }
+  | { readonly kind: "trouble"; readonly heading: string; readonly detail: string; readonly retry: Retry | undefined };
 
 export interface SearchView {
   readonly status: Status;
-  readonly progress: Progress | undefined;
+  readonly progress: TileProgress | undefined;
   readonly pose: PipPose;
   readonly body: Body;
 }
@@ -122,6 +143,8 @@ export interface Search {
 
 const placeholdersAlone = 4;
 const placeholdersAfter = 2;
+
+type Importing = Extract<Stage, { name: "importing" }>;
 
 type Underway = Extract<Stage, { name: "importing" | "reading" }>;
 
@@ -147,7 +170,7 @@ export type Whose = string | undefined;
 
 const theirs = (whose: Whose) => (whose === undefined ? "your stars" : `@${whose}'s stars`);
 
-const progressOf = (stage: Stage, whose: Whose): Progress | undefined => {
+const progressOf = (stage: Stage, whose: Whose): TileProgress | undefined => {
   if (stage.name === "importing" && stage.total !== null)
     return {
       value: stage.done,
@@ -168,21 +191,21 @@ const progressOf = (stage: Stage, whose: Whose): Progress | undefined => {
 const withTime = (text: string, timeLeft: string | undefined) =>
   timeLeft === undefined ? text : `${text} · ${timeLeft}`;
 
-const browsing = (stage: Stage, synced: string | undefined, timeLeft: string | undefined, whose: Whose): Status => {
-  switch (stage.name) {
-    case "importing":
-      if (stage.starting)
-        return {
-          icon: "paused",
-          label: `ready to import ${theirs(whose)}`,
-          ...(whose === undefined ? {} : { phoneLabel: "ready to import" }),
-        };
-      if (stage.line !== null)
-        return {
-          icon: "busy",
-          label: "in line to import",
-          detail: withTime(stage.line.ahead === 0 ? "next up" : `${n(stage.line.ahead)} ahead`, timeLeft),
-        };
+const importingStatus = (stage: Importing, timeLeft: string | undefined, whose: Whose): Status => {
+  switch (stage.phase.kind) {
+    case "not-asked":
+      return {
+        icon: "paused",
+        label: `ready to import ${theirs(whose)}`,
+        ...(whose === undefined ? {} : { phoneLabel: "ready to import" }),
+      };
+    case "in-line":
+      return {
+        icon: "busy",
+        label: "in line to import",
+        detail: withTime(stage.phase.ahead === 0 ? "next up" : `${n(stage.phase.ahead)} ahead`, timeLeft),
+      };
+    case "running":
       return {
         icon: "busy",
         label: `importing ${theirs(whose)}`,
@@ -192,6 +215,13 @@ const browsing = (stage: Stage, synced: string | undefined, timeLeft: string | u
             ? `${n(stage.done)} imported so far`
             : withTime(`${n(stage.done)} of ${n(stage.total)}`, timeLeft),
       };
+  }
+};
+
+const browsing = (stage: Stage, synced: string | undefined, timeLeft: string | undefined, whose: Whose): Status => {
+  switch (stage.name) {
+    case "importing":
+      return importingStatus(stage, timeLeft, whose);
     case "refreshing":
       return stage.arriving === 0
         ? { icon: "busy", label: "checking for new stars" }
@@ -209,9 +239,9 @@ const browsing = (stage: Stage, synced: string | undefined, timeLeft: string | u
       };
     case "ready":
       if (stage.lastSync === "failed-refresh")
-        return { icon: "failed", label: "couldn't check", detail: "for new stars", continues: true, retry: true };
+        return { icon: "failed", label: "couldn't check", detail: "for new stars", continues: true, retry: "sync" };
       if (stage.lastSync === "failed-first")
-        return { icon: "failed", label: "sync didn't finish", detail: `${stars(stage.total)} so far`, retry: true };
+        return { icon: "failed", label: "sync didn't finish", detail: `${stars(stage.total)} so far`, retry: "sync" };
       return { icon: "synced", label: stars(stage.total), ...(synced === undefined ? {} : { detail: synced }) };
   }
 };
@@ -330,17 +360,20 @@ const failedCopy: EmptyCopy = {
   body: "the search didn't answer. try again in a moment.",
 };
 
+const arrivingOf = (stage: Stage): Arriving | undefined =>
+  stage.name === "importing" ? { total: stage.total } : undefined;
+
 const bodyOf = (
   stage: Stage,
   answer: Answer,
   search: Search,
-  progress: Progress | undefined,
+  progress: TileProgress | undefined,
   timeLeft: string | undefined,
   whose: Whose,
 ): Body => {
   switch (answer.kind) {
     case "browsing":
-      return { kind: "library" };
+      return { kind: "library", arriving: arrivingOf(stage) };
     case "searching":
     case "found":
       return { kind: "results", groups: groupsOf(stage, search) };
@@ -383,4 +416,168 @@ export const searchView = ({
     pose: poseOf(stage, answer),
     body: bodyOf(stage, answer, search, progress, timeLeft, whose),
   };
+};
+
+interface TroubleCopy {
+  readonly status: Status;
+  readonly heading: string;
+  readonly detail: string;
+  readonly pose: PipPose;
+  // A login GitHub doesn't know is a dead end, so it offers nothing to try again.
+  readonly retry: Retry | undefined;
+}
+
+const breather: Status = { icon: "paused", label: "taking a breather" };
+
+const troubleCopy = (trouble: Trouble, owner: string, whose: Whose): TroubleCopy => {
+  switch (trouble) {
+    case "missing":
+      return {
+        status: { icon: "failed", label: "no such github user" },
+        heading: `github has no one called @${owner}`,
+        detail: "check the spelling, or pick someone else from the pill above.",
+        pose: "unsure",
+        retry: undefined,
+      };
+    case "busy":
+      return {
+        status: { icon: "paused", label: "the import line is full", detail: "for now" },
+        heading: "github's line for new imports is full",
+        detail: `stargrep can read ${theirs(whose)} once there's room. try again in a while.`,
+        pose: "unsure",
+        retry: "sync",
+      };
+    case "limited":
+      return {
+        status: breather,
+        heading: "lots of requests from your network",
+        detail: "give it a few minutes, then try again. accounts stargrep already knows still work.",
+        pose: "unsure",
+        retry: "sync",
+      };
+    case "unavailable":
+      return {
+        status: { icon: "failed", label: "couldn't reach github" },
+        heading: "stargrep couldn't reach github just now",
+        detail: `${theirs(whose)} can import once it answers. try again in a moment.`,
+        pose: "unsure",
+        retry: "sync",
+      };
+    case "load-limited":
+      return {
+        status: breather,
+        heading: "lots of requests from your network",
+        detail: "give it a minute, then try again.",
+        pose: "unsure",
+        retry: "library",
+      };
+    case "load-failed":
+      return {
+        status: { icon: "failed", label: "couldn't load" },
+        heading: `stargrep couldn't load ${theirs(whose)}`,
+        detail: "the library didn't arrive. try again in a moment.",
+        pose: "scared",
+        retry: "library",
+      };
+  }
+};
+
+// The butter tile asks a visitor to sign in. While someone's stars import, it asks whether the visitor is them, since
+// owners skip the line, and rings Pip with the import's progress.
+export type Butter = { readonly kind: "join" } | { readonly kind: "claim"; readonly progress: number };
+
+export interface HeroCopy {
+  readonly subtitle: string;
+  readonly butter: Butter;
+}
+
+// What the hero says above a visitor's search. While someone's stars import, the butter tile becomes the claim tile.
+// The status line under it carries the counts and times, so the subtitle stays put while they tick.
+const heroCopy = (stage: Stage, troubled: boolean, owner: string, demoLogin: string): HeroCopy => {
+  if (troubled) return { subtitle: "try any username.", butter: { kind: "join" } };
+  if (stage.name === "importing") {
+    const progress = stage.total === null ? 0 : stage.done / Math.max(1, stage.total);
+    const subtitle = {
+      "not-asked": `@${owner} is new here. their stars are ready to import from github, and search covers them as they land.`,
+      "in-line": `@${owner} is new here and waits in line for github. search covers their stars as they land.`,
+      running: `@${owner} is new here. their stars are on the way from github, and search covers the ones that landed.`,
+    }[stage.phase.kind];
+    return { subtitle, butter: { kind: "claim", progress } };
+  }
+  return {
+    subtitle:
+      owner.toLowerCase() === demoLogin.toLowerCase()
+        ? `live results from @${owner}, our demo account. try any username.`
+        : `@${owner}'s stars, searched in plain words. try any username.`,
+    butter: { kind: "join" },
+  };
+};
+
+const idlePlaceholder = "the rust tui library I starred last year";
+
+export interface PageView extends SearchView {
+  // The page still shows the answer the server painted.
+  readonly painted: boolean;
+  // Only a signed-out visitor sees the hero.
+  readonly hero: HeroCopy | undefined;
+  readonly placeholder: string;
+}
+
+export interface PageInputs {
+  readonly owner: string;
+  readonly own: boolean;
+  readonly visitor: boolean;
+  readonly demoLogin: string;
+  readonly query: string;
+  readonly stage: Stage;
+  // What the library shows for the query, once it has loaded.
+  readonly live: SearchView;
+  // The server's answer for its query, painted before the library loads.
+  readonly first: { readonly query: string; readonly view: SearchView } | undefined;
+  readonly library: { readonly ready: boolean; readonly whole: boolean };
+  readonly trouble: Trouble | undefined;
+  // Results by meaning just landed, which surprises an idle Pip for a moment.
+  readonly surprised: boolean;
+}
+
+// What a stars page shows. Trouble wins over everything. Then the server's first answer holds until the library has
+// every page, since a view of the first page alone can read differently, such as "found 20 so far" for a library still
+// reading. Then the library's own view, once it has loaded.
+export const pageView = ({
+  owner,
+  own,
+  visitor,
+  demoLogin,
+  query,
+  stage,
+  live,
+  first,
+  library,
+  trouble,
+  surprised,
+}: PageInputs): PageView => {
+  const whose = own ? undefined : owner;
+  const painted =
+    first !== undefined && !(library.ready && library.whole) && normalize(query) === normalize(first.query);
+  const shown = painted ? first.view : library.ready ? live : undefined;
+  const page = {
+    painted,
+    hero: visitor ? heroCopy(stage, trouble !== undefined, owner, demoLogin) : undefined,
+    placeholder: stage.name === "importing" ? "search what has arrived" : idlePlaceholder,
+    progress: shown?.progress,
+  };
+  if (trouble !== undefined) {
+    const { status, heading, detail, pose, retry } = troubleCopy(trouble, owner, whose);
+    return { ...page, status, pose, body: { kind: "trouble", heading, detail, retry } };
+  }
+  const calm = (shown ?? live).pose;
+  const pose = surprised && calm === "idle" ? "surprised" : calm;
+  if (shown === undefined)
+    return {
+      ...page,
+      status: { icon: "busy", label: `loading ${theirs(whose)}` },
+      pose,
+      body: { kind: "loading", searching: keywordTerms(query).length > 0, arriving: arrivingOf(stage) },
+    };
+  return { ...page, status: shown.status, pose, body: shown.body };
 };
