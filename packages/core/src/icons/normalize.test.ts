@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import * as it from "@stargrep/testing";
 import * as Effect from "effect/Effect";
 import { sniff } from "./image-format.ts";
 import { make, Normalized } from "./normalize.ts";
@@ -6,8 +7,8 @@ import { plateOf, type Rgba } from "./pixels.ts";
 
 const unreachable = () => Promise.reject(new Error("the codec should not run"));
 const { normalize } = make({ decode: unreachable, renderSvg: unreachable, encodeWebp: unreachable });
-const run = (bytes: Uint8Array) => Effect.runPromise(normalize(bytes, "homepage"));
-const rejected = (reason: string) => Normalized.Rejected({ reason } as never);
+const run = (bytes: Uint8Array) => normalize(bytes, "homepage");
+const rejected = (reason: Parameters<typeof Normalized.Rejected>[0]["reason"]) => Normalized.Rejected({ reason });
 
 const ico = (entry: { width: number; length: number; offset: number }, body: Uint8Array) => {
   const header = new Uint8Array(22);
@@ -31,22 +32,28 @@ const bmp = (width: number, height: number) => {
 };
 
 describe("normalize on hostile bytes", () => {
-  test("rejects truncated and lying headers without running a codec or throwing", async () => {
-    expect(await run(new Uint8Array([0, 0, 1, 0]))).toEqual(rejected("undecodable"));
-    expect(await run(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10]))).toEqual(rejected("undecodable"));
-    expect(await run(ico({ width: 0, length: 40, offset: 22 }, bmp(70_000, 70_000)))).toEqual(rejected("undecodable"));
-    expect(await run(ico({ width: 32, length: 9_999, offset: 22 }, bmp(32, 32)))).toEqual(rejected("undecodable"));
-    expect(await run(new TextEncoder().encode("<html>not an image</html>"))).toEqual(rejected("unsupported"));
-  });
+  it.effect("rejects truncated and lying headers without running a codec or throwing", () =>
+    Effect.gen(function* () {
+      expect(yield* run(new Uint8Array([0, 0, 1, 0]))).toEqual(rejected("undecodable"));
+      expect(yield* run(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10]))).toEqual(rejected("undecodable"));
+      expect(yield* run(ico({ width: 0, length: 40, offset: 22 }, bmp(70_000, 70_000)))).toEqual(
+        rejected("undecodable"),
+      );
+      expect(yield* run(ico({ width: 32, length: 9_999, offset: 22 }, bmp(32, 32)))).toEqual(rejected("undecodable"));
+      expect(yield* run(new TextEncoder().encode("<html>not an image</html>"))).toEqual(rejected("unsupported"));
+    }),
+  );
 
-  test("rejects a PNG whose header declares a side past the decode limit before decoding it", async () => {
-    const png = new Uint8Array(33);
-    png.set([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10]);
-    const data = new DataView(png.buffer);
-    data.setUint32(16, 20_000);
-    data.setUint32(20, 20_000);
-    expect(await run(png)).toEqual(rejected("oversized"));
-  });
+  it.effect("rejects a PNG whose header declares a side past the decode limit before decoding it", () =>
+    Effect.gen(function* () {
+      const png = new Uint8Array(33);
+      png.set([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10]);
+      const data = new DataView(png.buffer);
+      data.setUint32(16, 20_000);
+      data.setUint32(20, 20_000);
+      expect(yield* run(png)).toEqual(rejected("oversized"));
+    }),
+  );
 
   test("sniffs formats by their bytes, not their names", () => {
     expect(sniff(new TextEncoder().encode('<?xml version="1.0"?>\n<svg viewBox="0 0 1 1"/>'))).toBe("svg");

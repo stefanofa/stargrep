@@ -5,9 +5,10 @@ import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Redacted from "effect/Redacted";
 import * as Db from "../src/db.ts";
-import { createMigratedDatabase, dropDatabase } from "../src/local-database.ts";
+import { createMigratedDatabase, withClient } from "../src/local-database.ts";
 import * as Memory from "../src/memory.ts";
-import { acquirePool } from "../src/node-postgres.ts";
+import { acquirePool, driver } from "../src/node-postgres.ts";
+import * as Postgres from "../src/postgres.ts";
 
 const adminUrl = process.env.DATABASE_URL ?? "postgres://stargrep:stargrep@127.0.0.1:54317/stargrep";
 
@@ -54,21 +55,29 @@ export const layerMemory = (options: Db.Options) =>
 
 const freshDatabase = Effect.gen(function* () {
   const name = `stargrep_test_${yield* Random.nextIntBetween(0, 2 ** 31)}`;
-  const url = yield* Effect.acquireRelease(createMigratedDatabase(adminUrl, name), () => dropDatabase(adminUrl, name));
+  const url = yield* Effect.acquireRelease(createMigratedDatabase(adminUrl, name), () =>
+    withClient(adminUrl, async (client) => {
+      // DROP waits for disconnected backends to exit. pg_stat_activity can still show them after pool.end resolves.
+      try {
+        await client.query(`drop database ${client.escapeIdentifier(name)}`);
+      } catch (cause) {
+        await client.query(`drop database if exists ${client.escapeIdentifier(name)} with (force)`);
+        throw cause;
+      }
+    }),
+  );
   const pool = yield* acquirePool(url);
   return { url: Redacted.make(url), pool };
 });
 
 export const layerNodePostgres = (options: Db.Options) =>
   Layer.unwrap(
-    Effect.map(freshDatabase, ({ url, pool }) =>
-      Layer.merge(
-        Db.layerNodePostgres({ ...options, connectionString: url }),
-        testDatabase(
-          (text, values) => pool.query(text, values),
-          (connectOptions) => Db.layerNodePostgres({ ...connectOptions, connectionString: url }),
-          Option.some(Redacted.value(url)),
-        ),
-      ),
-    ),
+    Effect.map(freshDatabase, ({ url, pool }) => {
+      const connect = (settings: Db.Options) =>
+        Db.layer(settings).pipe(Layer.provide(Layer.succeed(Postgres.Postgres, Postgres.make(driver(pool)))));
+      return Layer.merge(
+        connect(options),
+        testDatabase((text, values) => pool.query(text, values), connect, Option.some(Redacted.value(url))),
+      );
+    }),
   );

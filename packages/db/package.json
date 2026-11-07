@@ -11,7 +11,8 @@
     "./memory": "./src/memory.ts",
     "./migrations": "./src/migrations.ts",
     "./node-postgres": "./src/node-postgres.ts",
-    "./test-database": "./test/database.ts"
+    "./test-database": "./test/database.ts",
+    "./testing": "./test/fakes.ts"
   },
   "scripts": {
     "bench": "bun scripts/bench.ts",

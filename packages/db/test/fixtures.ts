@@ -73,3 +73,26 @@ export const hybrid = (
   rankBy: null,
   ...search,
 });
+
+export const accountRow = (id: GitHubAccountId, overrides: Partial<Db.Account> = {}): Db.Account => ({
+  ...account(id),
+  ownedRepoStars: null,
+  claimedBy: null,
+  starredCount: null,
+  starsSyncedAt: null,
+  starsFullSyncedAt: null,
+  ...overrides,
+});
+
+export const repo = (id: RepoId, overrides: Partial<Db.Repo> = {}): Db.Repo => ({
+  ...facts(id),
+  nodeId: RepoNodeId.make(`R_${id}`),
+  kind: null,
+  summary: null,
+  summaryReadmeOid: null,
+  keywords: [],
+  embeddingModel: null,
+  icon: null,
+  iconCheckedAt: null,
+  ...overrides,
+});

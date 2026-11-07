@@ -91,21 +91,21 @@ const storedToken = (userId: UserId) =>
     ),
   ).pipe(Effect.map((rows) => rows[0]?.accessToken ?? null));
 
-describe("GitHubTokens.read", () => {
-  it.live("reads a token that has not expired without asking GitHub", () =>
+it.layer(database, { timeout: 30_000 })("GitHubTokens.read", (test) => {
+  test.effect("reads a token that has not expired without asking GitHub", () =>
     Effect.gen(function* () {
       const { refreshes } = yield* stubTokenEndpoint({});
       const userId = yield* seedUser({
         accessToken: "ghu_current",
-        expiresAt: (yield* Clock.currentTimeMillis) + hour,
+        expiresAt: (yield* TestClock.withLive(Clock.currentTimeMillis)) + hour,
       });
       const token = yield* (yield* reader).read(userId);
       expect(Redacted.value(token)).toBe("ghu_current");
       expect(refreshes).toEqual([]);
-    }).pipe(Effect.provide(database)),
+    }),
   );
 
-  it.live("refreshes an expired token through GitHub and stores the new one encrypted", () =>
+  test.effect("refreshes an expired token through GitHub and stores the new one encrypted", () =>
     Effect.gen(function* () {
       const { refreshes } = yield* stubTokenEndpoint({
         access_token: "ghu_refreshed",
@@ -116,7 +116,7 @@ describe("GitHubTokens.read", () => {
       });
       const userId = yield* seedUser({
         accessToken: "ghu_expired",
-        expiresAt: (yield* Clock.currentTimeMillis) - hour,
+        expiresAt: (yield* TestClock.withLive(Clock.currentTimeMillis)) - hour,
       });
       const tokens = yield* reader;
       expect(Redacted.value(yield* tokens.read(userId))).toBe("ghu_refreshed");
@@ -128,10 +128,10 @@ describe("GitHubTokens.read", () => {
       expect(stored).not.toContain("ghu_refreshed");
       expect(Redacted.value(yield* tokens.read(userId))).toBe("ghu_refreshed");
       expect(refreshes).toHaveLength(1);
-    }).pipe(Effect.provide(database)),
+    }),
   );
 
-  it.live("fails when GitHub refuses the refresh token, instead of answering with the expired token", () =>
+  test.effect("fails when GitHub refuses the refresh token, instead of answering with the expired token", () =>
     Effect.gen(function* () {
       yield* stubTokenEndpoint({
         error: "bad_refresh_token",
@@ -139,23 +139,23 @@ describe("GitHubTokens.read", () => {
       });
       const userId = yield* seedUser({
         accessToken: "ghu_expired",
-        expiresAt: (yield* Clock.currentTimeMillis) - hour,
+        expiresAt: (yield* TestClock.withLive(Clock.currentTimeMillis)) - hour,
       });
       const error = yield* Effect.flip((yield* reader).read(userId));
       expect(error).toMatchObject({ _tag: "AuthFailed", operation: "token" });
       expect(JSON.stringify(error)).not.toContain("ghu_expired");
-    }).pipe(Effect.provide(database)),
+    }),
   );
 
-  it.live("fails for a user with no GitHub account", () =>
+  test.effect("fails for a user with no GitHub account", () =>
     Effect.gen(function* () {
       yield* stubTokenEndpoint({});
       const error = yield* Effect.flip((yield* reader).read(UserId.make("nobody")));
       expect(error).toMatchObject({ _tag: "AuthFailed", operation: "token" });
-    }).pipe(Effect.provide(database)),
+    }),
   );
 
-  it.live("keeps the newest refresh token when two jobs refresh the same expired token at once", () =>
+  test.effect("keeps the newest refresh token when two jobs refresh the same expired token at once", () =>
     Effect.gen(function* () {
       const sent: Array<string | null> = [];
       const both = Promise.withResolvers<void>();
@@ -191,7 +191,7 @@ describe("GitHubTokens.read", () => {
       );
       const userId = yield* seedUser({
         accessToken: "ghu_expired",
-        expiresAt: (yield* Clock.currentTimeMillis) - hour,
+        expiresAt: (yield* TestClock.withLive(Clock.currentTimeMillis)) - hour,
       });
       const tokens = yield* reader;
       const first = tokens.read(userId).pipe(Effect.ensuring(Effect.sync(() => firstStored.resolve())));
@@ -201,7 +201,9 @@ describe("GitHubTokens.read", () => {
       expect(reads.map((read) => read._tag)).toEqual(["Success", "Failure"]);
 
       const db = yield* Database;
-      const expired = DateTime.toDateUtc(DateTime.makeUnsafe((yield* Clock.currentTimeMillis) - hour));
+      const expired = DateTime.toDateUtc(
+        DateTime.makeUnsafe((yield* TestClock.withLive(Clock.currentTimeMillis)) - hour),
+      );
       yield* Effect.promise(() =>
         db
           .update(AuthSchema.account)
@@ -210,7 +212,7 @@ describe("GitHubTokens.read", () => {
       );
       expect(Redacted.value(yield* tokens.read(userId))).toBe("ghu_fresh_3");
       expect(sent).toEqual(["ghr_refresh_token", "ghr_refresh_token", "ghr_next_1"]);
-    }).pipe(Effect.scoped, Effect.provide(database)),
+    }).pipe(Effect.scoped),
   );
 });
 
