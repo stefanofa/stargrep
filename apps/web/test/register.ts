@@ -1,3 +1,4 @@
+import "./client-branch.ts";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 // TanStack DB calls unref() on timer handles that are objects, and happy-dom's handles are objects without it.
