@@ -273,9 +273,18 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
       replace: true,
     });
   };
+  // Opening a repo from this page adds a history entry, so Back closes the panel. Closing it takes that entry back off,
+  // so Back never opens it again. A panel the address opened has no entry of its own, so closing it only drops ?repo=.
+  const pushed = useRef(false);
   const open: OpenResult = (result, link) => {
     setOpener(link);
+    pushed.current = true;
     navigate({ to: ".", search: (previous) => ({ ...previous, repo: `${result.owner}/${result.name}` }) });
+  };
+  const close = () => {
+    if (pushed.current) router.history.back();
+    else navigate({ to: ".", search: (previous) => ({ ...previous, repo: undefined }), replace: true });
+    pushed.current = false;
   };
   // The panel keeps the last repo it showed while it slides closed.
   const [panelRepo, setPanelRepo] = useState(params.repo);
@@ -397,7 +406,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
         repo={opened && toDetail(opened, at, whose)}
         open={params.repo !== undefined && opened !== undefined}
         onOpenChange={(next) => {
-          if (!next) navigate({ to: ".", search: (previous) => ({ ...previous, repo: undefined }) });
+          if (!next) close();
         }}
         returnFocus={opener}
       />
