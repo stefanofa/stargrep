@@ -19,6 +19,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { LibraryEntry } from "../lib/library-collection.ts";
 import { libraryOrder } from "../lib/order.ts";
 import { formatCount, monthOf, stars, toResult } from "../lib/present.ts";
+import type { Params } from "../lib/search-params.ts";
 import type { Arriving } from "../lib/search-state.ts";
 
 const pageSize = 48;
@@ -168,7 +169,7 @@ export function LibraryView({
   at,
   view,
   sort,
-  language,
+  search,
   arriving,
   pose,
   butter,
@@ -178,12 +179,13 @@ export function LibraryView({
   at: number;
   view: View;
   sort: Sort;
-  language: string | undefined;
+  search: Params;
   arriving: Arriving | undefined;
   pose: PipPose;
   butter: boolean;
   onOpen: OpenResult;
 }) {
+  const language = search.lang;
   const [shown, setShown] = useState(pageSize);
   const seen = useRef(new Set<string>());
   const shares = useMemo(() => languageShares(entries), [entries]);
@@ -219,7 +221,7 @@ export function LibraryView({
             <MonthHeading heading={heading} size={size} arriving={arriving !== undefined} />
             <ResultList
               view={view}
-              results={members.map((entry) => toResult(entry, at, { flagUnread: false }))}
+              results={members.map((entry) => toResult(entry, at, { search, flagUnread: false }))}
               pending={pending}
               enter="tile-in"
               entering={(key) => !seen.current.has(key)}

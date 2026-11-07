@@ -6,7 +6,6 @@ import {
   RephraseChips,
   RepoPanel,
   Results,
-  ScopeSwitch,
   SearchTile,
   type Sort,
   SortMenu,
@@ -16,7 +15,7 @@ import {
 } from "@stargrep/ui";
 import { and, ilike } from "@tanstack/db";
 import { useLiveQuery } from "@tanstack/react-db";
-import { useHydrated, useNavigate, useRouter, useSearch } from "@tanstack/react-router";
+import { Link, useHydrated, useNavigate, useRouter, useSearch } from "@tanstack/react-router";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -47,12 +46,19 @@ export const pageFor = (request: PageRequest, { viewer, config }: Session): Page
   return { viewer, owner, own, config, query, defaultQuery, first: null, sync: null, refusal: null };
 };
 
-const scopes = [{ value: "stars", label: "Your stars", href: "/" }];
-
+// Until other scopes ship, the scope switch is one link to the viewer's own stars rather than a tab list of one.
 export function HeaderControls({ viewer }: { viewer: Viewer }) {
   return (
     <>
-      <ScopeSwitch scopes={scopes} value="stars" className="max-sm:hidden" />
+      <nav aria-label="Scope" className="flex items-center rounded-full bg-card p-1 max-sm:hidden">
+        <Link
+          to="/"
+          activeOptions={{ exact: true, includeSearch: false }}
+          className="flex h-9 items-center rounded-full px-[18px] font-sans text-meta font-medium text-muted-foreground transition-[color,background-color] duration-120 hover:text-foreground aria-[current=page]:bg-accent aria-[current=page]:font-semibold aria-[current=page]:text-ink"
+        >
+          Your stars
+        </Link>
+      </nav>
       <AccountMenu login={viewer.login} avatarUrl={viewer.avatarUrl} />
     </>
   );
@@ -237,6 +243,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     query,
     stage,
     live: liveView({
+      search: params,
       query,
       stage,
       entries,
@@ -277,8 +284,11 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     setOpener(link);
     navigate({ to: ".", search: (previous) => ({ ...previous, repo: `${result.owner}/${result.name}` }) });
   };
+  // The panel keeps the last repo it showed while it slides closed.
+  const [panelRepo, setPanelRepo] = useState(params.repo);
+  if (params.repo !== undefined && params.repo !== panelRepo) setPanelRepo(params.repo);
   const entry =
-    params.repo === undefined ? undefined : entries.find((repo) => `${repo.owner}/${repo.name}` === params.repo);
+    panelRepo === undefined ? undefined : entries.find((repo) => `${repo.owner}/${repo.name}` === panelRepo);
   const hit = hits.find((result) => result.id === entry?.id);
   const opened = entry && (hit ? withReply(entry, hit) : entry);
 
@@ -309,7 +319,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
             at={at}
             view={view}
             sort={sort}
-            language={params.lang}
+            search={params}
             arriving={current.arriving}
             pose={page.pose}
             butter={!visitor}
@@ -385,7 +395,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
       </div>
       <RepoPanel
         repo={opened && toDetail(opened, at, data.own ? undefined : owner)}
-        open={opened !== undefined}
+        open={params.repo !== undefined && opened !== undefined}
         onOpenChange={(next) => {
           if (!next) navigate({ to: ".", search: (previous) => ({ ...previous, repo: undefined }) });
         }}

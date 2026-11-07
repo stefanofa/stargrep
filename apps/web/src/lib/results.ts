@@ -3,6 +3,7 @@ import { score } from "./keyword.ts";
 import type { LibraryEntry } from "./library-collection.ts";
 import { toResult } from "./present.ts";
 import type { SearchResult } from "./rpc.ts";
+import type { Params } from "./search-params.ts";
 
 const keywordLimit = 60;
 
@@ -10,6 +11,7 @@ const byRelevance = (terms: ReadonlyArray<string>) => (a: LibraryEntry, b: Libra
   score(b, terms) - score(a, terms) || (b.stars ?? -1) - (a.stars ?? -1) || b.starredAt.localeCompare(a.starredAt);
 
 export interface Merge {
+  readonly search: Params;
   readonly matched: ReadonlyArray<LibraryEntry>;
   readonly terms: ReadonlyArray<string>;
   readonly hits: ReadonlyArray<SearchResult>;
@@ -27,7 +29,7 @@ export interface Merged {
   readonly meaning: ReadonlyArray<Result>;
 }
 
-export const mergeResults = ({ matched, terms, hits, find, at, order }: Merge): Merged => {
+export const mergeResults = ({ search, matched, terms, hits, find, at, order }: Merge): Merged => {
   const ranked = terms.length === 0 ? [] : matched.toSorted(byRelevance(terms)).slice(0, keywordLimit);
   const keyword = order === undefined ? ranked : ranked.toSorted(order);
   const seen = new Set(keyword.map((entry) => entry.id));
@@ -39,7 +41,7 @@ export const mergeResults = ({ matched, terms, hits, find, at, order }: Merge): 
   });
   const meaning = order === undefined ? appended : appended.toSorted((a, b) => order(a.entry, b.entry));
   return {
-    words: keyword.map((entry) => toResult(entry, at, { terms })),
-    meaning: meaning.map(({ entry, values }) => toResult(entry, at, { terms, values })),
+    words: keyword.map((entry) => toResult(entry, at, { search, terms })),
+    meaning: meaning.map(({ entry, values }) => toResult(entry, at, { search, terms, values })),
   };
 };

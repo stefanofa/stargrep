@@ -2,18 +2,11 @@ import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import { getRequest } from "@tanstack/react-start/server";
 import { keywordTerms, searchText } from "../lib/keyword.ts";
-import {
-  type Asked,
-  type FirstAnswer,
-  type PageData,
-  type PageRequest,
-  pageOwner,
-  type Session,
-} from "../lib/page-data.ts";
+import { type FirstAnswer, type PageData, type PageRequest, pageOwner, type Session } from "../lib/page-data.ts";
 import { liveView, matchesEvery } from "../lib/page-view.ts";
 import { now } from "../lib/present.ts";
 import type { Client, Viewer } from "../lib/rpc.ts";
-import { validateParams } from "../lib/search-params.ts";
+import { type Params, validateParams } from "../lib/search-params.ts";
 import { stageOf } from "../lib/search-state.ts";
 import { allStars } from "../lib/stars-pages.ts";
 import { rememberedRefusal } from "../lib/trouble.ts";
@@ -48,7 +41,7 @@ const viewerOf = async (client: Client, request: Request): Promise<Viewer | null
   return client.viewer().catch(() => null);
 };
 
-const firstAnswer = async (client: Client, login: string, query: string, sort: Asked["sort"]) => {
+const firstAnswer = async (client: Client, login: string, query: string, search: Params) => {
   const [repos, hits, sync] = await Promise.all([
     allStars(client, login),
     client.search({ scope: { kind: "stars", login }, q: query }).then(({ results }) => results),
@@ -58,6 +51,7 @@ const firstAnswer = async (client: Client, login: string, query: string, sort: A
   const byId = new Map(entries.map((entry) => [entry.id as number, entry]));
   const at = now();
   const view = liveView({
+    search,
     query,
     stage: stageOf({ sync, entries, starred: sync.starredTotal }),
     entries,
@@ -65,7 +59,7 @@ const firstAnswer = async (client: Client, login: string, query: string, sort: A
     find: (id) => byId.get(id),
     sync,
     semantic: { kind: "answered", results: hits },
-    sort: sort ?? "best",
+    sort: search.sort ?? "best",
     at,
     timeLeft: undefined,
     whose: login,
@@ -96,10 +90,10 @@ export const loadSession = async (): Promise<Session> => {
 export const loadPage = async ({ login }: PageRequest, { viewer, config }: Session): Promise<PageData> => {
   const request = getRequest();
   const client = inProcess(request);
-  const { q, sort } = validateParams(Object.fromEntries(new URL(request.url).searchParams));
-  const { owner, own, query, defaultQuery, showcase } = pageOwner(viewer, config, { login, q });
+  const search = validateParams(Object.fromEntries(new URL(request.url).searchParams));
+  const { owner, own, query, defaultQuery, showcase } = pageOwner(viewer, config, { login, q: search.q });
   const first =
-    showcase && query === config.demoQuery ? await firstAnswer(client, owner, query, sort).catch(() => null) : null;
+    showcase && query === config.demoQuery ? await firstAnswer(client, owner, query, search).catch(() => null) : null;
   const { sync, refusal } =
     first === null ? await syncOf(client, owner, request.headers.get("cookie")) : { sync: first.sync, refusal: null };
   return { viewer, owner, own, config, query, defaultQuery, first, sync, refusal };

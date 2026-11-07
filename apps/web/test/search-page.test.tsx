@@ -507,6 +507,33 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(mark()).toBe("unsure"));
   });
 
+  test("the header links to your stars, and marks the link current only on your own page", async () => {
+    await open("/?q=terminal");
+    expect(page().getByRole("link", { name: "Your stars" }).getAttribute("aria-current")).toBe("page");
+    expect(page().queryByRole("tablist")).toBeNull();
+    cleanup();
+    server.status = status({ login: "octosync" });
+    await open("/octosync", "Search @octosync's stars");
+    expect(page().getByRole("link", { name: "Your stars" }).getAttribute("aria-current")).toBeNull();
+  });
+
+  test("a closing panel keeps its repo on screen while it slides away", async () => {
+    const user = userEvent.setup();
+    await open("/?q=terminal");
+    await user.click(await page().findByRole("link", { name: "bottom" }));
+    await page().findByRole("heading", { level: 2, name: "bottom" });
+    const blank: Array<boolean> = [];
+    const watch = new MutationObserver(() => {
+      const dialog = document.querySelector("[role=dialog]");
+      if (dialog !== null) blank.push(dialog.querySelector("h2") === null);
+    });
+    watch.observe(document.body, { subtree: true, childList: true });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
+    watch.disconnect();
+    expect(blank).not.toContain(true);
+  });
+
   test("Back puts the query of the page it returns to back in the search box", async () => {
     const user = userEvent.setup();
     const router = await open("/?q=terminal");
