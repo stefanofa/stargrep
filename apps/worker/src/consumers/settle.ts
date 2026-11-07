@@ -6,6 +6,7 @@ import * as TokenGate from "@stargrep/github/token-gate";
 import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
@@ -24,7 +25,7 @@ export type Failure =
   | FetchIcon.FetchIconError
   | FetchIcon.BackfillError;
 
-type Reason = Failure["_tag"] | "SchemaError" | "Stale";
+type Reason = Failure["_tag"] | "SchemaError" | "Stale" | "Deadline";
 
 export type Settlement = Data.TaggedEnum<{
   Done: Record<never, never>;
@@ -183,6 +184,16 @@ export interface Delivery<A> {
   readonly attempts: number;
 }
 
+export interface Chunks<A> {
+  readonly size: number;
+  // How long after the batch starts a chunk may still run. A chunk still running then stops, and its messages and
+  // every later one retry, well before Cloudflare ends the invocation at 15 minutes.
+  readonly deadline: Duration.Duration;
+  // The gate a message starts on. Once a message on a gate is deferred, that gate's messages in later chunks defer to
+  // the same time without running, so the batch does not ask GitHub again during the wait.
+  readonly gate: (body: A) => string;
+}
+
 export interface Pipeline<A, R, D = never> {
   readonly decode: (body: unknown) => Result.Result<A, Schema.SchemaError>;
   readonly run: (
@@ -192,6 +203,9 @@ export interface Pipeline<A, R, D = never> {
   readonly onDeadLetter: (body: A) => Effect.Effect<void, never, D>;
   // The body a deferred message goes out again with. None sends the body it arrived with.
   readonly resend: (body: A) => Option.Option<unknown>;
+  // Runs and settles the batch a chunk at a time, so a slow chunk never holds back the messages before it. None runs
+  // the whole batch as one chunk.
+  readonly chunks: Option.Option<Chunks<A>>;
 }
 
 export const pipeline = <S extends Schema.Decoder<unknown>, R, D = never>(options: {
@@ -200,12 +214,14 @@ export const pipeline = <S extends Schema.Decoder<unknown>, R, D = never>(option
   readonly describe: Pipeline<S["Type"], R>["describe"];
   readonly onDeadLetter?: Pipeline<S["Type"], R, D>["onDeadLetter"];
   readonly resend?: Pipeline<S["Type"], R>["resend"];
+  readonly chunks?: Chunks<S["Type"]>;
 }): Pipeline<S["Type"], R, D> => ({
   decode: Schema.decodeUnknownResult(options.schema),
   run: options.run,
   describe: options.describe,
   onDeadLetter: options.onDeadLetter ?? (() => Effect.void),
   resend: options.resend ?? (() => Option.none()),
+  chunks: Option.fromNullishOr(options.chunks),
 });
 
 // Fresh, because a nested provide reuses the layers the runtime already built, such as GitHub on the server's gate.
@@ -217,27 +233,68 @@ export const processBatch = Effect.fn("Consumer.processBatch")(function* <A, R, 
   queues: Queues,
   messages: ReadonlyArray<Message>,
 ) {
+  const started = yield* Clock.currentTimeMillis;
+  const deadline = Option.map(pipeline.chunks, (chunks) => started + Duration.toMillis(chunks.deadline));
+  const gateOf = Option.match(pipeline.chunks, { onNone: () => () => "", onSome: (chunks) => chunks.gate });
+  const waits = new Map<string, Settlement>();
   const decoded = messages.map((message) => ({ message, body: pipeline.decode(message.body) }));
   const valid = decoded.flatMap(({ message, body }) =>
     Result.isSuccess(body) ? [{ message, body: body.success }] : [],
   );
-  const outcomes = yield* pipeline.run(valid.map(({ message, body }) => ({ body, attempts: message.attempts })));
-  if (outcomes.length !== valid.length) {
-    return yield* Effect.die(`A pipeline returned ${outcomes.length} outcomes for ${valid.length} bodies`);
-  }
+
+  const runUntilDeadline = <X>(run: Effect.Effect<X, never, R>) =>
+    Option.match(deadline, {
+      onNone: () => Effect.asSome(run),
+      onSome: (at) =>
+        Effect.flatMap(Clock.currentTimeMillis, (now) =>
+          now < at ? Effect.timeoutOption(run, Duration.millis(at - now)) : Effect.succeedNone,
+        ),
+    });
+
+  const settleChunk = Effect.fnUntraced(function* (
+    chunk: ReadonlyArray<{ readonly message: Message; readonly body: A }>,
+  ) {
+    const waiting = chunk.flatMap((entry) => {
+      const wait = waits.get(gateOf(entry.body));
+      return wait === undefined ? [] : [{ ...entry, settlement: wait }];
+    });
+    const ready = chunk.filter(({ body }) => !waits.has(gateOf(body)));
+    const outcomes = yield* runUntilDeadline(
+      pipeline.run(ready.map(({ message, body }) => ({ body, attempts: message.attempts }))),
+    );
+    if (Option.isSome(outcomes) && outcomes.value.length !== ready.length) {
+      return yield* Effect.die(`A pipeline returned ${outcomes.value.length} outcomes for ${ready.length} bodies`);
+    }
+    const now = yield* Clock.currentTimeMillis;
+    const settlements = Option.match(outcomes, {
+      onNone: () => ready.map(() => Settlement.Retry({ error: "Deadline" })),
+      onSome: (settled) =>
+        settled.map((outcome) =>
+          Result.match(outcome, { onSuccess: (done) => done, onFailure: (error) => afterFailure(error, now) }),
+        ),
+    });
+    const ran = Arr.zipWith(ready, settlements, (entry, settlement) => ({ ...entry, settlement }));
+    for (const { body, settlement } of ran) if (settlement._tag === "Defer") waits.set(gateOf(body), settlement);
+    yield* Effect.forEach([...ran, ...waiting], ({ message, body, settlement }) =>
+      settle(
+        queues,
+        message,
+        settlement,
+        now,
+        Option.getOrElse(pipeline.resend(body), () => message.body),
+      ),
+    );
+  });
+
+  const chunks = Option.match(pipeline.chunks, {
+    onNone: () => [valid],
+    onSome: ({ size }) => Arr.chunksOf(valid, size),
+  });
+  yield* Effect.forEach(chunks, settleChunk, { discard: true });
   const now = yield* Clock.currentTimeMillis;
-  const undecodable = decoded.flatMap(({ message, body }) =>
-    Result.isFailure(body)
-      ? [{ message, settlement: Settlement.DeadLetter({ error: "SchemaError" }), resend: message.body }]
-      : [],
-  );
-  const settled = Arr.zipWith(valid, outcomes, ({ message, body }, outcome) => ({
-    message,
-    settlement: Result.match(outcome, { onSuccess: (done) => done, onFailure: (error) => afterFailure(error, now) }),
-    resend: Option.getOrElse(pipeline.resend(body), () => message.body),
-  }));
-  yield* Effect.forEach([...undecodable, ...settled], ({ message, settlement, resend }) =>
-    settle(queues, message, settlement, now, resend),
+  yield* Effect.forEach(
+    decoded.flatMap(({ message, body }) => (Result.isFailure(body) ? [message] : [])),
+    (message) => settle(queues, message, Settlement.DeadLetter({ error: "SchemaError" }), now),
   );
 });
 

@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
+import * as Stream from "effect/Stream";
 import type * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 import * as Embeddings from "./embeddings.ts";
@@ -384,6 +385,16 @@ const fakeBatch = (options: {
 
 const batchRepos = [repo, { ...repo, fullName: "junegunn/fzf" }, { ...repo, fullName: "sharkdp/bat" }];
 
+// The batch's answers in prompt order.
+const summaries = (repos: ReadonlyArray<Summarize.RepoFacts>) =>
+  Summarize.summarizeBatch(
+    repos.map((facts, index) => ({ facts, index })),
+    ({ facts }) => facts,
+  ).pipe(
+    Stream.runCollect,
+    Effect.map((answers) => answers.toSorted(([a], [b]) => a.index - b.index).map(([, answer]) => answer)),
+  );
+
 describe("gateway batch", () => {
   it.effect("submits one job with the JSON schema and answers failed or invalid items with a direct call", () => {
     const fake = fakeBatch({
@@ -394,7 +405,7 @@ describe("gateway batch", () => {
       ],
     });
     return Effect.gen(function* () {
-      const results = yield* Summarize.summarizeBatch(batchRepos);
+      const results = yield* summaries(batchRepos);
       expect(fake.starts).toHaveLength(1);
       const request = fake.starts[0]?.requests[0];
       expect(request?.modelId).toBe("test/model");
@@ -420,7 +431,7 @@ describe("gateway batch", () => {
     });
     return Effect.gen(function* () {
       const before = yield* Port.tokensSpent("test/model");
-      const results = yield* Summarize.summarizeBatch(batchRepos);
+      const results = yield* summaries(batchRepos);
       const after = yield* Port.tokensSpent("test/model");
       expect(results.map(Result.isSuccess)).toEqual([true, true, true]);
       const attributes = (name: string) =>
@@ -442,7 +453,7 @@ describe("gateway batch", () => {
     const other = { ...validSummary, summary: "A command-line fuzzy finder." };
     const fake = fakeBatch({ items: [succeeded("1", JSON.stringify(other))] });
     return Effect.gen(function* () {
-      const results = yield* Summarize.summarizeBatch([repo, repo]);
+      const results = yield* summaries([repo, repo]);
       expect(results).toEqual([Result.succeed(validSummary), Result.succeed(other)]);
       expect(fake.direct.calls).toBe(1);
     }).pipe(Effect.provide(fake.layer));
@@ -453,9 +464,9 @@ describe("gateway batch", () => {
     const keyOf = (start: StartOptions | undefined) =>
       (start?.providerOptions?.gateway as { readonly idempotencyKey?: string } | undefined)?.idempotencyKey;
     return Effect.gen(function* () {
-      yield* Summarize.summarizeBatch([repo, repo]);
-      yield* Summarize.summarizeBatch([repo, repo]);
-      yield* Summarize.summarizeBatch([repo, { ...repo, readme: "a new README" }]);
+      yield* summaries([repo, repo]);
+      yield* summaries([repo, repo]);
+      yield* summaries([repo, { ...repo, readme: "a new README" }]);
       const [first, again, changed] = fake.starts.map(keyOf);
       expect(first).toMatch(/^stargrep-batch-[0-9a-f]{64}$/);
       expect(again).toBe(first);
@@ -466,7 +477,7 @@ describe("gateway batch", () => {
   it.effect("answers a single prompt directly, without starting a batch job", () => {
     const fake = fakeBatch({ items: [] });
     return Effect.gen(function* () {
-      expect(yield* Summarize.summarizeBatch([repo])).toEqual([Result.succeed(validSummary)]);
+      expect(yield* summaries([repo])).toEqual([Result.succeed(validSummary)]);
       expect(fake.starts).toHaveLength(0);
       expect(fake.direct.calls).toBe(1);
     }).pipe(Effect.provide(fake.layer));
@@ -475,7 +486,7 @@ describe("gateway batch", () => {
   it.effect("answers every prompt directly when the gateway fails the whole batch", () => {
     const fake = fakeBatch({ items: [], fails: true });
     return Effect.gen(function* () {
-      const results = yield* Summarize.summarizeBatch(batchRepos);
+      const results = yield* summaries(batchRepos);
       expect(results).toEqual(batchRepos.map(() => Result.succeed(validSummary)));
       expect(fake.direct.calls).toBe(3);
     }).pipe(Effect.provide(fake.layer));
@@ -487,7 +498,7 @@ describe("gateway batch", () => {
       throwOnce: ["start", "status", "results"],
     });
     return Effect.gen(function* () {
-      const fiber = yield* Effect.forkChild(Summarize.summarizeBatch([repo, repo]));
+      const fiber = yield* Effect.forkChild(summaries([repo, repo]));
       // The idempotency key's SHA-256 runs on real time, so the clock steps start once the job is first sent.
       yield* Effect.promise(() => fake.firstStart);
       expect(yield* settle(fiber)).toEqual([Result.succeed(validSummary), Result.succeed(validSummary)]);
@@ -697,7 +708,7 @@ describe("gateway privacy", () => {
   it.effect("keeps rejected batch output out of every span when the direct fallback recovers", () =>
     throughGateway(JSON.stringify(validSummary), ({ authorized }) =>
       Effect.gen(function* () {
-        expect(yield* Summarize.summarizeBatch([{ ...repo, readme: keyCanary }, repo])).toEqual([
+        expect(yield* summaries([{ ...repo, readme: keyCanary }, repo])).toEqual([
           Result.succeed(validSummary),
           Result.succeed(validSummary),
         ]);
@@ -709,7 +720,7 @@ describe("gateway privacy", () => {
   it.effect("keeps rejected output out of every span when the direct fallback fails too", () =>
     throughGateway(rejected, ({ spans }) =>
       Effect.gen(function* () {
-        const answers = yield* Summarize.summarizeBatch([{ ...repo, readme: keyCanary }, repo]);
+        const answers = yield* summaries([{ ...repo, readme: keyCanary }, repo]);
         expect(answers.map((answer) => Result.isFailure(answer) && answer.failure._tag)).toEqual([
           "AiOutputInvalid",
           "AiOutputInvalid",
@@ -739,7 +750,7 @@ describe("gateway without the batch API", () => {
       { batch: false },
     );
     return Effect.gen(function* () {
-      const results = yield* Summarize.summarizeBatch([repo, { ...repo, fullName: "other/repo" }, repo]);
+      const results = yield* summaries([repo, { ...repo, fullName: "other/repo" }, repo]);
       expect(results.map(Result.isSuccess)).toEqual([true, true, true]);
       expect(calls).toBe(3);
       const generated = spans.filter((span) => span.name === "TextGeneration.generate");
@@ -759,7 +770,7 @@ describe("gateway without the batch API", () => {
       { batch: false },
     );
     return Effect.gen(function* () {
-      const results = yield* Summarize.summarizeBatch([repo, { ...repo, fullName: "other/repo" }, repo]);
+      const results = yield* summaries([repo, { ...repo, fullName: "other/repo" }, repo]);
       expect(results.map((result) => (Result.isSuccess(result) ? "summary" : result.failure._tag))).toEqual([
         "summary",
         "AiOutputInvalid",

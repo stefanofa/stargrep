@@ -3,6 +3,7 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
+import * as Stream from "effect/Stream";
 import { type AiError, AiOutputInvalid, AiTimeout } from "./errors.ts";
 import { annotateTokens, countTokens } from "./port.ts";
 import type { AiSchema } from "./schema-bridge.ts";
@@ -13,11 +14,13 @@ export interface GenerateRequest<A> {
   readonly prompt: string;
 }
 
-export interface GenerateBatchRequest<A> extends Omit<GenerateRequest<A>, "prompt"> {
-  readonly prompts: ReadonlyArray<string>;
+export interface GenerateBatchRequest<A, I> extends Omit<GenerateRequest<A>, "prompt"> {
+  readonly items: ReadonlyArray<I>;
+  readonly prompt: (item: I) => string;
 }
 
-export type BatchResults<A> = ReadonlyArray<Result.Result<A, AiError>>;
+// Each item with its answer, sent as soon as that answer is ready, so a caller can keep it before the slowest arrives.
+export type BatchAnswer<A, I> = readonly [item: I, answer: Result.Result<A, AiError>];
 
 export interface RunRequest {
   readonly jsonSchema: JSONSchema7;
@@ -39,7 +42,7 @@ export class TextGeneration extends Context.Service<
   {
     readonly model: string;
     readonly generate: <A>(request: GenerateRequest<A>) => Effect.Effect<A, AiError>;
-    readonly generateBatch: <A>(request: GenerateBatchRequest<A>) => Effect.Effect<BatchResults<A>>;
+    readonly generateBatch: <A, I>(request: GenerateBatchRequest<A, I>) => Stream.Stream<BatchAnswer<A, I>>;
   }
 >()("@stargrep/ai/text-generation/TextGeneration") {}
 
@@ -85,7 +88,7 @@ export const make = (options: {
     generateOne(request).pipe(Effect.withSpan("TextGeneration.generate", { attributes: { provider, model } }));
 
   const answer = <A>(
-    request: GenerateBatchRequest<A>,
+    request: Omit<GenerateRequest<A>, "prompt">,
     prompt: string,
     item: Result.Result<RunResult, AiError> | undefined,
   ) => {
@@ -110,15 +113,21 @@ export const make = (options: {
           ),
         );
 
-  const generateBatch = <A>(request: GenerateBatchRequest<A>): Effect.Effect<BatchResults<A>> =>
-    runBatch({ jsonSchema: request.schema.jsonSchema, system: request.system, prompts: request.prompts }).pipe(
-      Effect.flatMap((items) =>
-        Effect.forEach(request.prompts, (prompt, index) => answer(request, prompt, items[index]), {
-          concurrency: fallbackConcurrency,
-        }),
+  const generateBatch = <A, I>(request: GenerateBatchRequest<A, I>): Stream.Stream<BatchAnswer<A, I>> => {
+    const asked = request.items.map((item) => ({ item, prompt: request.prompt(item) }));
+    const prompts = asked.map(({ prompt }) => prompt);
+    return Stream.fromEffect(runBatch({ jsonSchema: request.schema.jsonSchema, system: request.system, prompts })).pipe(
+      Stream.flatMap((results) =>
+        Stream.fromIterable(asked.map((entry, index) => ({ ...entry, result: results[index] }))),
       ),
-      Effect.withSpan("TextGeneration.generateBatch", { attributes: { provider, model } }),
+      Stream.mapEffect(
+        ({ item, prompt, result }) =>
+          Effect.map(answer(request, prompt, result), (answered): BatchAnswer<A, I> => [item, answered]),
+        { concurrency: fallbackConcurrency, unordered: true },
+      ),
+      Stream.withSpan("TextGeneration.generateBatch", { attributes: { provider, model } }),
     );
+  };
 
   return TextGeneration.of({ model, generate, generateBatch });
 };

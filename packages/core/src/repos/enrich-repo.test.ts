@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as IconQueue from "../icons/icon-queue.ts";
@@ -801,6 +802,93 @@ it.layer(enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30
       ]);
       expect(yield* failuresOf(36)).toEqual([{ enrich_failures: 0 }]);
       expect(yield* enrichAll).toMatchObject([{ _tag: "Summarized" }]);
+    }),
+  );
+  it.effect(
+    "saves each summary as its answer arrives, so a run cut short keeps them and the next run only embeds",
+    () =>
+      Effect.gen(function* () {
+        const numbers = [280, 281, 282];
+        for (const n of numbers)
+          remotes.set(n, { description: `Slow ${n}`, readme: { oid: wideOid(n), text: `# Slow ${n}` } });
+        const db = yield* Db.Db;
+        const saved = yield* Queue.unbounded<RepoId>();
+        const watched = Layer.succeed(
+          Db.Db,
+          Db.Db.of({
+            ...db,
+            repos: {
+              ...db.repos,
+              saveSummary: (summary) => Effect.tap(db.repos.saveSummary(summary), () => Queue.offer(saved, summary.id)),
+            },
+          }),
+        );
+        const allAsked = yield* Deferred.make<void>();
+        const asked: Array<string> = [];
+        const answerAfter = (seconds: (prompt: string) => number) =>
+          textGeneration((request) =>
+            Effect.gen(function* () {
+              asked.push(request.prompt);
+              if (asked.length === numbers.length) yield* Deferred.succeed(allAsked, undefined);
+              yield* Effect.sleep(Duration.seconds(seconds(request.prompt)));
+              return { output: SummarizeFake.respond(request.prompt), usage };
+            }),
+          );
+        const slow = answerAfter((prompt) =>
+          prompt.includes("repo-280\n") ? 1 : prompt.includes("repo-281\n") ? 2 : 4,
+        );
+        const ids = yield* store(numbers);
+        const enrichAll = Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) => enricher.enrichRepos(ids));
+
+        const fiber = yield* Effect.forkChild(
+          enrichAll.pipe(Effect.provide(Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(Layer.merge(watched, slow))))),
+        );
+        yield* Deferred.await(allAsked);
+        yield* TestClock.adjust("1 second");
+        expect(yield* Queue.take(saved)).toBe(id(280));
+        yield* TestClock.adjust("1 second");
+        expect(yield* Queue.take(saved)).toBe(id(281));
+        yield* Fiber.interrupt(fiber);
+        expect(yield* get(281)).toMatchObject({ summaryReadmeOid: wideOid(281), embeddingModel: null });
+        expect((yield* get(282)).summary).toBeNull();
+
+        asked.length = 0;
+        const outcomes = yield* enrichAll.pipe(using(answerAfter(() => 0)));
+        expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Embedded", "Embedded", "Summarized"]);
+        expect(asked).toEqual([expect.stringContaining("Repository: owner/repo-282\n")]);
+      }),
+  );
+  it.effect("saves a later answer while an earlier summary's save still waits", () =>
+    Effect.gen(function* () {
+      const numbers = [283, 284];
+      for (const n of numbers)
+        remotes.set(n, { description: `Locked ${n}`, readme: { oid: wideOid(n), text: `# ${n}` } });
+      const db = yield* Db.Db;
+      const saved = yield* Queue.unbounded<RepoId>();
+      const unlock = yield* Deferred.make<void>();
+      const locked = Layer.succeed(
+        Db.Db,
+        Db.Db.of({
+          ...db,
+          repos: {
+            ...db.repos,
+            saveSummary: (summary) =>
+              Effect.andThen(
+                summary.id === id(283) ? Deferred.await(unlock) : Effect.void,
+                Effect.tap(db.repos.saveSummary(summary), () => Queue.offer(saved, summary.id)),
+              ),
+          },
+        }),
+      );
+      const ids = yield* store(numbers);
+      const fiber = yield* Effect.forkChild(
+        Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) => enricher.enrichRepos(ids)).pipe(
+          Effect.provide(Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(locked))),
+        ),
+      );
+      expect(yield* Queue.take(saved)).toBe(id(284));
+      yield* Deferred.succeed(unlock, undefined);
+      expect((yield* Fiber.join(fiber)).map((outcome) => outcome._tag)).toEqual(["Summarized", "Summarized"]);
     }),
   );
   it.effect("reads up to four READMEs from the blob store at once while it plans", () =>

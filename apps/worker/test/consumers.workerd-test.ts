@@ -29,6 +29,7 @@ import { GitHubAccountId, Login, type RepoId, RepoName } from "@stargrep/github/
 import * as TokenGate from "@stargrep/github/token-gate";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -415,6 +416,180 @@ describe("enrich-repo consumer", () => {
     expect(later.map((sent) => sent.body)).toEqual([{ repoId: 3 }, { repoId: 4 }]);
     expect(result.explicitAcks.toSorted()).toEqual(["m0", "m1"]);
     expect(result.retryMessages).toEqual([]);
+  });
+});
+
+describe("enrich-repo consumer in chunks", () => {
+  const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, index) => from + index);
+
+  // Messages that log each ack and retry next to each run the fake enricher starts, in the order they happen.
+  const loggedBatch = (bodies: ReadonlyArray<unknown>) => {
+    const batch = batchOf("enrich-repo", bodies);
+    const events: Array<string> = [];
+    const messages = batch.messages.map(
+      (message): Cloudflare.Queues.Message<unknown> => ({
+        id: message.id,
+        timestamp: message.timestamp,
+        body: message.body,
+        attempts: message.attempts,
+        ack: () => {
+          events.push(`ack ${message.id}`);
+          message.ack();
+        },
+        retry: (options) => {
+          events.push(`retry ${message.id}`);
+          message.retry(options);
+        },
+      }),
+    );
+    return { batch, events, messages };
+  };
+
+  const enricher = (
+    events: Array<string>,
+    enrich: (
+      ids: ReadonlyArray<RepoId>,
+    ) => Effect.Effect<ReadonlyArray<EnrichRepo.Enrichment>, EnrichRepo.EnrichRepoAbort>,
+  ) =>
+    Layer.mock(EnrichRepo.EnrichRepo, {
+      enrichRepos: (ids) =>
+        Effect.sync(() => events.push(`run ${ids.join(",")}`)).pipe(
+          Effect.andThen(enrich(ids)),
+          Effect.onInterrupt(() => Effect.sync(() => events.push(`stopped ${ids.join(",")}`))),
+        ),
+    });
+
+  const summarized = (ids: ReadonlyArray<RepoId>) =>
+    ids.map((id) => EnrichRepo.Enrichment.Summarized({ id, summary: { summary: "s", keywords: [], kind: null } }));
+
+  const names = (indexes: ReadonlyArray<number>) => indexes.map((index) => `m${index}`);
+  const logged = (verb: string, indexes: ReadonlyArray<number>) => names(indexes).map((name) => `${verb} ${name}`);
+
+  // The first chunk's messages run on the server's token, and the second chunk splits into a server group and a user
+  // group whose model answers come in slowly and then fail.
+  it("acks each chunk before the next starts, and acks an earlier group when a later group fails late", async () => {
+    const bodies = range(1, 25).map((repoId) => (repoId >= 15 && repoId <= 20 ? { repoId, userId: "u1" } : { repoId }));
+    const { queues } = recordingQueues();
+    const { batch, events, messages } = loggedBatch(bodies);
+    const layer = enricher(events, (asked) =>
+      asked.includes(repoId(15))
+        ? Effect.sleep("2 minutes").pipe(
+            Effect.andThen(
+              Effect.fail(new DbQueryFailed({ operation: "repos.saveSummary", reason: "transport", sqlState: null })),
+            ),
+          )
+        : Effect.as(Effect.sleep("1 minute"), summarized(asked)),
+    );
+    const result = await run(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkChild(
+          Effect.timed(Settle.processBatch(EnrichRepoConsumer.pipeline(layer), queues, messages)),
+        );
+        yield* TestClock.adjust("10 minutes");
+        const [took] = yield* Fiber.join(fiber);
+        expect(Duration.toMinutes(took)).toBe(5);
+      }).pipe(Effect.provide(Layer.mergeAll(answering, UserGate.layerServerOnly, TestClock.layer()))),
+      batch,
+    );
+    expect(events).toEqual([
+      `run ${range(1, 10).join(",")}`,
+      ...logged("ack", range(0, 9)),
+      `run ${range(11, 14).join(",")}`,
+      `run ${range(15, 20).join(",")}`,
+      ...logged("ack", range(10, 13)),
+      ...logged("retry", range(14, 19)),
+      `run ${range(21, 25).join(",")}`,
+      ...logged("ack", range(20, 24)),
+    ]);
+    expect(result.explicitAcks.toSorted()).toEqual(names([...range(0, 13), ...range(20, 24)]).toSorted());
+    expect(result.retryMessages.map((message) => message.msgId)).toEqual(names(range(14, 19)));
+  });
+
+  it("retries the chunk the deadline stops and every chunk after it, settling all by the deadline", async () => {
+    const { queues } = recordingQueues();
+    const { batch, events, messages } = loggedBatch(range(1, 40).map((repoId) => ({ repoId })));
+    const layer = enricher(events, (asked) => Effect.as(Effect.sleep("4 minutes"), summarized(asked)));
+    const result = await run(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkChild(
+          Effect.timed(Settle.processBatch(EnrichRepoConsumer.pipeline(layer), queues, messages)),
+        );
+        yield* TestClock.adjust("15 minutes");
+        const [took] = yield* Fiber.join(fiber);
+        expect(Duration.toMillis(took)).toBe(Duration.toMillis(EnrichRepoConsumer.chunks.deadline));
+      }).pipe(Effect.provide(Layer.mergeAll(answering, UserGate.layerServerOnly, TestClock.layer()))),
+      batch,
+    );
+    expect(events).toEqual([
+      `run ${range(1, 10).join(",")}`,
+      ...logged("ack", range(0, 9)),
+      `run ${range(11, 20).join(",")}`,
+      ...logged("ack", range(10, 19)),
+      `run ${range(21, 30).join(",")}`,
+      `stopped ${range(21, 30).join(",")}`,
+      ...logged("retry", range(20, 39)),
+    ]);
+    expect(result.explicitAcks).toHaveLength(20);
+    expect(result.retryMessages).toHaveLength(20);
+  });
+
+  it("defers a rate-limited gate's later chunks without running them, and keeps running other gates", async () => {
+    const bodies = range(1, 30).map((repoId) => (repoId >= 16 && repoId <= 20 ? { repoId, userId: "u1" } : { repoId }));
+    const { queues, later } = recordingQueues();
+    const { batch, events, messages } = loggedBatch(bodies);
+    const rateLimited = new RateLimited({ operation: "repo-facts", resource: "graphql", retryAfterMillis: 120_000 });
+    const layer = enricher(events, (asked) =>
+      asked.includes(repoId(16)) ? Effect.succeed(summarized(asked)) : Effect.fail(rateLimited),
+    );
+    const result = await run(
+      Settle.processBatch(EnrichRepoConsumer.pipeline(layer), queues, messages).pipe(
+        Effect.provide(Layer.merge(answering, UserGate.layerServerOnly)),
+      ),
+      batch,
+    );
+    expect(events.filter((event) => event.startsWith("run"))).toEqual([
+      `run ${range(1, 10).join(",")}`,
+      `run ${range(16, 20).join(",")}`,
+    ]);
+    expect(later.map((sent) => (sent.body as { readonly repoId: number }).repoId).toSorted((a, b) => a - b)).toEqual([
+      ...range(1, 15),
+      ...range(21, 30),
+    ]);
+    expect(new Set(later.map((sent) => sent.delaySeconds)).size).toBe(1);
+    expect(result.explicitAcks).toHaveLength(30);
+  });
+
+  it("leaves an undecodable message for the batch's retry when a chunk dies, as before chunks", async () => {
+    const { queues, deadLetters } = recordingQueues();
+    const { events, messages } = loggedBatch([{ repo: "x" }, { repoId: 1 }]);
+    const layer = enricher(events, () => Effect.die("lost the isolate"));
+    const exit = await Effect.runPromiseExit(
+      Settle.processBatch(EnrichRepoConsumer.pipeline(layer), queues, messages).pipe(
+        Effect.provide(Layer.merge(answering, UserGate.layerServerOnly)),
+      ),
+    );
+    expect(Exit.hasDies(exit)).toBe(true);
+    expect(events).toEqual(["run 1"]);
+    expect(deadLetters).toEqual([]);
+  });
+
+  it("keeps a finished chunk's acks when a later chunk dies and the whole batch is retried", async () => {
+    const { queues } = recordingQueues();
+    const { batch, events, messages } = loggedBatch(range(1, 15).map((repoId) => ({ repoId })));
+    const layer = enricher(events, (asked) =>
+      asked.includes(repoId(11)) ? Effect.die("lost the isolate") : Effect.succeed(summarized(asked)),
+    );
+    const exit = await Effect.runPromiseExit(
+      Settle.processBatch(EnrichRepoConsumer.pipeline(layer), queues, messages).pipe(
+        Effect.provide(Layer.merge(answering, UserGate.layerServerOnly)),
+      ),
+    );
+    expect(Exit.hasDies(exit)).toBe(true);
+    // Alchemy retries every message of a batch whose handler failed, and a message's first ack or retry wins.
+    for (const message of batch.messages) message.retry();
+    const result = await getQueueResult(batch, createExecutionContext());
+    expect(result.explicitAcks.toSorted()).toEqual(names(range(0, 9)).toSorted());
+    expect(result.retryMessages.map((message) => message.msgId).toSorted()).toEqual(names(range(10, 14)).toSorted());
   });
 });
 
