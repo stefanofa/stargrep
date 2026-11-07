@@ -93,7 +93,7 @@ export default Cloudflare.Worker(
       [queueNames.fetchIcon, yield* Cloudflare.Queues.WriteQueue(yield* FetchIcons)],
     ]);
     yield* Cloudflare.KV.ReadWriteNamespace(DebugCache);
-    yield* Cloudflare.R2.ReadWriteBucket(DebugBlobs);
+    const blobs = yield* Cloudflare.R2.ReadWriteBucket(DebugBlobs);
     const database = yield* Cloudflare.Hyperdrive.Connect(Database);
     const counters = yield* Counter;
     const budgets = yield* Budget;
@@ -102,7 +102,7 @@ export default Cloudflare.Worker(
     yield* Cloudflare.Queues.consumeQueueMessages(jobs, { batchSize: 10, maxWaitTime: "1 second" }, (stream) =>
       Stream.runForEach(stream, (message) =>
         decodePing(message.body).pipe(
-          Effect.flatMap(({ id }) => Effect.log("consumed job").pipe(Effect.annotateLogs({ id }))),
+          Effect.flatMap(({ id }) => blobs.put(`consumed/${id}`, "consumed")),
           Effect.catchTags({ SchemaError: (error) => Effect.logWarning("dropped malformed job", error.message) }),
         ),
       ),
@@ -155,6 +155,15 @@ export default Cloudflare.Worker(
         return yield* withinBudget(
           count.value,
           sendPings(count.value).pipe(Effect.flatMap((sent) => HttpServerResponse.json({ sent }))),
+        );
+      }
+      const job = /^\/queue\/([a-f0-9-]{36})$/.exec(url.pathname)?.[1];
+      if (method === "GET" && job !== undefined) {
+        return yield* withinBudget(
+          1,
+          blobs
+            .head(`consumed/${job}`)
+            .pipe(Effect.flatMap((receipt) => HttpServerResponse.json({ consumed: receipt !== null }))),
         );
       }
       if (method === "POST" && url.pathname === "/transaction") {

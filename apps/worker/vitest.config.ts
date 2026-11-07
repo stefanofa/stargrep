@@ -29,6 +29,7 @@ export default defineConfig({
   ],
   test: {
     include: ["test/**/*.workerd-test.ts"],
+    exclude: ["test/runtime/**"],
     testTimeout: 30_000,
     // With the module cache on, the plugin sends the whole warm import graph to workerd in one WebSocket message, which
     // workerd refuses past its size limit once a second test file loads the consumers (cloudflare/workers-sdk#16349).

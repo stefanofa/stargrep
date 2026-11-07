@@ -22,6 +22,7 @@ const { url: workerUrl, debugUrl, debugToken, webUrl } = await readStageOutput(s
 const Budget = Schema.Struct({ minute: Schema.Int, used: Schema.Int, cap: Schema.Int });
 const Count = Schema.Struct({ count: Schema.Int });
 const Sent = Schema.Struct({ sent: Schema.Array(Schema.String) });
+const Consumed = Schema.Struct({ consumed: Schema.Boolean });
 const Refused = Schema.Struct({ budget: Budget });
 const Transaction = Schema.Struct({ pid: Schema.Int, sum: Schema.Int });
 
@@ -121,6 +122,19 @@ const unauthenticated = Effect.gen(function* () {
 
 const traffic = Effect.gen(function* () {
   const queued = yield* read(Sent, "POST", "/queue?count=10");
+  yield* waitUntilReady(
+    `${debugUrl}/queue`,
+    Effect.forEach(queued.sent, (id) => read(Consumed, "GET", `/queue/${id}`), { concurrency: 10 }).pipe(
+      Effect.orDie,
+      Effect.flatMap((receipts) =>
+        receipts.every((receipt) => receipt.consumed)
+          ? Effect.void
+          : Effect.fail(
+              new NotSettled({ answer: `${receipts.filter((receipt) => receipt.consumed).length}/10 consumed` }),
+            ),
+      ),
+    ),
+  );
 
   const counter = `parallel-${yield* Clock.currentTimeMillis}`;
   yield* Effect.forEach(Array.from({ length: 5 }), () => read(Count, "POST", `/counter/${counter}`), {
@@ -136,7 +150,7 @@ const traffic = Effect.gen(function* () {
     ({ body }) => decode(Transaction, body),
   );
   return [
-    check("queue accepts 10 jobs", queued.sent.length === 10, { sent: queued.sent }),
+    check("queue consumes 10 jobs", queued.sent.length === 10, { consumed: queued.sent }),
     check("counter ends at 5 after 5 parallel increments", counted.count === 5, counted),
     check("30 parallel transactions commit", committed.length === 30, {
       failures: transactions.filter(({ status }) => status !== 200).map(({ status, body }) => `${status} ${body}`),

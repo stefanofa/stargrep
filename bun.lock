@@ -90,6 +90,7 @@
       "devDependencies": {
         "@cloudflare/vitest-plugin": "1.5.1",
         "@cloudflare/workers-types": "5.20261103.1",
+        "@effect/platform-node": "4.1.2",
         "@effect/tsgo": "catalog:",
         "@stargrep/config": "workspace:*",
         "@types/pg": "catalog:",
