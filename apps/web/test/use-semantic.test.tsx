@@ -34,6 +34,8 @@ describe("the search by meaning on a page", () => {
     expect(searched).toEqual([]);
     rerender({ revision: "synced at 2" });
     await waitFor(() => expect(searched).toEqual(["terminal"]));
+    await waitFor(() => expect(result.current.semantic).toEqual({ kind: "answered", results: [] }));
+    expect(searched).toEqual(["terminal"]);
   });
 
   test("asks again for a known answer searched in an older revision than the page's library", async () => {

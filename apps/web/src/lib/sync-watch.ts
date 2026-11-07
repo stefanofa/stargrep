@@ -21,6 +21,7 @@ const libraryMoved = (before: SyncStatus | undefined, current: SyncStatus) =>
 
 export class SyncRefused extends Data.TaggedError("SyncRefused")<{ readonly refusal: Refusal }> {}
 export class SyncFailed extends Data.TaggedError("SyncFailed")<{ readonly cause: unknown }> {}
+// The page records when it read a status, because the server's status carries no time.
 export type SyncWatch =
   | { readonly kind: "watching"; readonly status: SyncStatus | undefined; readonly at: number | undefined }
   | { readonly kind: Refusal };
@@ -64,6 +65,7 @@ export const watchSync = Effect.fn("Sync.watch")(function* (watch: Watch) {
             }),
             Effect.never,
           ),
+        // Failed reads retry at the next poll. A refused trigger waits for the visitor to ask again.
         SyncFailed: (error) => Effect.as(Effect.logWarning("sync status failed", error.cause), before),
       }),
     );

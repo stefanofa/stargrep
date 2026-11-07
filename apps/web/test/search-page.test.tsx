@@ -297,7 +297,7 @@ describe("the search page in each state", () => {
     server.repos = [fresh, ...server.repos];
     server.status = status({ state: "queued", enrichment: { total: 7, read: 6, failed: 0 } });
     await poll();
-    await waitFor(() => expect(strip()).toContain("1 new star · reading…"), { timeout: 8000 });
+    await waitFor(() => expect(strip()).toContain("1 new star · reading…"));
     const card = page().getByRole("link", { name: "auto-ontology" }).closest("article");
     expect(card?.textContent).toContain("reading…");
     expect(card?.textContent).not.toContain("no pushes yet");
@@ -316,9 +316,9 @@ describe("the search page in each state", () => {
     );
     server.status = status({ enrichment: { total: 7, read: 7, failed: 0 } });
     await poll();
-    await waitFor(() => expect(page().getByText("A semantic layer.")).toBeTruthy(), { timeout: 8000 });
+    await waitFor(() => expect(page().getByText("A semantic layer.")).toBeTruthy());
     expect(strip()).toContain("7 stars");
-  }, 20_000);
+  });
 
   test("a sync that starts after the page settled is picked up when the tab is shown again", async () => {
     await open("/", "Search your stars", false);
