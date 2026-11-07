@@ -1,7 +1,8 @@
 import { Input } from "@base-ui/react/input";
 import { type FormEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "../lib/cn.ts";
-import { SearchIcon } from "./icons.tsx";
+import { Button } from "./button.tsx";
+import { CloseIcon, SearchIcon } from "./icons.tsx";
 import { Tile } from "./tile.tsx";
 
 const typing = (target: EventTarget | null) =>
@@ -79,7 +80,16 @@ export function SearchTile({
     return () => window.removeEventListener("keydown", focusOnSlash);
   }, []);
 
-  const submit = (event: FormEvent<HTMLFormElement>) => event.preventDefault();
+  // Results land as you type, so a phone keyboard's search key only has to get out of their way.
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (matchMedia("(pointer: coarse)").matches) input.current?.blur();
+  };
+
+  const clear = () => {
+    onQueryChange?.("");
+    input.current?.focus();
+  };
 
   const strip = status !== undefined || controls !== undefined;
 
@@ -102,8 +112,14 @@ export function SearchTile({
               placeholder={placeholder}
               value={query}
               onValueChange={(next) => onQueryChange?.(next)}
+              enterKeyHint="search"
               className="min-w-0 flex-1 bg-transparent font-sans text-ellipsis outline-none text-[16px] leading-6 font-medium text-foreground placeholder:text-muted-foreground sm:text-xl sm:tracking-snug [&::-webkit-search-cancel-button]:appearance-none"
             />
+            {query !== "" && (
+              <Button variant="bare" size="xs" aria-label="Clear search" onClick={clear}>
+                <CloseIcon />
+              </Button>
+            )}
             <kbd className="flex h-[30px] shrink-0 items-center rounded-xs bg-muted px-2.5 font-sans text-sm font-semibold text-secondary-foreground max-sm:hidden">
               /
             </kbd>
