@@ -15,7 +15,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
-import { type AnswerContext, type AnswerPolicy, answerCache } from "./answer-cache.ts";
+import { type AnswerContext, type AnswerPolicy, answerCache, searchWindows } from "./answer-cache.ts";
 import { Caller } from "./caller.ts";
 import {
   contract,
@@ -193,8 +193,7 @@ const searchAnswer = Effect.fnUntraced(function* (input: typeof SearchInput.Type
 const searchAnswers: AnswerPolicy<typeof SearchOutput.Encoded> = {
   procedure: "search",
   json: Schema.fromJsonString(Schema.toEncoded(SearchOutput)),
-  fresh: Duration.minutes(5),
-  stale: Duration.days(1),
+  ...searchWindows,
   keep: (answer) => answer.planSource !== "fallback",
 };
 

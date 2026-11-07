@@ -12,7 +12,7 @@ import { type Answer, type Ask, pause, semanticAnswers } from "../src/lib/search
 
 const typing = Duration.millis(60);
 
-const harness = (latency: Duration.Duration) =>
+const harness = (latency: Duration.Duration, answered?: string) =>
   Effect.gen(function* () {
     const queries = yield* Queue.unbounded<Ask>();
     const started = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -24,7 +24,7 @@ const harness = (latency: Duration.Duration) =>
         Effect.as(`results for ${query}`),
         Effect.onInterrupt(() => Ref.update(interrupted, (all) => [...all, query])),
       );
-    yield* semanticAnswers(Stream.fromQueue(queries), search).pipe(
+    yield* semanticAnswers(Stream.fromQueue(queries), search, answered).pipe(
       Stream.runForEach((answer) => Ref.update(answers, (all) => [...all, answer])),
       Effect.forkChild,
     );
@@ -47,6 +47,23 @@ const harness = (latency: Duration.Duration) =>
   });
 
 describe("semanticAnswers", () => {
+  it.effect("does not ask again for the query the page already answered, until it changes or a refresh asks", () =>
+    Effect.gen(function* () {
+      const { type, refresh, started } = yield* harness(Duration.millis(100), "Rust  TUI");
+      yield* type("rust tui");
+      yield* TestClock.adjust(pause);
+      expect(yield* started).toEqual([]);
+
+      yield* refresh("rust tui");
+      yield* TestClock.adjust(pause);
+      expect(yield* started).toEqual(["rust tui"]);
+
+      yield* type("go cli");
+      yield* TestClock.adjust(pause);
+      expect(yield* started).toEqual(["rust tui", "go cli"]);
+    }),
+  );
+
   it.effect("searches only once typing pauses, for the last query typed", () =>
     Effect.gen(function* () {
       const { type, started, answers } = yield* harness(Duration.millis(100));

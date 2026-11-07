@@ -4,6 +4,7 @@ import { describe, expect } from "bun:test";
 import { middlewareGen, type WithEffectContext } from "@orpc/effect";
 import { createRouterClient, os } from "@orpc/server";
 import * as it from "@stargrep/testing";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -72,10 +73,26 @@ const harness = (planned: () => boolean = () => true) => {
       return { value: found.value, cache: resHeaders.get("x-answer-cache") };
     });
   const runRefreshes = Effect.suspend(() => Effect.all(refreshes.splice(0)));
-  return { memory, counts, refreshes, answer, runRefreshes };
+  const storedAt = () => resHeaders.get("x-answer-stored-at");
+  return { memory, counts, refreshes, answer, runRefreshes, storedAt };
 };
 
 describe("answer cache middleware", () => {
+  it.effect("says when the answer it serves was stored, so a page built from it can expire with it", () =>
+    Effect.gen(function* () {
+      const cache = harness();
+      const storedAt = String(yield* Clock.currentTimeMillis);
+      yield* cache.answer("stored at");
+      expect(cache.storedAt()).toBe(storedAt);
+      yield* TestClock.adjust("4 minutes");
+      expect(yield* cache.answer("stored at")).toEqual({ value: 1, cache: "hit" });
+      expect(cache.storedAt()).toBe(storedAt);
+      yield* TestClock.adjust("2 minutes");
+      expect(yield* cache.answer("stored at")).toEqual({ value: 1, cache: "stale" });
+      expect(cache.storedAt()).toBe(storedAt);
+    }),
+  );
+
   it.effect("refreshes with a background signal after the stale request is aborted", () => {
     const request = new AbortController();
     return Effect.gen(function* () {

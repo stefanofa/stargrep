@@ -11,45 +11,51 @@ export type { Semantic };
 
 const none: Semantic = { kind: "none" };
 
+// An answer the page already has, and the library revision it was answered from.
 export interface Known {
   readonly query: string;
   readonly results: ReadonlyArray<SearchResult>;
+  readonly revision: string;
 }
 
 export function useSemanticSearch(
   login: string,
   query: string,
-  { read, settled, known }: { read: number | undefined; settled: boolean; known?: Known | undefined },
+  { revision, settled, known }: { revision: string | undefined; settled: boolean; known?: Known | undefined },
 ): { readonly semantic: Semantic; readonly retry: () => void } {
   const [answer, setAnswer] = useState<Answer<ReadonlyArray<SearchResult>, SearchFailed> | undefined>(
     known && { query: normalize(known.query), result: Result.succeed(known.results) },
   );
   const search = useRef<Search>(undefined);
-  const readBefore = useRef<number>(undefined);
+  // The library revision the answer on screen was searched in. Once the library settles on another one, a search by
+  // meaning asks again, since the answer may describe stars that changed.
+  const answeredIn = useRef(known?.revision);
+  const [answered] = useState(known?.query);
 
   useEffect(() => {
     const client = api();
     const running = startSemanticSearch(
       (q, signal) => client.search({ scope: { kind: "stars", login }, q }, { signal }).then(({ results }) => results),
       setAnswer,
+      answered,
     );
     search.current = running;
     return () => {
       running.stop();
       search.current = undefined;
     };
-  }, [login]);
+  }, [login, answered]);
 
   useEffect(() => {
     search.current?.offer(query);
   }, [query]);
 
   useEffect(() => {
-    if (read === undefined) return;
-    const before = readBefore.current;
-    if (settled && before !== undefined && before !== read) search.current?.refresh();
-    if (settled || before === undefined) readBefore.current = read;
-  }, [read, settled]);
+    if (revision === undefined) return;
+    const before = answeredIn.current;
+    if (settled && before !== undefined && before !== revision) search.current?.refresh();
+    if (settled || before === undefined) answeredIn.current = revision;
+  }, [revision, settled]);
 
   // Asking again drops the failed answer, so the page shows the search pending until the new answer lands.
   const retry = () => {

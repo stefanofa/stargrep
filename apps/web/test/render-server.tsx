@@ -5,6 +5,7 @@
 // STARGREP_PAGE_FAILURE set, the page loader fails with that message after the session loaded.
 //   SSR=1 bun test/render-server.tsx /path [cookie]
 import { mock } from "bun:test";
+import { disabled } from "@stargrep/api/answer-cache";
 
 const [path = "/", cookie] = process.argv.slice(2);
 const request = new Request(`http://localhost${path}`, cookie === undefined ? {} : { headers: { cookie } });
@@ -12,13 +13,14 @@ const request = new Request(`http://localhost${path}`, cookie === undefined ? {}
 const { serveApi, requested } = await import("./page-api.ts");
 // Bun loads a CSS import as an object, where Vite gives the root route a URL string.
 mock.module("../src/styles.css?url", () => ({ default: "/styles.css" }));
-// The Worker's app module binds Cloudflare's env. The page path only needs its API handler.
+// The Worker's app module binds Cloudflare's env. The page path needs its API handler, and a cache that keeps nothing,
+// since each render runs in its own process.
 const failure = process.env.STARGREP_API_FAILURE;
 const answer = (incoming: Request) =>
   failure !== undefined && new URL(incoming.url).pathname === "/rpc/config"
     ? Promise.reject(new Error(failure))
     : serveApi(incoming);
-mock.module("../src/server/app.ts", () => ({ serveApi: answer }));
+mock.module("../src/server/app.ts", () => ({ serveApi: answer, answers: () => disabled, waitUntil: () => {} }));
 // TanStack Start hands the request to server code through its own context, which this script stands in for.
 const pageFailure = process.env.STARGREP_PAGE_FAILURE;
 let reads = 0;
@@ -28,6 +30,7 @@ mock.module("@tanstack/react-start/server", () => ({
     if (pageFailure !== undefined && reads > 1) throw new Error(pageFailure);
     return request;
   },
+  setResponseHeader: () => {},
 }));
 
 const { routeTree } = await import("../src/routeTree.gen.ts");

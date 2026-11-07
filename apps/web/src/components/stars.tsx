@@ -30,7 +30,7 @@ import type { Viewer } from "../lib/rpc.ts";
 import { librarySorts, type Params, searchSorts, validateParams } from "../lib/search-params.ts";
 import { type Arriving, type Body, pageView, type Retry, type Stage, stageOf } from "../lib/search-state.ts";
 import { useStoredView } from "../lib/stored-view.ts";
-import { nothingSynced } from "../lib/sync-status.ts";
+import { libraryRevision, nothingSynced } from "../lib/sync-status.ts";
 import { libraryTrouble, type Trouble } from "../lib/trouble.ts";
 import { useSemanticSearch } from "../lib/use-semantic.ts";
 import { useSync } from "../lib/use-sync.ts";
@@ -210,9 +210,10 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
       ? startsIn(stage.phase.startsAt, readAt ?? at)
       : estimate;
   const { semantic, retry: retrySearch } = useSemanticSearch(owner, query, {
-    read: sync?.enrichment.read,
+    revision: sync === undefined ? undefined : libraryRevision(sync),
     settled: stage.name === "ready",
-    known: first === null ? undefined : { query: first.query, results: first.hits },
+    known:
+      first === null ? undefined : { query: first.query, results: first.hits, revision: libraryRevision(first.sync) },
   });
 
   const hits = hitsOf(semantic);

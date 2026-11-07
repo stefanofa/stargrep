@@ -47,6 +47,10 @@ export interface AnswerContext {
   readonly resHeaders?: Headers | undefined;
 }
 
+// How long a demo search answer is served as is, and how long after that while a refresh runs. A page built from one
+// keeps the same windows, measured from when the answer was stored.
+export const searchWindows = { fresh: Duration.minutes(5), stale: Duration.days(1) } as const;
+
 export interface AnswerPolicy<A> {
   readonly procedure: "search" | "stars";
   readonly json: Schema.Codec<A, string>;
@@ -61,20 +65,31 @@ const answersServed = Metric.counter("stargrep_answer_cache", {
   description: "Answers of cached procedures, by procedure and whether the cache served them fresh, stale, or not.",
 });
 
+// x-answer-stored-at says when the answer was computed, so a caller that keeps something built from it can expire it
+// with the answer instead of from the moment it read it.
 const served = (
   context: AnswerContext,
   procedure: AnswerPolicy<unknown>["procedure"],
   outcome: "hit" | "stale" | "miss",
+  storedAt: number,
 ) =>
   Effect.andThen(
-    Effect.sync(() => context.resHeaders?.set("x-answer-cache", outcome)),
+    Effect.sync(() => {
+      context.resHeaders?.set("x-answer-cache", outcome);
+      context.resHeaders?.set("x-answer-stored-at", String(storedAt));
+    }),
     Metric.update(Metric.withAttributes(answersServed, { procedure, outcome }), 1),
   );
 
 // When each key's latest refresh in this isolate started, oldest first. A refresh that stores its answer frees its key.
 // One that stores nothing, such as an answer the planner could not plan, keeps it, so a stale answer starts at most one
 // refresh per fresh window however its refreshes end.
-const claimRefresh = (refreshStarts: Map<string, number>, key: string, now: number, every: Duration.Duration) => {
+export const claimRefresh = (
+  refreshStarts: Map<string, number>,
+  key: string,
+  now: number,
+  every: Duration.Duration,
+) => {
   for (const [started, at] of refreshStarts) {
     if (now - at < Duration.toMillis(every)) break;
     refreshStarts.delete(started);
@@ -118,7 +133,7 @@ export const answerCache = <I, A, C extends AnswerContext>(
       const age = Duration.millis(Math.max(0, now - stored.value.storedAt));
       if (Option.isSome(answer) && Duration.isLessThan(age, keepFor)) {
         if (Duration.isLessThan(age, policy.fresh)) {
-          yield* served(context, policy.procedure, "hit");
+          yield* served(context, policy.procedure, "hit", stored.value.storedAt);
           return done({ output: answer.value });
         }
         if (claimRefresh(refreshStarts, key, now, policy.fresh)) {
@@ -148,14 +163,14 @@ export const answerCache = <I, A, C extends AnswerContext>(
             ),
           );
         }
-        yield* served(context, policy.procedure, "stale");
+        yield* served(context, policy.procedure, "stale", stored.value.storedAt);
         return done({ output: answer.value });
       }
     }
     // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC erases downstream failures to unknown.
     const result = yield* next();
     if (policy.keep(result.output)) yield* store(result.output);
-    yield* served(context, policy.procedure, "miss");
+    yield* served(context, policy.procedure, "miss", yield* Clock.currentTimeMillis);
     return result;
   });
 };
