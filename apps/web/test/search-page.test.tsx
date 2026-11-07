@@ -512,7 +512,8 @@ describe("the search page in each state", () => {
   });
 
   test("a result's link keeps the query and a view this browser saved, so it opens the same way anywhere", async () => {
-    localStorage.setItem("stargrep:view", "list");
+    // biome-ignore lint/suspicious/noDocumentCookie: the test saves a view the way the page does.
+    document.cookie = "stargrep-view=list; Path=/";
     try {
       await open("/?q=terminal");
       await waitFor(() =>
@@ -525,7 +526,8 @@ describe("the search page in each state", () => {
         repo: "ClementTsang/bottom",
       });
     } finally {
-      localStorage.removeItem("stargrep:view");
+      // biome-ignore lint/suspicious/noDocumentCookie: the test clears the view it saved.
+      document.cookie = "stargrep-view=; Max-Age=0; Path=/";
     }
   });
 
@@ -557,7 +559,7 @@ describe("the search page in each state", () => {
     expect(blank).not.toContain(true);
   });
 
-  test("Back puts the query of the page it returns to back in the search box", async () => {
+  test("Forward puts the query of the page it lands on back in the search box", async () => {
     const user = userEvent.setup();
     const router = await open("/?q=terminal");
     await user.click(await page().findByRole("link", { name: "bottom" }));
@@ -566,9 +568,60 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
     await user.type(page().getByRole("searchbox"), "s");
     await waitFor(() => expect(router.state.location.search).toMatchObject({ q: "terminals" }));
-    await act(async () => router.history.back());
+    await act(async () => router.history.forward());
     await page().findByRole("dialog");
     expect(page().getByRole<HTMLInputElement>("searchbox", { hidden: true }).value).toBe("terminal");
+  });
+
+  test("closing a panel opened from the page takes its history entry back off, so Back never reopens it", async () => {
+    const user = userEvent.setup();
+    const router = await open("/?q=terminal");
+    await user.click(await page().findByRole("link", { name: "bottom" }));
+    await page().findByRole("dialog");
+    expect(router.history.canGoBack()).toBe(true);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: "terminal" }));
+    expect(router.history.canGoBack()).toBe(false);
+  });
+
+  test("closing a panel reopened with Forward goes back over the same entry, so Back never shows it twice", async () => {
+    const user = userEvent.setup();
+    const router = await open("/?q=terminal");
+    await user.click(await page().findByRole("link", { name: "bottom" }));
+    await page().findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
+    await act(async () => router.history.forward());
+    await page().findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: "terminal" }));
+    expect(router.history.canGoBack()).toBe(false);
+  });
+
+  test("a panel opened by a click still closes back to its page after the page remounts", async () => {
+    const user = userEvent.setup();
+    const router = await open("/?q=terminal");
+    await user.click(await page().findByRole("link", { name: "bottom" }));
+    await page().findByRole("dialog");
+    cleanup();
+    render(<RouterProvider router={router} />);
+    await page().findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: "terminal" }));
+    expect(router.history.canGoBack()).toBe(false);
+  });
+
+  test("closing a panel a shared link opened drops the repo from the address without a new entry", async () => {
+    const user = userEvent.setup();
+    const router = await open("/?q=terminal&repo=ClementTsang%2Fbottom");
+    await page().findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: "terminal" }));
+    expect(page().queryByRole("dialog")).toBeNull();
+    expect(router.history.length).toBe(1);
   });
 
   test("on the demo page an emptied search stays empty across Back and Forward", async () => {
@@ -586,15 +639,15 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
     await user.type(box(), "async");
     await waitFor(() => expect(router.state.location.search).toEqual({ q: "async" }));
-    await act(async () => router.history.back());
+    await act(async () => router.history.forward());
     await page().findByRole("dialog");
     expect(box().value).toBe("");
-    await act(async () => router.history.forward());
+    await act(async () => router.history.back());
     await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
     expect(box().value).toBe("async");
   });
 
-  test("Back to the demo page's own address brings its query back, and Forward the one typed over it", async () => {
+  test("Forward to the demo page's own address brings its query back, and Back the one typed over it", async () => {
     const user = userEvent.setup();
     server.signedIn = false;
     server.status = status({ login: "stefanofa" });
@@ -606,10 +659,10 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
     await user.type(box(), `${"{Backspace}".repeat(box().value.length)}async`);
     await waitFor(() => expect(router.state.location.search).toEqual({ q: "async" }));
-    await act(async () => router.history.back());
+    await act(async () => router.history.forward());
     await page().findByRole("dialog");
     expect(box().value).toBe("terminal dashboard");
-    await act(async () => router.history.forward());
+    await act(async () => router.history.back());
     await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
     expect(box().value).toBe("async");
   });

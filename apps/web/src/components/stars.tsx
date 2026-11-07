@@ -19,17 +19,18 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { useEffect, useRef, useState } from "react";
-import { keywordTerms, normalize } from "../lib/keyword.ts";
+import { keywordTerms, normalize, searchText } from "../lib/keyword.ts";
 import { getLibrary, type Library } from "../lib/library-collection.ts";
 import { type PageData, type PageRequest, pageOwner, type Session } from "../lib/page-data.ts";
 import { hitsOf, liveView } from "../lib/page-view.ts";
+import { closesBack } from "../lib/panel-history.ts";
 import { now, startsIn, toDetail, withLinks } from "../lib/present.ts";
 import { withReply } from "../lib/results.ts";
 import { useReveal } from "../lib/reveal.ts";
 import type { Viewer } from "../lib/rpc.ts";
 import { librarySorts, type Params, searchSorts, validateParams } from "../lib/search-params.ts";
 import { type Arriving, type Body, pageView, type Retry, type Stage, stageOf } from "../lib/search-state.ts";
-import { useStoredView } from "../lib/stored-view.ts";
+import { storedView, useStoredView } from "../lib/stored-view.ts";
 import { libraryRevision, nothingSynced } from "../lib/sync-status.ts";
 import { libraryTrouble, type Trouble } from "../lib/trouble.ts";
 import { useSemanticSearch } from "../lib/use-semantic.ts";
@@ -43,7 +44,19 @@ import { OwnerPill } from "./owner-pill.tsx";
 // A navigation in the browser starts from the session the server loaded. The page reads the rest once it mounts.
 export const pageFor = (request: PageRequest, { viewer, config }: Session): PageData => {
   const { owner, own, query, defaultQuery } = pageOwner(viewer, config, request);
-  return { viewer, owner, own, config, query, defaultQuery, first: null, sync: null, refusal: null };
+  return {
+    viewer,
+    owner,
+    own,
+    config,
+    query,
+    defaultQuery,
+    first: null,
+    sync: null,
+    refusal: null,
+    opened: null,
+    view: storedView(document.cookie) ?? null,
+  };
 };
 
 // Until other scopes ship, the scope switch is one link to the viewer's own stars rather than a tab list of one.
@@ -68,10 +81,10 @@ export function HeaderControls({ viewer }: { viewer: Viewer }) {
 const dock =
   "max-sm:fixed max-sm:inset-x-3 max-sm:bottom-[max(16px,env(safe-area-inset-bottom))] max-sm:z-30 max-sm:[&_[data-slot=tile]]:shadow-dock";
 
-function useArrangement(searching: boolean) {
+function useArrangement(searching: boolean, saved: View | null) {
   const params: Params = useSearch({ strict: false });
   const navigate = useNavigate();
-  const [storedView, storeView] = useStoredView();
+  const [storedView, storeView] = useStoredView(saved ?? "tiles");
   const view = params.view ?? storedView;
   const sort = params.sort ?? (searching ? "best" : "starred");
   const setView = (next: View) => {
@@ -213,12 +226,14 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     revision: sync === undefined ? undefined : libraryRevision(sync),
     settled: stage.name === "ready",
     known:
-      first === null ? undefined : { query: first.query, results: first.hits, revision: libraryRevision(first.sync) },
+      first?.hits == null
+        ? undefined
+        : { query: first.query, results: first.hits, revision: libraryRevision(first.sync) },
   });
 
   const hits = hitsOf(semantic);
   const searching = keywordTerms(query).length > 0 || semantic.kind === "pending" || hits.length > 0;
-  const { view, sort, setView, setSort } = useArrangement(searching);
+  const { view, sort, setView, setSort } = useArrangement(searching, data.view);
   // A result's link carries what the page shows, including a view this browser saved, so it opens the same way
   // anywhere. The default view and sort stay out, so a link doesn't override the opener's own choice.
   const links: Params = {
@@ -273,15 +288,30 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
       replace: true,
     });
   };
+  // Opening a repo adds a history entry that names the page it opened over, so Back closes the panel. The entry keeps
+  // that through Forward and reloads, which a component's own state would not.
   const open: OpenResult = (result, link) => {
     setOpener(link);
-    navigate({ to: ".", search: (previous) => ({ ...previous, repo: `${result.owner}/${result.name}` }) });
+    navigate({
+      to: ".",
+      search: (previous) => ({ ...previous, repo: `${result.owner}/${result.name}` }),
+      state: { panelOver: router.state.location.state.__TSR_index },
+    });
   };
-  // The panel keeps the last repo it showed while it slides closed.
+  const close = () => {
+    if (closesBack(router.state.location.state)) router.history.back();
+    else navigate({ to: ".", search: (previous) => ({ ...previous, repo: undefined }), replace: true });
+  };
+  // The panel keeps the last repo it showed while it slides closed. Until the library loads, the repo a shared link
+  // opens comes from the server.
   const [panelRepo, setPanelRepo] = useState(params.repo);
   if (params.repo !== undefined && params.repo !== panelRepo) setPanelRepo(params.repo);
+  const named = (repo: { readonly owner: string; readonly name: string }) => `${repo.owner}/${repo.name}` === panelRepo;
   const entry =
-    panelRepo === undefined ? undefined : entries.find((repo) => `${repo.owner}/${repo.name}` === panelRepo);
+    panelRepo === undefined
+      ? undefined
+      : (entries.find(named) ??
+        (data.opened !== null && named(data.opened) ? { ...data.opened, text: searchText(data.opened) } : undefined));
   const hit = hits.find((result) => result.id === entry?.id);
   const opened = entry && (hit ? withReply(entry, hit) : entry);
 
@@ -397,7 +427,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
         repo={opened && toDetail(opened, at, whose)}
         open={params.repo !== undefined && opened !== undefined}
         onOpenChange={(next) => {
-          if (!next) navigate({ to: ".", search: (previous) => ({ ...previous, repo: undefined }) });
+          if (!next) close();
         }}
         returnFocus={opener}
       />

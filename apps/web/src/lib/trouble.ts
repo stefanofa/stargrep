@@ -1,4 +1,5 @@
 import type { WireCode } from "@stargrep/api/errors";
+import { cookieValue, setCookie } from "./cookies.ts";
 import { wireCode } from "./rpc.ts";
 import { sameLogin } from "./whose.ts";
 
@@ -33,21 +34,17 @@ const remembered = "stargrep-refused";
 const remembering = 600;
 
 export const rememberedRefusal = (cookies: string | null, login: string): Refusal | undefined => {
-  const value = cookies?.match(new RegExp(`(?:^|;\\s*)${remembered}=([^;]*)`))?.[1];
+  const value = cookieValue(cookies, remembered);
   if (value === undefined) return undefined;
-  const [who, refusal] = decodeURIComponent(value).split(":");
+  const [who, refusal] = value.split(":");
   return who !== undefined && sameLogin(who, login) && refusal !== undefined && isRefusal(refusal)
     ? refusal
     : undefined;
 };
 
-const setCookie = (value: string, maxAge: number) => {
-  // biome-ignore lint/suspicious/noDocumentCookie: the server reads this cookie when it renders the page, so it can't live in storage.
-  document.cookie = `${remembered}=${encodeURIComponent(value)}; Max-Age=${maxAge}; Path=/; SameSite=Lax`;
-};
-
-export const rememberRefusal = (login: string, refusal: Refusal) => setCookie(`${login}:${refusal}`, remembering);
+export const rememberRefusal = (login: string, refusal: Refusal) =>
+  setCookie(remembered, `${login}:${refusal}`, remembering);
 
 export const forgetRefusal = (login: string) => {
-  if (rememberedRefusal(document.cookie, login) !== undefined) setCookie("", 0);
+  if (rememberedRefusal(document.cookie, login) !== undefined) setCookie(remembered, "", 0);
 };

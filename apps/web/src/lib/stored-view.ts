@@ -1,30 +1,21 @@
 import { isView, type View } from "@stargrep/ui";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { cookieValue, setCookie } from "./cookies.ts";
 
-const storageKey = "stargrep:view";
+const name = "stargrep-view";
+const year = 365 * 24 * 60 * 60;
 
-const readStoredView = (): View | undefined => {
-  try {
-    const stored = localStorage.getItem(storageKey);
-    return isView(stored) ? stored : undefined;
-  } catch {
-    return undefined;
-  }
+export const storedView = (cookies: string | null): View | undefined => {
+  const value = cookieValue(cookies, name);
+  return isView(value) ? value : undefined;
 };
 
-// The view a visitor last picked, kept in this browser. The server renders the fallback and the stored view lands
-// after hydration.
-export function useStoredView(fallback: View = "tiles") {
-  const [view, setView] = useState<View>(fallback);
-  useEffect(() => {
-    const stored = readStoredView();
-    if (stored) setView(stored);
-  }, []);
+// The view a visitor last picked, kept in a cookie, so the server paints it and a reload moves nothing.
+export function useStoredView(initial: View) {
+  const [view, setView] = useState(initial);
   const update = useCallback((next: View) => {
     setView(next);
-    try {
-      localStorage.setItem(storageKey, next);
-    } catch {}
+    setCookie(name, next, year);
   }, []);
   return [view, update] as const;
 }

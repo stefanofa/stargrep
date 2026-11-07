@@ -1,5 +1,5 @@
-import type { Sort } from "@stargrep/ui";
-import type { PublicConfig, SearchResult, SyncStatus, Viewer } from "./rpc.ts";
+import type { Sort, View } from "@stargrep/ui";
+import type { LibraryRepo, PublicConfig, SearchResult, SyncStatus, Viewer } from "./rpc.ts";
 import type { SearchView } from "./search-state.ts";
 import type { Refusal } from "./trouble.ts";
 import { sameLogin } from "./whose.ts";
@@ -9,7 +9,8 @@ export interface FirstAnswer {
   readonly query: string;
   readonly at: number;
   readonly sync: SyncStatus;
-  readonly hits: ReadonlyArray<SearchResult>;
+  // The answer by meaning, or null when the server painted keyword matches alone and left that search to the browser.
+  readonly hits: ReadonlyArray<SearchResult> | null;
   readonly view: SearchView;
 }
 
@@ -31,6 +32,10 @@ export interface PageData extends Session {
   // browser remembers.
   readonly sync: SyncStatus | null;
   readonly refusal: Refusal | null;
+  // The repo a shared link opens, so its panel opens as the page hydrates instead of once the library loads.
+  readonly opened: LibraryRepo | null;
+  // The view this browser picked, so the server paints it.
+  readonly view: View | null;
 }
 
 export interface PageRequest {

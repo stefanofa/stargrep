@@ -13,6 +13,14 @@ export async function* starsPages(client: Pick<Client, "stars">, login: string) 
   } while (cursor !== undefined);
 }
 
+export const findStar = async (client: Pick<Client, "stars">, login: string, fullName: string) => {
+  for await (const page of starsPages(client, login)) {
+    const found = page.find((repo) => `${repo.owner}/${repo.name}` === fullName);
+    if (found !== undefined) return found;
+  }
+  return null;
+};
+
 export const allStars = async (client: Pick<Client, "stars">, login: string) => {
   const repos: Array<LibraryRepo> = [];
   for await (const page of starsPages(client, login)) repos.push(...page);

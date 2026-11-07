@@ -33,9 +33,10 @@ const titled = (data: PageData, query: string | undefined) => {
 
 // A stars page is titled by whose stars it shows and what it searches, so tabs and history tell pages apart. The home
 // page a visitor lands on keeps the site's own title. The reveal types the demo query once per visit, on a page the
-// server painted with its first answer. Its script runs in the head before the first paint, so it renders on that page
-// alone.
+// server painted with its first answer for that query, and never over a shared link's own query. Its script runs in the
+// head before the first paint, so it renders on that page alone.
 export const pageHead = (loaderData: PageData | undefined, home: boolean, query: string | undefined) => ({
   meta: loaderData === undefined || (home && !loaderData.own) ? [] : titled(loaderData, query),
-  scripts: loaderData?.first == null ? [] : [{ children: revealScript }],
+  scripts:
+    loaderData?.first != null && loaderData.first.query === loaderData.defaultQuery ? [{ children: revealScript }] : [],
 });
