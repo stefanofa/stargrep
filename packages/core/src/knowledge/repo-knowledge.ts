@@ -88,6 +88,7 @@ const lostRace = (error: DbQueryFailed | DbRowInvalid) => error._tag === "DbQuer
 
 // The projection sweep: up to groupsPerSweep groups of stale repos, lowest ID first. A group that loses a deadlock or a
 // serialization race leaves its rows stale and counts as a group, and the run goes on, so the next group retries them.
+// A group can commit a first pass and its mints before its second pass loses, so the run's counts are a lower bound.
 export const reproject = Effect.fn("RepoKnowledge.reproject")(function* (
   options: { readonly groupSize: number; readonly groups: number } = { groupSize, groups: groupsPerSweep },
 ) {

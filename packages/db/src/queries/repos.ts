@@ -455,6 +455,8 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
       ).pipe(Effect.flatMap(decodeStored("repos.getMany"))),
     // A copy of an attempt already counted, such as a second message for the same repo, finds the retry time in
     // the future and changes nothing. The array index past the last delay reads null, so a capped repo has none.
+    // The subquery locks the rows in ID order first. Without it Postgres picks a bitmap heap scan and locks them in
+    // heap order, which can deadlock with the projection sweep.
     recordEnrichFailures: ({ ids, at, retryDelays }) =>
       Arr.isReadonlyArrayEmpty(ids)
         ? Effect.void
@@ -466,7 +468,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
                 enrichRetryAt: sql`${timeParam(at)} + (${sql.param(retryDelays.map(Duration.toMillis))}::float8[])[${repos.enrichFailures} + 1] * interval '1 millisecond'`,
               })
               .where(
-                sql`${repos.id} = any(${sql.param([...ids])}::bigint[]) and ${needsEnrichment} and (${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(at)})`,
+                sql`${repos.id} in (select id from repos where id = any(${sql.param([...ids])}::bigint[]) order by id for no key update) and ${needsEnrichment} and (${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(at)})`,
               ),
           ),
     sweepable: ({ now, limit }) =>
