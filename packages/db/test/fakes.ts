@@ -77,6 +77,7 @@ const defaults = {
     count: unexpected("knowledge.count")(),
     allocate: unexpected("knowledge.allocate"),
     revision: unexpected("knowledge.revision")(),
+    decisions: unexpected("knowledge.decisions")(),
     decide: unexpected("knowledge.decide"),
   },
 } satisfies Db.Db["Service"];

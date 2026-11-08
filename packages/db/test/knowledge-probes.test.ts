@@ -1,10 +1,9 @@
 import { expect } from "bun:test";
 import type { RepoId } from "@stargrep/github/schemas";
 import type { SubjectId } from "@stargrep/knowledge/ids";
-import { LabelKey } from "@stargrep/knowledge/label-key";
+import type { LabelKey } from "@stargrep/knowledge/label-key";
 import * as it from "@stargrep/testing";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 import * as Db from "../src/db.ts";
 import * as TestDatabase from "./database.ts";
 import { model } from "./fixtures.ts";
@@ -12,6 +11,7 @@ import {
   about,
   answer,
   atom,
+  claim,
   createSubject,
   decide,
   key,
@@ -23,9 +23,6 @@ import {
 } from "./knowledge-fixtures.ts";
 
 type Services = Db.Db | Db.Transactions | TestDatabase.TestDatabase;
-
-const Claim = Schema.Struct({ key: LabelKey });
-const decodeClaims = Schema.decodeUnknownSync(Schema.Array(Claim));
 
 const labelsOf = Effect.fn("labelsOf")(function* (ids: ReadonlyArray<number>) {
   const database = yield* TestDatabase.TestDatabase;
@@ -72,7 +69,7 @@ const orderCases = (test: { readonly effect: it.Tester<Services> }) => {
           const terms = repo.keywords.map((term) => ({ term, mints: input.includes(term) }));
           claims.set(id, terms);
           yield* db.knowledge.capture([
-            answer(id, receiptId(id), { claims: terms.map(({ term }) => ({ key: key(term) })) }),
+            answer(id, receiptId(id), { claims: terms.map(({ term }, ordinal) => claim("about", term, { ordinal })) }),
           ]);
           ids.push(id);
         }
@@ -91,7 +88,7 @@ const orderCases = (test: { readonly effect: it.Tester<Services> }) => {
             yield* db.knowledge.project([id], (locked) =>
               Effect.forEach(locked, (repo) =>
                 Effect.gen(function* () {
-                  const claimed = decodeClaims(repo.claims).map((claim) => claim.key);
+                  const claimed = repo.claims.map((stored) => stored.key);
                   const topics = repo.topics.map(key);
                   const labels = yield* db.knowledge.labels([...claimed, ...topics]);
                   const resolve = (wanted: LabelKey) =>

@@ -1,5 +1,6 @@
 import type { RepoId } from "@stargrep/github/schemas";
 import type { FacetRef } from "@stargrep/knowledge/atom";
+import type { Claim } from "@stargrep/knowledge/claims";
 import { BatchId, InputHash, ReceiptId, Revision, SubjectId } from "@stargrep/knowledge/ids";
 import { type LabelKey, labelKey } from "@stargrep/knowledge/label-key";
 import type { RoleId } from "@stargrep/knowledge/registry";
@@ -23,6 +24,17 @@ export const key = (term: string): LabelKey => {
 };
 
 export const atom = (role: RoleId, value: FacetRef): Db.StoredAtom => ({ role, value });
+
+// A claim as decodeFacets leaves it on a receipt.
+export const claim = (role: RoleId, term: string, overrides: Partial<Claim> = {}): Claim => ({
+  ordinal: 0,
+  role,
+  term,
+  key: key(term),
+  quote: null,
+  found: "term",
+  ...overrides,
+});
 export const about = (id: SubjectId) => atom("about", { dim: "subject", id });
 
 export const allComplete = {
