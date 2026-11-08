@@ -110,6 +110,18 @@ describe("decodeFacets", () => {
     expect(lanesOf(decoded)).toEqual([]);
   });
 
+  test("keeps a term of exactly 80 characters", () => {
+    const term = "x".repeat(80);
+    const decoded = decodeFacets([{ role: "about", term }], input);
+    expect([decoded.claims.map((claim) => claim.term), decoded.dropped]).toEqual([[term], []]);
+  });
+
+  test("marks the cut at the 33rd item and not at the 32nd", () => {
+    const items = (length: number) => Array.from({ length }, (_, index) => ({ role: "about", term: `topic ${index}` }));
+    expect(decodeFacets(items(maxItems), input).dropped).toEqual([]);
+    expect(decodeFacets(items(maxItems + 1), input).dropped).toEqual([{ ordinal: maxItems, issue: "over-limit" }]);
+  });
+
   test("reads at most 32 items and marks the cut once", () => {
     const raw = Array.from({ length: 40 }, (_, index) => ({ role: "about", term: `topic ${index}` }));
     const decoded = decodeFacets(raw, input);
@@ -159,14 +171,18 @@ describe("decodeFacets", () => {
     expect(found).toEqual(fixture.map((row) => row.matches));
   });
 
-  test("keeps model text storable: lone surrogates become U+FFFD, and a long quote is cut on a code point", () => {
-    const [claim] = decodeFacets(
-      [{ role: "about", term: "ab\uD800c", quote: `${"q".repeat(239)}😀tail` }],
+  test("keeps model text storable: lone surrogates become U+FFFD, U+0000 goes, and a long quote is cut on a code point", () => {
+    const [surrogate, nul] = decodeFacets(
+      [
+        { role: "about", term: "ab\uD800c", quote: `${"q".repeat(239)}😀tail` },
+        { role: "about", term: "dash\u0000boards", quote: "widget\u0000" },
+      ],
       input,
     ).claims;
-    expect(claim?.term).toBe("ab�c");
-    expect(claim?.quote).toBe("q".repeat(239));
-    expect(() => JSON.parse(JSON.stringify(claim))).not.toThrow();
+    expect(surrogate?.term).toBe("ab\uFFFDc");
+    expect(surrogate?.quote).toBe("q".repeat(239));
+    expect([nul?.term, nul?.key, nul?.quote]).toEqual(["dashboards", "dashboards", "widget"]);
+    expect(JSON.stringify([surrogate, nul])).not.toMatch(/\\u0000|\\ud800/i);
   });
 });
 

@@ -295,6 +295,10 @@ describe("project: closed values", () => {
       ["used", "closed-value"],
     ]);
   });
+
+  test("the primary kind stays first even when it sorts after the second", () => {
+    expect(atomsOf({ claims: [claim("is", "library"), claim("is", "app")] })).toEqual(["kind:library", "kind:app"]);
+  });
 });
 
 describe("project: GitHub facts", () => {
@@ -318,6 +322,11 @@ describe("project: GitHub facts", () => {
     ]);
     expect<unknown>(result.unresolvedKeys).toEqual(["unheard of", "web scraping"]);
     expect(result.mints).toEqual([]);
+  });
+
+  test("a license matches its SPDX id exactly, case included", () => {
+    expect(verdictOf({ facts: { ...noFacts, license: "mit" } })).toEqual([["dropped", "license-unknown", null]]);
+    expect(atomsOf({ facts: { ...noFacts, license: "MIT" } })).toEqual(["license:MIT"]);
   });
 
   test("every language prod holds today resolves, and an unknown one or a missing license gives no atom", () => {
@@ -416,6 +425,34 @@ describe("project: subjects and the curated rules", () => {
     ]);
   });
 
+  test("a claim past its role's max is over-limit and mints nothing, before the mint and after it", () => {
+    const terms = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india"];
+    const claims = terms.map((term) => claim("about", term));
+    const before = run({ claims: [...claims, claim("about", "terminal UI")], labels: labels({ "terminal ui": 50 }) });
+    expect(before.mints.map((mint) => mint.label)).toEqual(terms.slice(0, 8));
+    expect(before.verdicts.slice(8).map((verdict) => [verdict.outcome, verdict.reason])).toEqual([
+      ["dropped", "over-limit"],
+      ["dropped", "over-limit"],
+    ]);
+    const minted = labels({
+      ...Object.fromEntries(terms.slice(0, 8).map((term, index) => [term, 60 + index])),
+      "terminal ui": 50,
+    });
+    const after = run({ claims: [...claims, claim("about", "terminal UI")], labels: minted });
+    expect(after.mints).toEqual([]);
+    expect(after.atoms).toHaveLength(8);
+    expect(after.verdicts.map((verdict) => verdict.reason)).toEqual(
+      before.verdicts.map((verdict, index) => (index < 8 ? "label" : verdict.reason)),
+    );
+  });
+
+  test("a repeated key waiting on its mint holds one slot, not two", () => {
+    const result = run({
+      claims: [claim("trait", "offline"), claim("trait", "Offline"), claim("trait", "local-first")],
+    });
+    expect<unknown>(result.mints.map((mint) => mint.key)).toEqual(["offline", "local first"]);
+  });
+
   test("the default sense wins over other senses of a key, and only a split rule picks another", () => {
     expect(
       verdictOf({
@@ -473,6 +510,19 @@ describe("project: subjects and the curated rules", () => {
         claims: [claim("about", "user agents", { quote: "mobile browser strings", found: "quote" })],
         labels: labels({ "user agents": 3 }),
         rules: rules({ splits, canonical }),
+      }),
+    ).toEqual(["about:subject:30"]);
+  });
+
+  test("when two split rules match one claim, the older one wins", () => {
+    const splits = new Map([
+      [subject(4), [entry(31, { terms: [["browser"]] }, 2), entry(30, { terms: [["browser"]] }, 1)]],
+    ]);
+    expect(
+      atomsOf({
+        claims: [claim("about", "agent", { quote: "browser agent", found: "quote" })],
+        labels: labels({ agent: 4 }),
+        rules: rules({ splits }),
       }),
     ).toEqual(["about:subject:30"]);
   });

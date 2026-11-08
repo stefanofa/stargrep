@@ -331,6 +331,66 @@ describe("apply", () => {
     ).toBe("role-mismatch");
   });
 
+  test("a link conflicts with a repo another member of the subject's merge class is linked to", () => {
+    expect(
+      refusal(
+        sequence(
+          { _tag: "Link", subject: s(1), repo: 7 },
+          { _tag: "Merge", from: s(1), into: s(2) },
+          { _tag: "Link", subject: s(2), repo: 8 },
+        ),
+      ),
+    ).toBe("link-conflict");
+    expect(
+      refusal(
+        sequence(
+          { _tag: "Link", subject: s(1), repo: 7 },
+          { _tag: "Merge", from: s(1), into: s(2) },
+          { _tag: "Link", subject: s(2), repo: 7 },
+        ),
+      ),
+    ).toBe("Applied");
+  });
+
+  test("an alias removal names a key the subject holds, never another subject's", () => {
+    expect(refusal(sequence(create("alpha", 10), { _tag: "Alias", subject: s(1), label: "alpha", add: false }))).toBe(
+      "not-live",
+    );
+    const removed = sequence(create("alpha", 10, ["alef"]), {
+      _tag: "Alias",
+      subject: s(10),
+      label: "Alef",
+      add: false,
+    });
+    expect<unknown>(removed._tag === "Applied" && [...removed.state.labels.keys()]).toEqual(["alpha"]);
+  });
+
+  test("a correction cannot name a subject whose create was undone", () => {
+    const atom: Atom = { role: "about", value: { dim: "subject", id: s(10) } };
+    expect(
+      refusal(
+        sequence(
+          create("alpha", 10),
+          { _tag: "Undo", revision: revision(1), cascade: false },
+          { _tag: "Correct", repo: 1, atom, present: true },
+        ),
+      ),
+    ).toBe("not-live");
+  });
+
+  test("apply refuses a revision at or below the state's", () => {
+    const first = sequence(create("alpha", 10));
+    if (first._tag !== "Applied") throw new Error("the create applies");
+    for (const at of [0, 1]) {
+      const again = apply(first.state, {
+        revision: revision(at),
+        decision: { _tag: "Status", subject: s(10), status: "rejected" },
+        created: null,
+      });
+      expect([at, again]).toEqual([at, { _tag: "Invalid", invalid: { revision: revision(at), reason: "not-live" } }]);
+    }
+  });
+
   test("keeps free the keys the registry does not reserve: tui, postgresql, chrome, ubuntu, and zlib", () => {
     const result = sequence(
       create("TUI", 10),

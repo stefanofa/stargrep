@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import type { RepoId } from "@stargrep/github/schemas";
 import { type Atom, type FacetRef, formatAtom } from "@stargrep/knowledge/atom";
+import { decodeFacets } from "@stargrep/knowledge/claims";
 import type { SubjectId } from "@stargrep/knowledge/ids";
 import { closed, type Dim, roleIds, roles } from "@stargrep/knowledge/registry";
 import { renderRegistrySql } from "@stargrep/knowledge/registry-sql";
@@ -372,6 +373,37 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
     }),
   );
 
+  test.effect("a decoded answer with U+0000 and a lone surrogate in its facts is stored and projected", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const id = yield* seedRepo({ id: 73_301 });
+      const decoded = decodeFacets(
+        [
+          { role: "about", term: "dash\u0000boards", quote: "widget\u0000" },
+          { role: "trait", term: "off\uD800line" },
+        ],
+        { fullName: "probe/repo-73301", description: "", topics: [], readme: "" },
+      );
+      const [captured] = yield* db.knowledge.capture([
+        answer(id, receiptId(73_301), { claims: decoded.claims, lanes: decoded.lanes, dropped: decoded.dropped }),
+      ]);
+      expect(captured?.saved).toBe(true);
+      yield* projectAtoms(
+        () => [],
+        [id],
+        (repo) => repo.claims.map((stored) => stored.key),
+      );
+      expect(
+        yield* database.query(
+          `select c.claims -> 0 ->> 'term' as term, c.claims -> 1 ->> 'term' as trait, f.unresolved_keys as unresolved
+           from receipts c join repo_facets f on f.repo_id = c.repo_id where c.repo_id = $1`,
+          [id],
+        ),
+      ).toEqual([{ term: "dashboards", trait: "off\uFFFDline", unresolved: ["dashboards", "off\uFFFDline"] }]);
+    }),
+  );
+
   test.effect("capture saves the summary and points the repo at the receipt, and a retry keeps the first answer", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
@@ -653,8 +685,11 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
   );
 };
 
-it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 30_000 })("PGlite knowledge", cases);
-it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 30_000 })(
+it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 30_000, testTimeout: 30_000 })(
+  "PGlite knowledge",
+  cases,
+);
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 30_000, testTimeout: 30_000 })(
   "node-postgres knowledge",
   cases,
 );

@@ -198,6 +198,10 @@ export const project = (input: ProjectionInput): Projection => {
   const unresolved = new Set<LabelKey>();
   const mints = new Map<LabelKey, string>();
   const kept = new Map<RoleId, Array<ProjectedAtom>>();
+  // Keys a role waits on a mint for. Each holds a slot as a kept atom does, so a claim past the role's max never
+  // mints, and the projection after the mint keeps the same claims as the one before it.
+  const pending = new Map<RoleId, Set<LabelKey>>();
+  const full = (role: RoleId) => (kept.get(role)?.length ?? 0) + (pending.get(role)?.size ?? 0) >= roles[role].max;
 
   const record = (claim: VerdictSource, outcome: ClaimVerdict["outcome"], reason: VerdictReason, atom: string | null) =>
     verdicts.push({ claim, outcome, reason, atom });
@@ -207,7 +211,7 @@ export const project = (input: ProjectionInput): Projection => {
     const key = formatAtom(atom);
     const list = kept.get(role) ?? [];
     if (list.some((other) => formatAtom(other) === key)) return record(claim, "used", reason, key);
-    if (list.length >= roles[role].max) return record(claim, "dropped", "over-limit", key);
+    if (full(role)) return record(claim, "dropped", "over-limit", key);
     kept.set(role, [...list, atom]);
     record(claim, "used", reason, key);
   };
@@ -219,6 +223,9 @@ export const project = (input: ProjectionInput): Projection => {
     if (chosen === undefined) {
       unresolved.add(evidence.key);
       if (!roles[role].mints) return record(claim, "dropped", "topic-unknown", null);
+      const waiting = pending.get(role) ?? new Set<LabelKey>();
+      if (!waiting.has(evidence.key) && full(role)) return record(claim, "dropped", "over-limit", null);
+      pending.set(role, waiting.add(evidence.key));
       if (!mints.has(evidence.key)) mints.set(evidence.key, evidence.term);
       return record(claim, "mint", "minted", null);
     }
