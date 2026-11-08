@@ -1,4 +1,5 @@
 import { expect } from "bun:test";
+import { splitSqlStatements } from "@alchemy.run/sql/SqlFile";
 import * as it from "@stargrep/testing";
 import * as Effect from "effect/Effect";
 import * as Random from "effect/Random";
@@ -7,33 +8,30 @@ import { databaseUrl, dropDatabase, withClient } from "../src/local-database.ts"
 import { migrationsFolder } from "../src/migrations.ts";
 import { adminUrl } from "./database.ts";
 
-// A deploy applies each migration in one transaction and sends its statements one round trip at a time. A lock on a
-// table the running Workers use lasts from the statement that takes it to the commit. So from the knowledge migration
-// on, a migration takes those locks only in its last statement, which can be a DO block holding several commands.
-
-const statementsOf = (sql: string) =>
-  sql
-    .split("--> statement-breakpoint")
-    .map((chunk) => chunk.trim())
-    .filter((chunk) => chunk.replace(/^--.*$/gm, "").trim().length > 0);
+// A deploy applies each migration in one transaction and sends each chunk Alchemy's splitSqlStatements makes as its
+// own round trip, a chunk of comments alone included. A lock on a table the running Workers may use lasts from the
+// statement that takes it to the commit. So from the knowledge migration on, a migration locks a table that existed
+// before it only in its last statement, which can be a DO block holding several commands. A table the migration
+// creates is new to every running Worker, so the migration may lock it anywhere.
 
 const migrations = Effect.promise(async () => {
   const folders = (await Array.fromAsync(new Bun.Glob("*/migration.sql").scan(migrationsFolder))).sort();
   return Promise.all(
     folders.map(async (file) => ({
       file,
-      statements: statementsOf(await Bun.file(`${migrationsFolder}/${file}`).text()),
+      statements: splitSqlStatements(await Bun.file(`${migrationsFolder}/${file}`).text()),
     })),
   );
 });
 
-// The tables the running Workers read and write. A new table joins this list once a deployed Worker uses it.
-const hotTables = ["repos", "user", "stars", "github_accounts", "repo_metrics", "collection_items", "search_events"];
+// Every table in public before the migration begins, any of which a running Worker may use.
+const existingTables = `select coalesce(array_agg(oid::int8), '{}') as oids from pg_class
+  where relnamespace = 'public'::regnamespace and relkind in ('r', 'p')`;
 
-const heldLocks = `select count(*)::int as locks from pg_locks l join pg_class c on c.oid = l.relation
-  where l.pid = pg_backend_pid() and c.relname = any($1::text[]) and c.relnamespace = 'public'::regnamespace`;
+const heldLocks = `select count(*)::int as locks from pg_locks
+  where pid = pg_backend_pid() and locktype = 'relation' and relation::int8 = any($1::int8[])`;
 
-it.effect("each migration from the knowledge one on locks tables the Workers use only in its last statement", () =>
+it.effect("each migration from the knowledge one on locks the tables before it only in its last statement", () =>
   Effect.gen(function* () {
     const name = `stargrep_lock_${yield* Random.nextIntBetween(0, 2 ** 31)}`;
     yield* Effect.acquireRelease(
@@ -46,11 +44,12 @@ it.effect("each migration from the knowledge one on locks tables the Workers use
     const lockedFrom = yield* withClient(databaseUrl(adminUrl, name), async (client: pg.Client) => {
       const firstLocking: Record<string, number> = {};
       for (const [index, migration] of all.entries()) {
+        const { rows: tables } = await client.query(existingTables);
         await client.query("begin");
         for (const [position, statement] of migration.statements.entries()) {
           await client.query(statement);
           if (index < first || migration.file in firstLocking) continue;
-          const { rows } = await client.query(heldLocks, [hotTables]);
+          const { rows } = await client.query(heldLocks, [tables[0].oids]);
           if (rows[0].locks > 0) firstLocking[migration.file] = position;
         }
         await client.query("commit");
