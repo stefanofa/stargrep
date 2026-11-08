@@ -154,7 +154,7 @@ The first move logs once, as a warning for every reason but `budget`, and counts
 
 The `sync-stars` consumer runs the messages of a batch at once, so a user's sync never waits behind syncs on the server's token. The `enrich-repo` consumer groups a batch by `userId` and enriches each group over its own gate, so a group that aborts fails only its own messages.
 
-The main Worker has five crons in `apps/worker/src/crons.ts`. `*/10 * * * *` sweeps due enrichment, `5,15,25,35,45,55 * * * *` projects stale repo knowledge, `17 4 * * *` starts the icon backfill, `29 3 * * *` recounts the repos each subject holds, and `41 * * * *` prunes admission requests and rate lines.
+The main Worker has four crons in `apps/worker/src/crons.ts`. `*/10 * * * *` runs two sweeps from one handler, one for due enrichment and one that projects stale repo knowledge. `17 4 * * *` starts the icon backfill, `30 3 * * *` recounts the repos each subject holds, and `41 * * * *` prunes admission requests and rate lines. The projection sweep shares the enrichment sweep's minutes on purpose. Neon suspends a compute after 5 idle minutes, and a query at any other minute would leave no idle window, so the database would never scale to zero. A failed sweep logs its error and never stops the other.
 
 ## Search
 

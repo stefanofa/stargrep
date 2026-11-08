@@ -12,7 +12,7 @@ export const run = <E, R>(runtime: Layer.Layer<Db.Db, E, R>) =>
   RepoKnowledge.reproject().pipe(
     Effect.timeout(timeout),
     Effect.provide(runtime),
-    Effect.flatMap(({ projected, minted }) => Effect.logInfo("Projection sweep ran", { projected, minted })),
+    Effect.flatMap((result) => Effect.logInfo("Projection sweep ran", result)),
     Effect.catchCauseIf(
       (cause) => !Cause.hasInterruptsOnly(cause),
       (cause) => Effect.logError("Projection sweep failed", { cause }),

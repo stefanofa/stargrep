@@ -48,6 +48,7 @@ import * as SyncStarsConsumer from "../src/consumers/sync-stars.ts";
 import * as EnrichSweep from "../src/jobs/enrich-sweep.ts";
 import * as KnowledgeCount from "../src/jobs/knowledge-count.ts";
 import * as ProjectionSweep from "../src/jobs/projection-sweep.ts";
+import * as Sweeps from "../src/jobs/sweeps.ts";
 import * as Layers from "../src/layers.ts";
 import * as UserGate from "../src/user-gate.ts";
 import {
@@ -713,7 +714,9 @@ describe("knowledge crons", () => {
     const { logs, layer } = capture();
     const idle = knowledgeRuntime({ stale: () => Effect.succeed([]) });
     await Effect.runPromise(ProjectionSweep.run(idle).pipe(Effect.provide(layer)));
-    expect(logs).toEqual([{ level: "Info", message: ["Projection sweep ran", { projected: 0, minted: 0 }] }]);
+    expect(logs).toEqual([
+      { level: "Info", message: ["Projection sweep ran", { projected: 0, minted: 0, conflicts: 0 }] },
+    ]);
   });
 
   it("logs a failed sweep and finishes", async () => {
@@ -736,6 +739,43 @@ describe("knowledge crons", () => {
     );
     expect(Exit.isSuccess(exit)).toBe(true);
     expect(logs.map((log) => log.level)).toEqual(["Error"]);
+  });
+
+  it("runs both sweeps from the ten-minute handler, and a failing one never stops the other", async () => {
+    const sweepsRuntime = (enrichFails: boolean, projectionFails: boolean) =>
+      Layer.merge(
+        Layer.succeed(
+          Db.Db,
+          makeDb({
+            repos: {
+              sweepable: () =>
+                enrichFails
+                  ? Effect.fail(
+                      new DbQueryFailed({ operation: "repos.sweepable", reason: "transport", sqlState: null }),
+                    )
+                  : Effect.succeed([]),
+            },
+            knowledge: { stale: () => (projectionFails ? Effect.fail(down) : Effect.succeed([])) },
+          }),
+        ),
+        EnrichQueue.layerMemory().layer,
+      );
+    const outcomes = [];
+    for (const [enrichFails, projectionFails] of [
+      [true, false],
+      [false, true],
+    ] as const) {
+      const { logs, layer } = capture();
+      const exit = await Effect.runPromiseExit(
+        Sweeps.run(sweepsRuntime(enrichFails, projectionFails)).pipe(Effect.provide(layer)),
+      );
+      expect(Exit.isSuccess(exit)).toBe(true);
+      outcomes.push(logs.map((log) => `${log.level} ${String(log.message[0])}`).sort());
+    }
+    expect(outcomes).toEqual([
+      ["Error Enrich sweep failed", "Info Projection sweep ran"],
+      ["Error Projection sweep failed", "Info Enrich sweep ran"],
+    ]);
   });
 
   it("logs how many subjects the nightly count changed, or that it failed", async () => {
