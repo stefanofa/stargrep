@@ -60,6 +60,7 @@ export const Operation = Schema.Literals([
   "knowledge.allocate",
   "knowledge.revision",
   "knowledge.decide",
+  "knowledge.decisions",
 ]);
 export type Operation = typeof Operation.Type;
 

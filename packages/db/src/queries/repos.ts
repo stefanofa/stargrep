@@ -276,10 +276,15 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           );
 
   return {
+    // Every multi-row writer of repos locks its rows in ID order, so two of them, or one and the projection sweep,
+    // never wait on each other in a cycle.
     upsertRefs: (refs) =>
       withTransaction(
         Effect.forEach(
-          Arr.chunksOf(refs, batchSize),
+          Arr.chunksOf(
+            [...refs].sort((a, b) => a.id - b.id),
+            batchSize,
+          ),
           (chunk) =>
             encodeRefs(chunk).pipe(
               Effect.flatMap((values) =>
@@ -394,18 +399,20 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           .set({ ...iconColumnsOf(icon), iconCheckedAt: sql`now()` })
           .where(eq(repos.id, id)),
       ),
-    saveOwners: (owners) =>
-      owners.length === 0
+    saveOwners: (owners) => {
+      const sorted = [...owners].sort((a, b) => a.id - b.id);
+      return sorted.length === 0
         ? Effect.void
         : run("repos.saveOwners", (db) =>
             db
               .update(repos)
               .set({ ownerType: sql`owners.owner_type::account_type`, ownerAvatarUrl: sql`owners.owner_avatar_url` })
               .from(
-                sql`(select * from unnest(${sql.param(owners.map((owner) => owner.id))}::bigint[], ${sql.param(owners.map((owner) => owner.ownerType))}::text[], ${sql.param(owners.map((owner) => owner.ownerAvatarUrl))}::text[]) as owners(id, owner_type, owner_avatar_url)) as owners`,
+                sql`(select * from unnest(${sql.param(sorted.map((owner) => owner.id))}::bigint[], ${sql.param(sorted.map((owner) => owner.ownerType))}::text[], ${sql.param(sorted.map((owner) => owner.ownerAvatarUrl))}::text[]) as owners(id, owner_type, owner_avatar_url)) as owners`,
               )
               .where(sql`${repos.id} = owners.id`),
-          ),
+          );
+    },
     dueIcons: ({ after, limit, checkedBefore, keyVersion }) =>
       run("repos.dueIcons", (db) =>
         db
@@ -448,6 +455,8 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
       ).pipe(Effect.flatMap(decodeStored("repos.getMany"))),
     // A copy of an attempt already counted, such as a second message for the same repo, finds the retry time in
     // the future and changes nothing. The array index past the last delay reads null, so a capped repo has none.
+    // The subquery locks the rows in ID order first. Without it Postgres picks a bitmap heap scan and locks them in
+    // heap order, which can deadlock with the projection sweep.
     recordEnrichFailures: ({ ids, at, retryDelays }) =>
       Arr.isReadonlyArrayEmpty(ids)
         ? Effect.void
@@ -459,7 +468,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
                 enrichRetryAt: sql`${timeParam(at)} + (${sql.param(retryDelays.map(Duration.toMillis))}::float8[])[${repos.enrichFailures} + 1] * interval '1 millisecond'`,
               })
               .where(
-                sql`${repos.id} = any(${sql.param([...ids])}::bigint[]) and ${needsEnrichment} and (${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(at)})`,
+                sql`${repos.id} in (select id from repos where id = any(${sql.param([...ids])}::bigint[]) order by id for no key update) and ${needsEnrichment} and (${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(at)})`,
               ),
           ),
     sweepable: ({ now, limit }) =>

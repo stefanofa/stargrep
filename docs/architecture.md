@@ -65,6 +65,7 @@ packages/
     src/search/     query parsing, hybrid search, ranking
     src/icons/      icon discovery and normalization
     src/limits/     rate lines and admission costs
+    src/knowledge/  the projection sweep and the nightly subject count
   api/              oRPC contracts and router
   db/               Drizzle schema, migrations, query functions
   github/           GitHub client, reply classification, token budget
@@ -153,7 +154,7 @@ The first move logs once, as a warning for every reason but `budget`, and counts
 
 The `sync-stars` consumer runs the messages of a batch at once, so a user's sync never waits behind syncs on the server's token. The `enrich-repo` consumer groups a batch by `userId` and enriches each group over its own gate, so a group that aborts fails only its own messages.
 
-The main Worker has three crons in `apps/worker/src/crons.ts`. `*/10 * * * *` sweeps due enrichment, `17 4 * * *` starts the icon backfill, and `41 * * * *` prunes admission requests and rate lines.
+The main Worker has four crons in `apps/worker/src/crons.ts`. `*/10 * * * *` runs two sweeps from one handler, one for due enrichment and one that projects stale repo knowledge. `20 4 * * *` starts the icon backfill, `30 3 * * *` recounts the repos each subject holds, and `40 * * * *` prunes admission requests and rate lines. Every cron runs on a sweep minute on purpose. Neon suspends a compute after 5 idle minutes, and a query at any other minute would leave no idle window, so the database would never scale to zero. A failed sweep logs its error and never stops the other.
 
 ## Search
 
@@ -330,7 +331,7 @@ The repo is the source of truth. Each concern has one file or folder that define
 | Design tokens | `packages/ui` |
 | CI and deploys | GitHub Actions workflows. Only CI deploys to production |
 
-A deploy applies each migration in one transaction and sends its statements to Neon one round trip at a time, so a lock on a table the running Workers use lasts until the commit. From `20261107193409_knowledge` on, a migration takes those locks only in its last statement, which can be a `DO` block holding several commands, and `knowledge-migration.test.ts` checks it. On a branch of prod, that migration held `repos` for 3 round trips, 645 ms from a laptop about 200 ms from Neon.
+A deploy applies each migration in one transaction and sends each chunk between `--> statement-breakpoint` markers to Neon as its own round trip, a chunk of comments alone included, so a lock on a table the running Workers use lasts until the commit. From `20261107193409_knowledge` on, a migration locks a table that existed before it only in its last statement, which can be a `DO` block holding several commands. `knowledge-migration.test.ts` checks it. It splits each file with Alchemy's own `splitSqlStatements` and treats every `public` table that existed before the migration as one the Workers may use, so a table the migration creates may be locked anywhere. On a branch of prod, that migration held `repos` for 3 round trips, 645 ms from a laptop about 200 ms from Neon.
 
 Some things stay outside the repo. Secret values live in Cloudflare secrets and GitHub Actions environment secrets, and the repo holds only their names. Only jobs on `main` can read the `production` environment's secrets. Previews read separate credentials from the `preview` environment. Account creation, billing plans, and domain registration are one-time manual steps, listed in `docs/setup.md`.
 

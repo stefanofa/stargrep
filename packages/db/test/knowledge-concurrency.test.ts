@@ -28,7 +28,7 @@ const lockWait = Effect.gen(function* () {
   return waiting.map((row) => (row as { event: string }).event);
 });
 
-it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 30_000 })(
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 30_000, testTimeout: 30_000 })(
   "node-postgres knowledge concurrency",
   (test) => {
     // opus 4, the concurrent case: a projection reads the label index, misses a key, and is still committing when

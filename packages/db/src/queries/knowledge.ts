@@ -1,7 +1,10 @@
 import { type ObjectId, RepoId } from "@stargrep/github/schemas";
 import type { FacetRef } from "@stargrep/knowledge/atom";
+import { Claim, type DroppedItem, type Lanes } from "@stargrep/knowledge/claims";
+import * as Decisions from "@stargrep/knowledge/decisions";
 import { type BatchId, type InputHash, ReceiptId, Revision, SubjectId } from "@stargrep/knowledge/ids";
 import { LabelKey } from "@stargrep/knowledge/label-key";
+import type { ClaimVerdict } from "@stargrep/knowledge/projection";
 import type { Dim, RoleId } from "@stargrep/knowledge/registry";
 import { type SQL, sql } from "drizzle-orm";
 import * as Effect from "effect/Effect";
@@ -46,9 +49,9 @@ export interface Answer {
   readonly batchId: BatchId | null;
   readonly summary: string;
   readonly keywords: ReadonlyArray<string>;
-  readonly claims: ReadonlyArray<Schema.Json>;
-  readonly lanes: { readonly [role: string]: "complete" | "invalid" | "missing" };
-  readonly dropped: ReadonlyArray<Schema.Json>;
+  readonly claims: ReadonlyArray<Claim>;
+  readonly lanes: Lanes;
+  readonly dropped: ReadonlyArray<DroppedItem>;
   readonly carriedFrom: ReceiptId | null;
   readonly rawKey: string | null;
 }
@@ -80,14 +83,17 @@ export interface Label {
   readonly source: "minted" | "decision";
 }
 
-// A repo as projection reads it, locked until the projection commits: its GitHub facts and its receipt's claims.
+// A repo as projection reads it, locked until the projection commits: its name, its GitHub facts, and its receipt's
+// claims.
 export interface LockedRepo {
   readonly id: RepoId;
+  readonly owner: string;
+  readonly name: string;
   readonly receiptId: ReceiptId | null;
   readonly language: string | null;
   readonly license: string | null;
   readonly topics: ReadonlyArray<string>;
-  readonly claims: ReadonlyArray<Schema.Json>;
+  readonly claims: ReadonlyArray<Claim>;
 }
 
 export interface StoredAtom {
@@ -103,7 +109,7 @@ export interface Projection {
   // Label keys looked up and not found, so a later label for one of them marks the repo stale.
   readonly unresolvedKeys: ReadonlyArray<LabelKey>;
   // Why each claim was used or dropped, kept on the receipt.
-  readonly verdicts: ReadonlyArray<Schema.Json>;
+  readonly verdicts: ReadonlyArray<ClaimVerdict>;
 }
 
 export interface Projected {
@@ -173,6 +179,8 @@ export interface Decision {
   // The head revision the caller computed the change against.
   readonly expected: Revision;
   readonly kind: DecisionKind;
+  // The decision as the Decision schema in packages/knowledge encodes it, plus created, the subject a Create or Split
+  // made. decisions reads both back for the fold.
   readonly payload: { readonly _tag: string; readonly [field: string]: Schema.Json };
   readonly undoes: Revision | null;
   readonly actor: string;
@@ -198,13 +206,16 @@ export interface Queries {
   readonly mint: (claims: ReadonlyArray<MintClaim>) => Effect.Effect<Minted, DbQueryFailed | DbRowInvalid>;
   // The labels resolution reads, from knowledge_labels.
   readonly labels: (keys: ReadonlyArray<LabelKey>) => Effect.Effect<ReadonlyArray<Label>, DbQueryFailed | DbRowInvalid>;
-  // Commit B, step 2: under the shared lock, locks the live repos for no key update in ID order, hands them to
-  // compute, and writes each projection's closed arrays, facets row, and verdicts where the repo still points at the
-  // receipt projected.
+  // Commit B, step 2: under the shared lock, locks the live repos for no key update in ID order, hands them and the
+  // head revision to compute, and writes each projection's closed arrays, facets row, and verdicts where the repo
+  // still points at the receipt projected. A repo compute returns no projection for stays stale. The closed arrays are
+  // written only where they changed, so a projection that changes no closed atom leaves the repos row untouched.
   readonly project: <E, R>(
     repoIds: ReadonlyArray<RepoId>,
-    compute: (repos: ReadonlyArray<LockedRepo>) => Effect.Effect<ReadonlyArray<Projection>, E, R>,
+    compute: (repos: ReadonlyArray<LockedRepo>, revision: Revision) => Effect.Effect<ReadonlyArray<Projection>, E, R>,
   ) => Effect.Effect<Projected, E | DbQueryFailed | DbRowInvalid, R>;
+  // The public curation log in revision order, which projection folds for its split rules and corrections.
+  readonly decisions: Effect.Effect<ReadonlyArray<Decisions.StoredDecision>, DbQueryFailed | DbRowInvalid>;
   readonly stale: (limit: number) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
   readonly invalidate: (invalidation: Invalidation) => Effect.Effect<number, DbQueryFailed | DbRowInvalid>;
   // The nightly count behind listing. Returns how many subjects changed.
@@ -284,12 +295,17 @@ const decodeLabels = rowsDecoder(
 const decodeLocked = rowsDecoder(
   Schema.Struct({
     id: RepoId,
+    owner: Schema.String,
+    name: Schema.String,
     receiptId: Schema.NullOr(ReceiptId),
     language: Schema.NullOr(Schema.String),
     license: Schema.NullOr(Schema.String),
     topics: Schema.Array(Schema.String),
-    claims: Schema.Array(Schema.Json),
+    claims: Schema.Array(Claim),
   }),
+);
+const decodeDecisions = rowsDecoder(
+  Schema.Struct({ revision: Revision, decision: Decisions.Decision, created: Schema.NullOr(SubjectId) }),
 );
 const decodeIds = rowsDecoder(Schema.Struct({ id: RepoId }));
 const decodeSubjectIds = rowsDecoder(Schema.Struct({ id: SubjectId }));
@@ -466,7 +482,7 @@ export const make = Effect.gen(function* () {
 
   const project = <E, R>(
     repoIds: ReadonlyArray<RepoId>,
-    compute: (repos: ReadonlyArray<LockedRepo>) => Effect.Effect<ReadonlyArray<Projection>, E, R>,
+    compute: (repos: ReadonlyArray<LockedRepo>, revision: Revision) => Effect.Effect<ReadonlyArray<Projection>, E, R>,
   ) =>
     withTransaction(
       Effect.gen(function* () {
@@ -477,15 +493,15 @@ export const make = Effect.gen(function* () {
           "knowledge.project",
           decodeLocked,
           sql`
-            select r.id::float8 as id, r.receipt_id as "receiptId", r.language, r.license, r.topics,
-              coalesce(c.claims, '[]') as claims
+            select r.id::float8 as id, r.owner, r.name, r.receipt_id as "receiptId", r.language, r.license,
+              r.topics, coalesce(c.claims, '[]') as claims
             from repos r left join receipts c on c.id = r.receipt_id
             where r.id = any(${sql.param([...repoIds])}::bigint[]) and r.gone_at is null
             order by r.id
             for no key update of r`,
         );
         const revision = yield* head;
-        const projections = yield* compute(locked);
+        const projections = yield* compute(locked, revision);
         if (projections.length === 0) return { projected: 0, skipped: repoIds.length };
         const records = json(projections.map(projectionRecord));
         const written = yield* query(
@@ -656,6 +672,15 @@ export const make = Effect.gen(function* () {
         sql`select nextval(pg_get_serial_sequence('subjects', 'id'))::float8 as id from generate_series(1, ${count})`,
       ).pipe(Effect.map((rows) => rows.map((row) => row.id))),
     revision: head,
+    // created is kept beside the decision's own fields in its payload.
+    decisions: query(
+      "knowledge.decisions",
+      decodeDecisions,
+      sql`
+        select revision::float8 as revision, payload - 'created' as decision,
+          (payload ->> 'created')::float8 as created
+        from decisions where namespace = ${namespace} order by revision`,
+    ),
     decide,
   } satisfies Queries;
 });

@@ -25,3 +25,9 @@ export type BatchId = typeof BatchId.Type;
 // SHA-256, in lowercase hex, of the prompt inputs an answer was made from.
 export const InputHash = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)).pipe(Schema.brand("InputHash"));
 export type InputHash = typeof InputHash.Type;
+
+export const SelectionId = Schema.Int.check(
+  Schema.isGreaterThan(0),
+  Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
+).pipe(Schema.brand("SelectionId"));
+export type SelectionId = typeof SelectionId.Type;

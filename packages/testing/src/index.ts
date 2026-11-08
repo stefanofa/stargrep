@@ -67,12 +67,15 @@ const run = <A, E>(effect: Effect.Effect<A, E>): Promise<void> => {
   });
 };
 
-const makeTester = <R>(provide: <A, E>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E>): Tester<R> => {
+const makeTester = <R>(
+  provide: <A, E>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E>,
+  timeout?: number,
+): Tester<R> => {
   // Bun throws when CI reads test.only, so read each modifier only when a test uses it.
   const register =
-    (t: () => (name: string, fn: () => Promise<void>) => void): Register<R> =>
+    (t: () => (name: string, fn: () => Promise<void>, timeout?: number) => void): Register<R> =>
     (name, body) =>
-      t()(name, () => run(provide(Effect.suspend(body))));
+      t()(name, () => run(provide(Effect.suspend(body))), timeout);
   return Object.assign(
     register(() => test),
     {
@@ -89,8 +92,10 @@ export const effect = makeTester<Scope.Scope | TestServices>((self) =>
 
 export const live = makeTester<Scope.Scope>(Effect.scoped);
 
+// timeout bounds building and closing the layer. testTimeout bounds each test in the block, for tests that run many
+// statements against a shared database and outgrow Bun's 5 s default under a parallel run.
 export const layer =
-  <ROut, E>(self: Layer.Layer<ROut, E>, options: { readonly timeout?: number } = {}) =>
+  <ROut, E>(self: Layer.Layer<ROut, E>, options: { readonly timeout?: number; readonly testTimeout?: number } = {}) =>
   (name: string, f: (it: { readonly effect: Tester<ROut | Scope.Scope | TestServices> }) => void) =>
     describe(name, () => {
       const scope = Scope.makeUnsafe();
@@ -119,8 +124,9 @@ export const layer =
         return runOrThrow(Effect.andThen(build ? Fiber.interrupt(build) : Effect.void, Scope.close(scope, Exit.void)));
       }, options.timeout);
       f({
-        effect: makeTester((self) =>
-          Effect.flatMap(context, (services) => self.pipe(Effect.scoped, Effect.provide(services))),
+        effect: makeTester(
+          (self) => Effect.flatMap(context, (services) => self.pipe(Effect.scoped, Effect.provide(services))),
+          options.testTimeout,
         ),
       });
     });

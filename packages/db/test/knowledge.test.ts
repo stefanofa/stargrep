@@ -1,7 +1,9 @@
 import { expect } from "bun:test";
-import { type Atom, formatAtom } from "@stargrep/knowledge/atom";
+import type { RepoId } from "@stargrep/github/schemas";
+import { type Atom, type FacetRef, formatAtom } from "@stargrep/knowledge/atom";
+import { decodeFacets } from "@stargrep/knowledge/claims";
 import type { SubjectId } from "@stargrep/knowledge/ids";
-import { type Dim, roleIds, roles } from "@stargrep/knowledge/registry";
+import { closed, type Dim, roleIds, roles } from "@stargrep/knowledge/registry";
 import { renderRegistrySql } from "@stargrep/knowledge/registry-sql";
 import * as it from "@stargrep/testing";
 import * as Effect from "effect/Effect";
@@ -14,6 +16,7 @@ import {
   answer,
   atom,
   batchId,
+  claim,
   createSubject,
   decide,
   facetsOf,
@@ -53,8 +56,8 @@ const forget = `
   delete from repo_facets where repo_id in (select id from gone)`;
 
 const firstText = { summary: "First answer", keywords: ["first"] };
-const firstAnswer = { ...firstText, claims: [{ term: "first" }] };
-const secondAnswer = { summary: "Second answer", keywords: ["second"], claims: [{ term: "second" }] };
+const firstAnswer = { ...firstText, claims: [claim("about", "first")] };
+const secondAnswer = { summary: "Second answer", keywords: ["second"], claims: [claim("about", "second")] };
 
 // The answer a repo shows next to the answer its receipt holds, which must be the same.
 const shownAnswer = Effect.fn("shownAnswer")(function* (id: number) {
@@ -182,6 +185,89 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
     }),
   );
 
+  test.effect("every role's max fits the limits on its columns, so projection never writes a refused row", () =>
+    Effect.gen(function* () {
+      const subjects: Array<SubjectId> = [];
+      for (let n = 0; n < 20; n++) subjects.push(yield* newSubjectId);
+      const closedIds: Readonly<Record<Exclude<Dim, "subject">, ReadonlyArray<string>>> = {
+        kind: closed.kind.map((value) => value.id),
+        language: closed.language.map((value) => value.id),
+        license: closed.license.map((value) => value.id),
+        platform: closed.platform.map((value) => value.id),
+        status: closed.status.map((value) => value.id),
+      };
+      let next = 73_201;
+      for (const role of roleIds) {
+        for (const dim of roles[role].accepts) {
+          const ids = dim === "subject" ? subjects : closedIds[dim];
+          expect([role, dim, ids.length >= roles[role].max]).toEqual([role, dim, true]);
+          const atoms = ids.slice(0, roles[role].max).map((id) => atom(role, { dim, id } as FacetRef));
+          const repo = yield* seedRepo({ id: next++ });
+          expect([role, dim, yield* projectAtoms(() => atoms, [repo])]).toEqual([
+            role,
+            dim,
+            { projected: 1, skipped: 0 },
+          ]);
+        }
+      }
+    }),
+  );
+
+  test.effect("projection leaves the repos row unwritten when no closed atom changed", () =>
+    Effect.gen(function* () {
+      const database = yield* TestDatabase.TestDatabase;
+      const tui = yield* createSubject("unwritten tui");
+      const id = yield* seedRepo({ id: 73_001 });
+      const version = Effect.gen(function* () {
+        const [row] = yield* database.query(
+          "select r.xmin::text as repo, f.xmin::text as facets from repos r join repo_facets f on f.repo_id = r.id where r.id = $1",
+          [id],
+        );
+        return row as { readonly repo: string; readonly facets: string };
+      });
+      const cli = atom("is", { dim: "kind", id: "cli" });
+      yield* projectAtoms(() => [cli, about(tui)], [id]);
+      const first = yield* version;
+      yield* projectAtoms(() => [cli, about(tui)], [id]);
+      const same = yield* version;
+      expect(same.repo).toBe(first.repo);
+      expect(same.facets).not.toBe(first.facets);
+      yield* projectAtoms(() => [cli], [id]);
+      expect((yield* version).repo).toBe(first.repo);
+      yield* projectAtoms(() => [atom("is", { dim: "kind", id: "library" })], [id]);
+      expect((yield* version).repo).not.toBe(first.repo);
+      expect(yield* database.query("select kinds::text[] as kinds from repos where id = $1", [id])).toEqual([
+        { kinds: ["library"] },
+      ]);
+    }),
+  );
+
+  test.effect("the self rule drops a with: atom whose subject is linked to the repo, as it drops a comparison", () =>
+    Effect.gen(function* () {
+      const database = yield* TestDatabase.TestDatabase;
+      const db = yield* Db.Db;
+      const tauri = yield* createSubject("self rule tauri");
+      const own = yield* seedRepo({ id: 73_101 });
+      const app = yield* seedRepo({ id: 73_102 });
+      yield* decide("link", {
+        presented: [{ id: tauri, label: "self rule tauri", definition: null, status: "accepted", repoId: own }],
+      });
+      const held = (value: FacetRef) =>
+        [atom("built_with", value), atom("alternative_to", value), atom("about", value)] as const;
+      yield* projectAtoms(() => held({ dim: "subject", id: tauri }), [own, app]);
+      const rolesOf = (repo: RepoId) =>
+        database.query("select role from effective_atoms where repo_id = $1 and dim = 'subject' order by role", [repo]);
+      expect(yield* rolesOf(own)).toEqual([{ role: "about" }]);
+      expect(yield* rolesOf(app)).toEqual([{ role: "about" }, { role: "alternative_to" }, { role: "built_with" }]);
+      const keys = yield* database.query("select atom from matching_atoms where repo_id = $1 order by atom", [own]);
+      expect(keys).toEqual([{ atom: `about:subject:${tauri}` }, { atom: `subject:${tauri}` }]);
+      yield* db.knowledge.count;
+      expect(yield* database.query("select repo_count from subjects where id = $1", [tauri])).toEqual([
+        { repo_count: 2 },
+      ]);
+    }),
+  );
+
   test.effect("refuses writes that break the knowledge invariants", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
@@ -284,6 +370,37 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
            values ('public', 'ratatui', ${minted[0]?.subjectId}, true, 'decision', ${aliased})`,
         ),
       ).toBe("23505");
+    }),
+  );
+
+  test.effect("a decoded answer with U+0000 and a lone surrogate in its facts is stored and projected", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const id = yield* seedRepo({ id: 73_301 });
+      const decoded = decodeFacets(
+        [
+          { role: "about", term: "dash\u0000boards", quote: "widget\u0000" },
+          { role: "trait", term: "off\uD800line" },
+        ],
+        { fullName: "probe/repo-73301", description: "", topics: [], readme: "" },
+      );
+      const [captured] = yield* db.knowledge.capture([
+        answer(id, receiptId(73_301), { claims: decoded.claims, lanes: decoded.lanes, dropped: decoded.dropped }),
+      ]);
+      expect(captured?.saved).toBe(true);
+      yield* projectAtoms(
+        () => [],
+        [id],
+        (repo) => repo.claims.map((stored) => stored.key),
+      );
+      expect(
+        yield* database.query(
+          `select c.claims -> 0 ->> 'term' as term, c.claims -> 1 ->> 'term' as trait, f.unresolved_keys as unresolved
+           from receipts c join repo_facets f on f.repo_id = c.repo_id where c.repo_id = $1`,
+          [id],
+        ),
+      ).toEqual([{ term: "dashboards", trait: "off\uFFFDline", unresolved: ["dashboards", "off\uFFFDline"] }]);
     }),
   );
 
@@ -568,8 +685,11 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
   );
 };
 
-it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 30_000 })("PGlite knowledge", cases);
-it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 30_000 })(
+it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 30_000, testTimeout: 30_000 })(
+  "PGlite knowledge",
+  cases,
+);
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 30_000, testTimeout: 30_000 })(
   "node-postgres knowledge",
   cases,
 );

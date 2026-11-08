@@ -206,6 +206,7 @@
         "@stargrep/ai": "workspace:*",
         "@stargrep/db": "workspace:*",
         "@stargrep/github": "workspace:*",
+        "@stargrep/knowledge": "workspace:*",
         "effect": "catalog:",
       },
       "devDependencies": {
@@ -231,6 +232,7 @@
         "pg": "catalog:",
       },
       "devDependencies": {
+        "@alchemy.run/sql": "2.0.0-beta.85",
         "@effect/tsgo": "catalog:",
         "@stargrep/config": "workspace:*",
         "@stargrep/telemetry": "workspace:*",
