@@ -84,7 +84,10 @@ export const projectRepos = Effect.fn("RepoKnowledge.projectRepos")(function* (i
   return yield* projectWith(ids, rulesCache(yield* Db.Db));
 });
 
-// The projection sweep: up to groupsPerSweep groups of stale repos, lowest ID first.
+const lostRace = (error: DbQueryFailed | DbRowInvalid) => error._tag === "DbQueryFailed" && error.reason === "conflict";
+
+// The projection sweep: up to groupsPerSweep groups of stale repos, lowest ID first. A group that loses a deadlock or a
+// serialization race leaves its rows stale and counts as a group, and the run goes on, so the next group retries them.
 export const reproject = Effect.fn("RepoKnowledge.reproject")(function* (
   options: { readonly groupSize: number; readonly groups: number } = { groupSize, groups: groupsPerSweep },
 ) {
@@ -92,15 +95,20 @@ export const reproject = Effect.fn("RepoKnowledge.reproject")(function* (
   const rulesAt = rulesCache(db);
   let projected = 0;
   let minted = 0;
+  let conflicts = 0;
   for (let group = 0; group < options.groups; group++) {
     const ids = yield* db.knowledge.stale(options.groupSize);
     if (ids.length === 0) break;
-    const result = yield* projectWith(ids, rulesAt);
+    const result = yield* projectWith(ids, rulesAt).pipe(Effect.catchIf(lostRace, () => Effect.succeed(null)));
+    if (result === null) {
+      conflicts++;
+      continue;
+    }
     projected += result.projected;
     minted += result.minted;
     if (ids.length < options.groupSize) break;
   }
-  return { projected, minted };
+  return { projected, minted, conflicts };
 });
 
 // The nightly count behind listing: every public subject's repo_count, from the same rows filters and chips read.

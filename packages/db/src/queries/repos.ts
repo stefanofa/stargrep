@@ -276,10 +276,15 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           );
 
   return {
+    // Every multi-row writer of repos locks its rows in ID order, so two of them, or one and the projection sweep,
+    // never wait on each other in a cycle.
     upsertRefs: (refs) =>
       withTransaction(
         Effect.forEach(
-          Arr.chunksOf(refs, batchSize),
+          Arr.chunksOf(
+            [...refs].sort((a, b) => a.id - b.id),
+            batchSize,
+          ),
           (chunk) =>
             encodeRefs(chunk).pipe(
               Effect.flatMap((values) =>
@@ -394,18 +399,20 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           .set({ ...iconColumnsOf(icon), iconCheckedAt: sql`now()` })
           .where(eq(repos.id, id)),
       ),
-    saveOwners: (owners) =>
-      owners.length === 0
+    saveOwners: (owners) => {
+      const sorted = [...owners].sort((a, b) => a.id - b.id);
+      return sorted.length === 0
         ? Effect.void
         : run("repos.saveOwners", (db) =>
             db
               .update(repos)
               .set({ ownerType: sql`owners.owner_type::account_type`, ownerAvatarUrl: sql`owners.owner_avatar_url` })
               .from(
-                sql`(select * from unnest(${sql.param(owners.map((owner) => owner.id))}::bigint[], ${sql.param(owners.map((owner) => owner.ownerType))}::text[], ${sql.param(owners.map((owner) => owner.ownerAvatarUrl))}::text[]) as owners(id, owner_type, owner_avatar_url)) as owners`,
+                sql`(select * from unnest(${sql.param(sorted.map((owner) => owner.id))}::bigint[], ${sql.param(sorted.map((owner) => owner.ownerType))}::text[], ${sql.param(sorted.map((owner) => owner.ownerAvatarUrl))}::text[]) as owners(id, owner_type, owner_avatar_url)) as owners`,
               )
               .where(sql`${repos.id} = owners.id`),
-          ),
+          );
+    },
     dueIcons: ({ after, limit, checkedBefore, keyVersion }) =>
       run("repos.dueIcons", (db) =>
         db
