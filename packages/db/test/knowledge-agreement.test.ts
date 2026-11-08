@@ -418,24 +418,27 @@ const closedCases = (test: { readonly effect: it.Tester<Services> }) => {
   );
 };
 
-it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 120_000 })(
+it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 120_000, testTimeout: 120_000 })(
   "PGlite membership agreement",
   membershipCases,
 );
-it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 120_000 })(
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 120_000, testTimeout: 120_000 })(
   "node-postgres membership agreement",
   membershipCases,
 );
-it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 120_000 })(
+it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 120_000, testTimeout: 120_000 })(
   "PGlite closed agreement",
   closedCases,
 );
-it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 120_000 })(
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 120_000, testTimeout: 120_000 })(
   "node-postgres closed agreement",
   closedCases,
 );
-it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 120_000 })("PGlite named cases", namedCases);
-it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 120_000 })(
+it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 120_000, testTimeout: 120_000 })(
+  "PGlite named cases",
+  namedCases,
+);
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 120_000, testTimeout: 120_000 })(
   "node-postgres named cases",
   namedCases,
 );

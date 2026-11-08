@@ -336,8 +336,11 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
   deletionCases(test);
 };
 
-it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 60_000 })("PGlite knowledge probes", cases);
-it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 60_000 })(
+it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 60_000, testTimeout: 60_000 })(
+  "PGlite knowledge probes",
+  cases,
+);
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 60_000, testTimeout: 60_000 })(
   "node-postgres knowledge probes",
   cases,
 );

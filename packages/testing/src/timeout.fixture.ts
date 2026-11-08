@@ -26,6 +26,10 @@ layer(SlowBuild, { timeout: 50 })("builds past its timeout", (it) => {
   it.effect("never runs", () => Effect.void);
 });
 
+layer(Layer.empty, { testTimeout: 1_000 })("a block with its own test budget", (it) => {
+  it.effect("outlasts the run's timeout", () => wait(150));
+});
+
 live("hangs past its timeout", () =>
   Effect.acquireRelease(Effect.void, (_, exit) =>
     Console.log(

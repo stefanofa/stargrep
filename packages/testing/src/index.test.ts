@@ -96,6 +96,11 @@ describe("timeout", () => {
     expect(stderr).toMatch(failure("hangs past its timeout, then its finalizer outlasts the timeout"));
   });
 
+  test("gives each test in a layer block its testTimeout instead of the run's", () => {
+    expect(stderr).not.toContain("(fail) a block with its own test budget");
+    expect(stderr).toMatch(/\n 2 pass\n/);
+  });
+
   test("interrupts the fiber and runs its finalizers", () => {
     expect(stdout).toContain("released:interrupted");
   });
