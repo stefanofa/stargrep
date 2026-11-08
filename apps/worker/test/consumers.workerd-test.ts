@@ -46,6 +46,8 @@ import * as FetchIconConsumer from "../src/consumers/fetch-icon.ts";
 import * as Settle from "../src/consumers/settle.ts";
 import * as SyncStarsConsumer from "../src/consumers/sync-stars.ts";
 import * as EnrichSweep from "../src/jobs/enrich-sweep.ts";
+import * as KnowledgeCount from "../src/jobs/knowledge-count.ts";
+import * as ProjectionSweep from "../src/jobs/projection-sweep.ts";
 import * as Layers from "../src/layers.ts";
 import * as UserGate from "../src/user-gate.ts";
 import {
@@ -690,6 +692,65 @@ describe("enrich sweep cron", () => {
     );
     expect(Exit.isSuccess(exit) && Exit.isFailure(exit.value) && Cause.hasInterruptsOnly(exit.value.cause)).toBe(true);
     expect(logs).toEqual([]);
+  });
+});
+
+describe("knowledge crons", () => {
+  const knowledgeRuntime = (knowledge: Partial<Db.Db["Service"]["knowledge"]>) =>
+    Layer.succeed(Db.Db, makeDb({ knowledge }));
+  const capture = () => {
+    const logs: Array<{ readonly level: string; readonly message: ReadonlyArray<unknown> }> = [];
+    const layer = Logger.layer([
+      Logger.make(({ logLevel, message }) =>
+        logs.push({ level: logLevel, message: message as ReadonlyArray<unknown> }),
+      ),
+    ]);
+    return { logs, layer };
+  };
+  const down = new DbQueryFailed({ operation: "knowledge.stale", reason: "transport", sqlState: null });
+
+  it("logs a sweep that found nothing stale", async () => {
+    const { logs, layer } = capture();
+    const idle = knowledgeRuntime({ stale: () => Effect.succeed([]) });
+    await Effect.runPromise(ProjectionSweep.run(idle).pipe(Effect.provide(layer)));
+    expect(logs).toEqual([{ level: "Info", message: ["Projection sweep ran", { projected: 0, minted: 0 }] }]);
+  });
+
+  it("logs a failed sweep and finishes", async () => {
+    const { logs, layer } = capture();
+    const exit = await Effect.runPromiseExit(
+      ProjectionSweep.run(knowledgeRuntime({ stale: () => Effect.fail(down) })).pipe(Effect.provide(layer)),
+    );
+    expect(Exit.isSuccess(exit)).toBe(true);
+    expect(logs.map((log) => [log.level, log.message[0]])).toEqual([["Error", "Projection sweep failed"]]);
+  });
+
+  it("gives up a sweep that runs past five minutes and logs it", async () => {
+    const { logs, layer } = capture();
+    const exit = await Effect.runPromiseExit(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkChild(ProjectionSweep.run(knowledgeRuntime({ stale: () => Effect.never })));
+        yield* TestClock.adjust("5 minutes");
+        return yield* Fiber.join(fiber);
+      }).pipe(Effect.provide(Layer.merge(layer, TestClock.layer()))),
+    );
+    expect(Exit.isSuccess(exit)).toBe(true);
+    expect(logs.map((log) => log.level)).toEqual(["Error"]);
+  });
+
+  it("logs how many subjects the nightly count changed, or that it failed", async () => {
+    const { logs, layer } = capture();
+    await Effect.runPromise(
+      KnowledgeCount.run(knowledgeRuntime({ count: Effect.succeed(3) })).pipe(Effect.provide(layer)),
+    );
+    await Effect.runPromise(
+      KnowledgeCount.run(knowledgeRuntime({ count: Effect.fail(down) })).pipe(Effect.provide(layer)),
+    );
+    expect(logs.map((log) => [log.level, log.message[0]])).toEqual([
+      ["Info", "Knowledge count ran"],
+      ["Error", "Knowledge count failed"],
+    ]);
+    expect(logs[0]?.message[1]).toEqual({ changed: 3 });
   });
 });
 

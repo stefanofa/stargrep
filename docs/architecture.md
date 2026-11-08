@@ -65,6 +65,7 @@ packages/
     src/search/     query parsing, hybrid search, ranking
     src/icons/      icon discovery and normalization
     src/limits/     rate lines and admission costs
+    src/knowledge/  the projection sweep and the nightly subject count
   api/              oRPC contracts and router
   db/               Drizzle schema, migrations, query functions
   github/           GitHub client, reply classification, token budget
@@ -153,7 +154,7 @@ The first move logs once, as a warning for every reason but `budget`, and counts
 
 The `sync-stars` consumer runs the messages of a batch at once, so a user's sync never waits behind syncs on the server's token. The `enrich-repo` consumer groups a batch by `userId` and enriches each group over its own gate, so a group that aborts fails only its own messages.
 
-The main Worker has three crons in `apps/worker/src/crons.ts`. `*/10 * * * *` sweeps due enrichment, `17 4 * * *` starts the icon backfill, and `41 * * * *` prunes admission requests and rate lines.
+The main Worker has five crons in `apps/worker/src/crons.ts`. `*/10 * * * *` sweeps due enrichment, `5,15,25,35,45,55 * * * *` projects stale repo knowledge, `17 4 * * *` starts the icon backfill, `29 3 * * *` recounts the repos each subject holds, and `41 * * * *` prunes admission requests and rate lines.
 
 ## Search
 
