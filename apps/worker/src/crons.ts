@@ -16,8 +16,9 @@ import { startIconBackfill } from "./queues.ts";
 // leave it no idle window, so the database would never scale to zero.
 const sweepSchedule = "*/10 * * * *";
 // The backfill walks every repo whose icon was never checked or is due its 30-day refresh, a page per message.
-const iconBackfillSchedule = "17 4 * * *";
-const pruneSchedule = "41 * * * *";
+const iconBackfillSchedule = "20 4 * * *";
+// On a sweep minute, so it adds no database wake-up of its own.
+const pruneSchedule = "40 * * * *";
 // Listing reads the nightly count. It runs on a sweep minute, so it wakes the database no extra time.
 const knowledgeCountSchedule = "30 3 * * *";
 
