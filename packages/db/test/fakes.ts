@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Db from "../src/db.ts";
 
 export { accountRow, repo } from "./fixtures.ts";
+export { summarize } from "./summaries.ts";
 
 type Overrides = { readonly [Group in keyof Db.Db["Service"]]?: Partial<Db.Db["Service"][Group]> };
 
@@ -25,7 +26,6 @@ const defaults = {
     pendingEnrichment: unexpected("repos.pendingEnrichment"),
     saveFacts: unexpected("repos.saveFacts"),
     saveCounts: unexpected("repos.saveCounts"),
-    saveSummary: unexpected("repos.saveSummary"),
     saveEmbedding: unexpected("repos.saveEmbedding"),
     saveIcon: unexpected("repos.saveIcon"),
     saveOwners: unexpected("repos.saveOwners"),
@@ -35,6 +35,8 @@ const defaults = {
     getMany: unexpected("repos.getMany"),
     recordEnrichFailures: unexpected("repos.recordEnrichFailures"),
     sweepable: unexpected("repos.sweepable"),
+    lease: unexpected("repos.lease"),
+    settleFailures: unexpected("repos.settleFailures"),
   },
   stars: {
     upsert: unexpected("stars.upsert"),

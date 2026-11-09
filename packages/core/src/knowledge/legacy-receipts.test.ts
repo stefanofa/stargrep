@@ -31,9 +31,9 @@ const seed = Effect.fn("seed")(function* (repos: ReadonlyArray<Legacy>) {
   const database = yield* TestDatabase.TestDatabase;
   yield* database.query(
     `insert into repos (id, owner, name, description, topics, language, readme_oid, summary_readme_oid, summary,
-       keywords, kind)
+       keywords, kind, summary_recipe)
      select id, 'legacy', 'repo-' || id, 'A repo numbered ' || id, '["legacy"]', language, $2, $2,
-       'Legacy summary of ' || id, keywords, kind
+       'Legacy summary of ' || id, keywords, kind, 1
      from jsonb_to_recordset($1::jsonb) as r (id bigint, kind text, keywords jsonb, language text)`,
     [JSON.stringify(repos.map((repo) => ({ language: null, ...repo }))), oid("1")],
   );
@@ -78,7 +78,7 @@ const shown = Effect.fn("shown")(function* (id: number) {
   return row;
 });
 
-// Enrichment summarizing a repo again: a new README, summary, keywords, and kind in one write, as saveSummary does.
+// A Worker from before receipts summarizing a repo again: a new README, summary, keywords, and kind in one write.
 const summarize = Effect.fn("summarize")(function* (
   id: number,
   readme: string,
@@ -212,9 +212,9 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | Test
       yield* database.query(`update repos set keywords = '["dotfiles", "shell"]' where id = 7`);
       expect(yield* keep(4)).toMatchObject({ inserted: 1, pointed: 1 });
       expect(yield* receiptOf7).toEqual({ keywords: ["dotfiles", "shell"], recipe: 1 });
-      yield* database.query("update repos set summary_recipe = 2 where id = 7");
+      yield* database.query("update repos set summary_recipe = 3 where id = 7");
       expect(yield* keep(4)).toMatchObject({ inserted: 1, pointed: 1 });
-      expect(yield* receiptOf7).toEqual({ keywords: ["dotfiles", "shell"], recipe: 2 });
+      expect(yield* receiptOf7).toEqual({ keywords: ["dotfiles", "shell"], recipe: 3 });
     }),
   );
 

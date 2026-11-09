@@ -227,7 +227,7 @@ Every stage gets its own Neon branch. Prod's branch is in the project `stargrep-
 
 Prod and local stages call the models. Each `pr-<number>` preview answers with deterministic fakes from `@stargrep/ai/stand-in` instead. Its deploy binds no `AI_GATEWAY_API_KEY`, even when the deploy's environment has one, and binds `STARGREP_AI_PROVIDER=fake`.
 
-- A summary is the repo's description and the first 60 words of its README. Its keywords are the repo's topics, and its kind is `other`.
+- A summary is the repo's description and the first 60 words of its README. Its keywords are the repo's topics. Its facts are only what the text states: kind and platform words in the description, the language, each topic, an alternative the description names, and a deprecation the description or the top of the README states. A repo whose description names no kind gets none. The answers go through the same capture and projection as real ones, so a preview mints subjects and shows atoms at no cost.
 - An embedding hashes the words into 1,024 dimensions under the model ID `fake/hash-embedding`, so texts that share words land close together.
 - The planner has no key, so search runs every sentence as typed and reports the plan as a fallback.
 
@@ -235,7 +235,7 @@ Opening a preview's home page still imports the demo account's real stars throug
 
 `defaultAiProvider` in `stageSettings` (`packages/runtime/src/stage.ts`) is each stage's default, and `withStageAi` in `packages/runtime/src/ai-key.ts` applies it to the config of every resource the stack declares. Prod always calls the gateway and ignores `STARGREP_AI_PROVIDER`.
 
-To call the real models on a preview, add the `preview-ai` label to its pull request. Remove the label to go back to the fakes. Each change runs the preview workflow at once, and the run reads the pull request's labels from GitHub right before it deploys, so a run queued before a label change deploys what the labels say now. An opted-in preview spends like prod, about $0.76 for every 1,000 repos it imports that no account has read yet, so remove the label as soon as the check is done.
+To call the real models on a preview, add the `preview-ai` label to its pull request. Remove the label to go back to the fakes. Each change runs the preview workflow at once, and the run reads the pull request's labels from GitHub right before it deploys, so a run queued before a label change deploys what the labels say now. An opted-in preview spends like prod, about $1.07 for every 1,000 repos it imports that no account has read yet, so remove the label as soon as the check is done.
 
 A database keeps the embedding model of its first request, so a stage never changes provider in place. The workflow compares the provider the labels ask for with the `aiProvider` in the stage's output. When they differ, it destroys the stage and then deploys it fresh, both inside the stage's deploy lock. The stage is down for those few minutes and imports its stars again. Because the old branch is gone before the new one is created, a switch needs no spare branch in the preview project. A deploy writes the output last and a destroy deletes it last, so a stage whose output names no provider, such as one deployed before stages recorded it or one cut off mid-deploy, is recreated too. That is also how every preview deployed before the fakes existed moves to them, on its next run.
 

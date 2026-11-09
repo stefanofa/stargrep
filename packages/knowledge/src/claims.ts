@@ -1,6 +1,5 @@
 import * as Schema from "effect/Schema";
 import { evidenceText } from "./evidence-text.ts";
-import type { ReceiptId } from "./ids.ts";
 import { LabelKey, labelKey } from "./label-key.ts";
 import { RoleId } from "./registry.ts";
 
@@ -64,11 +63,12 @@ export interface PromptInput {
   readonly readme: string;
 }
 
-export interface DecodedFacets {
-  readonly claims: ReadonlyArray<Claim>;
-  readonly lanes: Lanes;
-  readonly dropped: ReadonlyArray<DroppedItem>;
-}
+export const DecodedFacets = Schema.Struct({
+  claims: Schema.Array(Claim),
+  lanes: Lanes,
+  dropped: Schema.Array(DroppedItem),
+});
+export type DecodedFacets = typeof DecodedFacets.Type;
 
 const allLanes = (state: LaneState): Record<ModelRole, LaneState> =>
   Object.fromEntries(modelRoles.map((role) => [role, state])) as Record<ModelRole, LaneState>;
@@ -154,19 +154,9 @@ const noPrompt: PromptInput = { fullName: "", description: "", topics: [], readm
 // A legacy summary's facts: its kind as the only is claim, decoded like a model's list against no prompt text, since
 // the legacy columns kept none. Keywords stay out of the claims. They mix categories, products, and dependencies, and
 // as subjects they would fix the identity and label of terms the summary model later writes itself. Only the is lane
-// is answered, so carry never takes anything but the kind from a legacy receipt.
+// is answered, so capture carries nothing but the kind from a legacy receipt into an answer that has no list.
 export const legacyFacets = (summary: LegacySummary): DecodedFacets => {
   const kind = summary.kind === null || summary.kind === unplaced ? [] : [{ role: "is", term: summary.kind }];
   const decoded = decodeFacets(kind, noPrompt);
   return { ...decoded, lanes: { ...allLanes("missing"), is: decoded.lanes.is } };
 };
-
-// An answer with no list at all keeps the previous receipt's claims and names that receipt, so a model that left the
-// field out does not wipe the repo's facets. An empty list is an answer, and is kept as one.
-export const carry = (
-  decoded: DecodedFacets,
-  previous: { readonly id: ReceiptId; readonly claims: ReadonlyArray<Claim> } | null,
-): { readonly claims: ReadonlyArray<Claim>; readonly carriedFrom: ReceiptId | null } =>
-  previous !== null && modelRoles.every((role) => decoded.lanes[role] === "missing")
-    ? { claims: previous.claims, carriedFrom: previous.id }
-    : { claims: decoded.claims, carriedFrom: null };

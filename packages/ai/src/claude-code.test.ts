@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { decodeFacets } from "@stargrep/knowledge/claims";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
 import * as Effect from "effect/Effect";
@@ -11,6 +12,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as ClaudeCode from "./claude-code.ts";
 import type { AiError } from "./errors.ts";
+import recordedAnswers from "./prompts/summarize.recorded.json";
 import * as Summarize from "./prompts/summarize.ts";
 
 interface Process {
@@ -69,10 +71,10 @@ const repo: Summarize.RepoFacts = {
   readme: "PRIVATE README TEXT about terminal dashboards",
 };
 
-const summary: Summarize.RepoSummary = {
+const summary = {
   summary: "A Rust library for terminal user interfaces.",
   keywords: ["tui"],
-  kind: "library",
+  facets: [{ role: "is", term: "library" }],
 };
 
 const result = (fields: Record<string, unknown>) =>
@@ -82,7 +84,11 @@ describe("claude code text generation", () => {
   it.effect("decodes structured_output through the summary schema", () => {
     const { seen, layer } = fakeClaude({ stdout: result({ structured_output: summary }) });
     return Effect.gen(function* () {
-      expect(yield* Summarize.summarize(repo)).toEqual(summary);
+      expect(yield* Summarize.summarize(repo)).toEqual({
+        summary: summary.summary,
+        keywords: summary.keywords,
+        facets: decodeFacets(summary.facets, Summarize.promptInput(repo)),
+      });
       expect(seen.args).toContain("--json-schema");
       expect(seen.args.slice(seen.args.indexOf("--model"), seen.args.indexOf("--model") + 2)).toEqual([
         "--model",
@@ -93,13 +99,33 @@ describe("claude code text generation", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  // Answers the production model wrote for pilot 1, as the CLI printed them. No test here runs the binary.
+  it.effect("decodes recorded answers with every fact", () =>
+    Effect.forEach(recordedAnswers, ({ facts, text }) => {
+      const answer = JSON.parse(text);
+      const { layer } = fakeClaude({ stdout: result({ structured_output: answer }) });
+      return Summarize.summarize(facts).pipe(
+        Effect.tap((summary) =>
+          Effect.sync(() =>
+            expect(summary).toEqual({
+              summary: answer.summary,
+              keywords: answer.keywords,
+              facets: decodeFacets(answer.facets, Summarize.promptInput(facts)),
+            }),
+          ),
+        ),
+        Effect.provide(layer),
+      );
+    }),
+  );
+
   const failures: ReadonlyArray<[string, Process, AiError["_tag"]]> = [
     ["output that is not JSON", { stdout: "Sure, here is a summary" }, "AiOutputInvalid"],
     ["partial JSON", { stdout: result({ structured_output: summary }).slice(0, 40) }, "AiOutputInvalid"],
     ["a result without structured_output", { stdout: result({}) }, "AiOutputInvalid"],
     [
       "structured_output that misses the schema",
-      { stdout: result({ structured_output: { ...summary, kind: "spaceship" } }) },
+      { stdout: result({ structured_output: { ...summary, keywords: "spaceship" } }) },
       "AiOutputInvalid",
     ],
     ["an error result", { stdout: result({ is_error: true, result: "auth failed" }) }, "AiRequestFailed"],
@@ -168,7 +194,7 @@ describe("claude code telemetry and output size", () => {
     ],
     [
       "an invalid result",
-      { stdout: result({ structured_output: { ...summary, kind: outputCanary }, result: outputCanary }) },
+      { stdout: result({ structured_output: { ...summary, keywords: outputCanary }, result: outputCanary }) },
       "AiOutputInvalid",
     ],
     ["8 MiB of output that is not JSON", { stdout: outputCanary + huge }, "AiOutputInvalid"],

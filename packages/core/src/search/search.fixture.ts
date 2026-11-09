@@ -3,6 +3,7 @@ import * as Fake from "@stargrep/ai/fake";
 import * as Db from "@stargrep/db";
 import { Embedding } from "@stargrep/db/embedding";
 import * as TestDatabase from "@stargrep/db/test-database";
+import { summarize } from "@stargrep/db/testing";
 import { GitHubAccountId, Login, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -60,7 +61,7 @@ export const seedLibrary = Effect.fn("test.seedLibrary")(function* (account: num
       ownerType: null,
       ownerAvatarUrl: null,
     });
-    yield* db.repos.saveSummary({
+    yield* summarize({
       id,
       readmeOid: null,
       summary: repo.summary,

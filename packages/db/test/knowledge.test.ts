@@ -1,8 +1,9 @@
 import { expect } from "bun:test";
 import type { RepoId } from "@stargrep/github/schemas";
 import { type Atom, type FacetRef, formatAtom } from "@stargrep/knowledge/atom";
-import { decodeFacets } from "@stargrep/knowledge/claims";
-import type { SubjectId } from "@stargrep/knowledge/ids";
+import { type Claim, decodeFacets, legacyFacets } from "@stargrep/knowledge/claims";
+import type { ReceiptId, SubjectId } from "@stargrep/knowledge/ids";
+import { primaryKind } from "@stargrep/knowledge/projection";
 import { closed, type Dim, roleIds, roles } from "@stargrep/knowledge/registry";
 import { renderRegistrySql } from "@stargrep/knowledge/registry-sql";
 import * as it from "@stargrep/testing";
@@ -10,7 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Db from "../src/db.ts";
 import { atomColumns } from "../src/schema.ts";
 import * as TestDatabase from "./database.ts";
-import { model, readme, repoId } from "./fixtures.ts";
+import { at, iso, model, readme, repoId } from "./fixtures.ts";
 import {
   about,
   allComplete,
@@ -57,6 +58,8 @@ const forget = `
   delete from repo_facets where repo_id in (select id from gone)`;
 
 const firstText = { summary: "First answer", keywords: ["first"] };
+// The lease an attempt took before paying for its answer.
+const lease = at("2026-05-01T00:15:00Z");
 const firstAnswer = { ...firstText, claims: [claim("about", "first")] };
 const secondAnswer = { summary: "Second answer", keywords: ["second"], claims: [claim("about", "second")] };
 
@@ -84,8 +87,8 @@ interface LegacySeed {
 const seedLegacy = Effect.fn("seedLegacy")(function* (seeds: ReadonlyArray<LegacySeed>) {
   const database = yield* TestDatabase.TestDatabase;
   yield* database.query(
-    `insert into repos (id, owner, name, readme_oid, summary_readme_oid, summary, keywords, kind, gone_at)
-     select id, 'probe', 'repo-' || id, $2, $2, summary, '["legacy keyword"]', kind,
+    `insert into repos (id, owner, name, readme_oid, summary_readme_oid, summary, keywords, kind, summary_recipe, gone_at)
+     select id, 'probe', 'repo-' || id, $2, $2, summary, '["legacy keyword"]', kind, 1,
        case when gone then now() end
      from jsonb_to_recordset($1::jsonb) as r (id bigint, summary text, kind text, gone boolean)`,
     [
@@ -558,11 +561,11 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
       const db = yield* Db.Db;
       const database = yield* TestDatabase.TestDatabase;
       const id = yield* seedRepo({ id: 70_501 });
-      yield* database.query("update repos set enrich_retry_at = now() + interval '1 day' where id = $1", [id]);
-      const first = yield* db.knowledge.capture([answer(id, receiptId(70_501), firstAnswer)]);
-      expect(first).toEqual([{ repoId: id, receiptId: receiptId(70_501), saved: true }]);
+      yield* database.query("update repos set enrich_retry_at = $2 where id = $1", [id, iso(lease)]);
+      const first = yield* db.knowledge.capture([answer(id, receiptId(70_501), { ...firstAnswer, lease })]);
+      expect(first).toEqual([{ repoId: id, receiptId: receiptId(70_501), saved: true, ...firstText }]);
       const retry = yield* db.knowledge.capture([answer(id, receiptId(70_502), secondAnswer)]);
-      expect(retry).toEqual([{ repoId: id, receiptId: receiptId(70_501), saved: true }]);
+      expect(retry).toEqual([{ repoId: id, receiptId: receiptId(70_501), saved: true, ...firstText }]);
       expect(yield* shownAnswer(id)).toEqual({
         ...firstText,
         receiptText: firstText,
@@ -583,21 +586,21 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
       yield* db.knowledge.capture([answer(id, receiptId(70_551), firstAnswer)]);
       yield* projectAtoms(() => [atom("is", { dim: "kind", id: "cli" })], [id]);
       const duplicate = yield* db.knowledge.capture([answer(id, receiptId(70_552), secondAnswer)]);
-      expect(duplicate).toEqual([{ repoId: id, receiptId: receiptId(70_551), saved: true }]);
+      expect(duplicate).toEqual([{ repoId: id, receiptId: receiptId(70_551), saved: true, ...firstText }]);
       expect(yield* shownAnswer(id)).toMatchObject({ ...firstText, receiptText: firstText, stale: false, receipts: 1 });
     }),
   );
 
-  test.effect("capture keeps an answer for moved inputs as history, saves nothing, and clears the lease", () =>
+  test.effect("capture keeps an answer for moved inputs as history, saves nothing, and clears its own lease", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
       const database = yield* TestDatabase.TestDatabase;
       const movedReadme = yield* seedRepo({ id: 70_601, readme: "2" });
       const movedInputs = yield* seedRepo({ id: 70_602, input: "b" });
-      yield* database.query("update repos set enrich_retry_at = now() + interval '1 day' where id in (70601, 70602)");
+      yield* database.query("update repos set enrich_retry_at = $1 where id in (70601, 70602)", [iso(lease)]);
       const captured = yield* db.knowledge.capture([
-        answer(movedReadme, receiptId(70_601)),
-        answer(movedInputs, receiptId(70_602)),
+        answer(movedReadme, receiptId(70_601), { lease }),
+        answer(movedInputs, receiptId(70_602), { lease }),
       ]);
       expect(captured.map((row) => row.saved)).toEqual([false, false]);
       expect(
@@ -613,7 +616,129 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
     }),
   );
 
-  test.effect("a new summary of the same README keeps the embedding, marked stale, as saveSummary does", () =>
+  // An attempt whose lease ran out can still answer after a later attempt leased the repo. Its capture, saved or
+  // stale, must leave the later lease alone, or a third attempt could pay for the same repo.
+  test.effect("capture leaves a lease the answer does not hold, whether it saves or not", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const saved = yield* seedRepo({ id: 70_611 });
+      const stale = yield* seedRepo({ id: 70_612, input: "b" });
+      const successor = at("2026-05-01T00:31:00Z");
+      yield* database.query("update repos set enrich_retry_at = $1 where id in (70611, 70612)", [iso(successor)]);
+      const captured = yield* db.knowledge.capture([
+        answer(saved, receiptId(70_611), { lease }),
+        answer(stale, receiptId(70_612), { lease }),
+      ]);
+      expect(captured.map((row) => row.saved)).toEqual([true, false]);
+      expect(
+        yield* database.query(
+          `select to_char(enrich_retry_at at time zone 'utc', 'HH24:MI') as "retryAt"
+           from repos where id in (70611, 70612) order by id`,
+        ),
+      ).toEqual([{ retryAt: "00:31" }, { retryAt: "00:31" }]);
+    }),
+  );
+
+  test.effect("capture writes the primary kind to the legacy kind column, from the receipt the repo shows", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const named = yield* seedRepo({ id: 70_621 });
+      const implied = yield* seedRepo({ id: 70_622 });
+      const unplaced = yield* seedRepo({ id: 70_623 });
+      yield* database.query("update repos set kind = 'other' where id = $1", [unplaced]);
+      const claims: Readonly<Record<number, ReadonlyArray<Claim>>> = {
+        [named]: [
+          claim("about", "terminal UI"),
+          claim("is", "toolkit", { ordinal: 1 }),
+          claim("is", "CLI", { ordinal: 2 }),
+          claim("is", "library", { ordinal: 3 }),
+        ],
+        [implied]: [claim("is", "SDK")],
+        [unplaced]: [claim("about", "dashboards")],
+      };
+      yield* db.knowledge.capture(
+        [named, implied, unplaced].map((id, index) =>
+          answer(id, receiptId(70_621 + index), { claims: claims[id] ?? [] }),
+        ),
+      );
+      const kinds = database
+        .query("select id::float8 as id, kind from repos where id in (70621, 70622, 70623) order by id")
+        .pipe(Effect.map((rows) => rows as ReadonlyArray<{ readonly id: number; readonly kind: string | null }>));
+      expect(yield* kinds).toEqual([
+        { id: named, kind: "cli" },
+        { id: implied, kind: "library" },
+        { id: unplaced, kind: null },
+      ]);
+      for (const id of [named, implied, unplaced]) {
+        const written = (yield* kinds).find((row) => row.id === id)?.kind;
+        expect<unknown>([id, primaryKind(claims[id] ?? [])]).toEqual([id, written]);
+      }
+
+      const retried = yield* db.knowledge.capture([
+        answer(named, receiptId(70_624), { claims: [claim("is", "app")], summary: "A retried answer" }),
+      ]);
+      expect(retried).toMatchObject([{ receiptId: receiptId(70_621), saved: true, summary: `summary of ${named}` }]);
+      expect((yield* kinds)[0]).toEqual({ id: named, kind: "cli" });
+    }),
+  );
+
+  test.effect("an answer with no facets list keeps the claims of the receipt the repo points at, and names it", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const id = yield* seedRepo({ id: 70_631 });
+      const missing = Object.fromEntries(
+        Object.keys(allComplete).map((role) => [role, "missing"]),
+      ) as Db.Answer["lanes"];
+      const kept = [claim("is", "library"), claim("about", "terminal UI", { ordinal: 1 })];
+      const receiptOf = (answered: ReceiptId) =>
+        database.query(
+          `select c.claims, c.carried_from as "carriedFrom", r.kind from receipts c join repos r on r.id = c.repo_id
+           where c.id = $1`,
+          [answered],
+        );
+      const answerTo = (input: string, receipt: ReceiptId, overrides: Partial<Db.Answer>) =>
+        database
+          .query("update repos set input_hash = $2 where id = $1", [id, hash(input)])
+          .pipe(Effect.andThen(db.knowledge.capture([answer(id, receipt, { inputHash: hash(input), ...overrides })])));
+
+      yield* db.knowledge.capture([answer(id, receiptId(70_631), { claims: kept })]);
+      yield* answerTo("b", receiptId(70_632), { claims: [], lanes: missing });
+      expect(yield* receiptOf(receiptId(70_632))).toEqual([
+        { claims: kept, carriedFrom: receiptId(70_631), kind: "library" },
+      ]);
+
+      yield* answerTo("c", receiptId(70_633), { claims: [] });
+      expect(yield* receiptOf(receiptId(70_633))).toEqual([{ claims: [], carriedFrom: null, kind: null }]);
+
+      // A fact with an unreadable role turns every lane invalid, and the answer keeps every fact it could read.
+      yield* answerTo("9", receiptId(70_636), { claims: kept });
+      const readable = decodeFacets(
+        [
+          { role: "is", term: "CLI" },
+          { role: "maintainer", term: "someone" },
+        ],
+        { fullName: "probe/repo-70631", description: "", topics: [], readme: "" },
+      );
+      expect(new Set(Object.values(readable.lanes))).toEqual(new Set(["invalid"]));
+      yield* answerTo("f", receiptId(70_637), readable);
+      expect(yield* receiptOf(receiptId(70_637))).toEqual([
+        { claims: readable.claims, carriedFrom: null, kind: "cli" },
+      ]);
+
+      // A legacy receipt holds only the kind, so that is all an answer with no list can keep from it.
+      const legacy = legacyFacets({ kind: "cli" });
+      yield* answerTo("d", receiptId(70_634), { source: "legacy", ...legacy });
+      yield* answerTo("e", receiptId(70_635), { claims: [], lanes: missing });
+      expect(yield* receiptOf(receiptId(70_635))).toEqual([
+        { claims: legacy.claims, carriedFrom: receiptId(70_634), kind: "cli" },
+      ]);
+    }),
+  );
+
+  test.effect("a new summary of the same README keeps the embedding, marked stale, until its own replaces it", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
       const database = yield* TestDatabase.TestDatabase;
@@ -707,7 +832,9 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
       yield* database.query(forget, [id]);
       expect(yield* facetsOf(id)).toBeUndefined();
       const late = yield* db.knowledge.capture([answer(id, receiptId(71_002), { recipe: 3 })]);
-      expect(late).toEqual([{ repoId: id, receiptId: receiptId(71_002), saved: false }]);
+      expect(late).toEqual([
+        { repoId: id, receiptId: receiptId(71_002), saved: false, summary: `summary of ${id}`, keywords: [] },
+      ]);
       expect(yield* facetsOf(id)).toBeUndefined();
       expect(yield* db.knowledge.project([id], () => Effect.succeed([]))).toEqual({ projected: 0, skipped: 1 });
       yield* database.query(`update repos set topics = '["late"]' where id = $1`, [id]);

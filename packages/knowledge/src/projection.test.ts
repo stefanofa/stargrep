@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { formatAtom } from "./atom.ts";
-import { type Claim, carry, decodeFacets, legacyFacets, type PromptInput } from "./claims.ts";
+import { type Claim, legacyFacets } from "./claims.ts";
 import { empty, type KnowledgeState, type SplitEntry } from "./decisions.ts";
-import { ReceiptId, Revision, SubjectId } from "./ids.ts";
+import { Revision, SubjectId } from "./ids.ts";
 import { type LabelKey, labelKey } from "./label-key.ts";
 import {
   type LabelIndex,
   lookupKeys,
   type ProjectionInput,
+  primaryKind,
   project,
   type RepoFacts,
   type RepoIdentity,
@@ -571,26 +572,6 @@ describe("project: subjects and the curated rules", () => {
     ]);
   });
 
-  test("a carried receipt projects to the atoms its previous receipt gave", () => {
-    const input: PromptInput = { fullName: "acme/widget", description: "A terminal UI kit", topics: [], readme: "" };
-    const previous = decodeFacets(
-      [
-        { role: "is", term: "library" },
-        { role: "about", term: "terminal UI" },
-      ],
-      input,
-    );
-    const carried = carry(decodeFacets(undefined, input), {
-      id: ReceiptId.make("00000000-0000-4000-8000-000000000002"),
-      claims: previous.claims,
-    });
-    const index = labels({ "terminal ui": 8 });
-    expect(atomsOf({ claims: carried.claims, labels: index })).toEqual(
-      atomsOf({ claims: previous.claims, labels: index }),
-    );
-    expect(atomsOf({ claims: carried.claims, labels: index })).toEqual(["kind:library", "about:subject:8"]);
-  });
-
   test("lookupKeys names every key projection looks up, so the caller loads exactly those labels", () => {
     const claims = [claim("about", "terminal UI"), claim("is", "library")];
     const facts = { ...noFacts, topics: ["TUI", "***"] };
@@ -605,6 +586,28 @@ describe("project: subjects and the curated rules", () => {
     expect(atomsOf({ claims, labels: index, facts })).toEqual(
       atomsOf({ claims: [...claims].reverse(), labels: index, facts: reversed }),
     );
+  });
+});
+
+describe("primaryKind", () => {
+  const firstKind = (claims: ReadonlyArray<Claim>) =>
+    run({ claims }).atoms.find((atom) => atom.role === "is")?.value.id ?? null;
+
+  test("is the kind projection puts first, for every spelling and impliedBy name of every kind", () => {
+    for (const entry of closed.kind) {
+      for (const term of [entry.id, entry.label, ...entry.aliases, ...entry.impliedBy]) {
+        const claims = [claim("about", "dashboards"), claim("is", "toolkit"), claim("is", term), claim("is", "cli")];
+        expect<unknown>([term, primaryKind(claims)]).toEqual([term, firstKind(claims)]);
+        expect<unknown>([term, primaryKind(claims)]).toEqual([term, entry.id]);
+      }
+    }
+  });
+
+  test("follows the model's order, not the list's, and is null when no is claim names a kind", () => {
+    const [cli, library] = [claim("is", "cli"), claim("is", "library")];
+    expect(primaryKind([library, cli])).toBe("cli");
+    expect(primaryKind([claim("is", "toolkit"), claim("about", "library")])).toBeNull();
+    expect(primaryKind([])).toBeNull();
   });
 });
 

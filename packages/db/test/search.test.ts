@@ -6,6 +6,7 @@ import * as Exit from "effect/Exit";
 import * as Db from "../src/db.ts";
 import * as TestDatabase from "./database.ts";
 import { account, accountId, at, embedding, facts, hybrid, model, ref, repoId, starred, stars } from "./fixtures.ts";
+import { summarize } from "./summaries.ts";
 
 interface Seed {
   readonly id: RepoId;
@@ -35,7 +36,7 @@ const seed = Effect.fn("seed")(function* (owner: GitHubAccountId, repos: Readonl
       license: repo.license ?? null,
       archived: repo.archived ?? false,
     });
-    yield* db.repos.saveSummary({
+    yield* summarize({
       id: repo.id,
       readmeOid: null,
       summary: repo.summary ?? "unrelated project",

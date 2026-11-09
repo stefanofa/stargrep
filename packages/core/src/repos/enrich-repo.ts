@@ -9,6 +9,7 @@ import type { DbQueryFailed, DbRowInvalid, RepoNotFound } from "@stargrep/db/err
 import { type GitHubError, isPermanent } from "@stargrep/github/errors";
 import * as GitHub from "@stargrep/github/github";
 import type { ObjectId, RepoFacts, RepoId } from "@stargrep/github/schemas";
+import type { InputHash } from "@stargrep/knowledge/ids";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -22,16 +23,33 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { IconQueue, iconRequest, needsIconCheck } from "../icons/icon-queue.ts";
+import * as RepoKnowledge from "../knowledge/repo-knowledge.ts";
 import * as BlobStore from "./blob-store.ts";
 import * as EnrichRetry from "./enrich-retry.ts";
 
 export interface Summary {
   readonly summary: string;
   readonly keywords: ReadonlyArray<string>;
-  readonly kind: string | null;
 }
 
-export type EnrichRepoError = AiError | GitHubError | BlobStore.BlobStoreFailed;
+// A paid answer that commit A could not save. It fails only its own repo. refused says the database refused the answer
+// itself, which would happen again, so it counts as the repo's failure and an answer that can never be saved reaches
+// the cap. A save that failed for a reason any repo could hit, such as a lock timeout, a lost connection, or a
+// deadlock, does not count.
+export class AnswerNotSaved extends Schema.TaggedError<AnswerNotSaved, { readonly brand: unique symbol }>()(
+  "AnswerNotSaved",
+  {
+    reason: Schema.String,
+    sqlState: Schema.NullOr(Schema.String),
+    refused: Schema.Boolean,
+  },
+) {
+  override get message(): string {
+    return `The answer was paid for and not saved: ${this.reason}${this.sqlState === null ? "" : ` ${this.sqlState}`}`;
+  }
+}
+
+export type EnrichRepoError = AiError | GitHubError | BlobStore.BlobStoreFailed | AnswerNotSaved;
 
 export type Enrichment = Data.TaggedEnum<{
   Unchanged: { readonly id: RepoId };
@@ -56,6 +74,7 @@ const ownError = (error: EnrichRepoError): boolean =>
     // A summary answer is one paid call for one repo, so a repo whose answers never decode must reach the cap. An
     // embedding answer covers a whole batch, so its bad shape is the provider's fault, not any one repo's.
     AiOutputInvalid: (failure) => failure.operation === "generate",
+    AnswerNotSaved: (failure) => failure.refused,
     RateLimited: () => false,
     TokenBudgetExhausted: () => false,
     Unauthorized: () => false,
@@ -97,6 +116,8 @@ type Work =
 interface Job {
   readonly id: RepoId;
   readonly facts: RepoFacts;
+  // The prompt inputs these facts make, as saveFacts saved them, which an answer must carry to be saved.
+  readonly inputHash: InputHash;
   readonly work: Work;
 }
 
@@ -117,9 +138,13 @@ const decodeEmbedding = Schema.decodeUnknownEffect(Embedding);
 
 const readmeOidOf = (facts: RepoFacts) => facts.readme?.oid ?? null;
 
-const summaryOf = (row: Db.StoredRepo, readmeOid: ObjectId | null): Option.Option<Summary> =>
-  row.summary !== null && row.summaryReadmeOid === readmeOid && row.summaryRecipe === Models.summaryRecipe
-    ? Option.some({ summary: row.summary, keywords: row.keywords, kind: row.kind })
+// The saved summary, when it answers the current recipe, README, and prompt inputs, so only its embedding is due.
+const summaryOf = (row: Db.StoredRepo, readmeOid: ObjectId | null, inputHash: InputHash): Option.Option<Summary> =>
+  row.summary !== null &&
+  row.summaryReadmeOid === readmeOid &&
+  row.summaryRecipe === Models.summaryRecipe &&
+  row.summaryInputHash === inputHash
+    ? Option.some({ summary: row.summary, keywords: row.keywords })
     : Option.none();
 
 const storedFacts = (facts: RepoFacts): Db.RepoFacts => ({
@@ -188,14 +213,14 @@ const make = Effect.gen(function* () {
     if (facts === undefined) return Result.fail(Enrichment.Gone({ id }));
     // saveFacts can clear pending, and nothing fetches a repo that is not pending, so the counts go first.
     yield* db.repos.saveCounts({ id: facts.id, stars: facts.stars, forks: facts.forks });
-    const { pending } = yield* db.repos.saveFacts(storedFacts(facts));
+    const { pending, inputHash } = yield* db.repos.saveFacts(storedFacts(facts));
     if (!pending) return Result.fail(Enrichment.Unchanged({ id }));
-    const work = yield* Option.match(summaryOf(row, readmeOidOf(facts)), {
+    const work = yield* Option.match(summaryOf(row, readmeOidOf(facts), inputHash), {
       onSome: (summary) => Effect.succeed(Result.succeed<Work>({ _tag: "Embed", summary })),
       onNone: () => Effect.result(summarizeWork(facts)),
     });
     return Result.isSuccess(work)
-      ? Result.succeed({ id, facts, work: work.success })
+      ? Result.succeed({ id, facts, inputHash, work: work.success })
       : Result.fail(Enrichment.Failed({ id, error: work.failure }));
   });
 
@@ -240,29 +265,98 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const keepSummary = (job: Job, answer: Result.Result<Summarize.RepoSummary, AiError>) =>
-    Result.isFailure(answer)
-      ? Effect.succeed(Result.fail(Enrichment.Failed({ id: job.id, error: answer.failure })))
-      : guarded(job.id, db.repos.saveSummary({ id: job.id, readmeOid: readmeOidOf(job.facts), ...answer.success }), {
-          job,
-          summary: answer.success,
-        });
+  // Commit A for a paid answer, as soon as it arrives. Capture gives the attempt's lease back when it saves or keeps
+  // the answer as history. An answer it cannot save fails only its own repo.
+  const keepSummary = Effect.fnUntraced(function* (
+    job: Job,
+    answer: Result.Result<Summarize.RepoSummary, AiError>,
+    lease: DateTime.Utc,
+  ): Effect.fn.Return<Step<Embeddable>> {
+    if (Result.isFailure(answer)) return Result.fail(Enrichment.Failed({ id: job.id, error: answer.failure }));
+    const captured = yield* RepoKnowledge.capture([
+      {
+        repoId: job.id,
+        readmeOid: readmeOidOf(job.facts),
+        inputHash: job.inputHash,
+        source: textGeneration.provider === "fake" ? "stand-in" : "model",
+        model: textGeneration.model,
+        answer: answer.success,
+        lease,
+      },
+    ]).pipe(
+      Effect.provideService(Db.Db, db),
+      Effect.map(Arr.head),
+      Effect.catchTags({
+        DbQueryFailed: (error) =>
+          Effect.fail(
+            new AnswerNotSaved({
+              reason: error.reason,
+              sqlState: error.sqlState,
+              refused: error.reason === "query" || error.reason === "constraint",
+            }),
+          ),
+        DbRowInvalid: (error) => Effect.fail(new AnswerNotSaved({ reason: error._tag, sqlState: null, refused: true })),
+      }),
+      Effect.result,
+    );
+    if (Result.isFailure(captured)) return Result.fail(Enrichment.Failed({ id: job.id, error: captured.failure }));
+    const outcome = Option.getOrUndefined(captured.success);
+    if (outcome?._tag === "Saved") {
+      return Result.succeed({ job, summary: { summary: outcome.summary, keywords: outcome.keywords } });
+    }
+    return Result.fail(
+      outcome?._tag === "NotFound" ? Enrichment.NotFound({ id: job.id }) : Enrichment.Stale({ id: job.id }),
+    );
+  });
 
-  // Each summary is saved as its answer arrives, so work cut short keeps every summary already paid for.
+  // Each summary is saved as its answer arrives, so work cut short keeps every summary already paid for. A repo is
+  // asked about only once this attempt holds its lease, so two attempts never pay for one repo, and a repo another
+  // attempt holds or whose summary is no longer due is skipped. Failed calls are settled while the attempt still holds
+  // their leases, then the saved repos are projected together, taking the vocabulary locks once for the chunk.
   const summarizeAll = Effect.fn("EnrichRepo.summarizeAll")(function* (jobs: ReadonlyArray<Job>) {
     const stored = jobs.flatMap((job) =>
       job.work._tag === "Embed" ? [Result.succeed<Embeddable>({ job, summary: job.work.summary })] : [],
     );
-    const asked = jobs.flatMap((job) => (job.work._tag === "Summarize" ? [{ job, facts: job.work.prompt }] : []));
+    const due = jobs.flatMap((job) => (job.work._tag === "Summarize" ? [{ job, facts: job.work.prompt }] : []));
+    const now = yield* DateTime.now;
+    const until = DateTime.addDuration(now, EnrichRetry.leaseFor(textGeneration.batchTimeout, due.length));
+    const leased = new Set<number>(yield* db.repos.lease({ ids: due.map(({ job }) => job.id), now, until }));
+    const asked = due.filter(({ job }) => leased.has(job.id));
+    const held = due.filter(({ job }) => !leased.has(job.id));
     const answered = yield* Summarize.summarizeBatch(asked, ({ facts }) => facts).pipe(
-      Stream.mapEffect(([{ job }, answer]) => keepSummary(job, answer), {
+      Stream.mapEffect(([{ job }, answer]) => keepSummary(job, answer, until), {
         concurrency: saveConcurrency,
         unordered: true,
       }),
       Stream.runCollect,
       Effect.provideService(TextGeneration.TextGeneration, textGeneration),
     );
-    return [...stored, ...answered];
+    // A save that failed for a reason any repo could hit keeps its lease, so the repo waits it out and the sweep sends it
+    // again, as for a run cut short.
+    const failures = answered.flatMap((step) =>
+      Result.isFailure(step) && step.failure._tag === "Failed"
+        ? step.failure.error._tag === "AnswerNotSaved" && !step.failure.error.refused
+          ? []
+          : [{ id: step.failure.id, counted: ownError(step.failure.error) }]
+        : [],
+    );
+    yield* db.repos.settleFailures({
+      until,
+      failures,
+      at: yield* DateTime.now,
+      retryDelays: EnrichRetry.retryDelays,
+    });
+    yield* RepoKnowledge.projectSaved(
+      answered.flatMap((step) => (Result.isSuccess(step) ? [step.success.job.id] : [])),
+    ).pipe(Effect.provideService(Db.Db, db));
+    return {
+      steps: [
+        ...stored,
+        ...held.map(({ job }) => Result.fail<Enrichment>(Enrichment.Backoff({ id: job.id }))),
+        ...answered,
+      ],
+      settled: new Set<number>(failures.map((failure) => failure.id)),
+    };
   });
 
   const keepEmbedding = (item: Embeddable, vector: Result.Result<Embedding, AiError>) => {
@@ -308,11 +402,12 @@ const make = Effect.gen(function* () {
 
   const enrichChunk = Effect.fn("EnrichRepo.enrichChunk")(function* (ids: ReadonlyArray<RepoId>) {
     const [jobs, skipped] = Arr.separate(yield* plan(ids));
-    const [summarized, unsummarized] = Arr.separate(yield* summarizeAll(jobs));
+    const { steps, settled } = yield* summarizeAll(jobs);
+    const [summarized, unsummarized] = Arr.separate(steps);
     const embedded = yield* Effect.forEach(Arr.chunksOf(summarized, embedBatchSize), embedChunk);
     const outcomes = [...skipped, ...unsummarized, ...embedded.flat().map(Result.merge)];
     yield* db.repos.recordEnrichFailures({
-      ids: outcomes.flatMap((outcome) => (repoFailed(outcome) ? [outcome.id] : [])),
+      ids: outcomes.flatMap((outcome) => (repoFailed(outcome) && !settled.has(outcome.id) ? [outcome.id] : [])),
       at: yield* DateTime.now,
       retryDelays: EnrichRetry.retryDelays,
     });
@@ -320,8 +415,9 @@ const make = Effect.gen(function* () {
   });
 
   const enrichRepos = Effect.fn("EnrichRepo.enrichRepos")(function* (ids: ReadonlyArray<RepoId>) {
-    // Sorting keeps each chunk's contents the same from run to run, so a rerun sends the same batch
-    // request and the Gateway's idempotency key finds the job that run already paid for.
+    // Sorting keeps each chunk's contents the same from run to run. A rerun after a dead batch run's lease has run out
+    // then sends the same batch request, and the Gateway's idempotency key can find the job that run already paid for. A
+    // rerun inside the lease skips the repos it holds.
     const chunks = Arr.chunksOf(Arr.sort(Arr.dedupe(ids), Order.Number), batchSize);
     const outcomes = yield* Effect.forEach(chunks, enrichChunk, { concurrency: batchConcurrency });
     const byId = new Map<number, Enrichment>(outcomes.flat().map((outcome) => [outcome.id, outcome]));

@@ -6,6 +6,7 @@ import * as TextGeneration from "@stargrep/ai/text-generation";
 import * as Db from "@stargrep/db";
 import { EmbeddingModelId } from "@stargrep/db/embedding";
 import * as TestDatabase from "@stargrep/db/test-database";
+import { summarize } from "@stargrep/db/testing";
 import * as GitHubFake from "@stargrep/github/github.fixture";
 import { ObjectId, Repo, type RepoId } from "@stargrep/github/schemas";
 import * as Arr from "effect/Array";
@@ -27,6 +28,7 @@ export const id = (n: number) => repo(n).id;
 
 interface Remote {
   readonly description: string | null;
+  readonly topics?: ReadonlyArray<string>;
   readonly archived?: boolean;
   readonly readme?: { readonly oid: ObjectId; readonly text: string };
   readonly stars?: number;
@@ -47,7 +49,7 @@ export const fixture = () => {
     homepageUrl: `https://repo-${n}.dev`,
     primaryLanguage: { name: "Rust" },
     licenseInfo: { spdxId: "MIT" },
-    repositoryTopics: { nodes: [{ topic: { name: "cli" } }] },
+    repositoryTopics: { nodes: (remote.topics ?? ["cli"]).map((name) => ({ topic: { name } })) },
     createdAt: "2020-01-01T00:00:00Z",
     pushedAt: "2026-10-01T00:00:00Z",
     isArchived: remote.archived ?? false,
@@ -87,7 +89,7 @@ export const fixture = () => {
   const respond = (prompt: string) => {
     prompts.push(prompt);
     return prompt.includes("Repository: owner/repo-34\n")
-      ? { summary: "", keywords: [], kind: "app" }
+      ? { summary: "", keywords: [], facets: [] }
       : SummarizeFake.respond(prompt);
   };
 
@@ -169,16 +171,10 @@ export const fixture = () => {
       database.query("select stars, forks from repo_metrics where repo_id = $1", [n]),
     );
 
+  // The same summary saved again, which marks a read repo's embedding stale.
   const resummarize = Effect.fn("test.resummarize")(function* (n: number) {
-    const db = yield* Db.Db;
     const row = yield* get(n);
-    yield* db.repos.saveSummary({
-      id: row.id,
-      readmeOid: row.readmeOid,
-      summary: row.summary ?? "",
-      keywords: row.keywords,
-      kind: row.kind ?? "",
-    });
+    yield* summarize({ id: row.id, readmeOid: row.readmeOid, summary: row.summary ?? "", keywords: row.keywords });
     return row;
   });
 
