@@ -1,8 +1,10 @@
 import { expect } from "bun:test";
 import { summaryRecipe } from "@stargrep/ai/models";
 import { type RepoId, RepoNodeId } from "@stargrep/github/schemas";
+import { inputHash } from "@stargrep/knowledge/input-hash";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
+import * as Digest from "effect/crypto/Digest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -836,6 +838,43 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       });
       expect(iso(stored.createdAt)).toBe("2020-01-02T03:04:05.000Z");
       expect(Option.isNone(yield* db.repos.get(repoId(2199)))).toBe(true);
+    }),
+  );
+
+  test.effect("saves the hash of the prompt inputs with the facts, and moves it only when one of them changes", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const id = repoId(2102);
+      const saved = {
+        ...facts(id),
+        description: "A terminal UI kit",
+        topics: ["tui", "rust"],
+        language: "Rust",
+        readmeOid: readme("c"),
+      };
+      const stored = Effect.map(
+        database.query("select input_hash as hash from repos where id = $1", [id]),
+        (rows) => (rows[0] as { readonly hash: string | null }).hash,
+      );
+      const expected = (changes: Partial<Db.RepoFacts>) =>
+        inputHash({
+          readmeOid: changes.readmeOid ?? saved.readmeOid,
+          fullName: `${saved.owner}/${saved.name}`,
+          description: changes.description ?? saved.description,
+          topics: changes.topics ?? saved.topics,
+          language: changes.language ?? saved.language,
+        }).pipe(Effect.provide(Digest.layerWebCrypto));
+
+      yield* db.repos.saveFacts(saved);
+      const first = yield* stored;
+      expect(first).toBe(yield* expected({}));
+      yield* db.repos.saveFacts({ ...saved, license: "MIT", homepage: "https://example.com", archived: true });
+      expect(yield* stored).toBe(first);
+      yield* db.repos.saveFacts({ ...saved, topics: ["tui", "rust", "terminal"] });
+      expect(yield* stored).toBe(yield* expected({ topics: ["tui", "rust", "terminal"] }));
+      yield* db.repos.saveFacts({ ...saved, readmeOid: readme("d") });
+      expect(yield* stored).toBe(yield* expected({ readmeOid: readme("d") }));
     }),
   );
 

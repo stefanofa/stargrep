@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { formatAtom } from "./atom.ts";
-import { type Claim, carry, decodeFacets, type PromptInput } from "./claims.ts";
+import { type Claim, carry, decodeFacets, legacyFacets, type PromptInput } from "./claims.ts";
 import { empty, type KnowledgeState, type SplitEntry } from "./decisions.ts";
 import { ReceiptId, Revision, SubjectId } from "./ids.ts";
 import { type LabelKey, labelKey } from "./label-key.ts";
@@ -605,5 +605,21 @@ describe("project: subjects and the curated rules", () => {
     expect(atomsOf({ claims, labels: index, facts })).toEqual(
       atomsOf({ claims: [...claims].reverse(), labels: index, facts: reversed }),
     );
+  });
+});
+
+describe("project: legacy summaries", () => {
+  const legacyAtoms = (kind: string | null, facts: RepoFacts = noFacts) =>
+    run({ claims: legacyFacets({ kind }).claims, facts }).atoms.map((atom) => formatAtom(atom));
+
+  test("each kind of the summary model projects as the primary kind", () => {
+    for (const kind of closed.kind.map((entry) => entry.id)) expect(legacyAtoms(kind)).toEqual([`kind:${kind}`]);
+  });
+
+  test("other projects to no kind, and the GitHub facts still project", () => {
+    expect(legacyAtoms("other", { language: "Rust", license: "MIT", topics: [] })).toEqual([
+      "written-in:lang:rust",
+      "license:MIT",
+    ]);
   });
 });

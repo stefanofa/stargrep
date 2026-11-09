@@ -73,7 +73,7 @@ const seedRows = (repos: ReadonlyArray<SeedRepo>) =>
     })),
   );
 
-// Repos as saveFacts will leave them once it computes input_hash, written directly because saveFacts does not yet.
+// Repos with a fixed input hash, written directly so a test can name the hash its answers carry.
 export const seedRepos = Effect.fn("seedRepos")(function* (repos: ReadonlyArray<SeedRepo>) {
   const database = yield* TestDatabase.TestDatabase;
   yield* database.query(

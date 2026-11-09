@@ -79,6 +79,7 @@ const defaults = {
     revision: unexpected("knowledge.revision")(),
     decisions: unexpected("knowledge.decisions")(),
     decide: unexpected("knowledge.decide"),
+    keepLegacy: unexpected("knowledge.keepLegacy"),
   },
 } satisfies Db.Db["Service"];
 

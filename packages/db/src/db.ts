@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -31,7 +32,11 @@ export type {
   Decided,
   Decision,
   Invalidation,
+  KeptLegacy,
   Label,
+  LegacyAnswer,
+  LegacyContent,
+  LegacyRepo,
   LockedRepo,
   MintClaim,
   Minted,
@@ -142,7 +147,7 @@ export const layer = (options: Options) =>
           knowledge: yield* Knowledge.make,
         });
       }),
-    ),
+    ).pipe(Layer.provide(Digest.layerWebCrypto)),
     Layer.effect(
       Transactions,
       Effect.gen(function* () {

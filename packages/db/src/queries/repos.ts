@@ -1,8 +1,10 @@
 import { summaryRecipe } from "@stargrep/ai/models";
 import { Repo as GitHubRepo, Login, ObjectId, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
+import { inputHash } from "@stargrep/knowledge/input-hash";
 import { and, asc, eq, getColumns, gt, isNotNull, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import * as Arr from "effect/Array";
+import * as Digest from "effect/crypto/Digest";
 import type * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -264,6 +266,16 @@ const repoFound = (id: RepoId) => requireRow(() => new RepoNotFound({ repoId: id
 
 export const make = Effect.fn("Db.repos.make")(function* (configuredModel: EmbeddingModelId) {
   const { run, withTransaction } = yield* Postgres.Postgres;
+  const digest = yield* Digest.Digest;
+
+  const hashOf = (facts: RepoFacts) =>
+    inputHash({
+      readmeOid: facts.readmeOid,
+      fullName: `${facts.owner}/${facts.name}`,
+      description: facts.description,
+      topics: facts.topics,
+      language: facts.language,
+    }).pipe(Effect.provideService(Digest.Digest, digest));
 
   const applied =
     (operation: "repos.saveSummary" | "repos.saveEmbedding", id: RepoId) =>
@@ -316,9 +328,11 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           return ids.filter((id) => pending.has(id));
         }),
       ),
+    // input_hash names the prompt inputs these facts make, so an answer to older facts can be told apart.
     saveFacts: (facts) =>
-      encodeFacts(facts).pipe(
-        Effect.flatMap((values) => {
+      Effect.all([encodeFacts(facts), hashOf(facts)]).pipe(
+        Effect.flatMap(([encoded, hash]) => {
+          const values = { ...encoded, inputHash: hash };
           const { id: _, ...changes } = values;
           return run("repos.saveFacts", (db) =>
             db

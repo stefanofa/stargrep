@@ -61,6 +61,7 @@ export const Operation = Schema.Literals([
   "knowledge.revision",
   "knowledge.decide",
   "knowledge.decisions",
+  "knowledge.keepLegacy",
 ]);
 export type Operation = typeof Operation.Type;
 
