@@ -1,12 +1,14 @@
-import { expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import * as Db from "@stargrep/db";
 import { EmbeddingModelId } from "@stargrep/db/embedding";
 import * as TestDatabase from "@stargrep/db/test-database";
 import { Login, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as EnrichQueue from "./enrich-queue.ts";
@@ -114,3 +116,19 @@ it.layer(Layer.merge(TestDatabase.layerMemory({ embeddingModel }), queue.layer),
     );
   },
 );
+
+describe("leaseFor", () => {
+  const minutes = (duration: Duration.Duration) => Duration.toMinutes(duration);
+
+  test("a direct call, or a batch of fewer than two prompts, holds its repos for 15 minutes", () => {
+    for (const prompts of [0, 1, 2, 250]) expect(minutes(EnrichRetry.leaseFor(Option.none(), prompts))).toBe(15);
+    for (const prompts of [0, 1])
+      expect(minutes(EnrichRetry.leaseFor(Option.some(Duration.hours(24)), prompts))).toBe(15);
+  });
+
+  test("a provider batch of two or more prompts holds its repos for the batch timeout and 15 minutes more", () => {
+    for (const prompts of [2, 250]) {
+      expect(minutes(EnrichRetry.leaseFor(Option.some(Duration.hours(24)), prompts))).toBe(24 * 60 + 15);
+    }
+  });
+});

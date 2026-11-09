@@ -32,13 +32,16 @@ export interface Summary {
   readonly keywords: ReadonlyArray<string>;
 }
 
-// A paid answer that commit A could not save. It fails only its own repo, and counts as that repo's failure, so an
-// answer that can never be saved reaches the cap instead of being paid for on every sweep.
+// A paid answer that commit A could not save. It fails only its own repo. refused says the database refused the answer
+// itself, which would happen again, so it counts as the repo's failure and an answer that can never be saved reaches
+// the cap. A save that failed for a reason any repo could hit, such as a lock timeout, a lost connection, or a
+// deadlock, does not count.
 export class AnswerNotSaved extends Schema.TaggedError<AnswerNotSaved, { readonly brand: unique symbol }>()(
   "AnswerNotSaved",
   {
     reason: Schema.String,
     sqlState: Schema.NullOr(Schema.String),
+    refused: Schema.Boolean,
   },
 ) {
   override get message(): string {
@@ -71,7 +74,7 @@ const ownError = (error: EnrichRepoError): boolean =>
     // A summary answer is one paid call for one repo, so a repo whose answers never decode must reach the cap. An
     // embedding answer covers a whole batch, so its bad shape is the provider's fault, not any one repo's.
     AiOutputInvalid: (failure) => failure.operation === "generate",
-    AnswerNotSaved: () => true,
+    AnswerNotSaved: (failure) => failure.refused,
     RateLimited: () => false,
     TokenBudgetExhausted: () => false,
     Unauthorized: () => false,
@@ -284,8 +287,15 @@ const make = Effect.gen(function* () {
       Effect.provideService(Db.Db, db),
       Effect.map(Arr.head),
       Effect.catchTags({
-        DbQueryFailed: (error) => Effect.fail(new AnswerNotSaved({ reason: error.reason, sqlState: error.sqlState })),
-        DbRowInvalid: (error) => Effect.fail(new AnswerNotSaved({ reason: error._tag, sqlState: null })),
+        DbQueryFailed: (error) =>
+          Effect.fail(
+            new AnswerNotSaved({
+              reason: error.reason,
+              sqlState: error.sqlState,
+              refused: error.reason === "query" || error.reason === "constraint",
+            }),
+          ),
+        DbRowInvalid: (error) => Effect.fail(new AnswerNotSaved({ reason: error._tag, sqlState: null, refused: true })),
       }),
       Effect.result,
     );
@@ -321,9 +331,13 @@ const make = Effect.gen(function* () {
       Stream.runCollect,
       Effect.provideService(TextGeneration.TextGeneration, textGeneration),
     );
+    // A save that failed for a reason any repo could hit keeps its lease, so the repo waits it out and the sweep sends it
+    // again, as for a run cut short.
     const failures = answered.flatMap((step) =>
       Result.isFailure(step) && step.failure._tag === "Failed"
-        ? [{ id: step.failure.id, counted: ownError(step.failure.error) }]
+        ? step.failure.error._tag === "AnswerNotSaved" && !step.failure.error.refused
+          ? []
+          : [{ id: step.failure.id, counted: ownError(step.failure.error) }]
         : [],
     );
     yield* db.repos.settleFailures({
@@ -401,8 +415,9 @@ const make = Effect.gen(function* () {
   });
 
   const enrichRepos = Effect.fn("EnrichRepo.enrichRepos")(function* (ids: ReadonlyArray<RepoId>) {
-    // Sorting keeps each chunk's contents the same from run to run, so a rerun sends the same batch
-    // request and the Gateway's idempotency key finds the job that run already paid for.
+    // Sorting keeps each chunk's contents the same from run to run. A rerun after a dead batch run's lease has run out
+    // then sends the same batch request, and the Gateway's idempotency key can find the job that run already paid for. A
+    // rerun inside the lease skips the repos it holds.
     const chunks = Arr.chunksOf(Arr.sort(Arr.dedupe(ids), Order.Number), batchSize);
     const outcomes = yield* Effect.forEach(chunks, enrichChunk, { concurrency: batchConcurrency });
     const byId = new Map<number, Enrichment>(outcomes.flat().map((outcome) => [outcome.id, outcome]));

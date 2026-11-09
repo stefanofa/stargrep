@@ -441,6 +441,20 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         retryDelays,
       });
       expect(yield* settled(free)).toEqual([{ failures: 1, at: "00:10:00.000" }]);
+
+      // A repo GitHub stopped serving while its call ran is no longer pending, so its failure ends the lease and counts
+      // nothing.
+      const gone = repoId(2551);
+      yield* db.repos.upsertRefs([ref(gone)]);
+      expect(yield* db.repos.lease({ ids: [gone], ...first })).toEqual([gone]);
+      yield* database.query("update repos set gone_at = now() where id = $1", [gone]);
+      yield* db.repos.settleFailures({
+        until: first.until,
+        failures: [{ id: gone, counted: true }],
+        at: now,
+        retryDelays,
+      });
+      expect(yield* settled(gone)).toEqual([{ failures: 0, at: null }]);
     }),
   );
 

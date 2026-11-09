@@ -319,6 +319,51 @@ for (const [adapter, database] of adapters) {
       );
     }
 
+    // A capture that times out behind a mint, loses its connection, or loses a deadlock says nothing about the answer.
+    for (const reason of ["timeout", "transport", "conflict"] as const) {
+      it.effect(`a ${reason} while saving counts nothing and keeps the lease until it runs out`, () =>
+        Effect.gen(function* () {
+          const db = yield* Db.Db;
+          const n = { timeout: 830, transport: 831, conflict: 832 }[reason];
+          f.remotes.set(n, { description: "A CLI", readme: { oid: oid("3"), text: "# Tool" } });
+          yield* f.store([n]);
+          const lost = Layer.succeed(
+            Db.Db,
+            Db.Db.of({
+              ...db,
+              knowledge: {
+                ...db.knowledge,
+                capture: () =>
+                  Effect.fail(new DbQueryFailed({ operation: "knowledge.capture", reason, sqlState: null })),
+              },
+            }),
+          );
+          let calls = 0;
+          const text = f.textGeneration((request) =>
+            Effect.sync(() => (calls++, { output: SummarizeFake.respond(request.prompt), usage: f.usage })),
+          );
+          for (let round = 0; round < 3; round++) {
+            const leasedAt = yield* DateTime.now;
+            const outcome = yield* f
+              .enrichOne(id(n))
+              .pipe(Effect.provide(Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(Layer.merge(lost, text)))));
+            expect(outcome).toMatchObject({
+              _tag: "Failed",
+              error: { _tag: "AnswerNotSaved", reason, refused: false },
+            });
+            expect(yield* f.failuresOf(n)).toEqual([{ enrich_failures: 0 }]);
+            const lease = DateTime.addDuration(leasedAt, Duration.minutes(15));
+            expect(yield* retryAt(n)).toEqual([{ at: DateTime.formatIso(lease).slice(0, 16).replace("T", " ") }]);
+            const sweepable = (at: DateTime.Utc) => db.repos.sweepable({ now: at, limit: 1000 });
+            expect(yield* sweepable(yield* DateTime.now)).not.toContain(id(n));
+            yield* TestClock.adjust("16 minutes");
+            expect(yield* sweepable(yield* DateTime.now)).toContain(id(n));
+          }
+          expect(calls).toBe(3);
+        }),
+      );
+    }
+
     it.effect("an answer capture cannot save fails only its own repo, counted, and its chunk-mates are saved", () =>
       Effect.gen(function* () {
         const db = yield* Db.Db;
@@ -352,7 +397,10 @@ for (const [adapter, database] of adapters) {
           Effect.provide(Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(Layer.merge(poisoned, text)))),
         );
         expect(calls).toBe(10);
-        expect(outcomes[0]).toMatchObject({ _tag: "Failed", error: { _tag: "AnswerNotSaved", sqlState: "22P02" } });
+        expect(outcomes[0]).toMatchObject({
+          _tag: "Failed",
+          error: { _tag: "AnswerNotSaved", sqlState: "22P02", refused: true },
+        });
         expect(outcomes.slice(1).map((outcome) => outcome._tag)).toEqual(numbers.slice(1).map(() => "Summarized"));
         expect(yield* f.failuresOf(810)).toEqual([{ enrich_failures: 1 }]);
         const backoff = DateTime.addDuration(yield* DateTime.now, Duration.minutes(10));
