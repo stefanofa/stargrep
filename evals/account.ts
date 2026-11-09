@@ -1,5 +1,5 @@
 import * as Models from "@stargrep/ai/models";
-import { RepoKnowledge } from "@stargrep/core/knowledge";
+import { Curation, RepoKnowledge } from "@stargrep/core/knowledge";
 import * as Db from "@stargrep/db";
 import { Embedding, EmbeddingModelId } from "@stargrep/db/embedding";
 import { GitHubAccountId, Login, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
@@ -98,4 +98,11 @@ export const loadAccount = Effect.fn("Evals.loadAccount")(function* (repos: Read
       source: "api",
     })),
   });
+});
+
+// The usage floor as the nightly job runs it: the count, then every candidate on at least 3 repos from 2 owners
+// accepted, so stated subject words resolve as they will once curation runs.
+export const acceptFloor = Effect.fn("Evals.acceptFloor")(function* () {
+  yield* RepoKnowledge.count();
+  return yield* Curation.floor();
 });

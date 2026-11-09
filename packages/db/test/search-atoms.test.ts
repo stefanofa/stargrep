@@ -318,61 +318,67 @@ const atomCases = (test: { readonly effect: it.Tester<Services> }) => {
 
 // With the accepted-key cache the web server keeps per isolate, a stated word no accepted subject holds costs the
 // statement nothing, and a subject accepted since the last read applies once the read is acceptedKeysTtl old.
-const cacheCases = (test: { readonly effect: it.Tester<Services> }) => {
-  test.effect("skips words no accepted subject holds, and reads newly accepted subjects once the cache expires", () =>
-    Effect.gen(function* () {
-      const owner = accountId(1301);
-      const postgres = yield* subjectNamed("PostgreSQL", ["postgres"]);
-      const graphs = yield* subjectNamed("graph databases", ["graph"]);
-      yield* subjectNamed("graph theory", ["graph"], { isDefault: false });
-      const [pgcli, sqliteUtils, graphLib, plain] = [1, 2, 3, 4].map((n) => repoId(13_010 + n)) as [
-        RepoId,
-        RepoId,
-        RepoId,
-        RepoId,
-      ];
-      const sqlite = yield* subjectNamed("SQLite", ["sqlite"], { status: "candidate" });
-      yield* seed(owner, [
-        { id: pgcli, distance: 0, atoms: [holds("for", postgres)] },
-        { id: sqliteUtils, distance: 0.1, atoms: [holds("for", sqlite)] },
-        { id: graphLib, distance: 0.2, atoms: [about(graphs)] },
-        { id: plain, distance: 0.3 },
-      ]);
-      const everyone = [pgcli, sqliteUtils, graphLib, plain];
-      const filtered = (key: string) => search(owner, { stated: [subjectGroup("filter", [key])] });
+const cacheCases =
+  (cache: Ref.Ref<Option.Option<Db.AcceptedKeys>>) => (test: { readonly effect: it.Tester<Services> }) => {
+    test.effect("skips words no accepted subject holds, and reads newly accepted subjects once the cache expires", () =>
+      Effect.gen(function* () {
+        const owner = accountId(1301);
+        const postgres = yield* subjectNamed("PostgreSQL", ["postgres"]);
+        const graphs = yield* subjectNamed("graph databases", ["graph"]);
+        yield* subjectNamed("graph theory", ["graph"], { isDefault: false });
+        const [pgcli, sqliteUtils, graphLib, plain] = [1, 2, 3, 4].map((n) => repoId(13_010 + n)) as [
+          RepoId,
+          RepoId,
+          RepoId,
+          RepoId,
+        ];
+        const sqlite = yield* subjectNamed("SQLite", ["sqlite"], { status: "candidate" });
+        yield* seed(owner, [
+          { id: pgcli, distance: 0, atoms: [holds("for", postgres)] },
+          { id: sqliteUtils, distance: 0.1, atoms: [holds("for", sqlite)] },
+          { id: graphLib, distance: 0.2, atoms: [about(graphs)] },
+          { id: plain, distance: 0.3 },
+        ]);
+        const everyone = [pgcli, sqliteUtils, graphLib, plain];
+        const filtered = (key: string) => search(owner, { stated: [subjectGroup("filter", [key])] });
 
-      expect(yield* filtered("postgres")).toEqual({
-        ids: [pgcli],
-        resolution: { stated: [[postgres]], labels: { [postgres]: "PostgreSQL" }, unavailable: [] },
-      });
-      expect(yield* filtered("nothing named this")).toEqual({
-        ids: everyone,
-        resolution: { stated: [null], labels: {}, unavailable: [] },
-      });
-      // Both graph subjects are accepted, so the key passes the cache and SQL finds it ambiguous.
-      expect((yield* filtered("graph")).ids).toEqual(everyone);
+        expect(yield* filtered("postgres")).toEqual({
+          ids: [pgcli],
+          resolution: { stated: [[postgres]], labels: { [postgres]: "PostgreSQL" }, unavailable: [] },
+        });
+        expect(yield* filtered("nothing named this")).toEqual({
+          ids: everyone,
+          resolution: { stated: [null], labels: {}, unavailable: [] },
+        });
+        expect((yield* filtered("graph")).ids).toEqual(everyone);
+        // The cache holds the keys SQL resolves, so an ambiguous key such as graph never reaches the statement.
+        const resolvable = yield* (yield* TestDatabase.TestDatabase).query(
+          "select key from knowledge_key_meanings(array(select key from knowledge_labels where namespace = 'public'))",
+        );
+        const cached = Option.map(yield* Ref.get(cache), ({ keys }) => [...keys].sort());
+        expect(cached).toEqual(Option.some(resolvable.map((row) => (row as { readonly key: string }).key).sort()));
+        expect(cached).toEqual(Option.some(["postgres"]));
 
-      yield* decide("status", {
-        presented: [{ id: sqlite, label: "SQLite", definition: null, status: "accepted", repoId: null }],
-      });
-      expect((yield* filtered("sqlite")).ids).toEqual(everyone);
-      yield* TestClock.adjust(Db.acceptedKeysTtl);
-      expect((yield* filtered("sqlite")).ids).toEqual([sqliteUtils]);
-    }),
-  );
-};
+        yield* decide("status", {
+          presented: [{ id: sqlite, label: "SQLite", definition: null, status: "accepted", repoId: null }],
+        });
+        expect((yield* filtered("sqlite")).ids).toEqual(everyone);
+        yield* TestClock.adjust(Db.acceptedKeysTtl);
+        expect((yield* filtered("sqlite")).ids).toEqual([sqliteUtils]);
+      }),
+    );
+  };
 
-it.layer(
-  TestDatabase.layerMemory({ embeddingModel: model, acceptedKeys: Ref.makeUnsafe(Option.none<Db.AcceptedKeys>()) }),
-  { timeout: 60_000, testTimeout: 60_000 },
-)("PGlite atom search with the accepted-key cache", cacheCases);
-it.layer(
-  TestDatabase.layerNodePostgres({
-    embeddingModel: model,
-    acceptedKeys: Ref.makeUnsafe(Option.none<Db.AcceptedKeys>()),
-  }),
-  { timeout: 60_000, testTimeout: 60_000 },
-)("node-postgres atom search with the accepted-key cache", cacheCases);
+const pgliteCache = Ref.makeUnsafe(Option.none<Db.AcceptedKeys>());
+it.layer(TestDatabase.layerMemory({ embeddingModel: model, acceptedKeys: pgliteCache }), {
+  timeout: 60_000,
+  testTimeout: 60_000,
+})("PGlite atom search with the accepted-key cache", cacheCases(pgliteCache));
+const postgresCache = Ref.makeUnsafe(Option.none<Db.AcceptedKeys>());
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model, acceptedKeys: postgresCache }), {
+  timeout: 60_000,
+  testTimeout: 60_000,
+})("node-postgres atom search with the accepted-key cache", cacheCases(postgresCache));
 
 it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 60_000, testTimeout: 60_000 })(
   "PGlite atom search",

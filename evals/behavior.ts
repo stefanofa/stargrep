@@ -1,6 +1,7 @@
-// Judged queries for what atoms do to search: negation, only, built with, for, kinds, and platforms. The recall query
-// set has no negation and no "only", so these check those paths on recorded repos. Each case compares the search with
-// atoms to the same search without them, so the result says what the atoms changed, whatever the ranking.
+// Judged queries for what atoms do to search: negation, contractions, only, built with, with, for, kinds, languages,
+// and platforms. The recall query set has none of these shapes, so these check them on recorded repos. Each case
+// compares the search with atoms to the same search without them, so the result says what the atoms changed, whatever
+// the ranking. The repos each case keeps and drops come from what the query asks for.
 export interface Judged {
   readonly query: string;
   // The repo whose recorded vector stands in for the query's, since no query embedding may be bought.
@@ -12,9 +13,12 @@ export interface Judged {
   readonly keeps: ReadonlyArray<string>;
   // Repos the search without atoms finds, which the atoms must drop.
   readonly drops?: ReadonlyArray<string>;
-  // Drops that need a subject accepted, which no subject is in prod until curation accepts one.
+  // Drops that need a subject accepted, which the usage floor does.
   readonly dropsOnceAccepted?: ReadonlyArray<string>;
 }
+
+// Terminals whose claims leave out Windows.
+const terminals = ["ghostty-org/ghostty", "kovidgoyal/kitty", "wezterm/wezterm", "warpdotdev/warp"];
 
 const desktopApps = [
   "tw93/Pake",
@@ -47,11 +51,12 @@ export const judged: ReadonlyArray<Judged> = [
     languages: ["Rust"],
     keeps: ["clap-rs/clap"],
   },
+  // A platform "only" filters on the claims, and wezterm's and kitty's leave out Linux, so they drop too.
   {
     query: "terminal emulator for linux only",
     near: "ghostty-org/ghostty",
     keeps: ["ghostty-org/ghostty", "warpdotdev/warp"],
-    drops: ["microsoft/terminal"],
+    drops: ["microsoft/terminal", "wezterm/wezterm", "kovidgoyal/kitty"],
   },
   {
     query: "configuration management tool, not puppet",
@@ -120,10 +125,103 @@ export const judged: ReadonlyArray<Judged> = [
     keeps: ["ghostty-org/ghostty", "warpdotdev/warp"],
     drops: ["microsoft/terminal", "microsoft/vscode"],
   },
+  {
+    query: "apps that don't run on windows",
+    near: "ghostty-org/ghostty",
+    keeps: terminals,
+    drops: ["microsoft/terminal"],
+  },
+  {
+    query: "apps that don’t run on windows",
+    near: "ghostty-org/ghostty",
+    keeps: terminals,
+    drops: ["microsoft/terminal"],
+  },
+  {
+    query: "terminals that won't run on windows",
+    near: "microsoft/terminal",
+    keeps: terminals,
+    drops: ["microsoft/terminal"],
+  },
+  { query: "apps that do not support windows", near: "ghostty-org/ghostty", keeps: terminals },
+  {
+    query: "apps that aren't built with electron",
+    near: "tw93/Pake",
+    keeps: ["tw93/Pake", "tauri-apps/tauri", "flutter/flutter"],
+    dropsOnceAccepted: ["atom/atom", "jgraph/drawio-desktop"],
+  },
+  {
+    query: "cli tools built with rust",
+    near: "BurntSushi/ripgrep",
+    languages: ["Rust"],
+    keeps: ["BurntSushi/ripgrep", "sharkdp/bat", "gitui-org/gitui"],
+    drops: ["junegunn/fzf", "mikefarah/yq"],
+  },
+  {
+    query: "cli tools built with go",
+    near: "junegunn/fzf",
+    languages: ["Go"],
+    keeps: ["junegunn/fzf", "mikefarah/yq", "jesseduffield/lazygit"],
+    drops: ["BurntSushi/ripgrep", "sharkdp/bat"],
+  },
+  {
+    query: "cli tools built with python",
+    near: "python-poetry/poetry",
+    languages: ["Python"],
+    keeps: ["python-poetry/poetry", "yt-dlp/yt-dlp", "nvbn/thefuck"],
+    drops: ["astral-sh/ruff", "astral-sh/uv"],
+  },
+  {
+    query: "typescript orm, not javascript",
+    near: "drizzle-team/drizzle-orm",
+    languages: ["TypeScript", "JavaScript"],
+    keeps: ["drizzle-team/drizzle-orm", "prisma/orm", "typeorm/typeorm"],
+  },
+  {
+    query: "react libraries written in typescript not javascript",
+    near: "pmndrs/zustand",
+    languages: ["TypeScript", "JavaScript"],
+    keeps: ["pmndrs/zustand", "pmndrs/jotai", "reduxjs/redux"],
+  },
+  {
+    query: "llm apps with privacy",
+    near: "zylon-ai/private-gpt",
+    keeps: ["zylon-ai/private-gpt", "janhq/jan", "ollama/ollama", "nomic-ai/gpt4all", "open-webui/open-webui"],
+  },
+  {
+    query: "editor with ai",
+    near: "zed-industries/zed",
+    keeps: ["zed-industries/zed", "microsoft/vscode", "helix-editor/helix"],
+  },
+  {
+    query: "login with github",
+    near: "nextauthjs/next-auth",
+    keeps: ["nextauthjs/next-auth", "better-auth/better-auth", "keycloak/keycloak", "goauthentik/authentik"],
+  },
+];
+
+// Repos that hold privacy, GitHub, and AI, which the usage floor accepts on the whole corpus. With them, the floor
+// accepts those subjects on this fixture too, so the "with" cases run against accepted subjects. ruanyf/weekly is the
+// one repo that states AI, which mints the subject that repos tagged ai then hold.
+const floorHolders = [
+  "ruanyf/weekly",
+  "AdguardTeam/AdGuardHome",
+  "keepassxreboot/keepassxc",
+  "plausible/analytics",
+  "cli/cli",
+  "go-gitea/gitea",
+  "trufflesecurity/trufflehog",
+  "Significant-Gravitas/AutoGPT",
 ];
 
 export const judgedRepos: ReadonlyArray<string> = [
-  ...new Set(
-    judged.flatMap((entry) => [entry.near, ...entry.keeps, ...(entry.drops ?? []), ...(entry.dropsOnceAccepted ?? [])]),
-  ),
+  ...new Set([
+    ...judged.flatMap((entry) => [
+      entry.near,
+      ...entry.keeps,
+      ...(entry.drops ?? []),
+      ...(entry.dropsOnceAccepted ?? []),
+    ]),
+    ...floorHolders,
+  ]),
 ].sort();

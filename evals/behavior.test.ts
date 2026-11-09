@@ -3,13 +3,16 @@ import * as Embeddings from "@stargrep/ai/embeddings";
 import * as Fake from "@stargrep/ai/fake";
 import * as Models from "@stargrep/ai/models";
 import { Compile, ModelAllowance, QueryPlan, QueryPlanner, Search, SearchCache } from "@stargrep/core/search";
+import type * as Db from "@stargrep/db";
 import * as TestDatabase from "@stargrep/db/test-database";
 import * as it from "@stargrep/testing";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import { embeddingModelId, loadAccount, scope } from "./account.ts";
+import { acceptFloor, embeddingModelId, loadAccount, scope } from "./account.ts";
 import { type Judged, judged } from "./behavior.ts";
 import { EnrichedRepo } from "./enriched-corpus.ts";
 
@@ -58,14 +61,20 @@ const noAtoms = Object.fromEntries(Object.keys(Compile.policy).map((row) => [row
 
 const names = (outcome: Search.SearchOutcome) => outcome.results.map(({ repo }) => `${repo.owner}/${repo.name}`);
 
-const layer = (accepted: boolean) =>
+// Nothing accepted, as in prod today, or what the usage floor accepts, each through SQL alone and through the
+// accepted-key cache the web server keeps.
+const modes = [
+  { name: "no subject accepted", floor: false, cache: false },
+  { name: "no subject accepted, with the key cache", floor: false, cache: true },
+  { name: "the usage floor's subjects accepted", floor: true, cache: false },
+  { name: "the usage floor's subjects accepted, with the key cache", floor: true, cache: true },
+] as const;
+
+const layer = (mode: (typeof modes)[number]) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
       yield* loadAccount(repos);
-      if (accepted) {
-        const database = yield* TestDatabase.TestDatabase;
-        yield* database.query("update subjects set status = 'accepted' where status = 'candidate'");
-      }
+      if (mode.floor) yield* acceptFloor();
     }),
   ).pipe(
     Layer.provideMerge(Search.layer),
@@ -73,29 +82,31 @@ const layer = (accepted: boolean) =>
     Layer.provideMerge(SearchCache.layerMemory),
     Layer.provideMerge(ModelAllowance.layerUnmetered),
     Layer.provideMerge(embeddings),
-    Layer.provideMerge(TestDatabase.layerMemory({ embeddingModel: embeddingModelId })),
+    Layer.provideMerge(
+      TestDatabase.layerMemory({
+        embeddingModel: embeddingModelId,
+        ...(mode.cache ? { acceptedKeys: Ref.makeUnsafe(Option.none<Db.AcceptedKeys>()) } : {}),
+      }),
+    ),
   );
 
-for (const accepted of [false, true]) {
-  it.layer(layer(accepted), { timeout: 120_000, testTimeout: 30_000 })(
-    accepted ? "judged queries with every subject accepted" : "judged queries with no subject accepted",
-    (test) => {
-      for (const entry of judged) {
-        test.effect(entry.query, () =>
-          Effect.gen(function* () {
-            const search = yield* Search.Search;
-            const request = { scope, query: entry.query, limit: 50 };
-            const before = names(
-              yield* search.search(request).pipe(Effect.provideService(Compile.CurrentPolicy, noAtoms)),
-            );
-            const after = names(yield* search.search(request));
-            const drops = [...(entry.drops ?? []), ...(accepted ? (entry.dropsOnceAccepted ?? []) : [])];
-            expect(before).toEqual(expect.arrayContaining([...entry.keeps, ...drops]));
-            expect(after).toEqual(expect.arrayContaining([...entry.keeps]));
-            expect(after.filter((name) => drops.includes(name))).toEqual([]);
-          }),
-        );
-      }
-    },
-  );
+for (const mode of modes) {
+  it.layer(layer(mode), { timeout: 120_000, testTimeout: 30_000 })(`judged queries with ${mode.name}`, (test) => {
+    for (const entry of judged) {
+      test.effect(entry.query, () =>
+        Effect.gen(function* () {
+          const search = yield* Search.Search;
+          const request = { scope, query: entry.query, limit: 50 };
+          const before = names(
+            yield* search.search(request).pipe(Effect.provideService(Compile.CurrentPolicy, noAtoms)),
+          );
+          const after = names(yield* search.search(request));
+          const drops = [...(entry.drops ?? []), ...(mode.floor ? (entry.dropsOnceAccepted ?? []) : [])];
+          expect(before).toEqual(expect.arrayContaining([...entry.keeps, ...drops]));
+          expect(after).toEqual(expect.arrayContaining([...entry.keeps]));
+          expect(after.filter((name) => drops.includes(name))).toEqual([]);
+        }),
+      );
+    }
+  });
 }

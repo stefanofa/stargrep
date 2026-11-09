@@ -417,6 +417,27 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
     }),
   );
 
+  test.effect("excludes exactly the stated language, so excluding JavaScript keeps TypeScript", () =>
+    Effect.gen(function* () {
+      const owner = accountId(814);
+      const [typescript, javascript, rust] = [repoId(9211), repoId(9212), repoId(9213)];
+      yield* seed(owner, [
+        { id: typescript, language: "TypeScript" },
+        { id: javascript, language: "JavaScript" },
+        { id: rust, language: "Rust" },
+      ]);
+      const found = (atoms: Db.AtomQuery) =>
+        searchHits(hybrid({ scope: stars(owner), text: "", embedding: embedding({ 5: 1 }), limit: 10, atoms })).pipe(
+          Effect.map((hits) => hits.map((hit) => hit.repo.id).sort()),
+        );
+      expect(yield* found({ explicit: everything, stated: [closedGroup("exclude", "lang:javascript")] })).toEqual([
+        typescript,
+        rust,
+      ]);
+      expect(yield* found({ explicit: selection("-lang:javascript"), stated: [] })).toEqual([typescript, rust]);
+    }),
+  );
+
   test.effect("matches a language filter on the language a repo is written in or is for", () =>
     Effect.gen(function* () {
       const owner = accountId(806);

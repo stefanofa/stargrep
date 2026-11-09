@@ -65,8 +65,9 @@ describe("compileQuery", () => {
   test("reads built-with cues, negations, and comparisons with closed values", () => {
     expect(groups("apps built with tauri")).toEqual(["filter built_with[tauri]"]);
     expect(groups("editor not built with electron")).toEqual(["boost any[editor]", "exclude built_with[electron]"]);
-    // "with" and "using" name a feature as often as a dependency.
-    expect(groups("apps using tauri")).toEqual(["filter any,built_with[tauri]"]);
+    // "with" and "using" name a feature as often as a dependency, so they only boost.
+    expect(groups("apps using tauri")).toEqual(["boost any,built_with[tauri]"]);
+    expect(groups("apps powered by electron")).toEqual(["filter built_with[electron]"]);
     expect(groups("deno alternative to node")).toEqual(["boost platform:deno", "boost alt:platform:node"]);
     expect(groups("apps, not libraries", { kinds: ["app"] })).toEqual(["filter kind:app", "exclude kind:library"]);
     expect(groups("password manager without electron, for linux")).toEqual([
@@ -98,7 +99,6 @@ describe("compileQuery", () => {
       "boost platform:macos",
       "boost any[vim]",
       "exclude platform:linux",
-      "boost platform:deno",
     ]);
   });
 
@@ -174,7 +174,7 @@ describe("compileQuery", () => {
     expect(groups("apps that do not run on windows")).toEqual(["boost any[do]", "exclude runs-on:platform:windows"]);
     expect(groups("cli for node")).toEqual(["boost platform:node"]);
     expect(groups("only apps built with javascript", { languages: ["JavaScript"] })).toEqual([
-      "filter with:lang:javascript",
+      "filter written-in:lang:javascript|with:lang:javascript",
       "filter kind:app",
     ]);
     expect(groups("apps written in javascript", { languages: ["JavaScript"] })).toEqual([
@@ -185,8 +185,59 @@ describe("compileQuery", () => {
     ]);
     expect(groups("javascript apps not built with rust", { languages: ["JavaScript", "Rust"] })).toEqual([
       "filter lang:javascript",
-      "exclude with:lang:rust",
+      "exclude written-in:lang:rust|with:lang:rust",
     ]);
+  });
+
+  // The re-verify of PR 95 found these on real queries.
+  test("reads a contraction with either apostrophe as a negation", () => {
+    for (const query of [
+      "apps that don't run on windows",
+      "apps that don’t run on windows",
+      "apps that dont run on windows",
+      "apps that can't run on windows",
+      "apps that won’t run on windows",
+    ]) {
+      expect([query, groups(query)]).toEqual([query, ["exclude runs-on:platform:windows"]]);
+    }
+    expect(groups("apps that aren't built with electron")).toEqual(["exclude built_with[electron]"]);
+    expect(groups("a cli that isn't written in go", { languages: ["Go"] })).toEqual(["exclude written-in:lang:go"]);
+    expect(groups("tools that doesn’t need a gpu")).toEqual(["exclude any,built_with[need gpu]"]);
+    const query = "apps that don’t run on windows";
+    const [spans] = compile(query).stated.map(({ spans }) => spans.map((span) => span && query.slice(...span)));
+    expect(spans).toEqual(["windows"]);
+  });
+
+  test("never applies a closed value positively after a negation's target", () => {
+    expect(groups("apps that do not support windows")).toEqual(["boost any[do]", "exclude any,built_with[support]"]);
+    expect(groups("apps that do not support rust", { languages: ["Rust"] })).toEqual([
+      "boost any[do]",
+      "exclude any,built_with[support]",
+    ]);
+  });
+
+  test("tests a language a built-with cue names where it is written in or built with", () => {
+    expect(groups("cli tools built with rust", { languages: ["Rust"] })).toEqual([
+      "filter written-in:lang:rust|with:lang:rust",
+    ]);
+    expect(groups("cli tools not built with go", { languages: ["Go"] })).toEqual([
+      "exclude written-in:lang:go|with:lang:go",
+    ]);
+    expect(groups("apps built with node")).toEqual(["filter with:platform:node"]);
+  });
+
+  test("boosts what with and using name, and filters only on an explicit dependency cue", () => {
+    expect(groups("llm apps with privacy")).toEqual(["boost any[llm]", "boost any,built_with[privacy]"]);
+    expect(groups("editor with ai")).toEqual(["boost any[editor]", "boost any,built_with[ai]"]);
+    expect(groups("login with github")).toEqual(["boost any[login]", "boost any,built_with[github]"]);
+    expect(groups("only apps with ai")).toEqual(["filter kind:app", "boost any,built_with[ai]"]);
+    expect(groups("apps with linux support")).toEqual(["boost platform:linux", "boost any[support]"]);
+    expect(groups("web framework using typescript", { languages: ["TypeScript"] })).toEqual([
+      "boost lang:typescript",
+      "boost any[web framework]",
+    ]);
+    expect(groups("apps built using tauri")).toEqual(["filter built_with[tauri]"]);
+    expect(groups("apps not using langchain")).toEqual(["exclude any,built_with[langchain]"]);
   });
 
   test("drops what it cannot be sure of", () => {
