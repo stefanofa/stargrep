@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import * as Schema from "effect/Schema";
 import {
   Claim,
-  carry,
   type DecodedFacets,
   decodeFacets,
   legacyFacets,
@@ -11,7 +10,6 @@ import {
   type PromptInput,
 } from "./claims.ts";
 import fixture from "./evidence-text.fixture.json";
-import { ReceiptId } from "./ids.ts";
 import type { LabelKey } from "./label-key.ts";
 import { roleIds, roles } from "./registry.ts";
 
@@ -196,33 +194,7 @@ describe("decodeFacets", () => {
   });
 });
 
-describe("carry", () => {
-  const previous = {
-    id: ReceiptId.make("00000000-0000-4000-8000-000000000001"),
-    claims: decodeFacets([{ role: "about", term: "terminal UI" }], input).claims,
-  };
-
-  test("an answer with no list keeps the previous receipt's claims and names it", () => {
-    expect(carry(decodeFacets(undefined, input), previous)).toEqual({
-      claims: previous.claims,
-      carriedFrom: previous.id,
-    });
-  });
-
-  test("an empty list, a list with facts, or no previous receipt carries nothing", () => {
-    expect(carry(decodeFacets([], input), previous)).toEqual({ claims: [], carriedFrom: null });
-    const fresh = decodeFacets([{ role: "is", term: "library" }], input);
-    expect(carry(fresh, previous)).toEqual({ claims: fresh.claims, carriedFrom: null });
-    expect(carry(decodeFacets(null, input), null)).toEqual({ claims: [], carriedFrom: null });
-  });
-});
-
 describe("legacyFacets", () => {
-  const legacyReceipt = (kind: string | null) => ({
-    id: ReceiptId.make("00000000-0000-4000-8000-000000000002"),
-    claims: legacyFacets({ kind }).claims,
-  });
-
   test("the kind is the only claim, the only answered lane, and is not found in any prompt", () => {
     const decoded = legacyFacets({ kind: "cli" });
     expect(decoded.claims).toEqual([
@@ -241,15 +213,5 @@ describe("legacyFacets", () => {
       expect(decoded.claims).toEqual([]);
       expect(decoded.lanes.is).toBe("complete");
     }
-  });
-
-  test("a model answer with no facets list carries only the legacy kind, never a keyword", () => {
-    const summary = { kind: "cli", keywords: ["terminal ui", "notion alternative", "dotfiles manager"] };
-    const carried = carry(decodeFacets(undefined, input), {
-      ...legacyReceipt(null),
-      claims: legacyFacets(summary).claims,
-    });
-    expect(carried.claims.map((claim) => `${claim.role}:${claim.term}`)).toEqual(["is:cli"]);
-    expect(carry(decodeFacets(undefined, input), legacyReceipt("other")).claims).toEqual([]);
   });
 });
