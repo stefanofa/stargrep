@@ -144,7 +144,6 @@ export const decodeFacets = (raw: unknown, input: PromptInput): DecodedFacets =>
 // A summary saved before receipts, as the repos row holds it.
 export interface LegacySummary {
   readonly kind: string | null;
-  readonly keywords: ReadonlyArray<string>;
 }
 
 // The kind the summary model gave a repo it could not place, which is no kind.
@@ -152,13 +151,14 @@ const unplaced = "other";
 
 const noPrompt: PromptInput = { fullName: "", description: "", topics: [], readme: "" };
 
-// A legacy summary's facts: its kind as the primary is claim, then each keyword as about, in order. They decode like a
-// model's list, against no prompt text, since the legacy columns kept none, so no claim counts as found. The summary
-// never spoke to any other role, so those lanes are missing.
+// A legacy summary's facts: its kind as the only is claim, decoded like a model's list against no prompt text, since
+// the legacy columns kept none. Keywords stay out of the claims. They mix categories, products, and dependencies, and
+// as subjects they would fix the identity and label of terms the summary model later writes itself. Only the is lane
+// is answered, so carry never takes anything but the kind from a legacy receipt.
 export const legacyFacets = (summary: LegacySummary): DecodedFacets => {
   const kind = summary.kind === null || summary.kind === unplaced ? [] : [{ role: "is", term: summary.kind }];
-  const decoded = decodeFacets([...kind, ...summary.keywords.map((term) => ({ role: "about", term }))], noPrompt);
-  return { ...decoded, lanes: { ...allLanes("missing"), is: decoded.lanes.is, about: decoded.lanes.about } };
+  const decoded = decodeFacets(kind, noPrompt);
+  return { ...decoded, lanes: { ...allLanes("missing"), is: decoded.lanes.is } };
 };
 
 // An answer with no list at all keeps the previous receipt's claims and names that receipt, so a model that left the

@@ -154,6 +154,52 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 3
       }),
     );
 
+    // A page's receipt trigger marks repo_facets rows, and a mint's invalidation marks them too, in another order.
+    test.effect("a mint waits for an open legacy page, so the two never mark facets rows at once", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const database = yield* TestDatabase.TestDatabase;
+        const id = repoId(75_401);
+        yield* database.query(
+          `insert into repos (id, owner, name, readme_oid, summary_readme_oid, summary, keywords, kind)
+           values ($1, 'probe', 'legacy-lock', $2, $2, 'A summary', '[]', 'cli')`,
+          [id, readme("1")],
+        );
+        const producer = yield* seedRepo({ id: 75_402 });
+        yield* db.knowledge.capture([answer(producer, receiptId(75_402))]);
+        const read = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const page = yield* Effect.forkChild(
+          db.knowledge.keepLegacy({ after: id - 1, limit: 1 }, (repos) =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(read, undefined);
+              yield* Deferred.await(release);
+              return repos.map((repo) => ({
+                repoId: repo.id,
+                inputHash: hash("e"),
+                recipe: repo.summaryRecipe,
+                summary: repo.summary,
+                keywords: repo.keywords,
+                claims: [],
+                lanes: allComplete,
+                dropped: [],
+              }));
+            }),
+          ),
+        );
+        yield* Deferred.await(read);
+        const minting = yield* Effect.forkChild(
+          db.knowledge.mint([
+            { key: key("legacy lock probe"), label: "legacy lock probe", receiptId: receiptId(75_402) },
+          ]),
+        );
+        expect(yield* lockWait).toEqual(["advisory"]);
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(page)).toMatchObject({ read: 1, inserted: 1, pointed: 1 });
+        expect((yield* Fiber.join(minting)).minted).toHaveLength(1);
+      }),
+    );
+
     test.effect("two projections of one repo at once queue on its row and both finish", () =>
       Effect.gen(function* () {
         const db = yield* Db.Db;

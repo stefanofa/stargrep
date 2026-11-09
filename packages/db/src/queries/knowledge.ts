@@ -89,6 +89,8 @@ export interface LockedRepo {
   readonly id: RepoId;
   readonly owner: string;
   readonly name: string;
+  // The receipt the claims came from. When a writer moved receipt_id while this read waited on the row, Postgres
+  // re-reads the row but not the receipt, so this differs from the row's receipt_id and the write guard skips the repo.
   readonly receiptId: ReceiptId | null;
   readonly language: string | null;
   readonly license: string | null;
@@ -562,7 +564,7 @@ export const make = Effect.gen(function* () {
           "knowledge.project",
           decodeLocked,
           sql`
-            select r.id::float8 as id, r.owner, r.name, r.receipt_id as "receiptId", r.language, r.license,
+            select r.id::float8 as id, r.owner, r.name, c.id as "receiptId", r.language, r.license,
               r.topics, coalesce(c.claims, '[]') as claims
             from repos r left join receipts c on c.id = r.receipt_id
             where r.id = any(${sql.param([...repoIds])}::bigint[]) and r.gone_at is null

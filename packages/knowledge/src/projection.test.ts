@@ -609,31 +609,17 @@ describe("project: subjects and the curated rules", () => {
 });
 
 describe("project: legacy summaries", () => {
-  const legacyAtoms = (kind: string | null, keywords: ReadonlyArray<string>, known: LabelIndex = new Map()) => {
-    const projection = run({ claims: legacyFacets({ kind, keywords }).claims, labels: known });
-    return {
-      atoms: projection.atoms.map((atom) => formatAtom(atom)),
-      mints: projection.mints.map((mint) => mint.label),
-    };
-  };
+  const legacyAtoms = (kind: string | null, facts: RepoFacts = noFacts) =>
+    run({ claims: legacyFacets({ kind }).claims, facts }).atoms.map((atom) => formatAtom(atom));
 
-  test("each kind of the summary model projects as the primary kind, before any keyword that spells another", () => {
-    for (const kind of closed.kind.map((entry) => entry.id)) {
-      const other = kind === "library" ? "framework" : "library";
-      expect(legacyAtoms(kind, [other, kind]).atoms).toEqual([`kind:${kind}`]);
-    }
+  test("each kind of the summary model projects as the primary kind", () => {
+    for (const kind of closed.kind.map((entry) => entry.id)) expect(legacyAtoms(kind)).toEqual([`kind:${kind}`]);
   });
 
-  test("other projects to no kind", () => {
-    expect(legacyAtoms("other", ["dotfiles manager"], labels({ "dotfiles manager": 7 })).atoms).toEqual([
-      "about:subject:7",
+  test("other projects to no kind, and the GitHub facts still project", () => {
+    expect(legacyAtoms("other", { language: "Rust", license: "MIT", topics: [] })).toEqual([
+      "written-in:lang:rust",
+      "license:MIT",
     ]);
-  });
-
-  test("keywords resolve or mint as about subjects, and reserved spellings are dropped", () => {
-    expect(legacyAtoms("cli", ["terminal ui", "rust", "macos", "git client"], labels({ "git client": 12 }))).toEqual({
-      atoms: ["kind:cli", "about:subject:12"],
-      mints: ["terminal ui"],
-    });
   });
 });

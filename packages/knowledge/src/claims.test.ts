@@ -12,6 +12,7 @@ import {
 } from "./claims.ts";
 import fixture from "./evidence-text.fixture.json";
 import { ReceiptId } from "./ids.ts";
+import type { LabelKey } from "./label-key.ts";
 import { roleIds, roles } from "./registry.ts";
 
 const input: PromptInput = {
@@ -217,49 +218,38 @@ describe("carry", () => {
 });
 
 describe("legacyFacets", () => {
-  const facts = (decoded: DecodedFacets) =>
-    decoded.claims.map((claim) => [claim.ordinal, claim.role, claim.term, claim.found]);
-
-  test("the kind is the first is claim, then each keyword is about, in order, none found", () => {
-    const decoded = legacyFacets({ kind: "cli", keywords: ["terminal ui", "Ratatui alternative", "rust"] });
-    expect(facts(decoded)).toEqual([
-      [0, "is", "cli", "neither"],
-      [1, "about", "terminal ui", "neither"],
-      [2, "about", "Ratatui alternative", "neither"],
-      [3, "about", "rust", "neither"],
-    ]);
-    expect(decoded.claims.every((claim) => claim.quote === null)).toBe(true);
-    expect(decoded.dropped).toEqual([]);
+  const legacyReceipt = (kind: string | null) => ({
+    id: ReceiptId.make("00000000-0000-4000-8000-000000000002"),
+    claims: legacyFacets({ kind }).claims,
   });
 
-  test("other and a missing kind give no is claim, and the is lane stays complete", () => {
+  test("the kind is the only claim, the only answered lane, and is not found in any prompt", () => {
+    const decoded = legacyFacets({ kind: "cli" });
+    expect(decoded.claims).toEqual([
+      { ordinal: 0, role: "is", term: "cli", key: "cli" as LabelKey, quote: null, found: "neither" },
+    ]);
+    expect(decoded.dropped).toEqual([]);
+    expect<Record<string, string>>(decoded.lanes).toEqual({
+      ...Object.fromEntries(modelRoles.map((role) => [role, "missing"])),
+      is: "complete",
+    });
+  });
+
+  test("other and a missing kind give no claim, and the is lane stays answered", () => {
     for (const kind of ["other", null]) {
-      const decoded = legacyFacets({ kind, keywords: ["dotfiles"] });
-      expect(facts(decoded)).toEqual([[0, "about", "dotfiles", "neither"]]);
+      const decoded = legacyFacets({ kind });
+      expect(decoded.claims).toEqual([]);
       expect(decoded.lanes.is).toBe("complete");
     }
   });
 
-  test("only the is and about lanes are answered, and an unreadable keyword turns only about invalid", () => {
-    const decoded = legacyFacets({ kind: "library", keywords: ["***", "x".repeat(81), "parser"] });
-    expect(facts(decoded)).toEqual([
-      [0, "is", "library", "neither"],
-      [3, "about", "parser", "neither"],
-    ]);
-    expect(decoded.dropped).toEqual([
-      { ordinal: 1, issue: "empty-term" },
-      { ordinal: 2, issue: "too-long" },
-    ]);
-    expect<Record<string, string>>(decoded.lanes).toEqual({
-      ...Object.fromEntries(modelRoles.map((role) => [role, "missing"])),
-      is: "complete",
-      about: "invalid",
+  test("a model answer with no facets list carries only the legacy kind, never a keyword", () => {
+    const summary = { kind: "cli", keywords: ["terminal ui", "notion alternative", "dotfiles manager"] };
+    const carried = carry(decodeFacets(undefined, input), {
+      ...legacyReceipt(null),
+      claims: legacyFacets(summary).claims,
     });
-  });
-
-  test("no keywords and no kind is an empty answer, not a missing one", () => {
-    const decoded = legacyFacets({ kind: "other", keywords: [] });
-    expect(decoded.claims).toEqual([]);
-    expect([decoded.lanes.is, decoded.lanes.about]).toEqual(["complete", "complete"]);
+    expect(carried.claims.map((claim) => `${claim.role}:${claim.term}`)).toEqual(["is:cli"]);
+    expect(carry(decodeFacets(undefined, input), legacyReceipt("other")).claims).toEqual([]);
   });
 });

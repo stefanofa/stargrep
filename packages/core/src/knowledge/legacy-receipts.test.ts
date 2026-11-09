@@ -3,7 +3,9 @@ import * as Db from "@stargrep/db";
 import { EmbeddingModelId } from "@stargrep/db/embedding";
 import * as TestDatabase from "@stargrep/db/test-database";
 import { RepoId } from "@stargrep/github/schemas";
-import { inputHash } from "@stargrep/knowledge/input-hash";
+import { legacyFacets } from "@stargrep/knowledge/claims";
+import { InputHash } from "@stargrep/knowledge/ids";
+import { legacyHash } from "@stargrep/knowledge/input-hash";
 import * as it from "@stargrep/testing";
 import * as Digest from "effect/crypto/Digest";
 import * as Deferred from "effect/Deferred";
@@ -53,19 +55,6 @@ const kinds = Effect.fn("kinds")(function* (ids: ReadonlyArray<RepoId>) {
   );
 });
 
-// The subject a label names, the repos a filter by its ID finds, and its listing after the nightly count.
-const subjectNamed = Effect.fn("subjectNamed")(function* (label: string) {
-  const database = yield* TestDatabase.TestDatabase;
-  const [row] = yield* database.query(
-    `select s.id::float8 as id, s.repo_count as repos, s.listed,
-       array(select repo_id::float8 from repo_facets where members && knowledge_origins(array[s.id], true)
-             order by repo_id) as members
-     from subjects s where s.label = $1`,
-    [label],
-  );
-  return row as { readonly id: number; readonly repos: number; readonly listed: boolean; members: Array<number> };
-});
-
 const receiptsOf = Effect.fn("receiptsOf")(function* (ids: ReadonlyArray<RepoId>) {
   const database = yield* TestDatabase.TestDatabase;
   return yield* database.query(
@@ -78,13 +67,58 @@ const receiptsOf = Effect.fn("receiptsOf")(function* (ids: ReadonlyArray<RepoId>
 const keep = (pageSize: number) =>
   LegacyReceipts.keepLegacySummaries({ pageSize }).pipe(Effect.provide(Digest.layerWebCrypto));
 
+// The summary a repo shows next to the summary its receipt holds, which must be the same.
+const shown = Effect.fn("shown")(function* (id: number) {
+  const database = yield* TestDatabase.TestDatabase;
+  const [row] = yield* database.query(
+    `select r.summary, c.summary as receipt, (select count(*)::int from receipts where repo_id = r.id) as receipts
+     from repos r join receipts c on c.id = r.receipt_id where r.id = $1`,
+    [id],
+  );
+  return row;
+});
+
+// Enrichment summarizing a repo again: a new README, summary, keywords, and kind in one write, as saveSummary does.
+const summarize = Effect.fn("summarize")(function* (
+  id: number,
+  readme: string,
+  summary: string,
+  kind: string,
+  keywords: ReadonlyArray<string> = [],
+) {
+  const database = yield* TestDatabase.TestDatabase;
+  yield* database.query(
+    `update repos set readme_oid = $2, summary_readme_oid = $2, summary = $3, kind = $4, keywords = $5::jsonb
+     where id = $1`,
+    [id, oid(readme), summary, kind, JSON.stringify(keywords)],
+  );
+});
+
+// Waits, inside Postgres, up to five seconds for a session of this database to wait on a lock, and returns what the
+// waiting sessions wait on.
+const lockWait = Effect.gen(function* () {
+  const database = yield* TestDatabase.TestDatabase;
+  yield* database.query(`
+    do $$ begin
+      for attempt in 1 .. 500 loop
+        exit when exists (
+          select 1 from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock');
+        perform pg_sleep(0.01);
+      end loop;
+    end $$`);
+  const waiting = yield* database.query(
+    "select wait_event as event from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'",
+  );
+  return waiting.map((row) => (row as { event: string }).event);
+});
+
 const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | TestDatabase.TestDatabase> }) => {
-  test.effect("every legacy kind projects as the primary kind, other as none, and keywords mint listed subjects", () =>
+  test.effect("every legacy kind projects as the primary kind and other as none, and keywords stay text", () =>
     Effect.gen(function* () {
       const database = yield* TestDatabase.TestDatabase;
       const ids = yield* seed([
-        { id: 1, kind: "cli", keywords: ["shared widget kit", "framework", "rust"], language: "Rust" },
-        { id: 2, kind: "library", keywords: ["shared widget kit", "lonely keyword"] },
+        { id: 1, kind: "cli", keywords: ["terminal ui", "framework", "rust"], language: "Rust" },
+        { id: 2, kind: "library", keywords: ["terminal ui"] },
         { id: 3, kind: "other", keywords: [] },
         { id: 4, kind: "learning", keywords: ["***"] },
         { id: 5, kind: "app", keywords: [] },
@@ -94,8 +128,7 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | Test
       );
 
       expect(yield* keep(2)).toEqual({ pages: 4, read: 5, inserted: 5, pointed: 5 });
-      yield* sweepAll;
-      yield* RepoKnowledge.count();
+      expect(yield* RepoKnowledge.reproject()).toEqual({ projected: 5, minted: 0, conflicts: 0 });
 
       expect(yield* kinds(ids)).toEqual([
         { id: 1, kind: "cli", kinds: ["cli"] },
@@ -107,30 +140,34 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | Test
       expect(
         yield* database.query("select md5(string_agg(id || ':' || kind, ',' order by id)) as h from repos"),
       ).toEqual(before);
-      expect(yield* database.query("select count(*)::int as n from repo_facets where stale")).toEqual([{ n: 0 }]);
-      const lonely = yield* subjectNamed("lonely keyword");
-      expect([lonely.members, lonely.repos, lonely.listed]).toEqual([[2], 1, false]);
-      const shared = yield* subjectNamed("shared widget kit");
-      expect([shared.members, shared.repos, shared.listed]).toEqual([[1, 2], 2, true]);
       expect(
-        yield* database.query("select count(*)::int as n from subjects where label in ('framework', 'rust')"),
-      ).toEqual([{ n: 0 }]);
+        yield* database.query(
+          `select (select count(*)::int from repo_facets where stale) as stale,
+             (select count(*)::int from subjects) as subjects,
+             (select count(*)::int from repo_facets where cardinality(about) > 0) as "withAbout"`,
+        ),
+      ).toEqual([{ stale: 0, subjects: 0, withAbout: 0 }]);
 
       const [receipt] = yield* database.query(
-        "select source, model, recipe, input_hash as hash, dropped from receipts where repo_id = 4",
+        "select source, model, recipe, input_hash as hash, keywords, claims, dropped from receipts where repo_id = 1",
       );
       expect(receipt).toEqual({
         source: "legacy",
         model: "legacy",
         recipe: 1,
-        hash: yield* inputHash({
-          readmeOid: oid("1"),
-          fullName: "legacy/repo-4",
-          description: "A repo numbered 4",
-          topics: ["legacy"],
-          language: null,
-        }).pipe(Effect.provide(Digest.layerWebCrypto)),
-        dropped: [{ ordinal: 1, issue: "empty-term" }],
+        hash: yield* legacyHash(
+          {
+            readmeOid: oid("1"),
+            fullName: "legacy/repo-1",
+            description: "A repo numbered 1",
+            topics: ["legacy"],
+            language: "Rust",
+          },
+          { summary: "Legacy summary of 1", keywords: ["terminal ui", "framework", "rust"], kind: "cli" },
+        ).pipe(Effect.provide(Digest.layerWebCrypto)),
+        keywords: ["terminal ui", "framework", "rust"],
+        claims: legacyFacets({ kind: "cli" }).claims,
+        dropped: [],
       });
     }),
   );
@@ -144,12 +181,7 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | Test
       expect(yield* keep(2)).toEqual({ pages: 4, read: 5, inserted: 0, pointed: 0 });
       expect(yield* database.query(versions)).toEqual(before);
 
-      yield* database.query(
-        `update repos set readme_oid = $1, summary_readme_oid = $1, summary = 'A new summary', kind = 'framework',
-           keywords = '["lonely keyword"]'
-         where id = 5`,
-        [oid("2")],
-      );
+      yield* summarize(5, "2", "A new summary", "framework", ["web framework"]);
       expect(yield* keep(2)).toEqual({ pages: 4, read: 5, inserted: 1, pointed: 1 });
       yield* sweepAll;
       expect((yield* kinds([repoId(5)]))[0]).toEqual({ id: 5, kind: "framework", kinds: ["framework"] });
@@ -160,8 +192,59 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | Test
         { id: 4, receipts: 1, pointed: true },
         { id: 5, receipts: 2, pointed: true },
       ]);
-      yield* RepoKnowledge.count();
-      expect((yield* subjectNamed("lonely keyword")).listed).toBe(true);
+    }),
+  );
+
+  test.effect("a receipt follows each summary column, and a facts change alone makes none", () =>
+    Effect.gen(function* () {
+      const database = yield* TestDatabase.TestDatabase;
+      yield* seed([{ id: 7, kind: "cli", keywords: ["dotfiles"] }]);
+      expect(yield* keep(4)).toMatchObject({ inserted: 1, pointed: 1 });
+      const receiptOf7 = Effect.map(
+        database.query(
+          "select c.keywords, c.recipe from repos r join receipts c on c.id = r.receipt_id where r.id = 7",
+        ),
+        (rows) => rows[0],
+      );
+
+      yield* database.query("update repos set description = 'An edited description' where id = 7");
+      expect(yield* keep(4)).toMatchObject({ inserted: 0, pointed: 0 });
+      yield* database.query(`update repos set keywords = '["dotfiles", "shell"]' where id = 7`);
+      expect(yield* keep(4)).toMatchObject({ inserted: 1, pointed: 1 });
+      expect(yield* receiptOf7).toEqual({ keywords: ["dotfiles", "shell"], recipe: 1 });
+      yield* database.query("update repos set summary_recipe = 2 where id = 7");
+      expect(yield* keep(4)).toMatchObject({ inserted: 1, pointed: 1 });
+      expect(yield* receiptOf7).toEqual({ keywords: ["dotfiles", "shell"], recipe: 2 });
+    }),
+  );
+
+  test.effect("a README back at an earlier version points the repo at the receipt of the summary it shows", () =>
+    Effect.gen(function* () {
+      yield* seed([{ id: 6, kind: "cli", keywords: ["dotfiles"] }]);
+      expect(yield* keep(4)).toMatchObject({ inserted: 1, pointed: 1 });
+
+      yield* summarize(6, "2", "A summary of the second README", "app");
+      expect(yield* keep(4)).toMatchObject({ inserted: 1, pointed: 1 });
+      expect(yield* shown(6)).toEqual({
+        summary: "A summary of the second README",
+        receipt: "A summary of the second README",
+        receipts: 2,
+      });
+
+      yield* summarize(6, "1", "Legacy summary of 6", "cli", ["dotfiles"]);
+      expect(yield* keep(4)).toMatchObject({ inserted: 0, pointed: 1 });
+      expect(yield* shown(6)).toEqual({ summary: "Legacy summary of 6", receipt: "Legacy summary of 6", receipts: 2 });
+
+      yield* summarize(6, "1", "A second summary of the first README", "library");
+      expect(yield* keep(4)).toMatchObject({ inserted: 1, pointed: 1 });
+      expect(yield* shown(6)).toEqual({
+        summary: "A second summary of the first README",
+        receipt: "A second summary of the first README",
+        receipts: 3,
+      });
+      expect(yield* keep(4)).toMatchObject({ inserted: 0, pointed: 0 });
+      yield* sweepAll;
+      expect(yield* kinds([repoId(6)])).toEqual([{ id: 6, kind: "library", kinds: ["library"] }]);
     }),
   );
 };
@@ -175,9 +258,9 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel }), { timeout: 60_000, 
   cases,
 );
 
-// PGlite has one connection, so only Postgres can hold a row while a run waits on it.
+// PGlite has one connection, so only Postgres can hold a row while a run or a sweep waits on it.
 it.layer(TestDatabase.layerNodePostgres({ embeddingModel }), { timeout: 60_000, testTimeout: 60_000 })(
-  "node-postgres legacy receipts, killed",
+  "node-postgres legacy receipts, concurrent",
   (test) => {
     test.effect("a run killed mid-page keeps the pages before it, and a rerun finishes the rest with no repeats", () =>
       Effect.gen(function* () {
@@ -193,14 +276,7 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel }), { timeout: 60_000, 
         );
         yield* Deferred.await(holding);
         const run = yield* Effect.forkChild(Effect.exit(keep(2)));
-        yield* database.query(`
-          do $$ begin
-            for attempt in 1 .. 500 loop
-              exit when exists (
-                select 1 from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock');
-              perform pg_sleep(0.01);
-            end loop;
-          end $$`);
+        expect(yield* lockWait).toEqual(["transactionid"]);
         const killed = yield* database.query(
           `select pg_terminate_backend(pid) as killed from pg_stat_activity
            where datname = current_database() and wait_event_type = 'Lock'`,
@@ -216,6 +292,51 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel }), { timeout: 60_000, 
         expect(yield* keep(2)).toMatchObject({ inserted: 4, pointed: 4 });
         expect(yield* receiptsOf(ids)).toEqual(ids.map((id) => ({ id, receipts: 1, pointed: true })));
         expect(yield* keep(2)).toMatchObject({ inserted: 0, pointed: 0 });
+      }),
+    );
+
+    // A sweep that reaches a repo while a page holds it re-reads the row once the page commits, but not the receipt it
+    // joined, so it sees the new receipt_id beside the old receipt's claims or none.
+    test.effect("a sweep that waited while a page moved a repo's receipt leaves it stale for the next sweep", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const id = repoId(31);
+        yield* seed([{ id: 31, kind: "cli", keywords: [] }]);
+        yield* keep(4);
+        yield* sweepAll;
+        expect(yield* kinds([id])).toEqual([{ id: 31, kind: "cli", kinds: ["cli"] }]);
+
+        yield* summarize(31, "2", "A summary of the second README", "library");
+        const database = yield* TestDatabase.TestDatabase;
+        yield* database.query("update repo_facets set stale = true where repo_id = 31");
+        const read = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const page = yield* Effect.forkChild(
+          db.knowledge.keepLegacy({ after: 30, limit: 1 }, (repos) =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(read, undefined);
+              yield* Deferred.await(release);
+              return repos.map((repo) => ({
+                repoId: repo.id,
+                inputHash: InputHash.make("d".repeat(64)),
+                recipe: repo.summaryRecipe,
+                summary: repo.summary,
+                keywords: repo.keywords,
+                ...legacyFacets(repo),
+              }));
+            }),
+          ),
+        );
+        yield* Deferred.await(read);
+        const sweep = yield* Effect.forkChild(RepoKnowledge.reproject({ groupSize: 64, groups: 1 }));
+        expect(yield* lockWait).toEqual(["transactionid"]);
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(page)).toMatchObject({ inserted: 1, pointed: 1 });
+
+        expect(yield* Fiber.join(sweep)).toEqual({ projected: 0, minted: 0, conflicts: 0 });
+        expect(yield* database.query("select stale from repo_facets where repo_id = 31")).toEqual([{ stale: true }]);
+        expect(yield* RepoKnowledge.reproject()).toEqual({ projected: 1, minted: 0, conflicts: 0 });
+        expect(yield* kinds([id])).toEqual([{ id: 31, kind: "library", kinds: ["library"] }]);
       }),
     );
   },

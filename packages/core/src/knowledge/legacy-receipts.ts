@@ -1,6 +1,6 @@
 import * as Db from "@stargrep/db";
 import { legacyFacets } from "@stargrep/knowledge/claims";
-import { inputHash } from "@stargrep/knowledge/input-hash";
+import { legacyHash } from "@stargrep/knowledge/input-hash";
 import * as Arr from "effect/Array";
 import type * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
@@ -15,18 +15,19 @@ const sameContent = (current: Db.LegacyContent, repo: Db.LegacyRepo) =>
   current.keywords.every((keyword, index) => keyword === repo.keywords[index]);
 
 // The legacy receipt a repo's summary columns make, or none when its legacy receipt already holds them. The summary
-// model wrote the kind with the summary and keywords, so the kind never changes alone. The input hash names the README
-// the summary was made from and the repo's facts now, the closest record of its prompt there is.
+// model wrote the kind with the summary and keywords, so the kind never changes alone. The hash names the README the
+// summary was made from and the repo's facts now, the closest record of its prompt there is, and the answer itself.
 const answerFor = (repo: Db.LegacyRepo): Effect.Effect<ReadonlyArray<Db.LegacyAnswer>, never, Digest.Digest> => {
   if (repo.current !== null && sameContent(repo.current, repo)) return Effect.succeed([]);
   const facets = legacyFacets(repo);
-  return inputHash({
+  const facts = {
     readmeOid: repo.summaryReadmeOid,
     fullName: `${repo.owner}/${repo.name}`,
     description: repo.description,
     topics: repo.topics,
     language: repo.language,
-  }).pipe(
+  };
+  return legacyHash(facts, repo).pipe(
     Effect.map((hash) => [
       {
         repoId: repo.id,
