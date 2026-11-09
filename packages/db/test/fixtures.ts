@@ -1,5 +1,7 @@
 import { GitHubAccountId, Login, ObjectId, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
+import { AtomKey, SelectionKey } from "@stargrep/knowledge/atom";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Db from "../src/db.ts";
 import { anyDistance, Embedding, EmbeddingModelId } from "../src/embedding.ts";
@@ -70,9 +72,25 @@ export const hybrid = (
   name: null,
   metrics: [],
   filters: Db.noFilters,
+  atoms: Db.noAtoms,
   rankBy: null,
   ...search,
 });
+
+const decodeAtom = Schema.decodeSync(AtomKey);
+
+// Closed atoms the query stated, ORed, as the compiler gives them.
+export const closedGroup = (mode: Db.GroupMode, ...keys: readonly [string, ...Array<string>]): Db.ClosedGroup => ({
+  _tag: "Closed",
+  mode,
+  any: [decodeAtom(keys[0]), ...keys.slice(1).map((key) => decodeAtom(key))],
+});
+
+// The caller's selection, from its key, such as "lang:rust -kind:list".
+export const selection = Schema.decodeSync(SelectionKey);
+
+export const searchHits = (search: Db.HybridSearch) =>
+  Effect.flatMap(Effect.service(Db.Db), (db) => db.search.hybrid(search)).pipe(Effect.map(({ hits }) => hits));
 
 export const accountRow = (id: GitHubAccountId, overrides: Partial<Db.Account> = {}): Db.Account => ({
   ...account(id),

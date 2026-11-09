@@ -78,6 +78,7 @@ const wireCodes = {
   LoginNotFound: "LOGIN_NOT_FOUND",
   RepoNotFound: "REPO_NOT_FOUND",
   SearchScopeUnavailable: "SCOPE_UNAVAILABLE",
+  FacetUnavailable: "BAD_REQUEST",
   RateLimited: "TOO_MANY_REQUESTS",
   NewAccountLimited: "TOO_MANY_REQUESTS",
   SyncBusy: "SYNC_BUSY",
@@ -172,8 +173,8 @@ const libraryRepo = (entry: Db.LibraryEntry, icons: IconHost["Service"]) => ({
 const searchAnswer = Effect.fnUntraced(function* (input: typeof SearchInput.Type) {
   const scope: Search.Scope = { _tag: input.scope.kind, login: input.scope.login };
   const outcome = yield* (yield* Search.Search).search({ scope, query: input.q, limit: input.limit }).pipe(
-    // The contract only accepts stars; a service rejecting that scope violates its contract.
-    Effect.catchTags({ SearchScopeUnavailable: Effect.die }),
+    // The contract only accepts stars and passes no filter, so either failure violates the service's contract.
+    Effect.catchTags({ SearchScopeUnavailable: Effect.die, FacetUnavailable: Effect.die }),
   );
   const icons = yield* IconHost;
   return {

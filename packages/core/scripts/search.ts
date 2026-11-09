@@ -69,6 +69,9 @@ const search = Command.make(
       yield* Console.log(`  exact name: ${plan.exactName ?? "none"}`);
       yield* Console.log(`  filters: ${describeFilters(plan)}`);
       yield* Console.log(
+        `  atoms: ${outcome.applied.map(({ mode, atom, label }) => `${mode} ${atom} (${label})`).join("; ") || "none"}`,
+      );
+      yield* Console.log(
         `  ranking: ${plan.ranking._tag === "metric" ? `${plan.ranking.metric}, ${plan.ranking.direction} first` : "relevance"}`,
       );
       yield* Console.log(

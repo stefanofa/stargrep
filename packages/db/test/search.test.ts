@@ -1,11 +1,30 @@
 import { expect } from "bun:test";
 import type { GitHubAccountId, RepoId } from "@stargrep/github/schemas";
+import { everything } from "@stargrep/knowledge/atom";
+import { labelKey } from "@stargrep/knowledge/label-key";
+import { type ClosedDim, closed, closedKeys, type RoleId } from "@stargrep/knowledge/registry";
 import * as it from "@stargrep/testing";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Db from "../src/db.ts";
 import * as TestDatabase from "./database.ts";
-import { account, accountId, at, embedding, facts, hybrid, model, ref, repoId, starred, stars } from "./fixtures.ts";
+import {
+  account,
+  accountId,
+  at,
+  closedGroup,
+  embedding,
+  facts,
+  hybrid,
+  model,
+  ref,
+  repoId,
+  searchHits,
+  selection,
+  starred,
+  stars,
+} from "./fixtures.ts";
+import { atom, projectAtoms } from "./knowledge-fixtures.ts";
 import { summarize } from "./summaries.ts";
 
 interface Seed {
@@ -21,6 +40,24 @@ interface Seed {
   readonly weights?: Readonly<Record<number, number>>;
   readonly metrics?: { readonly stars: number; readonly stars90d: number };
 }
+
+const closedId = (dim: ClosedDim, name: string) =>
+  closed[dim].find((value) => closedKeys(value).some((key) => key === labelKey(name)))?.id;
+
+// The closed atoms projection gives these facts and this kind: the language as written_in, a language topic as for,
+// the kind as is, and the license by its exact id.
+const closedAtoms = (repo: Seed): ReadonlyArray<Db.StoredAtom> => {
+  const atomOf = (role: RoleId, dim: ClosedDim, name: string | undefined) => {
+    const id = name === undefined ? undefined : closedId(dim, name);
+    return id === undefined ? [] : [atom(role, { dim, id } as Db.StoredAtom["value"])];
+  };
+  return [
+    ...atomOf("written_in", "language", repo.language),
+    ...(repo.topics ?? []).flatMap((topic) => atomOf("for", "language", topic)),
+    ...atomOf("is", "kind", repo.kind ?? "app"),
+    ...(closed.license.some((value) => value.id === repo.license) ? atomOf("licensed", "license", repo.license) : []),
+  ];
+};
 
 const seed = Effect.fn("seed")(function* (owner: GitHubAccountId, repos: ReadonlyArray<Seed>) {
   const db = yield* Db.Db;
@@ -64,6 +101,14 @@ const seed = Effect.fn("seed")(function* (owner: GitHubAccountId, repos: Readonl
     accountId: owner,
     stars: repos.map((repo) => starred(repo.id, repo.starredAt ?? "2026-01-01T00:00:00Z")),
   });
+  const seeds = new Map(repos.map((repo) => [repo.id, repo]));
+  yield* projectAtoms(
+    (locked) => {
+      const repo = seeds.get(locked.id);
+      return repo === undefined ? [] : closedAtoms(repo);
+    },
+    repos.map((repo) => repo.id),
+  );
 });
 
 const starsMetric: Db.SearchMetric = { id: "stars", family: "stars", variant: "total" };
@@ -72,7 +117,6 @@ const growthMetric: Db.SearchMetric = { id: "stars_growth_90d", family: "stars",
 const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatabase> }) => {
   test.effect("keeps only the stars that match every filter", () =>
     Effect.gen(function* () {
-      const db = yield* Db.Db;
       const owner = accountId(801);
       const [match, otherLanguage, otherKind, otherLicense, archived, tooEarly, tooLate] = [
         repoId(8001),
@@ -95,30 +139,30 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
       ]);
 
       const query = { scope: stars(owner), text: "", embedding: embedding({ 5: 1 }), limit: 10 };
-      const hits = yield* db.search.hybrid(
+      const hits = yield* searchHits(
         hybrid({
           ...query,
           filters: {
             ...Db.noFilters,
-            languages: ["typescript"],
-            kinds: ["library"],
-            licenses: ["mit"],
             archived: false,
             starredAfter: at("2025-01-01T00:00:00Z"),
             starredBefore: at("2026-01-01T00:00:00Z"),
+          },
+          atoms: {
+            explicit: selection("license:MIT"),
+            stated: [closedGroup("filter", "lang:typescript"), closedGroup("filter", "kind:library")],
           },
         }),
       );
       expect(hits.map((hit) => hit.repo.id)).toEqual([match]);
 
-      const archivedOnly = yield* db.search.hybrid(hybrid({ ...query, filters: { ...Db.noFilters, archived: true } }));
+      const archivedOnly = yield* searchHits(hybrid({ ...query, filters: { ...Db.noFilters, archived: true } }));
       expect(archivedOnly.map((hit) => hit.repo.id)).toEqual([archived]);
     }),
   );
 
   test.effect("returns metric values and keeps only repos inside the metric bounds", () =>
     Effect.gen(function* () {
-      const db = yield* Db.Db;
       const owner = accountId(802);
       const [big, growing, small, unmeasured] = [repoId(8101), repoId(8102), repoId(8103), repoId(8104)];
       yield* seed(owner, [
@@ -135,7 +179,7 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
         limit: 10,
         metrics: [starsMetric, growthMetric],
       };
-      const bounded = yield* db.search.hybrid(
+      const bounded = yield* searchHits(
         hybrid({
           ...query,
           filters: {
@@ -149,7 +193,7 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
       );
       expect(bounded.map((hit) => [hit.repo.id, hit.metrics])).toEqual([[big, [50_000, 500 / 49_500]]]);
 
-      const ranked = yield* db.search.hybrid(hybrid({ ...query, rankBy: { metric: "stars", direction: "highest" } }));
+      const ranked = yield* searchHits(hybrid({ ...query, rankBy: { metric: "stars", direction: "highest" } }));
       expect(ranked.map((hit) => [hit.repo.id, hit.metrics[0]])).toEqual([
         [big, 50_000],
         [growing, 2_000],
@@ -161,7 +205,6 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
 
   test.effect("keeps a strict bound strict and an inclusive bound inclusive", () =>
     Effect.gen(function* () {
-      const db = yield* Db.Db;
       const owner = accountId(807);
       const [exactly, above, below] = [repoId(8601), repoId(8602), repoId(8603)];
       yield* seed(owner, [
@@ -170,18 +213,16 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
         { id: below, metrics: { stars: 100, stars90d: 0 } },
       ]);
       const bounded = (op: Db.MetricBound["op"]) =>
-        db.search
-          .hybrid(
-            hybrid({
-              scope: stars(owner),
-              text: "",
-              embedding: embedding({ 5: 1 }),
-              limit: 10,
-              metrics: [starsMetric],
-              filters: { ...Db.noFilters, metrics: [{ metric: "stars", op, value: 200 }] },
-            }),
-          )
-          .pipe(Effect.map((hits) => hits.map((hit) => hit.metrics[0]).sort()));
+        searchHits(
+          hybrid({
+            scope: stars(owner),
+            text: "",
+            embedding: embedding({ 5: 1 }),
+            limit: 10,
+            metrics: [starsMetric],
+            filters: { ...Db.noFilters, metrics: [{ metric: "stars", op, value: 200 }] },
+          }),
+        ).pipe(Effect.map((hits) => hits.map((hit) => hit.metrics[0]).sort()));
       expect(yield* bounded("gt")).toEqual([300]);
       expect(yield* bounded("gte")).toEqual([200, 300]);
       expect(yield* bounded("lt")).toEqual([100]);
@@ -191,7 +232,6 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
 
   test.effect("orders the best matches by a metric without lifting a weaker match into them", () =>
     Effect.gen(function* () {
-      const db = yield* Db.Db;
       const owner = accountId(803);
       const [closest, close, popular] = [repoId(8201), repoId(8202), repoId(8203)];
       yield* seed(owner, [
@@ -201,13 +241,13 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
       ]);
       const query = { scope: stars(owner), text: "terminal dashboard", embedding: embedding({ 0: 1 }) };
 
-      const relevance = yield* db.search.hybrid(hybrid({ ...query, limit: 10 }));
+      const relevance = yield* searchHits(hybrid({ ...query, limit: 10 }));
       expect(relevance.map((hit) => hit.repo.id)).toEqual([closest, close, popular]);
 
       const ranked = (direction: "highest" | "lowest") =>
-        db.search
-          .hybrid(hybrid({ ...query, limit: 2, metrics: [starsMetric], rankBy: { metric: "stars", direction } }))
-          .pipe(Effect.map((hits) => hits.map((hit) => [hit.repo.id, hit.metrics[0]])));
+        searchHits(hybrid({ ...query, limit: 2, metrics: [starsMetric], rankBy: { metric: "stars", direction } })).pipe(
+          Effect.map((hits) => hits.map((hit) => [hit.repo.id, hit.metrics[0]])),
+        );
       expect(yield* ranked("highest")).toEqual([
         [close, 9_000],
         [closest, 10],
@@ -221,7 +261,6 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
 
   test.effect("ranks an exact repo name first, by name or owner and name", () =>
     Effect.gen(function* () {
-      const db = yield* Db.Db;
       const owner = accountId(804);
       const [named, similar] = [repoId(8301), repoId(8302)];
       yield* seed(owner, [
@@ -230,9 +269,9 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
       ]);
       const query = { scope: stars(owner), text: "", embedding: embedding({ 0: 1 }), limit: 10 };
 
-      expect((yield* db.search.hybrid(hybrid(query)))[0]?.repo.id).toBe(similar);
+      expect((yield* searchHits(hybrid(query)))[0]?.repo.id).toBe(similar);
       for (const name of ["ratatui", "OWNER/Ratatui"]) {
-        const hits = yield* db.search.hybrid(hybrid({ ...query, name }));
+        const hits = yield* searchHits(hybrid({ ...query, name }));
         expect(hits.map((hit) => [hit.repo.id, hit.nameMatch])).toEqual([
           [named, true],
           [similar, false],
@@ -243,16 +282,15 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
 
   test.effect("returns nothing for a query that matches no star", () =>
     Effect.gen(function* () {
-      const db = yield* Db.Db;
       const owner = accountId(805);
       yield* seed(owner, [{ id: repoId(8401), language: "Go" }]);
-      const hits = yield* db.search.hybrid(
+      const hits = yield* searchHits(
         hybrid({
           scope: stars(owner),
           text: "zzzz",
           embedding: embedding({ 0: 1 }),
           limit: 10,
-          filters: { ...Db.noFilters, languages: ["cobol"] },
+          atoms: { explicit: everything, stated: [closedGroup("filter", "lang:cobol")] },
         }),
       );
       expect(hits).toEqual([]);
@@ -261,7 +299,6 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
 
   test.effect("drops meaning matches past the max distance and keeps the ranks of the rest", () =>
     Effect.gen(function* () {
-      const db = yield* Db.Db;
       const owner = accountId(809);
       const [same, near, far, worded] = [repoId(8801), repoId(8802), repoId(8803), repoId(8804)];
       yield* seed(owner, [
@@ -272,9 +309,9 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
       ]);
       const query = { scope: stars(owner), text: "terminal dashboard", embedding: embedding({ 0: 1 }), limit: 10 };
       const ranks = (maxDistance: number) =>
-        db.search
-          .hybrid(hybrid({ ...query, maxDistance }))
-          .pipe(Effect.map((hits) => hits.map((hit) => [hit.repo.id, hit.textRank, hit.vectorRank]).sort()));
+        searchHits(hybrid({ ...query, maxDistance })).pipe(
+          Effect.map((hits) => hits.map((hit) => [hit.repo.id, hit.textRank, hit.vectorRank]).sort()),
+        );
 
       expect(yield* ranks(2)).toEqual([
         [same, null, 1],
@@ -292,14 +329,13 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
 
   test.effect("searches full text alone without an embedding, so no repo ranks by meaning", () =>
     Effect.gen(function* () {
-      const db = yield* Db.Db;
       const owner = accountId(812);
       const [same, worded] = [repoId(9101), repoId(9102)];
       yield* seed(owner, [
         { id: same, weights: { 0: 1 } },
         { id: worded, summary: "terminal dashboard", weights: { 1: 1 } },
       ]);
-      const hits = yield* db.search.hybrid(
+      const hits = yield* searchHits(
         hybrid({ scope: stars(owner), text: "terminal dashboard", embedding: null, limit: 10 }),
       );
       expect(hits.map((hit) => [hit.repo.id, hit.textRank, hit.vectorRank])).toEqual([[worded, 1, null]]);
@@ -308,10 +344,9 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
 
   test.effect("returns nothing for words no star has when every star is past the max distance", () =>
     Effect.gen(function* () {
-      const db = yield* Db.Db;
       const owner = accountId(810);
       yield* seed(owner, [{ id: repoId(8901) }, { id: repoId(8902), weights: { 0: 1, 1: 2 } }]);
-      const hits = yield* db.search.hybrid(
+      const hits = yield* searchHits(
         hybrid({ scope: stars(owner), text: "dfsfgdsrg", embedding: embedding({ 0: 1 }), maxDistance: 0.4, limit: 10 }),
       );
       expect(hits).toEqual([]);
@@ -342,27 +377,23 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
 
   test.effect("dies when a ranking names a metric the search does not compute", () =>
     Effect.gen(function* () {
-      const db = yield* Db.Db;
       const owner = accountId(808);
       yield* seed(owner, [{ id: repoId(8701), metrics: { stars: 1, stars90d: 0 } }]);
-      const exit = yield* db.search
-        .hybrid(
-          hybrid({
-            scope: stars(owner),
-            text: "",
-            embedding: embedding({ 5: 1 }),
-            limit: 10,
-            rankBy: { metric: "stars", direction: "highest" },
-          }),
-        )
-        .pipe(Effect.exit);
+      const exit = yield* searchHits(
+        hybrid({
+          scope: stars(owner),
+          text: "",
+          embedding: embedding({ 5: 1 }),
+          limit: 10,
+          rankBy: { metric: "stars", direction: "highest" },
+        }),
+      ).pipe(Effect.exit);
       expect(Exit.hasDies(exit)).toBe(true);
     }),
   );
 
-  test.effect("matches a language filter on the repo's topics as well as its language", () =>
+  test.effect("matches a language filter on the language a repo is written in or is for", () =>
     Effect.gen(function* () {
-      const db = yield* Db.Db;
       const owner = accountId(806);
       const [written, tagged, neither] = [repoId(8501), repoId(8502), repoId(8503)];
       yield* seed(owner, [
@@ -370,13 +401,13 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
         { id: tagged, language: "Rust", topics: ["python", "packaging"] },
         { id: neither, language: "Rust", topics: ["cli"] },
       ]);
-      const hits = yield* db.search.hybrid(
+      const hits = yield* searchHits(
         hybrid({
           scope: stars(owner),
           text: "",
           embedding: embedding({ 5: 1 }),
           limit: 10,
-          filters: { ...Db.noFilters, languages: ["Python"] },
+          atoms: { explicit: everything, stated: [closedGroup("filter", "lang:python")] },
         }),
       );
       expect(hits.map((hit) => hit.repo.id).sort()).toEqual([written, tagged]);

@@ -60,21 +60,6 @@ describe("Vocabulary", () => {
     }
   });
 
-  test("expands a language to the names it goes by in GitHub languages and topics", () => {
-    expect(Vocabulary.matchNames(["Go", "JavaScript", "Objective-C", "Visual Basic", "Node.js"])).toEqual([
-      "go",
-      "golang",
-      "javascript",
-      "typescript",
-      "nodejs",
-      "objective-c",
-      "objc",
-      "visual basic",
-      "visual-basic",
-      "node.js",
-    ]);
-  });
-
   test("treats connectives as sentence words in any case", () => {
     expect(["for", "Like", "WITHOUT", "react"].map(Vocabulary.isConnective)).toEqual([true, true, true, false]);
   });

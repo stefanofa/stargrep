@@ -71,15 +71,22 @@ export type {
 } from "./queries/repos.ts";
 export { IconPlate, IconSource, maxIconSize, OwnerType, RepoIcon } from "./queries/repos.ts";
 export type {
+  AtomQuery,
+  ClosedGroup,
+  GroupMode,
+  Hybrid,
   HybridSearch,
   MetricBound,
   MetricRanking,
+  Resolution,
   SearchFilters,
   SearchHit,
   SearchMetric,
   SearchScope,
+  StatedGroup,
+  SubjectGroup,
 } from "./queries/search.ts";
-export { MetricFamily, MetricVariant, noFilters } from "./queries/search.ts";
+export { MetricFamily, MetricVariant, noAtoms, noFilters } from "./queries/search.ts";
 export type {
   EnrichmentProgress,
   LibraryEntry,

@@ -94,6 +94,7 @@ const search = Search.Search.of({
       plan: QueryPlan.asTyped(request.query, "sentence"),
       planSource: "fallback",
       results: [{ repo, nameMatch: false, textRank: 1, vectorRank: 2, metrics: [{ metric: "stars", value: 18_000 }] }],
+      applied: [],
     } satisfies Search.SearchOutcome;
   }),
 });

@@ -5,6 +5,7 @@ import * as Db from "@stargrep/db";
 import { Embedding, EmbeddingModelId } from "@stargrep/db/embedding";
 import * as TestDatabase from "@stargrep/db/test-database";
 import { GitHubAccountId, Login } from "@stargrep/github/schemas";
+import { SelectionKey } from "@stargrep/knowledge/atom";
 import * as it from "@stargrep/testing";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
@@ -250,6 +251,21 @@ const fixture = () => {
       }),
     );
 
+    test.effect("fails a filter that names a subject no one can use, and applies a known one", () =>
+      Effect.gen(function* () {
+        const scope = yield* seed(921, orms(9070));
+        const filtered = (key: string) =>
+          search({ scope, query: "ratatui", limit: 10, filter: Schema.decodeSync(SelectionKey)(key) });
+        const error = yield* filtered("subject:999999999").pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "FacetUnavailable", subjects: [999_999_999] });
+        const rust = yield* filtered("lang:rust");
+        expect([names(rust), names(yield* filtered("-lang:rust"))]).toEqual([["ratatui"], []]);
+        expect(rust.applied).toEqual([
+          { atom: "lang:rust", label: "Rust", mode: "filter", from: "filter", span: null },
+        ]);
+      }),
+    );
+
     test.effect("refuses network and global scopes until they exist", () =>
       Effect.gen(function* () {
         for (const scope of [{ _tag: "network", login: Login.make("user-906") }, { _tag: "global" }] as const) {
@@ -466,17 +482,20 @@ const fixture = () => {
         const [query] = yield* embeddings.embed(["typescript orm"]);
         const embedding = yield* decodeEmbedding({ model, vector: query?.vector });
         for (const metric of Object.values(registry)) {
-          const hits = yield* db.search.hybrid({
-            scope: { kind: "stars", accountId: GitHubAccountId.make(907) },
-            text: "orm",
-            embedding,
-            maxDistance: embeddings.model.maxMatchDistance,
-            limit: 10,
-            name: null,
-            metrics: [metric],
-            filters: { ...Db.noFilters, metrics: [{ metric: metric.id, op: "gt", value: -1e12 }] },
-            rankBy: { metric: metric.id, direction: "highest" },
-          });
+          const hits = yield* db.search
+            .hybrid({
+              scope: { kind: "stars", accountId: GitHubAccountId.make(907) },
+              text: "orm",
+              embedding,
+              maxDistance: embeddings.model.maxMatchDistance,
+              limit: 10,
+              name: null,
+              metrics: [metric],
+              filters: { ...Db.noFilters, metrics: [{ metric: metric.id, op: "gt", value: -1e12 }] },
+              atoms: Db.noAtoms,
+              rankBy: { metric: metric.id, direction: "highest" },
+            })
+            .pipe(Effect.map(({ hits }) => hits));
           expect([metric.id, hits.length, hits.every((hit) => hit.metrics[0] !== null)]).toEqual([metric.id, 3, true]);
         }
       }),

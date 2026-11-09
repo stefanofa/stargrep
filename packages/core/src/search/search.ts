@@ -4,18 +4,20 @@ import * as Db from "@stargrep/db";
 import { Embedding, type EmbeddingModelMismatch, Float32Vector } from "@stargrep/db/embedding";
 import type { DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
 import type { Login } from "@stargrep/github/schemas";
+import { everything, type Selection } from "@stargrep/knowledge/atom";
+import { SubjectId } from "@stargrep/knowledge/ids";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Compile from "./compile.ts";
 import { type MetricId, registry } from "./metric-registry.ts";
 import * as ModelAllowance from "./model-allowance.ts";
 import * as QueryPlan from "./query-plan.ts";
 import * as QueryPlanner from "./query-planner.ts";
 import * as SearchCache from "./search-cache.ts";
-import * as Vocabulary from "./vocabulary.ts";
 
 export class SearchScopeUnavailable extends Schema.TaggedError<
   SearchScopeUnavailable,
@@ -39,12 +41,25 @@ export class AccountNotSynced extends Schema.TaggedError<AccountNotSynced, { rea
   }
 }
 
+// A filter named a subject that does not exist, is private, or was rejected. It is never dropped silently.
+export class FacetUnavailable extends Schema.TaggedError<FacetUnavailable, { readonly brand: unique symbol }>()(
+  "FacetUnavailable",
+  {
+    subjects: Schema.Array(SubjectId),
+  },
+) {
+  override get message(): string {
+    return `No public subject has the ID ${this.subjects.join(", ")}`;
+  }
+}
+
 export type SearchError =
   | AccountNotSynced
   | AiError
   | DbQueryFailed
   | DbRowInvalid
   | EmbeddingModelMismatch
+  | FacetUnavailable
   | SearchScopeUnavailable;
 
 export const ScopeKind = Schema.Literals(["stars", "network", "global"]);
@@ -58,6 +73,8 @@ export interface SearchRequest {
   readonly scope: Scope;
   readonly query: string;
   readonly limit: number;
+  // Atoms the caller chose, which always filter. Everything when absent.
+  readonly filter?: Selection;
 }
 
 export interface MetricValue {
@@ -77,11 +94,13 @@ export interface SearchOutcome {
   readonly plan: QueryPlan.QueryPlan;
   readonly planSource: QueryPlanner.PlanSource;
   readonly results: ReadonlyArray<SearchResult>;
+  readonly applied: ReadonlyArray<Compile.AppliedAtom>;
 }
 
 interface Found {
   readonly planned: QueryPlanner.Planned;
   readonly results: ReadonlyArray<SearchResult>;
+  readonly applied: ReadonlyArray<Compile.AppliedAtom>;
 }
 
 export class Search extends Context.Service<
@@ -154,11 +173,12 @@ export const make = Effect.gen(function* () {
     return { kind: "stars", accountId: account.value.id } satisfies Db.SearchScope;
   });
 
-  // A query embedding the allowance refuses runs the words as typed on full text alone, reported as a fallback.
+  // A query embedding the allowance refuses runs the words as typed on full text alone, reported as a fallback. It
+  // drops what the planner read into the query, never a filter the caller chose.
   const find = Effect.fn("Search.find")(function* (
     scope: Db.SearchScope,
     planned: QueryPlanner.Planned,
-    limit: number,
+    request: SearchRequest,
   ) {
     const embedding = yield* embedQuery(planned.plan.semanticText).pipe(
       Effect.asSome,
@@ -172,19 +192,34 @@ export const make = Effect.gen(function* () {
           failure: "ModelCallRefused",
         };
     const metrics = planMetrics(ran.plan);
-    const hits = yield* db.search.hybrid({
+    const { filters } = ran.plan;
+    const compiled = Compile.compileQuery({
+      query: ran.plan.textQuery,
+      planned: filters,
+      explicit: request.filter ?? everything,
+      policy: yield* Compile.CurrentPolicy,
+    });
+    const { hits, resolution } = yield* db.search.hybrid({
       scope,
       text: ran.plan.textQuery,
       embedding: Option.getOrNull(embedding),
       maxDistance: embeddings.model.maxMatchDistance,
-      limit,
+      limit: request.limit,
       name: ran.plan.exactName,
       metrics: metrics.map((id) => registry[id]),
-      filters: { ...ran.plan.filters, languages: Vocabulary.matchNames(ran.plan.filters.languages) },
+      filters: {
+        archived: filters.archived,
+        starredAfter: filters.starredAfter,
+        starredBefore: filters.starredBefore,
+        metrics: filters.metrics,
+      },
+      atoms: { explicit: compiled.explicit, stated: compiled.stated.map(({ group }) => group) },
       rankBy: ran.plan.ranking._tag === "metric" ? ran.plan.ranking : null,
     });
+    if (resolution.unavailable.length > 0) return yield* new FacetUnavailable({ subjects: resolution.unavailable });
     return {
       planned: ran,
+      applied: Compile.applied(compiled, resolution),
       results: hits.map(
         (hit): SearchResult => ({
           repo: hit.repo,
@@ -197,22 +232,22 @@ export const make = Effect.gen(function* () {
     } satisfies Found;
   });
 
-  const outcome = ({ planned, results }: Found) =>
+  const outcome = ({ planned, results, applied }: Found) =>
     Metric.update(Metric.withAttributes(plansMade, QueryPlanner.planAttributes(planned)), 1).pipe(
-      Effect.as<SearchOutcome>({ plan: planned.plan, planSource: planned.source, results }),
+      Effect.as<SearchOutcome>({ plan: planned.plan, planSource: planned.source, results, applied }),
     );
 
   const search = Effect.fn("Search.search")(function* (request: SearchRequest) {
     const scope = yield* dbScope(request.scope);
-    const typed = yield* find(scope, yield* planner.plan(request.query), request.limit);
+    const typed = yield* find(scope, yield* planner.plan(request.query), request);
     if (typed.results.length > 0 || typed.planned.source !== "keyword") return yield* outcome(typed);
     // Typed words that match nothing are often a misspelled name, which the planner can read past. Words that still
     // match as a prefix are most likely a word the user is still typing, so they skip the planner.
     const text = typed.planned.plan.textQuery;
     if (yield* db.search.matchesAsPrefix({ scope, text })) return yield* outcome(typed);
     const read = yield* planner.planWithModel(request.query);
-    if (read.source === "fallback") return yield* outcome({ planned: read, results: typed.results });
-    return yield* outcome(yield* find(scope, read, request.limit));
+    if (read.source === "fallback") return yield* outcome({ ...typed, planned: read });
+    return yield* outcome(yield* find(scope, read, request));
   });
 
   return Search.of({ search });

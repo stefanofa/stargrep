@@ -9,6 +9,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import { projectRepos } from "../knowledge/repo-knowledge.ts";
 import type * as Search from "./search.ts";
 
 const decodeEmbedding = Schema.decodeUnknownEffect(Embedding);
@@ -87,6 +88,7 @@ export const seedLibrary = Effect.fn("test.seedLibrary")(function* (account: num
       );
     }
   }
+  yield* projectRepos(repos.map((repo) => RepoId.make(repo.id)));
   yield* db.stars.upsert({
     accountId,
     stars: repos.map((repo) => ({

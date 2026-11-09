@@ -87,6 +87,7 @@ const searchOutcome = (request: Search.SearchRequest): Search.SearchOutcome => (
   plan: QueryPlan.asTyped(request.query, "sentence"),
   planSource: "fallback",
   results: [{ repo, nameMatch: false, textRank: 2, vectorRank: 1, metrics: [{ metric: "stars", value: 18_000 }] }],
+  applied: [],
 });
 
 const searchAda = (request: Search.SearchRequest) =>

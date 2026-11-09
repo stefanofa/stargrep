@@ -100,6 +100,7 @@ const search = Layer.succeed(
             request.scope._tag === "stars" && request.scope.login.toLowerCase() === "stefanofa"
               ? [{ repo: demoRepos[0], nameMatch: false, textRank: 1, vectorRank: 1, metrics: [] }]
               : [],
+          applied: [],
         } satisfies Search.SearchOutcome),
       ),
     ),
