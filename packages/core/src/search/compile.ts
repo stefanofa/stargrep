@@ -44,6 +44,7 @@ export type Planned = Pick<QueryPlan.Filters, "languages" | "kinds" | "licenses"
 //   kind and status: a word in the clause that describes the results, never a relation's target.
 //   platform: a platform the results describe, or one after a cue that names no role, such as "for".
 //   named: a language or platform after a cue that names its role, such as "built with" or "runs on".
+//   feature: the target of "with" or "using", which names a feature as often as a dependency, as in "editor with ai".
 //   cut: a relation's words that a closed word cuts short, as "local" in "for local models", where the closed word is
 //   most likely the noun they describe.
 type Row =
@@ -54,6 +55,7 @@ type Row =
   | "status"
   | "platform"
   | "named"
+  | "feature"
   | "relation"
   | "cut"
   | "comparison"
@@ -69,6 +71,7 @@ export const policy: Policy = {
   status: [null, "filter"],
   platform: ["boost", "filter"],
   named: ["filter", "filter"],
+  feature: ["boost", "boost"],
   relation: ["filter", "filter"],
   cut: ["boost", "filter"],
   comparison: ["boost", "boost"],
@@ -90,27 +93,29 @@ const memberOrBuilt: Roles = ["any", "built_with"];
 
 interface Relation {
   readonly _tag: "Relation";
+  // The policy row of the target's words: a relation, or a feature for "with" and "using", which only boost.
+  readonly row: "relation" | "feature";
   // The roles a subject target reaches.
   readonly subjects: Roles;
-  // The role a language or platform target takes. A cue that names one makes its target a filter.
-  readonly language: AtomRole;
-  readonly platform: AtomRole;
+  // The roles a language or platform target reaches. A cue that names them makes its target a filter.
+  readonly language: Roles;
+  readonly platform: Roles;
   readonly named: boolean;
 }
 
 type Cue = Relation | { readonly _tag: "Comparison" } | { readonly _tag: "Negation" } | { readonly _tag: "Only" };
 
-const relation = (
-  subjects: Roles,
-  named: { readonly language?: AtomRole; readonly platform?: AtomRole } = {},
-): Relation => ({
+const relation = (subjects: Roles, named: { readonly language?: Roles; readonly platform?: Roles } = {}): Relation => ({
   _tag: "Relation",
+  row: "relation",
   subjects,
-  language: named.language ?? "any",
-  platform: named.platform ?? "any",
+  language: named.language ?? member,
+  platform: named.platform ?? member,
   named: named.language !== undefined || named.platform !== undefined,
 });
-const builtWith = relation(["built_with"], { language: "built_with", platform: "built_with" });
+const feature: Relation = { ...relation(memberOrBuilt), row: "feature" };
+// A language something is built with is most often the one it is written in, so "built with rust" reaches both.
+const builtWith = relation(["built_with"], { language: ["written_in", "built_with"], platform: ["built_with"] });
 const comparison = { _tag: "Comparison" } as const;
 
 const cues: ReadonlyMap<string, Cue> = new Map<string, Cue>([
@@ -119,20 +124,25 @@ const cues: ReadonlyMap<string, Cue> = new Map<string, Cue>([
   ["on", relation(member)],
   ["supports", relation(member)],
   ["integrates with", relation(member)],
-  ["runs on", relation(member, { platform: "runs_on" })],
-  ["run on", relation(member, { platform: "runs_on" })],
-  ["running on", relation(member, { platform: "runs_on" })],
-  ["written in", relation(member, { language: "written_in" })],
-  ["with", relation(memberOrBuilt)],
-  ["using", relation(memberOrBuilt)],
+  ["runs on", relation(member, { platform: ["runs_on"] })],
+  ["run on", relation(member, { platform: ["runs_on"] })],
+  ["running on", relation(member, { platform: ["runs_on"] })],
+  ["written in", relation(member, { language: ["written_in"] })],
+  ["with", feature],
+  ["using", feature],
   ["built with", builtWith],
   ["built on", builtWith],
   ["built using", builtWith],
   ["made with", builtWith],
+  ["powered by", builtWith],
   ...["alternative to", "alternatives to", "instead of", "replacement for", "replacements for", "replaces"].map(
     (phrase) => [phrase, comparison] as const,
   ),
-  ...["not", "without", "no", "except", "excluding", "non"].map((word) => [word, { _tag: "Negation" }] as const),
+  // The tokenizer keeps a contraction whole without its apostrophe, so "don't" and "don’t" read as "dont".
+  ...[
+    ...["not", "without", "no", "except", "excluding", "non", "cannot"],
+    ...["dont", "doesnt", "didnt", "isnt", "arent", "wasnt", "werent", "wont", "cant"],
+  ].map((word) => [word, { _tag: "Negation" }] as const),
   ...["only", "just", "exclusively"].map((word) => [word, { _tag: "Only" }] as const),
 ]);
 
@@ -183,7 +193,7 @@ const idOf = (dim: ClosedDim, name: string): string | undefined => {
 
 export const version = Hash.string(
   JSON.stringify({
-    clauses: 2,
+    clauses: 3,
     policy,
     cues: [...cues],
     comparisonMarkers: [...comparisonMarkers],
@@ -204,20 +214,21 @@ interface Token {
   readonly slashed: boolean;
 }
 
-// The splitter mentionsFilter uses, with each word's place in the query.
+// The splitter mentionsFilter uses, with each word's place in the query, except that a contraction such as "don't"
+// or "won’t" stays one word, without its apostrophe.
 const tokenize = (query: string): ReadonlyArray<Token> => {
   const slashed = [...query.matchAll(/\S+/g)]
     .filter((match) => match[0].includes("/"))
     .map((match) => [match.index, match.index + match[0].length] as const);
   const tokens: Array<Token> = [];
   let previous = 0;
-  for (const match of query.matchAll(/[a-z0-9+#.]+/gi)) {
-    const word = match[0].replace(/\.+$/, "");
+  for (const match of query.matchAll(/[a-z0-9+#.]+(?:['’]t\b)?/giu)) {
+    const text = match[0].replace(/\.+$/, "");
     const start = match.index;
-    const end = start + word.length;
-    if (word !== "") {
+    const end = start + text.length;
+    if (text !== "") {
       tokens.push({
-        word: word.toLowerCase(),
+        word: text.replace(/['’]/gu, "").toLowerCase(),
         start,
         end,
         gap: query.slice(previous, start),
@@ -285,17 +296,26 @@ interface Clause {
   readonly cue: Relation | typeof comparison | null;
   readonly negated: boolean;
   readonly tail: boolean;
+  // A tail after a negation's target, as "windows" in "do not support windows". A negation never applies a closed
+  // value positively, so its closed values apply nothing.
+  readonly afterNegation: boolean;
   exclusive: boolean;
   readonly runs: Array<Run>;
 }
 
 const clauseOf = (
   cue: Clause["cue"],
-  options: { readonly negated?: boolean; readonly exclusive?: boolean; readonly tail?: boolean } = {},
+  options: {
+    readonly negated?: boolean;
+    readonly exclusive?: boolean;
+    readonly tail?: boolean;
+    readonly afterNegation?: boolean;
+  } = {},
 ): Clause => ({
   cue,
   negated: options.negated ?? false,
   tail: options.tail ?? false,
+  afterNegation: options.afterNegation ?? false,
   exclusive: options.exclusive ?? false,
   runs: [],
 });
@@ -309,9 +329,10 @@ const parse = (tokens: ReadonlyArray<Token>, matchAt: (index: number) => Match |
   const runFor = <R extends Run>(fits: (run: Run) => run is R, make: () => R): R => {
     const last = current().runs.at(-1);
     if (last !== undefined && fits(last)) return last;
-    if (last !== undefined && targets(current())) {
+    const open = current();
+    if (last !== undefined && targets(open)) {
       if (last._tag === "Words") last.cut = true;
-      clauses.push(clauseOf(null, { tail: true }));
+      clauses.push(clauseOf(null, { tail: true, afterNegation: open.negated || open.afterNegation }));
     }
     const run = make();
     current().runs.push(run);
@@ -395,6 +416,11 @@ const parse = (tokens: ReadonlyArray<Token>, matchAt: (index: number) => Match |
 const atomOf = (role: AtomRole, dim: ClosedDim, id: string): Atom =>
   ({ role: role === "any" || roles[role].accepts.includes(dim) ? role : "any", value: { dim, id } }) as Atom;
 
+// The atoms a closed value reaches through each of the cue's roles, once each.
+const atomsOf = (reaches: Roles, dim: ClosedDim, id: string): ReadonlyArray<Atom> => [
+  ...new Map(reaches.map((role) => atomOf(role, dim, id)).map((atom) => [formatAtom(atom), atom])).values(),
+];
+
 export const compileQuery = (input: {
   readonly query: string;
   readonly planned: Planned;
@@ -418,7 +444,7 @@ export const compileQuery = (input: {
   // Each planned language takes the role and the negation of the first clause that names it.
   const languagesAt = new Map<
     string,
-    { readonly atom: Atom; readonly mode: Db.GroupMode | null; readonly span: Span }
+    { readonly atoms: ReadonlyArray<Atom>; readonly mode: Db.GroupMode | null; readonly span: Span | null }
   >();
   // The kinds the results may have: the planner's guarded kinds, or else the last kind run that "only" narrows in the
   // clause describing the results, its head noun, so "only cli apps" asks for apps and "only apps or libraries" for
@@ -426,10 +452,16 @@ export const compileQuery = (input: {
   const plannedKinds = [...new Set(planned.kinds.flatMap((kind) => idOf("kind", kind) ?? []))];
   const lexicalKinds: Array<ClosedRun> = [];
   const words: Array<Stated> = [];
-  const closedStated = (mode: Db.GroupMode, run: ClosedRun, role: AtomRole) => {
-    const [first, ...rest] = run.values.map((value) => atomOf(role, run.dim, value.id));
+  const closedStated = (mode: Db.GroupMode, run: ClosedRun, reaches: Roles) => {
+    const atoms = run.values.flatMap((value) =>
+      atomsOf(reaches, run.dim, value.id).map((atom) => [atom, value.span] as const),
+    );
+    const [first, ...rest] = atoms;
     if (first !== undefined) {
-      words.push({ group: { _tag: "Closed", mode, any: [first, ...rest] }, spans: run.values.map(({ span }) => span) });
+      words.push({
+        group: { _tag: "Closed", mode, any: [first[0], ...rest.map(([atom]) => atom)] },
+        spans: atoms.map(([, span]) => span),
+      });
     }
   };
 
@@ -447,7 +479,15 @@ export const compileQuery = (input: {
         const keys = filled.map((alternative) => labelKey(alternative.map((token) => token.word).join(" ")));
         if (keys.some((key) => key === null || reservedKeys.has(key))) return;
         const row: Row =
-          cue === null ? "bare" : cue._tag === "Comparison" ? "comparison" : run.cut ? "cut" : "relation";
+          cue === null
+            ? "bare"
+            : cue._tag === "Comparison"
+              ? "comparison"
+              : cue.row === "feature"
+                ? "feature"
+                : run.cut
+                  ? "cut"
+                  : "relation";
         const mode = modeOf(negated ? "negated" : row, narrowed);
         if (mode === null) return;
         const reaches: Roles =
@@ -468,11 +508,27 @@ export const compileQuery = (input: {
         return;
       }
       if (run.dim === "language") {
-        const role = cue?._tag === "Comparison" ? "alternative_to" : cue?._tag === "Relation" ? cue.language : "any";
-        const mode = modeOf(negated ? "negated" : role === "alternative_to" ? "comparison" : "language", narrowed);
+        // A language a bare negation names is what the results are made of, as with "built with": "typescript orm, not
+        // javascript" keeps a TypeScript ORM that is also for JavaScript.
+        const reaches: Roles =
+          cue?._tag === "Comparison"
+            ? ["alternative_to"]
+            : cue?._tag === "Relation"
+              ? cue.language
+              : negated
+                ? builtWith.language
+                : member;
+        const row: Row = negated
+          ? "negated"
+          : cue?._tag === "Comparison"
+            ? "comparison"
+            : cue?.row === "feature"
+              ? "feature"
+              : "language";
+        const mode = current.afterNegation ? null : modeOf(row, narrowed);
         for (const value of run.values) {
           if (!languagesAt.has(value.id)) {
-            languagesAt.set(value.id, { atom: atomOf(role, "language", value.id), mode, span: value.span });
+            languagesAt.set(value.id, { atoms: atomsOf(reaches, "language", value.id), mode, span: value.span });
           }
         }
         return;
@@ -483,20 +539,30 @@ export const compileQuery = (input: {
         if (!describesResults) return;
         if (negated) {
           const mode = modeOf("negated", narrowed);
-          if (mode !== null) closedStated(mode, run, "any");
+          if (mode !== null) closedStated(mode, run, member);
         } else if (run.dim === "kind") {
           if (modeOf("kind", narrowed) !== null) lexicalKinds.push(run);
         } else {
           const mode = modeOf("status", narrowed);
-          if (mode !== null) closedStated(mode, run, "any");
+          if (mode !== null) closedStated(mode, run, member);
         }
         return;
       }
-      const role = cue?._tag === "Comparison" ? "alternative_to" : cue?._tag === "Relation" ? cue.platform : "any";
+      if (current.afterNegation) return;
+      const reaches: Roles =
+        cue?._tag === "Comparison" ? ["alternative_to"] : cue?._tag === "Relation" ? cue.platform : member;
       const row: Row =
-        cue?._tag === "Comparison" ? "comparison" : cue?._tag === "Relation" && cue.named ? "named" : "platform";
+        cue?._tag === "Comparison"
+          ? "comparison"
+          : cue?._tag !== "Relation"
+            ? "platform"
+            : cue.named
+              ? "named"
+              : cue.row === "feature"
+                ? "feature"
+                : "platform";
       const mode = modeOf(negated ? "negated" : row, narrowed);
-      if (mode !== null) closedStated(mode, run, role);
+      if (mode !== null) closedStated(mode, run, reaches);
     });
   }
 
@@ -511,12 +577,15 @@ export const compileQuery = (input: {
     }
   };
   const languageAtoms = plannedLanguages.map(
-    (id) => languagesAt.get(id) ?? { atom: atomOf("any", "language", id), mode: modeOf("language", false), span: null },
+    (id) =>
+      languagesAt.get(id) ?? { atoms: [atomOf("any", "language", id)], mode: modeOf("language", false), span: null },
   );
   for (const mode of ["filter", "exclude", "boost"] as const) {
     closedGroup(
       mode,
-      languageAtoms.filter((language) => language.mode === mode).map(({ atom, span }) => [atom, span] as const),
+      languageAtoms
+        .filter((language) => language.mode === mode)
+        .flatMap(({ atoms, span }) => atoms.map((atom) => [atom, span] as const)),
     );
   }
   const licenseMode = modeOf("license", false);

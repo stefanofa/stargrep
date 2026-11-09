@@ -216,7 +216,13 @@ describe("compileQuery", () => {
     ]);
   });
 
-  test("tests a language a built-with cue names where it is written in or built with", () => {
+  test("tests a language a built-with cue or a bare negation names where it is written in or built with", () => {
+    expect(groups("typescript orm, not javascript", { languages: ["TypeScript", "JavaScript"] })).toEqual([
+      "filter lang:typescript",
+      "exclude written-in:lang:javascript|with:lang:javascript",
+      "boost any[orm]",
+    ]);
+    expect(groups("libraries not for javascript", { languages: ["JavaScript"] })).toEqual(["exclude lang:javascript"]);
     expect(groups("cli tools built with rust", { languages: ["Rust"] })).toEqual([
       "filter written-in:lang:rust|with:lang:rust",
     ]);
@@ -234,7 +240,7 @@ describe("compileQuery", () => {
     expect(groups("apps with linux support")).toEqual(["boost platform:linux", "boost any[support]"]);
     expect(groups("web framework using typescript", { languages: ["TypeScript"] })).toEqual([
       "boost lang:typescript",
-      "boost any[web framework]",
+      "boost any[web]",
     ]);
     expect(groups("apps built using tauri")).toEqual(["filter built_with[tauri]"]);
     expect(groups("apps not using langchain")).toEqual(["exclude any,built_with[langchain]"]);

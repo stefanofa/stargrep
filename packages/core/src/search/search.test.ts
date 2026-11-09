@@ -312,9 +312,11 @@ const fixture = () => {
         const boosted = yield* found("apps for node");
         expect([boosted.slice(0, 2).sort(), boosted.sort()]).toEqual([["node-runtime", "node-target"], everyApp]);
         expect((yield* found("apps written in javascript")).sort()).toEqual(["js-written", "ts-written"]);
-        expect((yield* found("apps not written in javascript")).sort()).toEqual(without("js-written", "ts-written"));
-        expect((yield* found("apps built with javascript")).sort()).toEqual(["js-built"]);
-        expect((yield* found("apps not built with javascript")).sort()).toEqual(without("js-built"));
+        // An exclusion removes exactly the language it names, so a TypeScript repo stays.
+        expect((yield* found("apps not written in javascript")).sort()).toEqual(without("js-written"));
+        // A language something is built with is most often the one it is written in.
+        expect((yield* found("apps built with javascript")).sort()).toEqual(["js-built", "js-written", "ts-written"]);
+        expect((yield* found("apps not built with javascript")).sort()).toEqual(without("js-built", "js-written"));
         expect((yield* found("javascript apps")).sort()).toEqual(["js-target", "js-written", "ts-written"]);
       }),
     );
