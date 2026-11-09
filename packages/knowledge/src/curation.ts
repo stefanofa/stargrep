@@ -335,7 +335,8 @@ export const changeBetween = (before: KnowledgeState, after: KnowledgeState): Ch
 
 // What one step of the fold moves, for the impact count and the operator gate: the keys it labels, the subjects whose
 // holders project again or whose filter changes meaning, and the corrected repos. A merge moves its moving class even
-// when no split rule makes the holders project again, and a status moves its subject when it rejects or restores it.
+// when no split rule makes the holders project again. A status that rejects or restores a subject moves the holders of
+// its whole merge class, since every one of them loses or regains the atom.
 export const impact = (before: KnowledgeState, after: KnowledgeState): Invalidation => {
   const invalidated = invalidation(before, after);
   const rejected = (state: KnowledgeState, id: SubjectId) =>
@@ -343,6 +344,11 @@ export const impact = (before: KnowledgeState, after: KnowledgeState): Invalidat
   const flipped = [...after.subjects.keys(), ...after.retired].filter(
     (id) => rejected(before, id) !== rejected(after, id),
   );
-  const subjects = new Set([...invalidated.subjects, ...movedOrigins(before, after), ...flipped]);
+  const subjects = new Set([
+    ...invalidated.subjects,
+    ...movedOrigins(before, after),
+    ...classes(before, flipped),
+    ...classes(after, flipped),
+  ]);
   return { ...invalidated, subjects: [...subjects].sort((a, b) => a - b) };
 };

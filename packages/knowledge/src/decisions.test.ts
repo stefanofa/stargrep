@@ -233,7 +233,7 @@ describe("apply", () => {
     ).toBe("role-mismatch");
   });
 
-  test("a link conflicts with a repo another member of the subject's merge class is linked to", () => {
+  test("a link conflicts with a repo any other subject is linked to, inside the merge class too", () => {
     expect(
       refusal(
         sequence(
@@ -247,11 +247,12 @@ describe("apply", () => {
       refusal(
         sequence(
           { _tag: "Link", subject: s(1), repo: 7 },
-          { _tag: "Merge", from: s(1), into: s(2) },
-          { _tag: "Link", subject: s(2), repo: 7 },
+          { _tag: "Merge", from: s(1), into: s(4) },
+          { _tag: "Merge", from: s(4), into: s(3) },
+          { _tag: "Link", subject: s(3), repo: 7 },
         ),
       ),
-    ).toBe("Applied");
+    ).toBe("link-conflict");
   });
 
   test("an alias removal names a key the subject holds, never another subject's", () => {

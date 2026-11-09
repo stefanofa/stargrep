@@ -223,7 +223,8 @@ const planUndo = Effect.fn("Curation.planUndo")(function* (
 });
 
 // A label key a new decision gives a subject, when projection minted it for another subject first. That is a merge,
-// so the decision is refused as label-taken, naming the holder.
+// so the decision is refused as label-taken, naming the holder, even when the same batch merges the holder in: an undo
+// of that merge must give the key back.
 const mintedConflict = Effect.fn("Curation.mintedConflict")(function* (plan: Plan, change: Change) {
   const db = yield* Db.Db;
   const fresh = change.labelsAdded.filter((row) => row.revision > plan.before.revision);
@@ -231,10 +232,9 @@ const mintedConflict = Effect.fn("Curation.mintedConflict")(function* (plan: Pla
   const minted = new Map(
     (yield* db.knowledge.minted(fresh.map((row) => row.key))).map((row) => [row.key, row.subjectId]),
   );
-  const survivor = (id: SubjectId) => plan.after.canonical.get(id) ?? id;
   for (const row of fresh) {
     const holder = minted.get(row.key);
-    if (holder === undefined || survivor(holder) === survivor(row.subjectId)) continue;
+    if (holder === undefined || holder === row.subjectId) continue;
     const index = row.revision - plan.before.revision - 1;
     const decision = plan.rows[index]?.decision;
     if (decision !== undefined) return yield* refused(decision, index, "label-taken", holder);
@@ -350,49 +350,88 @@ export const preview = Effect.fn("Curation.preview")(function* (decisions: Reado
 
 export interface Proposal {
   readonly decision: Decision;
-  readonly channel: Db.Variant["channel"];
+  readonly channel: Db.Variant["channel"] | "seed";
   readonly evidence: string;
-  // Repos the merge moves, the holders of the subject that stops being canonical.
+  // Repos the merge moves, the holders of the class that stops being canonical.
   readonly moved: number;
   readonly examples: { readonly from: ReadonlyArray<RepoId>; readonly into: ReadonlyArray<RepoId> };
 }
 
-// Merge proposals ranked by the repos they move, from spelling variants: keys that differ by a separator, a plural s,
-// or a js suffix. The usual term wins, else the shorter key. A plural merges into its singular only when the singular
-// has at least 5% of the plural's repos. An unlisted subject is proposed only as the side that merges into a listed
-// one. A pair the fold refuses, such as a keep-apart one, is never proposed. A judge decides each one.
-export const queue = Effect.fn("Curation.queue")(function* (input: { readonly limit: number }) {
+// The repos that hold each subject's merge class, counted from repo_facets, so a ranking never waits on the nightly
+// count.
+const holdersOf = Effect.fn("Curation.holdersOf")(function* (state: KnowledgeState, ids: ReadonlyArray<SubjectId>) {
+  const db = yield* Db.Db;
+  const classOf = (id: SubjectId) => [
+    id,
+    ...[...state.canonical].flatMap(([origin, survivor]) => (survivor === id ? [origin] : [])),
+  ];
+  const unique = [...new Set(ids)];
+  const counts = yield* db.knowledge.reach(unique.map((id) => ({ keys: [], subjects: classOf(id), repos: [] })));
+  return new Map(unique.map((id, index) => [id, counts[index] ?? 0]));
+});
+
+// The merges a seed batch leaves for a judge: every other subject that holds one of an entry's names, into the one the
+// entry adopted.
+const seedProposals = Effect.fn("Curation.seedProposals")(function* (
+  seeds: ReadonlyArray<{ readonly entries: ReadonlyArray<SeedEntry>; readonly excluded: ReadonlySet<LabelKey> }>,
+) {
+  const proposals: Array<Planned> = [];
+  for (const batch of seeds) proposals.push(...(yield* planSeed(batch.entries, batch.excluded)).proposals);
+  return proposals;
+});
+
+// Merge proposals ranked by the repos they move. One channel is spelling variants, keys that differ by a separator, a
+// plural s, or a js suffix, where the subject more repos hold survives, else the shorter key. A plural merges into its
+// singular only when the singular has at least 5% of the plural's repos, and a variant is proposed only into a subject
+// two repos hold. The other channel is the subjects a seed batch adopted and the other holders of its names. A pair the
+// fold refuses, such as a keep-apart one, is never proposed. A judge decides each one.
+export const queue = Effect.fn("Curation.queue")(function* (input: {
+  readonly limit: number;
+  readonly seeds?: ReadonlyArray<{
+    readonly entries: ReadonlyArray<SeedEntry>;
+    readonly excluded: ReadonlySet<LabelKey>;
+  }>;
+}) {
   const db = yield* Db.Db;
   const state = yield* current;
   const variants = yield* db.knowledge.variants;
-  const info = new Map(
-    (yield* db.knowledge.subjects([...new Set(variants.flatMap((pair) => [pair.a.subjectId, pair.b.subjectId]))])).map(
-      (row) => [row.id, row] as const,
-    ),
-  );
+  const seeded = yield* seedProposals(input.seeds ?? []);
+  const merges = seeded.flatMap(({ decision }) => (decision._tag === "Merge" ? [decision] : []));
+  const counts = yield* holdersOf(state, [
+    ...variants.flatMap((pair) => [pair.a.subjectId, pair.b.subjectId]),
+    ...merges.flatMap((merge) => [merge.from, merge.into]),
+  ]);
+  const held = (id: SubjectId) => counts.get(id) ?? 0;
   const seen = new Set<string>();
   const proposals: Array<Omit<Proposal, "examples">> = [];
-  for (const variant of variants) {
-    const a = info.get(variant.a.subjectId);
-    const b = info.get(variant.b.subjectId);
-    if (a === undefined || b === undefined) continue;
-    const pair = a.id < b.id ? `${a.id}:${b.id}` : `${b.id}:${a.id}`;
-    if (seen.has(pair)) continue;
-    if (variant.channel === "plural" && a.repoCount < 0.05 * b.repoCount) continue;
-    const aFirst =
-      a.repoCount !== b.repoCount ? a.repoCount > b.repoCount : variant.a.key.length <= variant.b.key.length;
-    const [into, from] = aFirst ? [a, b] : [b, a];
-    const [intoKey, fromKey] = aFirst ? [variant.a.key, variant.b.key] : [variant.b.key, variant.a.key];
-    if (into.repoCount < 2) continue;
-    const decision: Decision = { _tag: "Merge", from: from.id, into: into.id };
-    if (extend(state, [{ revision: Revision.make(state.revision + 1), decision, created: null }])._tag !== "Applied")
-      continue;
+  const propose = (proposal: Omit<Proposal, "examples">) => {
+    if (proposal.decision._tag !== "Merge") return;
+    const { from, into } = proposal.decision;
+    const pair = from < into ? `${from}:${into}` : `${into}:${from}`;
+    if (seen.has(pair)) return;
+    const next = extend(state, [
+      { revision: Revision.make(state.revision + 1), decision: proposal.decision, created: null },
+    ]);
+    if (next._tag !== "Applied") return;
     seen.add(pair);
-    proposals.push({
-      decision,
+    proposals.push(proposal);
+  };
+  for (const { decision, reason } of seeded) {
+    if (decision._tag !== "Merge") continue;
+    propose({ decision, channel: "seed", evidence: reason, moved: held(decision.from) });
+  }
+  for (const variant of variants) {
+    const [a, b] = [variant.a, variant.b];
+    if (variant.channel === "plural" && held(a.subjectId) < 0.05 * held(b.subjectId)) continue;
+    const aFirst =
+      held(a.subjectId) !== held(b.subjectId) ? held(a.subjectId) > held(b.subjectId) : a.key.length <= b.key.length;
+    const [into, from] = aFirst ? [a, b] : [b, a];
+    if (held(into.subjectId) < 2) continue;
+    propose({
+      decision: { _tag: "Merge", from: from.subjectId, into: into.subjectId },
       channel: variant.channel,
-      evidence: `"${fromKey}" and "${intoKey}" differ by ${variant.channel === "js" ? "a js suffix" : variant.channel === "plural" ? "a plural s" : "a separator"}`,
-      moved: from.repoCount,
+      evidence: `"${from.key}" and "${into.key}" differ by ${variant.channel === "js" ? "a js suffix" : variant.channel === "plural" ? "a plural s" : "a separator"}`,
+      moved: held(from.subjectId),
     });
   }
   const top = proposals.sort((x, y) => y.moved - x.moved).slice(0, input.limit);
@@ -414,7 +453,8 @@ export const queue = Effect.fn("Curation.queue")(function* (input: { readonly li
   );
 });
 
-// The decisions a seed batch needs against the vocabulary now. A second run after the first plans nothing.
+// The decisions a seed batch needs against the vocabulary now, and the merges it leaves for a judge. A second run after
+// the first plans no decision.
 export const planSeed = Effect.fn("Curation.planSeed")(function* (
   entries: ReadonlyArray<SeedEntry>,
   excluded: ReadonlySet<LabelKey>,
@@ -424,7 +464,7 @@ export const planSeed = Effect.fn("Curation.planSeed")(function* (
   const keys = [
     ...new Set(
       entries.flatMap((entry) =>
-        [entry.label, ...(entry.key === undefined ? [] : [entry.key]), ...entry.aliases].flatMap(
+        [entry.label, ...(entry.key === undefined ? [] : [entry.key]), ...entry.aliases, ...entry.synonyms].flatMap(
           (text) => labelKey(text) ?? [],
         ),
       ),

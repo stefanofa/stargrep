@@ -137,7 +137,7 @@ Claims come first, in the model's order, then the facts.
 
 Each claim and fact gets a verdict with its reason, which projection stores on the receipt.
 
-`fold(log)` in `decisions.ts` turns the curation log into the state projection reads: merges, split rules, corrections, and the rest of what decisions set. An Undo removes its target from the fold, and undoing an Undo restores it. `apply(state, decision)` checks one more decision against the state and refuses what the state alone can prove wrong: a keep-apart pair joined by a merge, a cycle or a path deeper than three levels across Parent, Expand, and Split edges, a retired or merged-away subject, a repo linked twice, a label another subject holds or no subject may hold, and a correction with no role. A merge between two subjects that a Parent, Expand, or Split path joins, such as a child into its own parent, is a cycle too, because it would fold the hierarchy into one meaning. Remove the edge first. An Undo that would make a later decision invalid is a conflict that names it. Checks that need the database belong to the curation service.
+`fold(log)` in `decisions.ts` turns the curation log into the state projection reads: merges, split rules, corrections, and the rest of what decisions set. An Undo removes its target from the fold, and undoing an Undo restores it. `apply(state, decision)` checks one more decision against the state and refuses what the state alone can prove wrong: a keep-apart pair joined by a merge, a cycle or a path deeper than three levels across Parent, Expand, and Split edges, a retired or merged-away subject, a repo that another subject is linked to, a merged origin included, a label another subject holds or no subject may hold, and a correction with no role. A merge between two subjects that a Parent, Expand, or Split path joins, such as a child into its own parent, is a cycle too, because it would fold the hierarchy into one meaning. Remove the edge first. An Undo that would make a later decision invalid is a conflict that names it. Checks that need the database belong to the curation service.
 
 ## Curation
 
@@ -145,7 +145,7 @@ Each claim and fact gets a verdict with its reason, which projection stores on t
 
 1. Read the log, fold it, and fail with `StaleRevision` when its head is not the caller's expected revision.
 2. Check each decision of the batch against the fold before it with `extend`, or plan an undo with `undoing`. A refusal is `CurationRefused`, with the decision's index and reason. An undo that would leave a later decision invalid is `CurationConflict`, which names the later revisions. With `cascade`, the undo takes them out too, each as its own Undo, newest first.
-3. Refuse a label key that projection already minted for another subject as `label-taken`, naming that subject. That case is a merge, which keeps both IDs.
+3. Refuse a label key that projection already minted for another subject as `label-taken`, naming that subject. That case is a merge, which keeps both IDs. The check holds even when the same batch merges that subject in, so undoing the merge gives the key back.
 4. Count the repos each decision moves. A decision that moves more than 1,000 needs the operator flag, or it fails with `OperatorRequired`.
 5. Hand the rows and their change to `Db.knowledge.decide`, one transaction under the exclusive lock.
 
@@ -164,16 +164,21 @@ The invalidation follows from the two folds.
 
 A subject's holders are the repos whose stored arrays name it. The decision only marks rows stale, and the sweep re-projects them from their receipts.
 
-Projection folds only the merges, splits, corrections, and undos (`Db.knowledge.rules`). Curation keeps every active decision valid, so those rows fold to the same rules as the whole log, which a property test checks. A seed batch of two thousand Creates and Renames costs projection nothing.
+Projection reads only the merges, splits, corrections, and undos (`Db.knowledge.rules`) and replays them with `rules` in `decisions.ts`, without checking them again. Curation checked each decision when it wrote it and keeps every active decision valid, so the replay gives the whole log's rules. Checking a subset would not: a Split can reuse a label that an Alias removal freed, and the subset holds the Split but not the removal. A property test compares the replay with the whole fold over 500 random logs and four pinned ones that a checked subset gets wrong, and after every decision of the database property test. A seed batch of two thousand Creates and Renames costs projection nothing.
 
 Publish and Retire wait for pages. No selection exists yet, so both are refused as `not-live`, and the refusals that need selections or private namespaces arrive with them.
 
 ### Seeds and the usage floor
 
-`planSeeds` in `packages/knowledge/src/seeds.ts` turns seed entries into decisions against the vocabulary as it is. An entry that no subject holds becomes a Create. Otherwise the plan adopts the subject that holds the entry's own key, or the one that most repos hold. The other holders merge into it, and an accepting seed gives it the seed's label and definition unless a decision already set them. The seed's free keys become aliases, and the subject takes the seed's status. An accepting seed never adopts a rejected subject and never overrides a status that is not candidate. A second run plans nothing.
+`planSeeds` in `packages/knowledge/src/seeds.ts` turns seed entries into decisions against the vocabulary as it is. A seed never merges.
+
+- **Which subject.** An entry adopts the subject that holds its own key, such as the GitHub topic, else the one that holds its label's key. When neither key is held, a Create makes one. No repo count decides it, so the plan is the same whether or not the nightly count has run.
+- **Which names.** A source's aliases often name a narrower or a neighboring concept, as `3d-printing` does for `3d`, so an alias counts only when it spells the entry's key or label another way: separators and dots, a plural s or es, a js suffix, a version number, or the words its initials abbreviate, as model context protocol does MCP. Reviewed synonyms count as they are. A name only counts when it spells a key that is free or already the adopted subject's, so one spelling family never ends up split between two subjects.
+- **Other holders.** Every other subject that holds one of the entry's names keeps it. Its merge into the adopted subject goes to the queue for a judge, as channel `seed`.
+- **What changes.** An accepting seed gives the adopted subject the seed's definition, and its label only when that writes the same name another way, such as its case, unless a decision already set them. The free names become aliases, and the subject takes the seed's status. An accepting seed never adopts a rejected subject and never overrides a status that is not candidate. A second run plans nothing.
 
 - `seed:noise` rejects Hacktoberfest and its variants, open source, opensource, oss, and bare awesome. Their keys then resolve to a rejected subject and hide, instead of minting.
-- `seed:github-explore` creates or adopts the 1,278 curated topics of [GitHub Explore](https://github.com/github/explore), with their aliases and short descriptions, as accepted. It skips a topic whose key is reserved and leaves the noise keys alone. `packages/core/seeds/github-explore.json` holds the topics under CC-BY-4.0 with their attribution, and `bun run --cwd packages/core github-explore <checkout> <commit>` regenerates it.
+- `seed:github-explore` creates or adopts the 1,278 curated topics of [GitHub Explore](https://github.com/github/explore), with their short descriptions, as accepted. It skips a topic whose key is reserved and leaves the noise keys alone. `packages/core/seeds/github-explore.json` holds the topics under CC-BY-4.0 with their attribution, and `bun run --cwd packages/core github-explore <checkout> <commit>` regenerates it. `explore.ts` in `packages/core/src/knowledge` turns it into seed entries, with the short list of reviewed synonyms, such as postgres and k8s.
 
 `Curation.floor` runs right after the nightly count. It accepts every canonical candidate on at least 3 repos, by that count, whose repos have at least 2 owners. Each acceptance is a Status decision with actor `rule:floor`, so it shows in the log and can be undone.
 
@@ -184,11 +189,11 @@ Publish and Retire wait for pages. No selection exists yet, so both are refused 
 - `preview <json>` prints what a Decision, or an array of them, would do, and writes nothing.
 - `decide <json> --reason <why>` appends them in one transaction. `--operator` lets through a decision that moves more than 1,000 repos.
 - `undo <revision> --reason <why>` takes a decision out of the fold. `--cascade` also takes out the later ones that lean on it.
-- `log` prints the newest decisions, and `queue` prints merge proposals ranked by the repos they move.
+- `log` prints the newest decisions, and `queue` prints merge proposals ranked by the repos they move, from spelling variants and from the seeds.
 - `seed noise` and `seed github-explore` print a seed's plan and the repos it would move. `--apply` writes it, and `--json` prints every decision with its count.
 - `floor` runs the nightly count and the usage floor now.
 
-The queue proposes merges from spelling variants only: keys that differ by a separator, a plural s, or a js suffix. Keys of three characters or fewer never pair. A plural merges into its singular only when the singular has at least 5% of the plural's repos. The subject with more repos survives, else the shorter key. A judge decides each proposal. The embedding, ambiguity, and comparison-gap channels need data this repo does not keep yet.
+The queue proposes merges from two channels. One is spelling variants, keys that differ by a separator, a plural s, or a js suffix. Keys of three characters or fewer never pair, and a plural merges into its singular only when the singular has at least 5% of the plural's repos. The subject more repos hold survives, else the shorter key. The other channel is the seeds' other holders. Every count comes from `repo_facets`, not the nightly count. A judge decides each proposal. The embedding, ambiguity, and comparison-gap channels need data this repo does not keep yet.
 
 ## Legacy receipts
 

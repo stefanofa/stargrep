@@ -4,8 +4,8 @@ import * as Models from "@stargrep/ai/models";
 import * as Db from "@stargrep/db";
 import { Decision, fold } from "@stargrep/knowledge/decisions";
 import { Revision } from "@stargrep/knowledge/ids";
-import { labelKey } from "@stargrep/knowledge/label-key";
-import { noise, type SeedEntry } from "@stargrep/knowledge/seeds";
+import { type LabelKey, labelKey } from "@stargrep/knowledge/label-key";
+import { noise } from "@stargrep/knowledge/seeds";
 import * as Console from "effect/Console";
 import * as Argument from "effect/cli/Argument";
 import * as Command from "effect/cli/Command";
@@ -14,6 +14,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Curation from "../src/knowledge/curation.ts";
+import * as Explore from "../src/knowledge/explore.ts";
 import * as RepoKnowledge from "../src/knowledge/repo-knowledge.ts";
 import * as Runtime from "./runtime.ts";
 
@@ -23,37 +24,21 @@ const decodeBatch = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unio
 const batchOf = (json: string) =>
   Effect.map(decodeBatch(json), (decoded) => (Array.isArray(decoded) ? decoded : [decoded as Decision]));
 
-const Explore = Schema.Struct({
-  commit: Schema.String,
-  topics: Schema.Array(
-    Schema.Struct({
-      topic: Schema.String,
-      label: Schema.String,
-      definition: Schema.String,
-      aliases: Schema.Array(Schema.String),
-    }),
-  ),
-});
-const decodeExplore = Schema.decodeUnknownEffect(Schema.fromJsonString(Explore));
+const decodeExplore = Schema.decodeUnknownEffect(Schema.fromJsonString(Explore.ExploreFile));
 
 const explore = Effect.gen(function* () {
-  const file = yield* decodeExplore(
-    yield* Effect.promise(() => Bun.file(`${import.meta.dir}/../seeds/github-explore.json`).text()),
-  );
-  return file.topics.map(
-    (topic): SeedEntry => ({
-      key: topic.topic,
-      label: topic.label,
-      definition: topic.definition,
-      aliases: [topic.topic, ...topic.aliases],
-      status: "accepted",
-      reason: `GitHub explore topic ${topic.topic} (github/explore ${file.commit.slice(0, 12)}, CC-BY-4.0)`,
-    }),
-  );
+  const text = yield* Effect.promise(() => Bun.file(`${import.meta.dir}/../seeds/github-explore.json`).text());
+  return Explore.exploreEntries(yield* decodeExplore(text));
 });
 
+const noiseKeys: ReadonlySet<LabelKey> = new Set(
+  noise.flatMap((entry) => [entry.label, ...entry.synonyms]).flatMap((text) => labelKey(text) ?? []),
+);
+
 const json = Flag.Boolean("json").pipe(
-  Flag.withDescription("Print every decision with the repos it moves as one JSON line"),
+  Flag.withDescription(
+    "Print every decision with the repos it moves, and every merge left for the judge, one JSON line each",
+  ),
   Flag.withDefault(false),
 );
 const operator = Flag.Boolean("operator").pipe(
@@ -167,9 +152,17 @@ const queue = Command.make(
   "queue",
   { limit: Flag.Int("limit").pipe(Flag.withDescription("How many proposals"), Flag.withDefault(20)) },
   Effect.fn("curate.queue")(function* ({ limit }) {
-    for (const proposal of yield* Curation.queue({ limit })) yield* print(proposal);
+    const seeds = [
+      { entries: noise, excluded: new Set<LabelKey>() },
+      { entries: yield* explore, excluded: noiseKeys },
+    ];
+    for (const proposal of yield* Curation.queue({ limit, seeds })) yield* print(proposal);
   }, Effect.provide(layer)),
-).pipe(Command.withDescription("Print merge proposals ranked by the repos they move, for a judge to decide"));
+).pipe(
+  Command.withDescription(
+    "Print merge proposals ranked by the repos they move, from spelling variants and the seeds, for a judge to decide",
+  ),
+);
 
 const seed = Command.make(
   "seed",
@@ -184,9 +177,6 @@ const seed = Command.make(
   },
   Effect.fn("curate.seed")(
     function* (input) {
-      const noiseKeys = new Set(
-        noise.flatMap((entry) => [entry.label, ...entry.aliases]).flatMap((text) => labelKey(text) ?? []),
-      );
       const entries = input.batch === "noise" ? noise : yield* explore;
       const plan = yield* Curation.planSeed(entries, input.batch === "noise" ? new Set() : noiseKeys);
       const kinds = new Map<string, number>();
@@ -194,8 +184,9 @@ const seed = Command.make(
       const skipped = new Map<string, number>();
       for (const entry of plan.skipped) skipped.set(entry.reason, (skipped.get(entry.reason) ?? 0) + 1);
       yield* Console.log(
-        `seed:${input.batch} at revision ${plan.head}: ${entries.length} entries, ${plan.decisions.length} decisions (${[...kinds].map(([kind, count]) => `${kind} ${count}`).join(", ")}), skipped ${[...skipped].map(([why, count]) => `${why} ${count}`).join(", ") || "none"}, keys dropped ${plan.droppedKeys}`,
+        `seed:${input.batch} at revision ${plan.head}: ${entries.length} entries, ${plan.decisions.length} decisions (${[...kinds].map(([kind, count]) => `${kind} ${count}`).join(", ")}), skipped ${[...skipped].map(([why, count]) => `${why} ${count}`).join(", ") || "none"}, names dropped ${plan.droppedKeys}, merges left for the judge ${plan.proposals.length}`,
       );
+      if (input.json) for (const { decision, reason } of plan.proposals) yield* print({ proposal: decision, reason });
       if (plan.decisions.length === 0) return;
       const impact = input.apply
         ? yield* timed(Curation.seed({ ...plan, actor: `seed:${input.batch}`, operator: input.operator }))
@@ -217,7 +208,7 @@ const seed = Command.make(
   ),
 ).pipe(
   Command.withDescription(
-    "Plan, preview, or apply a seed batch: github-explore creates or adopts the curated topics, noise rejects tags that say nothing",
+    "Plan, preview, or apply a seed batch. github-explore creates or adopts the curated topics, and noise rejects tags that say nothing",
   ),
 );
 

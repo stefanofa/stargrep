@@ -414,10 +414,10 @@ const applyOne = (draft: Draft, stored: StoredDecision): InvalidReason | null =>
       const { subject, repo } = decision;
       if (!liveCanonical(draft, subject)) return "not-live";
       if (repo !== null) {
-        const members = classOf(draft, subject);
-        const elsewhere = [...draft.subjects].some(([id, state]) => state.repo === repo && !members.includes(id));
-        const merged = members.some((id) => (present(draft, id).repo ?? repo) !== repo);
-        if (elsewhere || merged) return "link-conflict";
+        // One subject row per linked repo, a merged origin's included, as the unique index on subjects.repo_id holds.
+        const taken = [...draft.subjects].some(([id, state]) => state.repo === repo && id !== subject);
+        const merged = classOf(draft, subject).some((id) => (present(draft, id).repo ?? repo) !== repo);
+        if (taken || merged) return "link-conflict";
       }
       draft.subjects.set(subject, { ...present(draft, subject), repo });
       return null;
@@ -479,6 +479,52 @@ export const fold = (
     if (stored.created !== null) draft.retired.add(stored.created);
   }
   return { state: freeze(draft, log, undone, new Set(invalid.map((entry) => entry.revision))), invalid };
+};
+
+// The merges, split rules, and corrections a log describes, replayed without checking any decision. Curation checked
+// each one when it wrote it and keeps every active decision valid, so this is what fold gives, from those rows and the
+// undos alone. A check needs the rest of the log, such as a split child's label freed by an Alias removal.
+export const rules = (
+  decisions: ReadonlyArray<StoredDecision>,
+): Pick<KnowledgeState, "canonical" | "splits" | "corrections"> => {
+  const log = [...decisions].sort((a, b) => a.revision - b.revision);
+  const undone = new Set<Revision>();
+  for (const stored of [...log].reverse()) {
+    if (stored.decision._tag === "Undo" && !undone.has(stored.revision)) undone.add(stored.decision.revision);
+  }
+  const canonical = new Map<SubjectId, SubjectId>();
+  const splits = new Map<SubjectId, ReadonlyArray<SplitEntry>>();
+  const corrections = new Map<number, ReadonlyArray<Correction>>();
+  for (const { decision, revision, created } of log) {
+    if (undone.has(revision)) continue;
+    switch (decision._tag) {
+      case "Merge": {
+        for (const [origin, survivor] of canonical)
+          if (survivor === decision.from) canonical.set(origin, decision.into);
+        canonical.set(decision.from, decision.into);
+        break;
+      }
+      case "Split": {
+        if (created === null) break;
+        splits.set(decision.subject, [
+          ...(splits.get(decision.subject) ?? []),
+          { revision, into: created, rule: decision.rule },
+        ]);
+        break;
+      }
+      case "Correct": {
+        const key = formatAtom(decision.atom);
+        corrections.set(decision.repo, [
+          ...(corrections.get(decision.repo) ?? []).filter((correction) => formatAtom(correction.atom) !== key),
+          { atom: decision.atom, present: decision.present },
+        ]);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  return { canonical, splits, corrections };
 };
 
 // Decisions other than Undo on top of the state, in order, each at the revision after the one before. The first that

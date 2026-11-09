@@ -260,8 +260,7 @@ export interface Queries {
   ) => Effect.Effect<Projected, E | DbQueryFailed | DbRowInvalid, R>;
   // The public curation log in revision order.
   readonly decisions: Effect.Effect<ReadonlyArray<Decisions.StoredDecision>, DbQueryFailed | DbRowInvalid>;
-  // The rows projection folds for its rules: merges, splits, corrections, and undos. Curation keeps every active
-  // decision valid, so these fold to the same merges, split rules, and corrections as the whole log.
+  // The rows projection replays for its rules: merges, splits, corrections, and undos.
   readonly rules: Effect.Effect<ReadonlyArray<Decisions.StoredDecision>, DbQueryFailed | DbRowInvalid>;
   readonly stale: (limit: number) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
   readonly invalidate: (invalidation: Invalidation) => Effect.Effect<number, DbQueryFailed | DbRowInvalid>;
@@ -719,6 +718,26 @@ export const make = Effect.gen(function* () {
           return yield* new StaleRevision({ expected: decision.expected, head: current });
         }
         const { change } = decision;
+        // A row that undo or redo puts back names an older revision. Only a new decision's labels can collide with a
+        // mint, because a minted label sits in its own slot and an older decision row outranks it. A key minted for any
+        // other subject is a merge to propose, even one this batch merges, or undoing that merge would leave the key
+        // taken from its holder.
+        const fresh = change.labelsAdded.filter((row) => row.revision > current);
+        if (fresh.length > 0) {
+          const [taken] = yield* query(
+            "knowledge.decide",
+            decodeTaken,
+            sql`
+              select l.key, a."subjectId"::float8 as "subjectId", l.subject_id::float8 as holder
+              from jsonb_to_recordset(${json(fresh)}) as a (key text, "subjectId" bigint)
+              join subject_labels l
+                on l.namespace = ${namespace} and l.key = a.key and l.source = 'minted' and l.is_default
+              where l.subject_id <> a."subjectId"
+              order by l.key
+              limit 1`,
+          );
+          if (taken !== undefined) return yield* new KeyMinted(taken);
+        }
         const rows = decision.rows.map((row, index) => ({ ...row, revision: current + index + 1 }));
         yield* execute(
           "knowledge.decide",
@@ -797,27 +816,6 @@ export const make = Effect.gen(function* () {
               from jsonb_to_recordset(${json(change.merged)}) as m ("originId" bigint, "canonicalId" bigint, revision bigint)
               on conflict (origin_id) do update set canonical_id = excluded.canonical_id, revision = excluded.revision`,
           );
-        }
-        // A row that undo or redo puts back names an older revision. Only a new decision's labels can collide with a
-        // mint, because a minted label sits in its own slot and an older decision row outranks it. A key minted for a
-        // subject the same batch merges into the new holder keeps one meaning, so it is checked after the merges.
-        const fresh = change.labelsAdded.filter((row) => row.revision > current);
-        if (fresh.length > 0) {
-          const [taken] = yield* query(
-            "knowledge.decide",
-            decodeTaken,
-            sql`
-              select l.key, a."subjectId"::float8 as "subjectId", l.subject_id::float8 as holder
-              from jsonb_to_recordset(${json(fresh)}) as a (key text, "subjectId" bigint)
-              join subject_labels l
-                on l.namespace = ${namespace} and l.key = a.key and l.source = 'minted' and l.is_default
-              left join subject_canonical h on h.origin_id = l.subject_id
-              left join subject_canonical o on o.origin_id = a."subjectId"
-              where coalesce(h.canonical_id, l.subject_id) <> coalesce(o.canonical_id, a."subjectId")
-              order by l.key
-              limit 1`,
-          );
-          if (taken !== undefined) return yield* new KeyMinted(taken);
         }
         if (change.edgesRemoved.length > 0) {
           yield* execute(

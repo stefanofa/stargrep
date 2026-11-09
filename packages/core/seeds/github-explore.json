@@ -2,7 +2,7 @@
  "source": "https://github.com/github/explore",
  "commit": "c8d7bc516928a4f17845b767884a80cc53affd57",
  "license": "CC-BY-4.0 https://creativecommons.org/licenses/by/4.0/",
- "attribution": "Topic names, display names, aliases, and short descriptions from GitHub Explore (github/explore) by GitHub, Inc. and contributors, under CC-BY-4.0. Changed: descriptions joined onto one line and cut at 400 characters, labels cut at 120.",
+ "attribution": "Topic names, display names, aliases, and short descriptions from GitHub Explore (github/explore) by GitHub, Inc. and contributors, under CC-BY-4.0. Changed: descriptions joined onto one line and cut at 400 characters, labels cut at 120, and a display name's (disambiguation) suffix dropped.",
  "topics": [
   {
    "topic": "3d",
@@ -1290,7 +1290,7 @@
   },
   {
    "topic": "cd",
-   "label": "CD (Disambiguation)",
+   "label": "CD",
    "definition": "CD can either mean \"continuous deployment\" or \"Continuous delivery\".",
    "aliases": []
   },
@@ -4586,7 +4586,7 @@
   },
   {
    "topic": "ioc",
-   "label": "IoC (Disambiguation)",
+   "label": "IoC",
    "definition": "IoC can either mean \"Inversion of Control\" or \"Indicator of Compromise\", depending on the context.",
    "aliases": []
   },
@@ -7316,7 +7316,7 @@
   },
   {
    "topic": "protocol",
-   "label": "Protocol (disambiguation)",
+   "label": "Protocol",
    "definition": "Protocol can mean either interface in OOP or communication protocol in networking and data exchange.",
    "aliases": []
   },
@@ -7556,7 +7556,7 @@
   },
   {
    "topic": "query",
-   "label": "Query (disambiguation)",
+   "label": "Query",
    "definition": "The term query can either mean query-string or sql-query.",
    "aliases": []
   },
@@ -8023,7 +8023,7 @@
   },
   {
    "topic": "routing",
-   "label": "Routing (disambiguation)",
+   "label": "Routing",
    "definition": "Routing can either mean URL routing, IP routing, or geo routing.",
    "aliases": []
   },
@@ -8904,7 +8904,7 @@
   },
   {
    "topic": "stylus",
-   "label": "Stylus (Disambiguation)",
+   "label": "Stylus",
    "definition": "Stylus can either refer to the stylus style sheet language or the stylus browser extension.",
    "aliases": []
   },

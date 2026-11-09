@@ -3,13 +3,15 @@ import { Revision, SubjectId } from "./ids.ts";
 import { type LabelKey, labelKey } from "./label-key.ts";
 import { reservedKeys } from "./registry.ts";
 
-// One concept a seed batch names: its label, definition, and other spellings, and the status it should end with. key is
-// the term the seed is known by, such as a GitHub topic, when it differs from the label.
+// One concept a seed batch names, and the status it should end with. key is the term the seed is known by, such as a
+// GitHub topic, when it differs from the label. aliases are other names the source lists, kept only when they spell
+// the key or the label another way. synonyms are names someone reviewed, kept as they are.
 export interface SeedEntry {
   readonly key?: string;
   readonly label: string;
   readonly definition: string;
   readonly aliases: ReadonlyArray<string>;
+  readonly synonyms: ReadonlyArray<string>;
   readonly status: SubjectStatus;
   readonly reason: string;
 }
@@ -21,7 +23,6 @@ export interface Holder {
   readonly label: string;
   readonly definition: string | null;
   readonly status: SubjectStatus;
-  readonly repoCount: number;
 }
 
 export interface Planned {
@@ -33,9 +34,11 @@ export type SkipReason = "reserved" | "excluded" | "duplicate" | "rejected";
 
 export interface SeedPlan {
   readonly decisions: ReadonlyArray<Planned>;
+  // Merges of the other subjects that hold one of an entry's names into the one it adopted. A seed never merges, so
+  // these wait for a judge in the queue.
+  readonly proposals: ReadonlyArray<Planned>;
   readonly skipped: ReadonlyArray<{ readonly label: string; readonly reason: SkipReason }>;
-  // Keys left out of an entry that still applied: reserved, excluded, another entry's, a rejected subject's, or one a
-  // merge it needed was refused for.
+  // Names left out: not a spelling of the entry, reserved, excluded, another entry's, or held by another subject.
   readonly droppedKeys: number;
 }
 
@@ -52,38 +55,63 @@ export const noise: ReadonlyArray<SeedEntry> = [
   {
     label: "Hacktoberfest",
     definition: "",
-    aliases: hacktoberfest,
+    aliases: [],
+    synonyms: hacktoberfest,
     status: "rejected",
     reason: "noise: an event tag, not what the repo is about",
   },
   {
     label: "open source",
     definition: "",
-    aliases: ["open-source", "opensource", "oss"],
+    aliases: [],
+    synonyms: ["open-source", "opensource", "oss"],
     status: "rejected",
     reason: "noise: true of every public repo",
   },
-  { label: "awesome", definition: "", aliases: [], status: "rejected", reason: "noise: a list badge on its own" },
+  {
+    label: "awesome",
+    definition: "",
+    aliases: [],
+    synonyms: [],
+    status: "rejected",
+    reason: "noise: a list badge on its own",
+  },
 ];
+
+const squash = (key: LabelKey) => key.replace(/[\s.]/g, "");
+const close = (a: string, b: string) =>
+  a === b || a === `${b}s` || b === `${a}s` || a === `${b}es` || b === `${a}es` || a === `${b}js` || b === `${a}js`;
+// A version number at the end, as in python3 or laravel10, unless only one letter is left, since d2 is not D.
+const unversioned = (word: string) => {
+  const bare = word.replace(/(?<=\D)\d+$/, "");
+  return bare.length >= 2 ? bare : word;
+};
+const initials = (key: LabelKey) =>
+  key
+    .split(" ")
+    .map((word) => [...word][0] ?? "")
+    .join("");
+
+// Whether alias spells name another way: the same letters apart from separators and dots, a plural s or es, a js
+// suffix, or a version number, or the words its initials abbreviate, as model context protocol is MCP. A source's
+// other aliases often name a narrower or a neighboring concept, as 3d-printing for 3d, so they are left out.
+export const spells = (alias: LabelKey, name: LabelKey) => {
+  const a = squash(alias);
+  const b = squash(name);
+  return close(a, b) || close(unversioned(a), unversioned(b)) || (alias.includes(" ") && initials(alias) === b);
+};
 
 // A Create's subject before the database allocates it. The plan only uses it to check the batch against the fold.
 const placeholder = (index: number) => SubjectId.make(Number.MAX_SAFE_INTEGER - index);
 
-const keysOf = (entry: SeedEntry) => {
-  const keys = new Map<LabelKey, string>();
-  for (const text of [entry.label, ...(entry.key === undefined ? [] : [entry.key]), ...entry.aliases]) {
-    const key = labelKey(text);
-    if (key !== null && !keys.has(key)) keys.set(key, text);
-  }
-  return keys;
-};
-
 // The decisions that make the vocabulary hold each entry, skipping what it already holds, so a second run plans
-// nothing. An entry no subject holds yet is a Create. Otherwise it adopts the subject that holds its own key, or the
-// one most repos hold. The other holders merge into it, an accepting seed gives it its label and definition unless a
-// decision already set them, its free keys become aliases, and its status moves to the seed's. A seed that accepts
-// never adopts a rejected subject or overrides a curator's status, while a noise seed rejects whatever holds its keys.
-// Every decision is checked against the fold, and one it refuses is left out.
+// nothing. An entry adopts the subject that holds its own key, else the one that holds its label's key, and a Create
+// makes one when neither is held. A seed never merges: every other subject that holds one of the entry's names becomes
+// a proposal, and that name stays with its holder. An accepting seed gives the adopted subject its definition, and its
+// label when that only changes how the same name is written, unless a decision set them. Its free names become
+// aliases, and its status moves to the seed's. A seed
+// that accepts never adopts a rejected subject or overrides a curator's status, while a noise seed rejects whatever
+// holds its keys. Every decision is checked against the fold, and one it refuses is left out.
 export const planSeeds = (input: {
   readonly entries: ReadonlyArray<SeedEntry>;
   readonly state: KnowledgeState;
@@ -96,28 +124,38 @@ export const planSeeds = (input: {
 }): SeedPlan => {
   let state = input.state;
   const decisions: Array<Planned> = [];
+  const proposals: Array<Planned> = [];
   const skipped: Array<{ readonly label: string; readonly reason: SkipReason }> = [];
   const claimed = new Set<LabelKey>();
   let droppedKeys = 0;
   let created = 0;
 
-  const add = (decision: Decision, reason: string) => {
-    const makes = decision._tag === "Create" || decision._tag === "Split";
-    const next = extend(state, [
-      { revision: Revision.make(state.revision + 1), decision, created: makes ? placeholder(created) : null },
+  const valid = (decision: Decision) =>
+    extend(state, [
+      {
+        revision: Revision.make(state.revision + 1),
+        decision,
+        created: decision._tag === "Create" ? placeholder(created) : null,
+      },
     ]);
-    if (next._tag !== "Applied") return false;
-    if (makes) created++;
+  const add = (decision: Decision, reason: string) => {
+    const next = valid(decision);
+    if (next._tag !== "Applied") return;
+    if (decision._tag === "Create") created++;
     state = next.state;
     decisions.push({ decision, reason });
-    return true;
   };
+  // The subject a key names now, raw as the label row names it, and resolved through merges.
+  const rawHolder = (key: LabelKey) => state.labels.get(key) ?? input.holders.get(key);
   const canonicalOf = (id: SubjectId) => state.canonical.get(id) ?? input.subjects.get(id)?.canonicalId ?? id;
+  const holderOf = (key: LabelKey) => {
+    const raw = rawHolder(key);
+    return raw === undefined ? undefined : canonicalOf(raw);
+  };
   const info = (id: SubjectId) => input.subjects.get(id) ?? input.subjects.get(canonicalOf(id));
   const statusOf = (id: SubjectId) => state.subjects.get(id)?.status ?? info(id)?.status ?? "candidate";
 
   for (const entry of input.entries) {
-    const all = keysOf(entry);
     const own = labelKey(entry.key ?? entry.label);
     const labelled = labelKey(entry.label);
     if (own === null || labelled === null || reservedKeys.has(own) || reservedKeys.has(labelled)) {
@@ -133,41 +171,61 @@ export const planSeeds = (input: {
       skipped.push({ label: entry.label, reason: "duplicate" });
       continue;
     }
-    const usable = new Map<LabelKey, string>();
-    for (const [key, text] of all) {
-      if (reservedKeys.has(key) || claimed.has(key) || (accepting && input.excluded.has(key))) droppedKeys++;
-      else usable.set(key, text);
-    }
-    const holderOf = (key: LabelKey) => {
-      const raw = state.labels.get(key) ?? input.holders.get(key);
-      return raw === undefined ? undefined : canonicalOf(raw);
-    };
-    const held = new Map<LabelKey, SubjectId>();
-    for (const key of usable.keys()) {
-      const holder = holderOf(key);
-      if (holder !== undefined) held.set(key, holder);
-    }
-    if (
-      accepting &&
-      [own, labelled].some((key) => {
-        const holder = held.get(key);
-        return holder !== undefined && statusOf(holder) === "rejected";
-      })
-    ) {
+    const survivor = holderOf(own) ?? holderOf(labelled);
+    if (accepting && survivor !== undefined && statusOf(survivor) === "rejected") {
       skipped.push({ label: entry.label, reason: "rejected" });
       continue;
     }
-    for (const [key, holder] of held) {
-      if (accepting && statusOf(holder) === "rejected") {
-        held.delete(key);
-        usable.delete(key);
+
+    // The entry's names in order: its label, its key, the aliases that spell one of them, and the synonyms.
+    const names = new Map<LabelKey, string>();
+    const name = (text: string) => {
+      const key = labelKey(text);
+      if (key !== null && !names.has(key)) names.set(key, text);
+    };
+    name(entry.label);
+    if (entry.key !== undefined) name(entry.key);
+    // An alias counts only when it spells a name that is free or already the adopted subject's, so one spelling
+    // family never ends up split between two subjects.
+    const ours = [own, labelled].filter((base) => {
+      const holder = holderOf(base);
+      return holder === undefined || holder === survivor;
+    });
+    for (const alias of entry.aliases) {
+      const key = labelKey(alias);
+      if (key !== null && ours.some((base) => spells(key, base))) name(alias);
+      else droppedKeys++;
+    }
+    for (const synonym of entry.synonyms) name(synonym);
+
+    const free = new Map<LabelKey, string>();
+    for (const [key, text] of names) {
+      if (reservedKeys.has(key) || claimed.has(key) || (accepting && input.excluded.has(key))) {
         droppedKeys++;
+        continue;
+      }
+      claimed.add(key);
+      const raw = rawHolder(key);
+      if (raw === undefined) {
+        free.set(key, text);
+        continue;
+      }
+      const holder = canonicalOf(raw);
+      if (holder === survivor) continue;
+      droppedKeys++;
+      if (survivor === undefined || (accepting && statusOf(holder) === "rejected")) continue;
+      const merge: Decision = { _tag: "Merge", from: holder, into: survivor };
+      const known = proposals.some(
+        ({ decision }) => decision._tag === "Merge" && decision.from === holder && decision.into === survivor,
+      );
+      if (!known && valid(merge)._tag === "Applied") {
+        proposals.push({ decision: merge, reason: `${entry.reason}: "${text}" names it too` });
       }
     }
-    for (const key of usable.keys()) claimed.add(key);
 
-    if (held.size === 0) {
-      const aliases = [...usable].filter(([key]) => key !== labelled).map(([, text]) => text);
+    if (survivor === undefined) {
+      if (!free.has(labelled)) continue;
+      const aliases = [...free].filter(([key]) => key !== labelled).map(([, text]) => text);
       add(
         { _tag: "Create", label: entry.label, definition: entry.definition, aliases, status: entry.status },
         entry.reason,
@@ -175,27 +233,19 @@ export const planSeeds = (input: {
       continue;
     }
 
-    const holders = [...new Set(held.values())];
-    const survivor =
-      held.get(own) ??
-      held.get(labelled) ??
-      [...holders].sort((a, b) => (info(b)?.repoCount ?? 0) - (info(a)?.repoCount ?? 0) || a - b)[0];
-    if (survivor === undefined) continue;
-    for (const holder of holders) {
-      if (holder === survivor || add({ _tag: "Merge", from: holder, into: survivor }, entry.reason)) continue;
-      for (const [key, owner] of held) {
-        if (owner !== holder) continue;
-        usable.delete(key);
-        droppedKeys++;
-      }
-    }
     const decided = state.subjects.get(survivor);
     const current = info(survivor);
-    const free = (key: LabelKey) => {
-      const holder = holderOf(key);
-      return holder === undefined || holder === survivor;
-    };
-    const relabel = decided?.label == null && current?.label !== entry.label && free(labelled);
+    // A relabel only fixes how the subject's own name is written, such as its case, so it never adds a key or a
+    // meaning. A source label that is just its slug, such as turn-based-strategy, reads worse than the mint. The label
+    // row names the raw subject, so the key must be free or already the survivor's own.
+    const labelOwner = rawHolder(labelled);
+    const relabel =
+      decided?.label == null &&
+      current !== undefined &&
+      current.label !== entry.label &&
+      labelKey(current.label) === labelled &&
+      entry.label !== entry.key &&
+      (labelOwner === undefined || labelOwner === survivor);
     const define = decided?.definition == null && entry.definition !== "" && current?.definition !== entry.definition;
     if (accepting && (relabel || define)) {
       add(
@@ -208,8 +258,8 @@ export const planSeeds = (input: {
         entry.reason,
       );
     }
-    for (const [key, text] of usable) {
-      if (holderOf(key) !== undefined) continue;
+    for (const [key, text] of free) {
+      if (rawHolder(key) !== undefined) continue;
       add({ _tag: "Alias", subject: survivor, label: text, add: true }, entry.reason);
     }
     const status = statusOf(survivor);
@@ -217,5 +267,5 @@ export const planSeeds = (input: {
       add({ _tag: "Status", subject: survivor, status: entry.status }, entry.reason);
     }
   }
-  return { decisions, skipped, droppedKeys };
+  return { decisions, proposals, skipped, droppedKeys };
 };

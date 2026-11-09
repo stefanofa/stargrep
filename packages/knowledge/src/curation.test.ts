@@ -1,7 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { type Change, changeBetween, derive, impact } from "./curation.ts";
 import { run } from "./decisions.fixture.ts";
-import { apply, type Decision, empty, fold, type KnowledgeState, type StoredDecision, undoing } from "./decisions.ts";
+import {
+  apply,
+  type Decision,
+  empty,
+  fold,
+  type KnowledgeState,
+  rules,
+  type StoredDecision,
+  undoing,
+} from "./decisions.ts";
 import { Revision, SubjectId } from "./ids.ts";
 import { type LabelKey, labelKey } from "./label-key.ts";
 
@@ -269,22 +278,27 @@ describe("changeBetween", () => {
 });
 
 describe("the projection rules", () => {
-  const rulesOf = (state: KnowledgeState) => ({
+  const rulesOf = (state: Pick<KnowledgeState, "canonical" | "splits" | "corrections">) => ({
     canonical: [...state.canonical].sort(),
     splits: [...state.splits]
       .map(([broad, entries]) => [broad, entries.map((entry) => [entry.revision, entry.into])])
       .sort(),
     corrections: [...state.corrections].sort(),
   });
+  const kinds = new Set<string>(["Merge", "Split", "Correct", "Undo"]);
+  const agree = (seed: number, steps: number) => {
+    const { log } = run(seed, steps, () => {});
+    const subset: ReadonlyArray<StoredDecision> = log.filter((entry) => kinds.has(entry.decision._tag));
+    expect([seed, rulesOf(rules(subset))]).toEqual([seed, rulesOf(fold(log).state)]);
+  };
 
-  test("fold the same from merges, splits, corrections, and undos alone as from the whole log", () => {
-    const kinds = new Set<string>(["Merge", "Split", "Correct", "Undo"]);
-    for (let seed = 1; seed <= 200; seed++) {
-      const { log } = run(seed, 60, () => {});
-      const subset: ReadonlyArray<StoredDecision> = log.filter((entry) => kinds.has(entry.decision._tag));
-      const partial = fold(subset);
-      expect(partial.invalid).toEqual([]);
-      expect(rulesOf(partial.state)).toEqual(rulesOf(fold(log).state));
-    }
+  test("replay from merges, splits, corrections, and undos alone as the whole log folds", () => {
+    for (let seed = 1; seed <= 400; seed++) agree(seed, 60);
+    for (let seed = 1; seed <= 100; seed++) agree(seed, 120);
+  }, 60_000);
+
+  // A split that reuses a label an Alias removal freed, which the subset alone would refuse.
+  test("keep a split whose label an Alias removal freed", () => {
+    for (const seed of [396, 490, 544, 2534]) agree(seed, 60);
   });
 });
