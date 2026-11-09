@@ -149,6 +149,10 @@ On 2026-11-09, with recipe 2 summaries and the cached plans, search with atom fi
 
 Bare subjects therefore boost. As filters they dropped Alacritty, Ghostty, and kitty for "gpu accelerated terminal emulator", Caddy for "reverse proxy with automatic https", and the repos of 8 other queries. A first version of the compiler let a relation cue reach past a kind or platform word, so "framework for building LLM apps and agents" filtered on "agents" and lost LangChain, and it scored 0.973 with subjects accepted. A relation clause that a closed word cuts short now boosts.
 
+### Judged queries
+
+None of the 129 recall queries has a negation or "only", so recall cannot see those paths. `evals/behavior.ts` lists 18 judged queries for negation, "only", built with, for, kinds, and platforms, among them "no-code app builder", "no dependency cli tool", "terminal emulator for linux only", and "only libraries for building apps". `evals/behavior.test.ts` runs each one through `Search` on the 29 recorded repos in `evals/fixtures/behavior-repos.jsonl`, with a guarded plan written into the case and a named repo's recorded vector standing in for the query's, so it makes no model call. It compares the search with atoms to the same search with every policy row off. It checks that the repos the case keeps are in both, and that the repos it drops were there before and are gone after. It runs once with no subject accepted and once with every subject accepted. Against the first version of the compiler, 24 of its 36 runs fail. `bun run evals/recall.ts --write-behavior` rewrites the fixture from the cache.
+
 ### Meaning floor
 
 On 2026-11-05 the query "dfsfgdsrg" found 20 of an account's 1,780 stars. The eval corpus shows the same thing. There the query returns 20 results, each a meaning match and none a word or name match. Full text needs the query's words in the repo, and a name match needs the exact name, but the vector side always returns the nearest repos however far they are. Rank fusion scores by rank alone, so the nearest repo to gibberish scored like the nearest repo to a real query.
