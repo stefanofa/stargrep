@@ -1,0 +1,672 @@
+import { expect } from "bun:test";
+import * as Db from "@stargrep/db";
+import type { DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
+import * as TestDatabase from "@stargrep/db/test-database";
+import type { RepoId } from "@stargrep/github/schemas";
+import { derive } from "@stargrep/knowledge/curation";
+import { type Decision, fold } from "@stargrep/knowledge/decisions";
+import { generate, random } from "@stargrep/knowledge/decisions.fixture";
+import { Revision, SubjectId } from "@stargrep/knowledge/ids";
+import { noise, type SeedEntry } from "@stargrep/knowledge/seeds";
+import * as it from "@stargrep/testing";
+import * as Effect from "effect/Effect";
+import * as Curation from "./curation.ts";
+import { answer, create, createdBy, embeddingModel, key, record, seed, split, sweepAll } from "./knowledge.fixture.ts";
+import * as RepoKnowledge from "./repo-knowledge.ts";
+
+type Services = Db.Db | Db.Transactions | TestDatabase.TestDatabase;
+
+const head = Effect.flatMap(Db.Db, (db) => db.knowledge.revision);
+
+const membersMatching = Effect.fn("membersMatching")(function* (id: SubjectId) {
+  const database = yield* TestDatabase.TestDatabase;
+  const rows = yield* database.query(
+    `select repo_id::float8 as id from repo_facets where members && knowledge_origins(array[$1]::bigint[], true)
+     order by repo_id`,
+    [id],
+  );
+  return rows.map((row) => (row as { readonly id: number }).id);
+});
+
+const aboutOf = Effect.fn("aboutOf")(function* (id: number) {
+  const database = yield* TestDatabase.TestDatabase;
+  const [row] = yield* database.query("select about::float8[] as about from repo_facets where repo_id = $1", [id]);
+  return (row as { readonly about: ReadonlyArray<number> } | undefined)?.about ?? [];
+});
+
+const rows = Effect.fn("rows")(function* (text: string) {
+  const database = yield* TestDatabase.TestDatabase;
+  return (yield* database.query(text)).map((row) => JSON.stringify(row));
+});
+
+// subject_matches as decisions left it, then as the full rebuild writes it.
+const matchesAgree = Effect.gen(function* () {
+  const database = yield* TestDatabase.TestDatabase;
+  const read = rows("select subject_id::float8, comparison, origin_id::float8 from subject_matches order by 1, 2, 3");
+  const kept = yield* read;
+  yield* database.query("select knowledge_rebuild_matches()");
+  return { kept, rebuilt: yield* read };
+});
+
+// The rows decisions own, as the database holds them, against the fold of the database's own log.
+const derivedAgree = Effect.gen(function* () {
+  const db = yield* Db.Db;
+  const derived = derive(fold(yield* db.knowledge.decisions).state);
+  const sorted = (values: ReadonlyArray<unknown>) => values.map((value) => JSON.stringify(value)).sort();
+  const stored = {
+    labels: yield* rows(
+      `select key, subject_id::float8 as "subjectId", revision::float8 as revision from subject_labels
+       where source = 'decision' order by key`,
+    ),
+    canonical: yield* rows(
+      `select origin_id::float8 as "originId", canonical_id::float8 as "canonicalId", revision::float8 as revision
+       from subject_canonical order by origin_id`,
+    ),
+    closure: yield* rows(
+      `select ancestor_id::float8 as "ancestorId", descendant_id::float8 as "descendantId", depth, via,
+         revision::float8 as revision
+       from subject_closure order by 1, 2`,
+    ),
+    statuses: yield* rows(
+      `select id::float8 as id, status, definition, repo_id::float8 as "repoId" from subjects
+       where id = any(array[${[...derived.subjects.keys(), 0].join(",")}]::bigint[]) order by id`,
+    ),
+  };
+  return {
+    stored: Object.fromEntries(Object.entries(stored).map(([name, values]) => [name, [...values].sort()])),
+    derived: {
+      labels: sorted(
+        [...derived.labels.values()].map(({ key, subjectId, revision }) => ({ key, subjectId, revision })),
+      ),
+      canonical: sorted([...derived.canonical.values()]),
+      closure: sorted([...derived.closure.values()]),
+      statuses: sorted(
+        [...derived.subjects.values()].map(({ id, status, definition, repoId }) => ({
+          id,
+          status,
+          definition,
+          repoId,
+        })),
+      ),
+    },
+  };
+});
+
+// Every decision-derived table and every facets row, for subjects that existed before a given ID only, because a
+// subject a projection mints between an undo and its redo stays as an empty tombstone.
+const snapshot = Effect.fn("snapshot")(function* (below: number) {
+  return {
+    subjects: yield* rows(
+      `select id::float8, label, definition, status, repo_id::float8 from subjects where id < ${below} order by id`,
+    ),
+    labels: yield* rows(
+      `select key, subject_id::float8, source, revision::float8 from subject_labels where subject_id < ${below}
+       order by key, subject_id`,
+    ),
+    canonical: yield* rows(
+      "select origin_id::float8, canonical_id::float8, revision::float8 from subject_canonical order by 1",
+    ),
+    closure: yield* rows(
+      "select ancestor_id::float8, descendant_id::float8, depth, via from subject_closure order by 1, 2",
+    ),
+    matches: yield* rows(
+      `select subject_id::float8, comparison, origin_id::float8 from subject_matches where subject_id < ${below}
+       order by 1, 2, 3`,
+    ),
+    facets: yield* rows(
+      `select repo_id::float8, stale, members::float8[], built_with::float8[], alternative_to::float8[],
+         unresolved_keys from repo_facets order by repo_id`,
+    ),
+  };
+});
+
+const maxSubject = Effect.gen(function* () {
+  const database = yield* TestDatabase.TestDatabase;
+  const [row] = yield* database.query("select coalesce(max(id), 0)::float8 as id from subjects");
+  return (row as { readonly id: number }).id;
+});
+
+const decideOne = (decision: Decision, operator = true) =>
+  Effect.flatMap(head, (expected) =>
+    Curation.decide({ decisions: [{ decision, reason: "test" }], expected, actor: "test", operator }),
+  );
+
+const undoOne = (revision: Revision, cascade = false) =>
+  Effect.flatMap(head, (expected) =>
+    Curation.undo({ revision, cascade, expected, actor: "test", reason: "test", operator: true }),
+  );
+
+const refusal = <A, R>(
+  effect: Effect.Effect<A, Curation.CurationError | DbQueryFailed | DbRowInvalid, R>,
+): Effect.Effect<string, DbQueryFailed | DbRowInvalid, R> =>
+  effect.pipe(
+    Effect.map((): string => "applied"),
+    Effect.catchTags({
+      CurationRefused: (error) => Effect.succeed(error.reason),
+      CurationConflict: () => Effect.succeed("conflict"),
+      OperatorRequired: () => Effect.succeed("operator"),
+      StaleRevision: () => Effect.succeed("stale"),
+    }),
+  );
+
+// Six minted subjects on eight repos, ids 1 to 6 in a fresh database, with quotes a "browser" split rule matches.
+const mintedFixture = Effect.gen(function* () {
+  const terms = ["mint one", "mint two", "mint three", "mint four", "mint five", "mint six"];
+  yield* seed(
+    Array.from({ length: 8 }, (_, index) => ({
+      id: index + 1,
+      owner: index % 2 === 0 ? "even" : "odd",
+      facets: [
+        { role: "about", term: terms[index % 6] ?? "", quote: index % 3 === 0 ? "a browser tool" : "a library" },
+        { role: "about", term: terms[(index + 2) % 6] ?? "", quote: "a service" },
+        { role: "alternative_to", term: terms[(index + 4) % 6] ?? "", quote: "like the other one" },
+      ],
+    })),
+  );
+  yield* sweepAll;
+  return terms.map((_, index) => SubjectId.make(index + 1));
+});
+
+const propertyCases = (test: { readonly effect: it.Tester<Services> }) => {
+  test.effect(
+    "after every decision and undo, subject_matches equals the full rebuild and the tables equal the fold",
+    () =>
+      Effect.gen(function* () {
+        const minted = yield* mintedFixture;
+        const db = yield* Db.Db;
+        const created: Array<SubjectId> = [];
+        let applied = 0;
+        for (const seedValue of [3, 7]) {
+          const next = random(seedValue);
+          for (let step = 0; step < 30; step++) {
+            const state = fold(yield* db.knowledge.decisions).state;
+            const decision = generate(next, state, created, minted, [1, 2, 3]);
+            const outcome = yield* refusal(decision._tag === "Undo" ? undoOne(decision.revision) : decideOne(decision));
+            if (outcome !== "applied") continue;
+            applied++;
+            const made = (yield* db.knowledge.decisions).at(-1)?.created;
+            if (made !== null && made !== undefined) created.push(made);
+            const matches = yield* matchesAgree;
+            expect(matches.kept).toEqual(matches.rebuilt);
+            const tables = yield* derivedAgree;
+            expect(tables.stored).toEqual(tables.derived);
+            const folded = fold(yield* db.knowledge.decisions);
+            expect(folded.invalid).toEqual([]);
+            expect(
+              yield* rows(
+                `select a.origin_id from subject_canonical a join subject_canonical b on b.origin_id = a.canonical_id`,
+              ),
+            ).toEqual([]);
+            if (step % 6 === 5) yield* sweepAll;
+          }
+        }
+        expect(applied).toBeGreaterThan(20);
+
+        // Projection converges to one answer whatever order the repos go in.
+        yield* sweepAll;
+        const settled = yield* snapshot(Number.MAX_SAFE_INTEGER);
+        const database = yield* TestDatabase.TestDatabase;
+        yield* database.query("update repo_facets set stale = true");
+        const order = [8, 3, 6, 1, 7, 2, 5, 4];
+        for (const id of order) yield* RepoKnowledge.projectRepos([id as RepoId]);
+        yield* sweepAll;
+        expect((yield* snapshot(Number.MAX_SAFE_INTEGER)).facets).toEqual(settled.facets);
+      }),
+  );
+
+  test.effect("an undo then its redo restores every derived table and every facets row after the sweep", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      yield* sweepAll;
+      const log = yield* db.knowledge.decisions;
+      const state = fold(log).state;
+      let checked = 0;
+      for (const target of [...log].reverse().slice(0, 12)) {
+        if (state.undone.has(target.revision) || target.decision._tag === "Publish") continue;
+        const below = (yield* maxSubject) + 1;
+        const before = yield* snapshot(below);
+        const undone = yield* refusal(undoOne(target.revision));
+        if (undone !== "applied") continue;
+        yield* sweepAll;
+        const undoRevision = yield* head;
+        expect(yield* refusal(undoOne(undoRevision))).toBe("applied");
+        yield* sweepAll;
+        expect(yield* snapshot(below)).toEqual(before);
+        checked++;
+      }
+      expect(checked).toBeGreaterThan(3);
+    }),
+  );
+};
+
+it.layer(TestDatabase.layerMemory({ embeddingModel }), { timeout: 120_000, testTimeout: 120_000 })(
+  "PGlite curation fold",
+  propertyCases,
+);
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel }), { timeout: 120_000, testTimeout: 120_000 })(
+  "node-postgres curation fold",
+  propertyCases,
+);
+
+const _browserRule = { labels: [], terms: [["browser", "user-agent"] as [string, ...Array<string>]], repos: [] };
+
+const cases = (test: { readonly effect: it.Tester<Services> }) => {
+  test.effect("refuses each reason it can reach, with the holder of a minted key", () =>
+    Effect.gen(function* () {
+      yield* seed([{ id: 30_001, facets: [{ role: "about", term: "refusal mint", quote: "x" }] }]);
+      yield* sweepAll;
+      const [minted] = (yield* (yield* Db.Db).knowledge.labels([key("refusal mint")])).map((label) => label.subjectId);
+      const [a, b, c, d, e] = yield* Effect.forEach(["r a", "r b", "r c", "r d", "r e"], (label) => create(label));
+      if (
+        a === undefined ||
+        b === undefined ||
+        c === undefined ||
+        d === undefined ||
+        e === undefined ||
+        minted === undefined
+      )
+        return yield* Effect.die("fixture");
+      yield* decideOne({ _tag: "KeepApart", a, b, add: true });
+      expect(yield* refusal(decideOne({ _tag: "Merge", from: a, into: b }))).toBe("keep-apart");
+      yield* decideOne({ _tag: "Parent", child: c, parent: d });
+      expect(yield* refusal(decideOne({ _tag: "Parent", child: d, parent: c }))).toBe("cycle");
+      // A merge across an edge folds the hierarchy into one meaning, so it is refused too.
+      expect(yield* refusal(decideOne({ _tag: "Merge", from: c, into: d }))).toBe("cycle");
+      yield* decideOne({ _tag: "Parent", child: e, parent: c });
+      const [f] = yield* Effect.forEach(["r f"], (label) => create(label));
+      if (f === undefined) return yield* Effect.die("fixture");
+      yield* decideOne({ _tag: "Parent", child: f, parent: e });
+      const [g] = yield* Effect.forEach(["r g"], (label) => create(label));
+      if (g === undefined) return yield* Effect.die("fixture");
+      expect(yield* refusal(decideOne({ _tag: "Expand", from: f, to: g, add: true }))).toBe("too-deep");
+      yield* decideOne({ _tag: "Merge", from: g, into: a });
+      expect(yield* refusal(decideOne({ _tag: "Status", subject: g, status: "accepted" }))).toBe("not-live");
+      // Selections land with pages, so no Publish names a live one yet.
+      expect(yield* refusal(decideOne({ _tag: "Publish", selection: 1 as never, slug: "topics/x", title: "X" }))).toBe(
+        "not-live",
+      );
+      yield* seed([{ id: 30_002 }]);
+      yield* decideOne({ _tag: "Link", subject: a, repo: 30_002 });
+      expect(yield* refusal(decideOne({ _tag: "Link", subject: b, repo: 30_002 }))).toBe("link-conflict");
+      expect(yield* refusal(decideOne({ _tag: "Alias", subject: b, label: "R A", add: true }))).toBe("label-taken");
+      const aliasMinted: Decision = { _tag: "Alias", subject: b, label: "refusal mint", add: true };
+      const takenOnDecide = yield* decideOne(aliasMinted).pipe(Effect.flip);
+      expect(takenOnDecide).toMatchObject({ _tag: "CurationRefused", reason: "label-taken", holder: minted, index: 0 });
+      const takenOnPreview = yield* Curation.preview([{ decision: aliasMinted, reason: "test" }]).pipe(Effect.flip);
+      expect(takenOnPreview).toMatchObject({ _tag: "CurationRefused", reason: "label-taken", holder: minted });
+      expect(
+        yield* refusal(decideOne({ _tag: "Create", label: "Rust", definition: "", aliases: [], status: "accepted" })),
+      ).toBe("reserved-label");
+      expect(
+        yield* refusal(
+          decideOne({
+            _tag: "Correct",
+            repo: 30_001,
+            atom: { role: "any", value: { dim: "subject", id: a } },
+            present: true,
+          }),
+        ),
+      ).toBe("role-mismatch");
+      const stale = yield* Curation.decide({
+        decisions: [{ decision: { _tag: "Status", subject: b, status: "accepted" }, reason: "test" }],
+        expected: Revision.make((yield* head) - 1),
+        actor: "test",
+        operator: false,
+      }).pipe(Effect.flip);
+      expect(stale._tag).toBe("StaleRevision");
+      const made = yield* record({ _tag: "Create", label: "r h", definition: "", aliases: [], status: "accepted" });
+      const h = yield* createdBy(made);
+      const leaning = yield* record({ _tag: "Parent", child: h, parent: b });
+      expect(yield* refusal(undoOne(made))).toBe("conflict");
+      const cascaded = yield* undoOne(made, true);
+      expect(cascaded.undone).toEqual([leaning, made]);
+    }),
+  );
+
+  test.effect("a decision that moves more than a thousand repos waits for the operator flag", () =>
+    Effect.gen(function* () {
+      const database = yield* TestDatabase.TestDatabase;
+      const big = yield* create("many holders");
+      const into = yield* create("merge target");
+      yield* seed(Array.from({ length: 1_001 }, (_, index) => ({ id: 40_000 + index })));
+      yield* database.query(
+        "update repo_facets set about = array[$1]::bigint[], stale = false where repo_id between 40000 and 41000",
+        [big],
+      );
+      const merge: Decision = { _tag: "Merge", from: big, into };
+      expect((yield* Curation.preview([{ decision: merge, reason: "test" }])).moved).toEqual([1_001]);
+      const waiting = yield* decideOne(merge, false).pipe(Effect.flip);
+      expect(waiting).toMatchObject({ _tag: "OperatorRequired", moved: 1_001, index: 0 });
+      expect((yield* decideOne(merge, true)).moved).toEqual([1_001]);
+    }),
+  );
+
+  test.effect(
+    "a split moves the claim its rule matches, keeps the ambiguous one, and moves a later receipt it matches",
+    () =>
+      Effect.gen(function* () {
+        const [parser, framework] = yield* seed([
+          { id: 50_001, facets: [{ role: "about", term: "agent", quote: "parses the browser user-agent header" }] },
+          { id: 50_002, facets: [{ role: "about", term: "agent", quote: "an autonomous coding agent" }] },
+        ]);
+        yield* sweepAll;
+        const [broad] = (yield* (yield* Db.Db).knowledge.labels([key("agent")])).map((label) => label.subjectId);
+        if (broad === undefined || parser === undefined || framework === undefined) return yield* Effect.die("fixture");
+        const before = yield* membersMatching(broad);
+        expect(before).toEqual([parser, framework]);
+        const child = yield* split(broad, "User agent parsing", ["browser", "user-agent"]);
+        yield* sweepAll;
+        expect(yield* aboutOf(parser)).toEqual([child]);
+        expect(yield* aboutOf(framework)).toEqual([broad]);
+        // The broad selection keeps exactly its old union of repos.
+        expect(yield* membersMatching(broad)).toEqual(before);
+        expect(yield* membersMatching(child)).toEqual([parser]);
+
+        yield* answer(
+          { id: 50_002, facets: [{ role: "about", term: "agent", quote: "reads the browser user-agent" }] },
+          50_102,
+        );
+        yield* sweepAll;
+        expect(yield* aboutOf(framework)).toEqual([child]);
+        expect(yield* membersMatching(broad)).toEqual(before);
+      }),
+  );
+
+  test.effect(
+    "a merge onto a subject with a split rule moves the holders the rule matches, and its undo moves them back",
+    () =>
+      Effect.gen(function* () {
+        const [onBroad, onAlias] = yield* seed([
+          { id: 51_001, facets: [{ role: "about", term: "agents", quote: "an agent runtime" }] },
+          { id: 51_002, facets: [{ role: "about", term: "ua lib", quote: "a browser user-agent parser" }] },
+        ]);
+        yield* sweepAll;
+        const db = yield* Db.Db;
+        const [broad] = (yield* db.knowledge.labels([key("agents")])).map((label) => label.subjectId);
+        const [alias] = (yield* db.knowledge.labels([key("ua lib")])).map((label) => label.subjectId);
+        if (broad === undefined || alias === undefined || onAlias === undefined || onBroad === undefined)
+          return yield* Effect.die("fixture");
+        const child = yield* split(broad, "UA parsing", ["browser", "user-agent"]);
+        yield* sweepAll;
+        const merged = yield* decideOne({ _tag: "Merge", from: alias, into: broad });
+        expect(merged.invalidated).toBe(2);
+        yield* sweepAll;
+        expect(yield* aboutOf(onAlias)).toEqual([child]);
+        expect(yield* membersMatching(child)).toEqual([onAlias]);
+        const undone = yield* undoOne(merged.revision);
+        expect(undone.invalidated).toBe(2);
+        yield* sweepAll;
+        expect(yield* aboutOf(onAlias)).toEqual([alias]);
+        expect(yield* membersMatching(alias)).toEqual([onAlias]);
+        expect(yield* membersMatching(child)).toEqual([]);
+      }),
+  );
+
+  test.effect("an alias removal lets the key mint its own subject, and its undo resolves the key back", () =>
+    Effect.gen(function* () {
+      const created = yield* record({
+        _tag: "Create",
+        label: "Flux capacitor",
+        definition: "",
+        aliases: ["fluxcap"],
+        status: "accepted",
+      });
+      const subject = yield* createdBy(created);
+      const [holder] = yield* seed([{ id: 52_001, facets: [{ role: "about", term: "fluxcap", quote: "x" }] }]);
+      yield* sweepAll;
+      expect(yield* aboutOf(52_001)).toEqual([subject]);
+      const removal = yield* decideOne({ _tag: "Alias", subject, label: "fluxcap", add: false });
+      expect(removal.invalidated).toBe(1);
+      yield* sweepAll;
+      const [mintedId] = yield* aboutOf(52_001);
+      expect(mintedId).not.toBe(subject);
+      const undone = yield* undoOne(removal.revision);
+      expect(undone.invalidated).toBe(1);
+      yield* sweepAll;
+      expect(yield* aboutOf(52_001)).toEqual([subject]);
+      expect(yield* membersMatching(subject)).toEqual([holder as number]);
+      expect(yield* membersMatching(mintedId as SubjectId)).toEqual([]);
+    }),
+  );
+
+  test.effect("a rename of a minted subject is undone back to its first label", () =>
+    Effect.gen(function* () {
+      yield* seed([{ id: 53_001, facets: [{ role: "about", term: "fooBar", quote: "x" }] }]);
+      yield* sweepAll;
+      const db = yield* Db.Db;
+      const [subject] = (yield* db.knowledge.labels([key("fooBar")])).map((label) => label.subjectId);
+      if (subject === undefined) return yield* Effect.die("fixture");
+      const renamed = yield* decideOne({ _tag: "Rename", subject, label: "Foo Bar", definition: "A foo for bars." });
+      expect((yield* db.knowledge.subjects([subject]))[0]).toMatchObject({
+        label: "Foo Bar",
+        definition: "A foo for bars.",
+      });
+      yield* undoOne(renamed.revision);
+      expect((yield* db.knowledge.subjects([subject]))[0]).toMatchObject({ label: "fooBar", definition: null });
+    }),
+  );
+
+  test.effect(
+    "seeds adopt the subjects projection already minted, reject noise, and plan nothing the second time",
+    () =>
+      Effect.gen(function* () {
+        yield* seed([
+          {
+            id: 54_001,
+            facets: [
+              { role: "trait", term: "open-source", quote: "x" },
+              { role: "about", term: "reactjs", quote: "x" },
+            ],
+          },
+          {
+            id: 54_002,
+            facets: [
+              { role: "trait", term: "Open Source", quote: "x" },
+              { role: "about", term: "React", quote: "x" },
+            ],
+          },
+          { id: 54_003, facets: [{ role: "about", term: "react", quote: "x" }], topics: ["hacktoberfest"] },
+        ]);
+        yield* sweepAll;
+        const db = yield* Db.Db;
+        const labelled = new Map(
+          (yield* db.knowledge.labels([key("open source"), key("react"), key("reactjs")])).map((row) => [
+            row.key,
+            row.subjectId,
+          ]),
+        );
+        const explore: ReadonlyArray<SeedEntry> = [
+          {
+            key: "react",
+            label: "React",
+            definition: "A JavaScript library for building user interfaces.",
+            aliases: ["react", "reactjs", "react-js"],
+            status: "accepted",
+            reason: "seed",
+          },
+          {
+            key: "zig-lang",
+            label: "Ziggy",
+            definition: "d",
+            aliases: ["zig-lang"],
+            status: "accepted",
+            reason: "seed",
+          },
+          {
+            key: "open-source",
+            label: "Open Source",
+            definition: "d",
+            aliases: [],
+            status: "accepted",
+            reason: "seed",
+          },
+        ];
+        const excluded = new Set(noise.flatMap((entry) => [entry.label, ...entry.aliases]).map(key));
+
+        const noisePlan = yield* Curation.planSeed(noise, new Set());
+        expect(noisePlan.decisions.map(({ decision }) => decision._tag)).toEqual([
+          "Create",
+          "Alias",
+          "Alias",
+          "Status",
+          "Create",
+        ]);
+        const noiseDone = yield* Curation.seed({ ...noisePlan, actor: "seed:noise", operator: false });
+        expect(noiseDone.moved).toEqual([1, 0, 0, 2, 0]);
+
+        const plan = yield* Curation.planSeed(explore, excluded);
+        expect(plan.skipped).toEqual([{ label: "Open Source", reason: "excluded" }]);
+        expect(plan.decisions.map(({ decision }) => decision._tag)).toEqual([
+          "Merge",
+          "Rename",
+          "Alias",
+          "Status",
+          "Create",
+        ]);
+        yield* Curation.seed({ ...plan, actor: "seed:github-explore", operator: false });
+        yield* sweepAll;
+
+        const react = labelled.get(key("react"));
+        const reactjs = labelled.get(key("reactjs"));
+        if (react === undefined || reactjs === undefined) return yield* Effect.die("fixture");
+        expect(yield* membersMatching(react)).toEqual([54_001, 54_002, 54_003]);
+        expect((yield* db.knowledge.subjects([react]))[0]).toMatchObject({ status: "accepted" });
+        const openSource = labelled.get(key("open source"));
+        if (openSource === undefined) return yield* Effect.die("fixture");
+        expect(yield* membersMatching(openSource)).toEqual([]);
+        const [hacktoberfest] = (yield* db.knowledge.labels([key("hacktoberfest")])).map((row) => row.subjectId);
+        expect(yield* aboutOf(54_003)).toEqual([react]);
+        expect(hacktoberfest).toBeDefined();
+
+        expect((yield* Curation.planSeed(noise, new Set())).decisions).toEqual([]);
+        expect((yield* Curation.planSeed(explore, excluded)).decisions).toEqual([]);
+      }),
+  );
+
+  test.effect("the usage floor accepts candidates on three repos from two owners, each as an undoable decision", () =>
+    Effect.gen(function* () {
+      yield* seed([
+        {
+          id: 55_001,
+          owner: "ann",
+          facets: [
+            { role: "about", term: "floor wide", quote: "x" },
+            { role: "about", term: "floor narrow", quote: "x" },
+          ],
+        },
+        {
+          id: 55_002,
+          owner: "ann",
+          facets: [
+            { role: "about", term: "floor wide", quote: "x" },
+            { role: "about", term: "floor narrow", quote: "x" },
+          ],
+        },
+        { id: 55_003, owner: "bob", facets: [{ role: "about", term: "floor wide", quote: "x" }] },
+        { id: 55_004, owner: "ann", facets: [{ role: "about", term: "floor narrow", quote: "x" }] },
+      ]);
+      yield* sweepAll;
+      yield* RepoKnowledge.count();
+      const db = yield* Db.Db;
+      const ids = new Map(
+        (yield* db.knowledge.labels([key("floor wide"), key("floor narrow")])).map((row) => [row.key, row.subjectId]),
+      );
+      const wide = ids.get(key("floor wide"));
+      const narrow = ids.get(key("floor narrow"));
+      if (wide === undefined || narrow === undefined) return yield* Effect.die("fixture");
+      const { accepted } = yield* Curation.floor();
+      expect(accepted).toBeGreaterThanOrEqual(1);
+      const info = new Map((yield* db.knowledge.subjects([wide, narrow])).map((row) => [row.id, row.status]));
+      expect([info.get(wide), info.get(narrow)]).toEqual(["accepted", "candidate"]);
+      const last = (yield* db.knowledge.decisions).filter((entry) => entry.decision._tag === "Status").at(-1);
+      expect(last?.decision).toEqual({ _tag: "Status", subject: wide, status: "accepted" });
+      expect((yield* Curation.floor()).accepted).toBe(0);
+    }),
+  );
+};
+
+it.layer(TestDatabase.layerMemory({ embeddingModel }), { timeout: 120_000, testTimeout: 120_000 })(
+  "PGlite curation",
+  cases,
+);
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel }), { timeout: 120_000, testTimeout: 120_000 })(
+  "node-postgres curation",
+  cases,
+);
+
+const retryStale = <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(Effect.retry({ while: (error) => error._tag === "StaleRevision", times: 20 }));
+
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel }), { timeout: 120_000, testTimeout: 120_000 })(
+  "node-postgres curation under load",
+  (test) => {
+    test.effect(
+      "a merge and its undo while extraction captures, mints, and projects leave every repo as a fresh projection",
+      () =>
+        Effect.gen(function* () {
+          const database = yield* TestDatabase.TestDatabase;
+          const db = yield* Db.Db;
+          const ids = Array.from({ length: 24 }, (_, index) => 60_001 + index);
+          yield* seed(
+            ids.map((id, index) => ({
+              id,
+              facets: [
+                {
+                  role: "about",
+                  term: index % 2 === 0 ? "load broad" : "load alias",
+                  quote: index % 4 < 2 ? "reads the browser user-agent" : "a plain tool",
+                },
+              ],
+            })),
+          );
+          yield* sweepAll;
+          const labelled = new Map(
+            (yield* db.knowledge.labels([key("load broad"), key("load alias")])).map((row) => [row.key, row.subjectId]),
+          );
+          const broad = labelled.get(key("load broad"));
+          const alias = labelled.get(key("load alias"));
+          if (broad === undefined || alias === undefined) return yield* Effect.die("fixture");
+          yield* split(broad, "load parsing", ["browser", "user-agent"]);
+          yield* sweepAll;
+
+          const writer = Effect.forEach(
+            ids,
+            (id, index) =>
+              answer(
+                {
+                  id,
+                  facets: [
+                    {
+                      role: "about",
+                      term: index % 3 === 0 ? "load alias" : `load fresh ${index}`,
+                      quote: "browser user-agent",
+                    },
+                    { role: "about", term: "load broad", quote: "a plain tool" },
+                  ],
+                },
+                61_000 + index,
+              ).pipe(Effect.andThen(RepoKnowledge.projectSaved([id as RepoId]))),
+            { concurrency: 3, discard: true },
+          );
+          const curator = Effect.gen(function* () {
+            for (let round = 0; round < 3; round++) {
+              const merged = yield* retryStale(decideOne({ _tag: "Merge", from: alias, into: broad }));
+              yield* retryStale(undoOne(merged.revision));
+            }
+            yield* retryStale(decideOne({ _tag: "Merge", from: alias, into: broad }));
+          });
+          yield* Effect.all([writer, curator, RepoKnowledge.reproject()], { concurrency: "unbounded", discard: true });
+          yield* sweepAll;
+
+          expect(yield* rows("select repo_id from repo_facets where stale")).toEqual([]);
+          const matches = yield* matchesAgree;
+          expect(matches.kept).toEqual(matches.rebuilt);
+          const settled = yield* snapshot(Number.MAX_SAFE_INTEGER);
+          yield* database.query("update repo_facets set stale = true");
+          yield* sweepAll;
+          expect((yield* snapshot(Number.MAX_SAFE_INTEGER)).facets).toEqual(settled.facets);
+          expect(yield* membersMatching(broad)).toEqual(ids);
+        }),
+    );
+  },
+);

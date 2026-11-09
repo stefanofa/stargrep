@@ -135,22 +135,46 @@ export const nextRevision = Effect.gen(function* () {
   return revision((yield* db.knowledge.revision) + 1);
 });
 
-// A decision against the current head, as Curation.decide will make it.
+// A change written by hand: created rows default to no link and the decision's own revision, and the invalidation to
+// no corrected repo.
+export interface HandChange extends Partial<Omit<Db.VocabularyChange, "created" | "invalidate">> {
+  readonly created?: ReadonlyArray<
+    Omit<Db.VocabularyChange["created"][number], "repoId" | "revision"> &
+      Partial<Db.VocabularyChange["created"][number]>
+  >;
+  readonly invalidate?: Omit<Db.VocabularyChange["invalidate"], "repos"> & Partial<Db.VocabularyChange["invalidate"]>;
+}
+
+// A decision against the current head. Curation computes the subjects whose matches to rebuild, and here they are every
+// subject the change names.
 export const decide = Effect.fn("decide")(function* (
-  kind: Db.Decision["kind"],
-  change: Partial<Db.VocabularyChange>,
+  kind: Db.DecisionRow["kind"],
+  hand: HandChange,
   undoes: Revision | null = null,
 ) {
   const db = yield* Db.Db;
   const expected = yield* db.knowledge.revision;
+  const own = revision(expected + 1);
+  const change: Db.VocabularyChange = {
+    ...Db.noChange,
+    ...hand,
+    created: (hand.created ?? []).map((row) => ({ repoId: null, revision: own, ...row })),
+    invalidate: { repos: [], ...(hand.invalidate ?? Db.noChange.invalidate) },
+  };
+  const refresh = new Set<SubjectId>([
+    ...change.created.map((row) => row.id),
+    ...change.presented.map((row) => row.id),
+    ...change.labelsAdded.map((row) => row.subjectId),
+    ...change.labelsRemoved.map((row) => row.subjectId),
+    ...change.merged.flatMap((row) => [row.originId, row.canonicalId]),
+    ...change.unmerged,
+    ...[...change.edgesAdded, ...change.edgesRemoved].flatMap((row) => [row.ancestorId, row.descendantId]),
+    ...change.invalidate.subjects,
+  ]);
   return yield* db.knowledge.decide({
     expected,
-    kind,
-    payload: { _tag: kind },
-    undoes,
-    actor: "test",
-    reason: "test",
-    change: { ...Db.noChange, ...change },
+    rows: [{ kind, payload: { _tag: kind }, undoes, actor: "test", reason: "test" }],
+    change: { ...change, refresh: hand.refresh ?? [...refresh] },
   });
 });
 

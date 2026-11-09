@@ -31,6 +31,7 @@ export type {
   Captured,
   Decided,
   Decision,
+  DecisionRow,
   Invalidation,
   KeptLegacy,
   Label,
@@ -42,8 +43,11 @@ export type {
   Minted,
   Projected,
   Projection,
+  Reach,
   ReceiptSource,
   StoredAtom,
+  SubjectInfo,
+  Variant,
   VocabularyChange,
 } from "./queries/knowledge.ts";
 export { noChange } from "./queries/knowledge.ts";

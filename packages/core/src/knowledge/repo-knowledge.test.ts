@@ -1,162 +1,27 @@
 import { expect } from "bun:test";
 import * as Db from "@stargrep/db";
-import { EmbeddingModelId } from "@stargrep/db/embedding";
 import { DbQueryFailed } from "@stargrep/db/errors";
 import * as TestDatabase from "@stargrep/db/test-database";
-import { ObjectId, RepoId } from "@stargrep/github/schemas";
+import type { RepoId } from "@stargrep/github/schemas";
 import type { Atom } from "@stargrep/knowledge/atom";
-import { type Claim, decodeFacets } from "@stargrep/knowledge/claims";
-import type { Decision } from "@stargrep/knowledge/decisions";
-import { InputHash, ReceiptId, Revision, type SubjectId } from "@stargrep/knowledge/ids";
-import { type LabelKey, labelKey } from "@stargrep/knowledge/label-key";
+import { decodeFacets } from "@stargrep/knowledge/claims";
+import type { ReceiptId } from "@stargrep/knowledge/ids";
 import * as it from "@stargrep/testing";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
+import {
+  create,
+  embeddingModel,
+  heldBy,
+  inputHash,
+  readmeOid,
+  record,
+  repoId,
+  seed,
+  split,
+  staleAmong,
+  sweepAll,
+} from "./knowledge.fixture.ts";
 import * as RepoKnowledge from "./repo-knowledge.ts";
-
-const embeddingModel = Schema.decodeSync(EmbeddingModelId)("fake/hash-embedding");
-const repoId = Schema.decodeSync(RepoId);
-const readmeOid = Schema.decodeSync(ObjectId)("a".repeat(40));
-const inputHash = Schema.decodeSync(InputHash)("b".repeat(64));
-const receiptId = (n: number) => ReceiptId.make(`00000000-0000-4000-8000-${n.toString().padStart(12, "0")}`);
-const key = (term: string): LabelKey => labelKey(term) ?? (term as LabelKey);
-
-interface Seed {
-  readonly id: number;
-  readonly language?: string;
-  readonly license?: string;
-  readonly topics?: ReadonlyArray<string>;
-  // Facts as the summary model would write them, decoded against a prompt that quotes each one.
-  readonly facets?: ReadonlyArray<{ readonly role: string; readonly term: string; readonly quote?: string }>;
-}
-
-const seed = Effect.fn("seed")(function* (repos: ReadonlyArray<Seed>) {
-  const database = yield* TestDatabase.TestDatabase;
-  const db = yield* Db.Db;
-  yield* database.query(
-    `insert into repos (id, owner, name, language, license, topics, readme_oid, input_hash)
-     select id, 'probe', 'repo-' || id, language, license, topics, $2, $3
-     from jsonb_to_recordset($1::jsonb) as r (id bigint, language text, license text, topics jsonb)`,
-    [
-      JSON.stringify(repos.map((repo) => ({ ...repo, topics: repo.topics ?? [], facets: undefined }))),
-      readmeOid,
-      inputHash,
-    ],
-  );
-  const answered = repos.filter((repo) => repo.facets !== undefined);
-  yield* db.knowledge.capture(
-    answered.map((repo) => {
-      const quotes = (repo.facets ?? []).map((fact) => fact.quote ?? "").join("\n");
-      const decoded = decodeFacets(repo.facets, {
-        fullName: `probe/repo-${repo.id}`,
-        description: "",
-        topics: repo.topics ?? [],
-        readme: quotes,
-      });
-      return {
-        receiptId: receiptId(repo.id),
-        repoId: repoId(repo.id),
-        source: "stand-in" as const,
-        inputHash,
-        readmeOid,
-        recipe: 2,
-        model: "recorded-no-model-call",
-        batchId: null,
-        summary: `summary of ${repo.id}`,
-        keywords: [],
-        claims: decoded.claims as ReadonlyArray<Claim>,
-        lanes: decoded.lanes,
-        dropped: decoded.dropped,
-        rawKey: null,
-        lease: null,
-      };
-    }),
-  );
-  return repos.map((repo) => repoId(repo.id));
-});
-
-// One decision with its real payload, and the vocabulary rows it creates, as Curation.decide will write them.
-const record = Effect.fn("record")(function* (
-  decision: Decision,
-  created: SubjectId | null,
-  change: Partial<Db.VocabularyChange> = {},
-) {
-  const db = yield* Db.Db;
-  const expected = yield* db.knowledge.revision;
-  const kind = decision._tag === "KeepApart" ? "keep_apart" : (decision._tag.toLowerCase() as Db.Decision["kind"]);
-  yield* db.knowledge.decide({
-    expected,
-    kind,
-    payload: {
-      ...(decision as unknown as Record<string, Schema.Json>),
-      _tag: decision._tag,
-      ...(created === null ? {} : { created }),
-    },
-    undoes: decision._tag === "Undo" ? decision.revision : null,
-    actor: "test",
-    reason: "test",
-    change: { ...Db.noChange, ...change },
-  });
-  return Revision.make(expected + 1);
-});
-
-const create = Effect.fn("create")(function* (label: string) {
-  const db = yield* Db.Db;
-  const [id] = yield* db.knowledge.allocate(1);
-  if (id === undefined) return yield* Effect.die(new Error("no subject id"));
-  const revision = Revision.make((yield* db.knowledge.revision) + 1);
-  yield* record({ _tag: "Create", label, definition: "", aliases: [], status: "accepted" }, id, {
-    created: [{ id, label, definition: null, status: "accepted" }],
-    labelsAdded: [{ key: key(label), subjectId: id, isDefault: true, revision }],
-  });
-  return id;
-});
-
-const split = Effect.fn("split")(function* (subject: SubjectId, label: string, terms: ReadonlyArray<string>) {
-  const db = yield* Db.Db;
-  const [child] = yield* db.knowledge.allocate(1);
-  if (child === undefined) return yield* Effect.die(new Error("no subject id"));
-  const revision = Revision.make((yield* db.knowledge.revision) + 1);
-  const rule = { labels: [], terms: [terms as [string, ...Array<string>]], repos: [] };
-  yield* record({ _tag: "Split", subject, into: { label, definition: "" }, rule }, child, {
-    created: [{ id: child, label, definition: null, status: "candidate" }],
-    labelsAdded: [{ key: key(label), subjectId: child, isDefault: true, revision }],
-    edgesAdded: [{ ancestorId: subject, descendantId: child, depth: 1, via: "split", revision }],
-  });
-  return child;
-});
-
-// Every atom a repo holds, with subjects named by label and the run's tag cut off, so runs compare by meaning.
-const heldBy = Effect.fn("heldBy")(function* (ids: ReadonlyArray<RepoId>, tag: string) {
-  const database = yield* TestDatabase.TestDatabase;
-  const rows = (yield* database.query(
-    `select e.repo_id::float8 as repo, e.role, e.dim, coalesce(s.label, e.value) as value
-     from effective_atoms e left join subjects s on e.dim = 'subject' and s.id::text = e.value
-     where e.repo_id = any($1::bigint[]) order by e.repo_id, e.role, e.dim, 4`,
-    [ids],
-  )) as ReadonlyArray<{ repo: number; role: string; dim: string; value: string }>;
-  return ids.map((id) =>
-    rows
-      .filter((row) => row.repo === id)
-      .map((row) => `${row.role}:${row.dim}:${tag === "" ? row.value : row.value.replace(` ${tag}`, "")}`),
-  );
-});
-
-const staleAmong = Effect.fn("staleAmong")(function* (ids: ReadonlyArray<RepoId>) {
-  const database = yield* TestDatabase.TestDatabase;
-  const rows = yield* database.query(
-    "select count(*)::int as n from repo_facets where stale and repo_id = any($1::bigint[])",
-    [ids],
-  );
-  return (rows[0] as { n: number }).n;
-});
-
-const sweepAll = Effect.gen(function* () {
-  for (let pass = 0; pass < 10; pass++) {
-    const { projected } = yield* RepoKnowledge.reproject();
-    if (projected === 0) return;
-  }
-});
 
 it.layer(TestDatabase.layerMemory({ embeddingModel }), { timeout: 60_000, testTimeout: 60_000 })(
   "RepoKnowledge",
@@ -307,7 +172,7 @@ it.layer(TestDatabase.layerMemory({ embeddingModel }), { timeout: 60_000, testTi
         const curated = yield* create("between groups");
         const atom: Atom = { role: "about", value: { dim: "subject", id: curated } };
         // A second writer records a correction for the second repo after the first group commits.
-        const correct = record({ _tag: "Correct", repo: second as number, atom, present: true }, null).pipe(
+        const correct = record({ _tag: "Correct", repo: second as number, atom, present: true }).pipe(
           Effect.provideService(Db.Db, db),
           Effect.orDie,
         );
@@ -392,7 +257,7 @@ it.layer(TestDatabase.layerMemory({ embeddingModel }), { timeout: 60_000, testTi
           const curated = yield* create(`curated ${tag}`);
           const base = 800 + run * 10;
           const atom: Atom = { role: "about", value: { dim: "subject", id: curated } };
-          yield* record({ _tag: "Correct", repo: base + 5, atom, present: true }, null);
+          yield* record({ _tag: "Correct", repo: base + 5, atom, present: true });
           const ids = yield* seed([
             { id: base, language: "Rust", license: "MIT", topics: [`acme widget protocol ${tag}`] },
             {

@@ -62,15 +62,18 @@ const projectGroup = Effect.fn("RepoKnowledge.projectGroup")(function* (ids: Rea
 });
 
 // The rules a projection reads must be those of the revision it holds the shared lock at, since no decision commits
-// while it holds it. The fold is cached by revision and refolded only when a decision lands between groups.
+// while it holds it. They fold from the merges, splits, corrections, and undos alone, which curation keeps equal to
+// the whole log's rules, so a large seed or floor batch costs projection nothing. The fold is cached by the head it
+// was read at and refolded only when a decision lands between groups.
 const rulesCache = (db: Db.Db["Service"]): RulesAt => {
-  let cached: KnowledgeState | null = null;
+  let cached: { readonly at: Revision; readonly rules: KnowledgeState } | null = null;
   return (revision) =>
-    cached !== null && cached.revision === revision
-      ? Effect.succeed(cached)
-      : Effect.map(db.knowledge.decisions, (decisions) => {
-          cached = fold(decisions).state;
-          return cached;
+    cached !== null && cached.at === revision
+      ? Effect.succeed(cached.rules)
+      : Effect.map(db.knowledge.rules, (decisions) => {
+          const rules = fold(decisions).state;
+          cached = { at: revision, rules };
+          return rules;
         });
 };
 
