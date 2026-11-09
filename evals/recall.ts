@@ -8,7 +8,7 @@ import * as TextGeneration from "@stargrep/ai/text-generation";
 import { Compile, ModelAllowance, QueryPlanner, Search, SearchCache } from "@stargrep/core/search";
 import * as Db from "@stargrep/db";
 import { anyDistance } from "@stargrep/db/embedding";
-import { createMigratedDatabase } from "@stargrep/db/local-database";
+import { createMigratedDatabase, dropDatabase } from "@stargrep/db/local-database";
 import * as Memory from "@stargrep/db/memory";
 import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
@@ -18,7 +18,7 @@ import * as Option from "effect/Option";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { embeddingModelId, loadAccount, scope } from "./account.ts";
+import { acceptFloor, embeddingModelId, loadAccount, scope } from "./account.ts";
 import { judgedRepos } from "./behavior.ts";
 import * as Corpus from "./corpus.ts";
 import { EnrichedRepo, enrich } from "./enriched-corpus.ts";
@@ -348,33 +348,6 @@ const sweep = Effect.fn("Recall.sweep")(function* (
   }
 });
 
-// Subjects are accepted by curation, which the eval database has none of. This accepts every subject the floor rule
-// would, held by at least 3 repos from 2 owners, so stated subject groups resolve as they will once curation runs.
-const acceptAtFloor = (url: string) =>
-  Effect.promise(async () => {
-    const db = new Bun.SQL(url);
-    try {
-      const [row] = await db`
-        with held as (
-          select substring(m.atom from 'subject:([0-9]+)$')::bigint as subject_id, m.repo_id, r.owner
-          from matching_atoms m join repos r on r.id = m.repo_id
-          where m.atom ~ '^((with|alt|replaced-by):)?subject:[0-9]+$'
-        ),
-        floor as (
-          select subject_id from held group by 1 having count(distinct repo_id) >= 3 and count(distinct owner) >= 2
-        ),
-        accepted as (
-          update subjects s set status = 'accepted' from floor f
-          where s.id = f.subject_id and s.status = 'candidate' and s.owner_id is null
-          returning 1
-        )
-        select count(*)::int as accepted, (select count(*)::int from subjects) as subjects from accepted`;
-      return row as { readonly accepted: number; readonly subjects: number };
-    } finally {
-      await db.close();
-    }
-  });
-
 // Bare stated subjects as filters, a policy change this eval gates.
 const bareFilters: Compile.Policy = { ...Compile.policy, bare: ["filter", "filter"] };
 
@@ -397,14 +370,16 @@ const real = Effect.fn("Recall.real")(function* (options: {
     );
   }
   const adminUrl = process.env.DATABASE_URL ?? "postgres://stargrep:stargrep@127.0.0.1:54317/stargrep";
+  // A fresh database each run, so neither an earlier corpus nor the subjects an --accept-floor run accepted leak in.
+  yield* dropDatabase(adminUrl, "stargrep_recall");
   const url = yield* createMigratedDatabase(adminUrl, "stargrep_recall");
   yield* Console.log(`Loaded ${repos.length} repos as the stars of recall-eval in ${new URL(url).pathname.slice(1)}`);
   const db = Db.layerNodePostgres({ embeddingModel: embeddingModelId, connectionString: Redacted.make(url) });
   return yield* Effect.gen(function* () {
     yield* loadAccount(repos);
     if (options.acceptFloor) {
-      const { accepted, subjects } = yield* acceptAtFloor(url);
-      yield* Console.log(`Accepted ${accepted} of ${subjects} subjects at the floor of 3 repos from 2 owners`);
+      const { accepted } = yield* acceptFloor();
+      yield* Console.log(`Accepted ${accepted} subjects at the usage floor`);
     }
     const sets = yield* loadSets;
     if (options.maxDistances.length > 0) return yield* sweep(sets, options.maxDistances);
