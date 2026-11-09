@@ -11,7 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Db from "../src/db.ts";
 import { atomColumns } from "../src/schema.ts";
 import * as TestDatabase from "./database.ts";
-import { model, readme, repoId } from "./fixtures.ts";
+import { at, iso, model, readme, repoId } from "./fixtures.ts";
 import {
   about,
   allComplete,
@@ -58,6 +58,8 @@ const forget = `
   delete from repo_facets where repo_id in (select id from gone)`;
 
 const firstText = { summary: "First answer", keywords: ["first"] };
+// The lease an attempt took before paying for its answer.
+const lease = at("2026-05-01T00:15:00Z");
 const firstAnswer = { ...firstText, claims: [claim("about", "first")] };
 const secondAnswer = { summary: "Second answer", keywords: ["second"], claims: [claim("about", "second")] };
 
@@ -559,8 +561,8 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
       const db = yield* Db.Db;
       const database = yield* TestDatabase.TestDatabase;
       const id = yield* seedRepo({ id: 70_501 });
-      yield* database.query("update repos set enrich_retry_at = now() + interval '1 day' where id = $1", [id]);
-      const first = yield* db.knowledge.capture([answer(id, receiptId(70_501), firstAnswer)]);
+      yield* database.query("update repos set enrich_retry_at = $2 where id = $1", [id, iso(lease)]);
+      const first = yield* db.knowledge.capture([answer(id, receiptId(70_501), { ...firstAnswer, lease })]);
       expect(first).toEqual([{ repoId: id, receiptId: receiptId(70_501), saved: true, ...firstText }]);
       const retry = yield* db.knowledge.capture([answer(id, receiptId(70_502), secondAnswer)]);
       expect(retry).toEqual([{ repoId: id, receiptId: receiptId(70_501), saved: true, ...firstText }]);
@@ -589,16 +591,16 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
     }),
   );
 
-  test.effect("capture keeps an answer for moved inputs as history, saves nothing, and clears the lease", () =>
+  test.effect("capture keeps an answer for moved inputs as history, saves nothing, and clears its own lease", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
       const database = yield* TestDatabase.TestDatabase;
       const movedReadme = yield* seedRepo({ id: 70_601, readme: "2" });
       const movedInputs = yield* seedRepo({ id: 70_602, input: "b" });
-      yield* database.query("update repos set enrich_retry_at = now() + interval '1 day' where id in (70601, 70602)");
+      yield* database.query("update repos set enrich_retry_at = $1 where id in (70601, 70602)", [iso(lease)]);
       const captured = yield* db.knowledge.capture([
-        answer(movedReadme, receiptId(70_601)),
-        answer(movedInputs, receiptId(70_602)),
+        answer(movedReadme, receiptId(70_601), { lease }),
+        answer(movedInputs, receiptId(70_602), { lease }),
       ]);
       expect(captured.map((row) => row.saved)).toEqual([false, false]);
       expect(
@@ -611,6 +613,30 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
         { summary: null, receiptId: null, retryAt: null, receipts: 1 },
         { summary: null, receiptId: null, retryAt: null, receipts: 1 },
       ]);
+    }),
+  );
+
+  // An attempt whose lease ran out can still answer after a later attempt leased the repo. Its capture, saved or
+  // stale, must leave the later lease alone, or a third attempt could pay for the same repo.
+  test.effect("capture leaves a lease the answer does not hold, whether it saves or not", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const saved = yield* seedRepo({ id: 70_611 });
+      const stale = yield* seedRepo({ id: 70_612, input: "b" });
+      const successor = at("2026-05-01T00:31:00Z");
+      yield* database.query("update repos set enrich_retry_at = $1 where id in (70611, 70612)", [iso(successor)]);
+      const captured = yield* db.knowledge.capture([
+        answer(saved, receiptId(70_611), { lease }),
+        answer(stale, receiptId(70_612), { lease }),
+      ]);
+      expect(captured.map((row) => row.saved)).toEqual([true, false]);
+      expect(
+        yield* database.query(
+          `select to_char(enrich_retry_at at time zone 'utc', 'HH24:MI') as "retryAt"
+           from repos where id in (70611, 70612) order by id`,
+        ),
+      ).toEqual([{ retryAt: "00:31" }, { retryAt: "00:31" }]);
     }),
   );
 
@@ -686,6 +712,21 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
 
       yield* answerTo("c", receiptId(70_633), { claims: [] });
       expect(yield* receiptOf(receiptId(70_633))).toEqual([{ claims: [], carriedFrom: null, kind: null }]);
+
+      // A fact with an unreadable role turns every lane invalid, and the answer keeps every fact it could read.
+      yield* answerTo("9", receiptId(70_636), { claims: kept });
+      const readable = decodeFacets(
+        [
+          { role: "is", term: "CLI" },
+          { role: "maintainer", term: "someone" },
+        ],
+        { fullName: "probe/repo-70631", description: "", topics: [], readme: "" },
+      );
+      expect(new Set(Object.values(readable.lanes))).toEqual(new Set(["invalid"]));
+      yield* answerTo("f", receiptId(70_637), readable);
+      expect(yield* receiptOf(receiptId(70_637))).toEqual([
+        { claims: readable.claims, carriedFrom: null, kind: "cli" },
+      ]);
 
       // A legacy receipt holds only the kind, so that is all an answer with no list can keep from it.
       const legacy = legacyFacets({ kind: "cli" });

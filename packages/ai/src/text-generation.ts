@@ -2,6 +2,7 @@ import type { JSONSchema7 } from "ai";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { type AiError, AiOutputInvalid, AiTimeout } from "./errors.ts";
@@ -43,6 +44,8 @@ export class TextGeneration extends Context.Service<
     // Who answers: a provider such as the gateway, the claude-code CLI, or the fake stand-in.
     readonly provider: string;
     readonly model: string;
+    // How long a batch of two or more prompts may wait for its answers, when the provider has a batch API.
+    readonly batchTimeout: Option.Option<Duration.Duration>;
     readonly generate: <A>(request: GenerateRequest<A>) => Effect.Effect<A, AiError>;
     readonly generateBatch: <A, I>(request: GenerateBatchRequest<A, I>) => Stream.Stream<BatchAnswer<A, I>>;
   }
@@ -131,5 +134,11 @@ export const make = (options: {
     );
   };
 
-  return TextGeneration.of({ provider, model, generate, generateBatch });
+  return TextGeneration.of({
+    provider,
+    model,
+    batchTimeout: Option.map(Option.fromUndefinedOr(batch), (api) => api.timeout),
+    generate,
+    generateBatch,
+  });
 };

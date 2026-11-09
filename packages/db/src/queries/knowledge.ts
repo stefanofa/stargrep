@@ -7,6 +7,7 @@ import { LabelKey } from "@stargrep/knowledge/label-key";
 import { type ClaimVerdict, kindKeys } from "@stargrep/knowledge/projection";
 import type { Dim, RoleId } from "@stargrep/knowledge/registry";
 import { type SQL, sql } from "drizzle-orm";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { type DbQueryFailed, type DbRowInvalid, type Operation, StaleRevision } from "../errors.ts";
@@ -53,6 +54,9 @@ export interface Answer {
   readonly lanes: Lanes;
   readonly dropped: ReadonlyArray<DroppedItem>;
   readonly rawKey: string | null;
+  // The enrichment lease the attempt that paid for the answer holds, by its end time. Capture clears only that lease,
+  // so a late answer never frees a repo a later attempt holds.
+  readonly lease: DateTime.Utc | null;
 }
 
 // receiptId is the answer the repo points at: the one captured, or the receipt an earlier capture of the same source,
@@ -242,7 +246,7 @@ export interface KeptLegacy {
 export interface Queries {
   // Commit A: receipts, then the summary of every repo whose README and inputs still match and that is not gone, with
   // the legacy kind column set from the receipt's primary kind. An answer with no facets list keeps the claims of the
-  // receipt the repo points at. Every repo's enrichment lease is cleared, saved or not. The trigger on receipt_id marks
+  // receipt the repo points at. The lease each answer names is cleared, saved or not. The trigger on receipt_id marks
   // the repo stale. The answers must name distinct repos, and an answer for a repo with no row is left out.
   readonly capture: (
     answers: ReadonlyArray<Answer>,
@@ -399,6 +403,11 @@ const only = <A>(rows: ReadonlyArray<A>): Effect.Effect<A> => Effect.orDie(Effec
 
 const keepsEmbedding = sql`not ${unreadEnrichment(repos)}`;
 
+const withLeaseText = (answer: Answer) => ({
+  ...answer,
+  lease: answer.lease === null ? null : DateTime.formatIso(answer.lease),
+});
+
 export const make = Effect.gen(function* () {
   const { run, withTransaction } = yield* Postgres.Postgres;
 
@@ -449,10 +458,10 @@ export const make = Effect.gen(function* () {
           sql`
             with answer as (
               select a.*, not exists (select 1 from jsonb_each_text(a.lanes) l where l.value <> 'missing') as unanswered
-              from jsonb_to_recordset(${json(answers)}) as a (
+              from jsonb_to_recordset(${json(answers.map(withLeaseText))}) as a (
                 "receiptId" uuid, "repoId" bigint, source receipt_source, "inputHash" text, "readmeOid" text,
                 recipe integer, model text, "batchId" uuid, summary text, keywords jsonb, claims jsonb, lanes jsonb,
-                dropped jsonb, "rawKey" text
+                dropped jsonb, "rawKey" text, lease timestamptz
               )
               where exists (select 1 from repos r where r.id = a."repoId")
             ),
@@ -476,11 +485,11 @@ export const make = Effect.gen(function* () {
             -- A retried answer converges on the receipt committed first, text and claims included, so the repo always
             -- shows the answer its receipt holds.
             winner as (
-              select a."repoId", a."readmeOid", a."inputHash", a.recipe, i.id as receipt_id, a.summary, a.keywords,
-                i.claims
+              select a."repoId", a."readmeOid", a."inputHash", a.recipe, a.lease, i.id as receipt_id, a.summary,
+                a.keywords, i.claims
               from answer a join inserted i on i.id = a."receiptId"
               union all
-              select a."repoId", a."readmeOid", a."inputHash", a.recipe, r.id, r.summary, r.keywords, r.claims
+              select a."repoId", a."readmeOid", a."inputHash", a.recipe, a.lease, r.id, r.summary, r.keywords, r.claims
               from answer a join receipts r
                 on (r.repo_id, r.source, r.input_hash, r.recipe) = (a."repoId", a.source, a."inputHash", a.recipe)
             ),
@@ -508,7 +517,7 @@ export const make = Effect.gen(function* () {
                 summary_recipe = w.recipe,
                 summary_input_hash = w."inputHash",
                 receipt_id = w.receipt_id,
-                enrich_retry_at = null,
+                enrich_retry_at = case when repos.enrich_retry_at = w.lease then null else repos.enrich_retry_at end,
                 embedding = case when ${keepsEmbedding} then repos.embedding end,
                 embedding_model = case when ${keepsEmbedding} then repos.embedding_model end,
                 embedding_stale = ${keepsEmbedding}
@@ -522,7 +531,8 @@ export const make = Effect.gen(function* () {
             released as (
               update repos set enrich_retry_at = null
               from winner w
-              where repos.id = w."repoId" and not exists (select 1 from saved s where s.id = w."repoId")
+              where repos.id = w."repoId" and repos.enrich_retry_at = w.lease
+                and not exists (select 1 from saved s where s.id = w."repoId")
             )
             select w."repoId"::float8 as "repoId", w.receipt_id as "receiptId",
               exists (select 1 from saved s where s.id = w."repoId") as saved, w.summary, w.keywords

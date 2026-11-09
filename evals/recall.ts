@@ -125,6 +125,7 @@ const loadAccount = Effect.fn("Recall.loadAccount")(function* (repos: ReadonlyAr
               keywords: repo.keywords,
               facets: decodeFacets(repo.kind === null ? [] : [{ role: "is", term: repo.kind }], promptInput(repo)),
             },
+            lease: null,
           },
         ]);
         const embedding = yield* decodeEmbedding({ model: embeddingModelId, vector: repo.vector }).pipe(Effect.orDie);

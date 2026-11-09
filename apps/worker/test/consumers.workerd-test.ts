@@ -844,6 +844,7 @@ describe("settlement table", () => {
     BlobStoreFailed: [[new BlobStore.BlobStoreFailed({ operation: "get", key: "readmes/x", cause: null }), "Retry"]],
     AiModelNotFound: [[new AiModelNotFound({ model: "m" }), "DeadLetter"]],
     AiOutputInvalid: [[new AiOutputInvalid({ operation: "generate", model: "m", detail: "d" }), "Retry"]],
+    AnswerNotSaved: [[new EnrichRepo.AnswerNotSaved({ reason: "query", sqlState: "22P02" }), "Retry"]],
     AiTimeout: [[new AiTimeout({ operation: "embed", model: "m", timeoutMillis: 30_000 }), "Retry"]],
     AiUnavailable: [[new AiUnavailable({ operation: "generate", model: "m", detail: "503" }), "Retry"]],
     AiRequestFailed: [[new AiRequestFailed({ operation: "generate", model: "m", detail: "400" }), "DeadLetter"]],

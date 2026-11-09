@@ -9,6 +9,7 @@ import type { LabelKey } from "@stargrep/knowledge/label-key";
 import { type LabelEntry, lookupKeys, project } from "@stargrep/knowledge/projection";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Data from "effect/Data";
+import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 // Repos one projection transaction locks and writes.
@@ -116,7 +117,8 @@ export const reproject = Effect.fn("RepoKnowledge.reproject")(function* (
   return { projected, minted, conflicts };
 });
 
-// A summary answer for one repo, with the README and the prompt inputs it describes.
+// A summary answer for one repo, with the README and the prompt inputs it describes, and the enrichment lease its
+// attempt holds, if any. Capture clears only that lease.
 export interface Paid {
   readonly repoId: RepoId;
   readonly readmeOid: ObjectId | null;
@@ -124,6 +126,7 @@ export interface Paid {
   readonly source: Db.ReceiptSource;
   readonly model: string;
   readonly answer: RepoSummary;
+  readonly lease: DateTime.Utc | null;
 }
 
 // Saved: the repo shows the receipt's summary, which a retried answer shares with the answer committed first. Stale:
@@ -170,6 +173,7 @@ export const capture = Effect.fn("RepoKnowledge.capture")(function* (answers: Re
           lanes: paid.answer.facets.lanes,
           dropped: paid.answer.facets.dropped,
           rawKey: null,
+          lease: paid.lease,
         }),
       ),
     ),

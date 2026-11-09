@@ -24,6 +24,7 @@ import {
   repoMetrics,
   repos,
   retryableEnrichment,
+  summaryDue,
 } from "../schema.ts";
 
 const RepoRow = createSelectSchema(repos, {
@@ -220,13 +221,23 @@ export interface SweepQuery {
   readonly limit: number;
 }
 
-// An enrichment attempt's hold on repos before its paid call. enrich_retry_at is the time before which no paid attempt
-// may start, so a lease is a retry time in the future, and until also names the lease, so the attempt can give back
-// only its own.
+// An enrichment attempt's hold on repos before its paid summary call. enrich_retry_at is the time before which no paid
+// attempt may start, so a lease is a retry time in the future, and until also names the lease, so the attempt can
+// settle only its own.
 export interface Lease {
   readonly ids: ReadonlyArray<RepoId>;
   readonly now: DateTime.Utc;
   readonly until: DateTime.Utc;
+}
+
+// How an attempt ends a lease whose paid call failed. A counted failure adds one to enrich_failures and turns the lease
+// into that failure's backoff in the same statement, and any other failure gives the lease back.
+export interface LeaseFailures {
+  readonly until: DateTime.Utc;
+  readonly failures: ReadonlyArray<{ readonly id: RepoId; readonly counted: boolean }>;
+  readonly at: DateTime.Utc;
+  /** The wait after each failure, in order. A failure past the last delay leaves no retry time. */
+  readonly retryDelays: ReadonlyArray<Duration.Duration>;
 }
 
 export interface SavedFacts {
@@ -259,10 +270,12 @@ export interface Queries {
     ids: ReadonlyArray<RepoId>,
   ) => Effect.Effect<ReadonlyArray<StoredRepo>, DbQueryFailed | DbRowInvalid>;
   readonly recordEnrichFailures: (failures: EnrichFailures) => Effect.Effect<void, DbQueryFailed>;
-  // Leases the pending repos no other attempt holds and returns them. A repo it leaves out is due to another attempt.
+  // Leases the repos whose summary is due and that no other attempt holds, and returns them. A repo due only for its
+  // embedding is never leased, so no attempt pays for a summary another attempt has already saved.
   readonly lease: (lease: Lease) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
-  // Gives back this lease on repos it still holds, so the next attempt can start.
-  readonly release: (lease: Lease) => Effect.Effect<void, DbQueryFailed>;
+  // Settles failed paid calls on the repos this lease still holds, in one statement, so no other attempt can lease a
+  // repo between its failure and its count.
+  readonly settleFailures: (settled: LeaseFailures) => Effect.Effect<void, DbQueryFailed>;
   readonly sweepable: (query: SweepQuery) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
 }
 
@@ -488,7 +501,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
               .update(repos)
               .set({ enrichRetryAt: sql`${timeParam(until)}` })
               .where(
-                sql`${repos.id} in (select id from repos where id = any(${sql.param([...ids])}::bigint[]) order by id for no key update) and ${needsEnrichment} and (${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(now)})`,
+                sql`${repos.id} in (select id from repos where id = any(${sql.param([...ids])}::bigint[]) order by id for no key update) and ${summaryDue(repos)} and (${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(now)})`,
               )
               .returning({ id: repos.id }),
           ).pipe(
@@ -498,17 +511,26 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
               return ids.filter((id) => leased.has(id));
             }),
           ),
-    release: ({ ids, until }) =>
-      Arr.isReadonlyArrayEmpty(ids)
+    settleFailures: ({ until, failures, at, retryDelays }) => {
+      const sorted = [...failures].sort((a, b) => a.id - b.id);
+      const counts = sql`settled.counted and ${needsEnrichment}`;
+      return sorted.length === 0
         ? Effect.void
-        : run("repos.release", (db) =>
+        : run("repos.settleFailures", (db) =>
             db
               .update(repos)
-              .set({ enrichRetryAt: null })
+              .set({
+                enrichFailures: sql`${repos.enrichFailures} + case when ${counts} then 1 else 0 end`,
+                enrichRetryAt: sql`case when ${counts} then ${timeParam(at)} + (${sql.param(retryDelays.map(Duration.toMillis))}::float8[])[${repos.enrichFailures} + 1] * interval '1 millisecond' end`,
+              })
+              .from(
+                sql`unnest(${sql.param(sorted.map((failure) => failure.id))}::bigint[], ${sql.param(sorted.map((failure) => failure.counted))}::boolean[]) as settled (id, counted)`,
+              )
               .where(
-                sql`${repos.id} in (select id from repos where id = any(${sql.param([...ids])}::bigint[]) order by id for no key update) and ${repos.enrichRetryAt} = ${timeParam(until)}`,
+                sql`${repos.id} = settled.id and ${repos.id} in (select id from repos where id = any(${sql.param(sorted.map((failure) => failure.id))}::bigint[]) order by id for no key update) and ${repos.enrichRetryAt} = ${timeParam(until)}`,
               ),
-          ),
+          );
+    },
     sweepable: ({ now, limit }) =>
       run("repos.sweepable", (db) =>
         db

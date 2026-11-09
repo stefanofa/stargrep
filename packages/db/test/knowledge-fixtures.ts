@@ -105,6 +105,7 @@ export const answer = (id: RepoId, receipt: ReceiptId, overrides: Partial<Db.Ans
   lanes: allComplete,
   dropped: [],
   rawKey: null,
+  lease: null,
   ...overrides,
 });
 

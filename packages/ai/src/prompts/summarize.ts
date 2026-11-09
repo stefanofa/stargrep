@@ -4,6 +4,7 @@ import type { JSONSchema7 } from "ai";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Stream from "effect/Stream";
 import type { AiSchema } from "../schema-bridge.ts";
 import * as TextGeneration from "../text-generation.ts";
@@ -27,11 +28,19 @@ export type RepoFacts = typeof RepoFacts.Type;
 
 export const readmeLimit = 24_000;
 
+// Model text can hold lone surrogates and U+0000, which Postgres refuses in jsonb, so a summary or keyword holding one
+// would fail the commit that saves it. Surrogates become U+FFFD and U+0000 goes, as for facts.
+const storable = (text: string) => text.toWellFormed().replaceAll("\u0000", "");
+const ModelText = <S extends Schema.Codec<string>>(to: S) =>
+  Schema.String.pipe(
+    Schema.decodeTo(to, SchemaTransformation.transform({ decode: storable, encode: (text: string) => text })),
+  );
+
 // What the model returns. A failure here is an invalid answer, which counts toward the repo's failure cap, so the
 // facts are left undecoded and a bad fact never fails the answer.
 const Envelope = Schema.Struct({
-  summary: Schema.String.check(Schema.isMinLength(1)),
-  keywords: Schema.Array(Schema.String),
+  summary: ModelText(Schema.String.check(Schema.isMinLength(1))),
+  keywords: Schema.Array(ModelText(Schema.String)),
   facets: Schema.optionalKey(Schema.Unknown),
 });
 type Envelope = typeof Envelope.Type;

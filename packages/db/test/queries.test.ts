@@ -393,37 +393,54 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     }),
   );
 
-  test.effect("leases only pending repos no attempt holds, and gives back only its own lease", () =>
+  test.effect("leases only repos whose summary is due and no attempt holds, and settles only its own lease", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
       const database = yield* TestDatabase.TestDatabase;
-      const [free, held, done] = [repoId(2547), repoId(2548), repoId(2549)];
-      yield* db.repos.upsertRefs([free, held, done].map((id) => ref(id)));
+      const [free, held, done, embedOnly] = [repoId(2547), repoId(2548), repoId(2549), repoId(2550)];
+      yield* db.repos.upsertRefs([free, held, done, embedOnly].map((id) => ref(id)));
       yield* embedSummarized(db, done, embedding({ 0: 1 }));
+      yield* summarize({ id: embedOnly, readmeOid: null, summary: "summarized", keywords: [] });
+      expect(yield* db.repos.pendingEnrichment([embedOnly])).toEqual([embedOnly]);
       const now = at("2026-05-01T00:00:00Z");
       const first = { now, until: at("2026-05-01T00:15:00Z") };
       expect(yield* db.repos.lease({ ids: [held], ...first })).toEqual([held]);
 
       const second = { now, until: at("2026-05-01T00:15:00.001Z") };
-      expect(yield* db.repos.lease({ ids: [done, held, free], ...second })).toEqual([free]);
+      expect(yield* db.repos.lease({ ids: [done, embedOnly, held, free], ...second })).toEqual([free]);
       expect(yield* db.repos.lease({ ids: [free, held], ...second })).toEqual([]);
       expect(yield* db.repos.sweepable({ now, limit: 1000 })).not.toEqual(expect.arrayContaining([free]));
       expect(yield* db.repos.sweepable({ now, limit: 1000 })).not.toEqual(expect.arrayContaining([held]));
 
-      yield* db.repos.release({ ids: [free, held], ...first });
-      const retryAt = (id: RepoId) =>
+      const settled = (id: RepoId) =>
         database.query(
-          "select to_char(enrich_retry_at at time zone 'utc', 'HH24:MI:SS.MS') as at from repos where id = $1",
+          `select enrich_failures as failures, to_char(enrich_retry_at at time zone 'utc', 'HH24:MI:SS.MS') as at
+           from repos where id = $1`,
           [id],
         );
-      expect([yield* retryAt(free), yield* retryAt(held)]).toEqual([[{ at: "00:15:00.001" }], [{ at: null }]]);
-
-      // A failure counts once its attempt gives the lease back, as it would with no lease.
-      yield* db.repos.release({ ids: [free], ...second });
-      yield* db.repos.recordEnrichFailures({ ids: [free], at: now, retryDelays: [Duration.minutes(10)] });
-      expect(yield* database.query("select enrich_failures from repos where id = $1", [free])).toEqual([
-        { enrich_failures: 1 },
+      const retryDelays = [Duration.minutes(10)];
+      yield* db.repos.settleFailures({
+        until: first.until,
+        failures: [
+          { id: free, counted: true },
+          { id: held, counted: false },
+        ],
+        at: now,
+        retryDelays,
+      });
+      expect([yield* settled(free), yield* settled(held)]).toEqual([
+        [{ failures: 0, at: "00:15:00.001" }],
+        [{ failures: 0, at: null }],
       ]);
+
+      // A counted failure turns its lease into the failure's backoff in the same statement.
+      yield* db.repos.settleFailures({
+        until: second.until,
+        failures: [{ id: free, counted: true }],
+        at: now,
+        retryDelays,
+      });
+      expect(yield* settled(free)).toEqual([{ failures: 1, at: "00:10:00.000" }]);
     }),
   );
 

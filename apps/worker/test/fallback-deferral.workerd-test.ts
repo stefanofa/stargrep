@@ -78,7 +78,7 @@ it("shares the server token's rate-limit deferral across users who spent their o
         db,
         Layer.mock(BlobStore.BlobStore, {}),
         Layer.mock(Embeddings.Embeddings, { model: embeddingModel }),
-        Layer.mock(TextGeneration.TextGeneration, { provider: "test", model: "test" }),
+        Layer.mock(TextGeneration.TextGeneration, { provider: "test", model: "test", batchTimeout: Option.none() }),
         Layer.mock(IconQueue.IconQueue, {}),
       ),
     ),

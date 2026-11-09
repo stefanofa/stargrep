@@ -159,6 +159,11 @@ export const unreadEnrichment = (table: EnrichmentColumns) =>
 export const pendingEnrichment = (table: EnrichmentColumns) =>
   sql<boolean>`(${unreadEnrichment(table)} or ${table.embeddingStale} or ${table.summaryRecipe} is distinct from ${sql.raw(String(summaryRecipe))} or ${table.summaryInputHash} is distinct from ${table.inputHash}) and ${table.goneAt} is null`;
 
+// A new summary is due, not only an embedding: the repo has none, or its README, recipe, or prompt inputs moved on. A
+// gone repo never is. Only this makes a repo worth a paid summary call.
+export const summaryDue = (table: EnrichmentColumns) =>
+  sql<boolean>`(${table.summary} is null or ${table.summaryReadmeOid} is distinct from ${table.readmeOid} or ${table.summaryRecipe} is distinct from ${sql.raw(String(summaryRecipe))} or ${table.summaryInputHash} is distinct from ${table.inputHash}) and ${table.goneAt} is null`;
+
 // The cap is a literal, not a parameter, so Postgres can match a query to the partial index on this predicate.
 export const retryableEnrichment = (table: EnrichmentColumns) =>
   sql<boolean>`${pendingEnrichment(table)} and ${table.enrichFailures} < ${sql.raw(String(enrichFailureCap))}`;

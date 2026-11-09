@@ -28,7 +28,7 @@ export const Operation = Schema.Literals([
   "repos.recordEnrichFailures",
   "repos.sweepable",
   "repos.lease",
-  "repos.release",
+  "repos.settleFailures",
   "stars.upsert",
   "stars.applySnapshot",
   "stars.list",

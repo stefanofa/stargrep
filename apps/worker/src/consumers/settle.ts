@@ -63,6 +63,8 @@ export const afterFailure = (error: Failure, now: number): Settlement =>
     AiModelNotFound: deadLetter,
     // Model output varies from call to call, so a second answer can decode.
     AiOutputInvalid: retry,
+    // EnrichRepo has counted it, so a retry finds the repo's backoff and the sweep sends it again.
+    AnswerNotSaved: retry,
     AiTimeout: retry,
     AiUnavailable: retry,
     // The SDK marks this not retryable, such as a 400 for the request itself.

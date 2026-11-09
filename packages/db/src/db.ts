@@ -54,6 +54,7 @@ export type {
   EnrichFailures,
   IconCheck,
   Lease,
+  LeaseFailures,
   Repo,
   RepoCounts,
   RepoEmbedding,

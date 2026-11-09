@@ -68,6 +68,7 @@ const seed = Effect.fn("seed")(function* (repos: ReadonlyArray<Seed>) {
         lanes: decoded.lanes,
         dropped: decoded.dropped,
         rawKey: null,
+        lease: null,
       };
     }),
   );
@@ -477,6 +478,7 @@ it.layer(TestDatabase.layerMemory({ embeddingModel }), { timeout: 60_000, testTi
       source: "stand-in",
       model: "recorded-no-model-call",
       answer: { summary: `summary of ${id}`, keywords: ["dashboards"], facets: decodeFacets(facets, input) },
+      lease: null,
       ...overrides,
     });
     const row = (id: number) =>

@@ -59,6 +59,7 @@ export const summarize = Effect.fn("summarize")(function* (summary: Summary) {
       lanes: facets.lanes,
       dropped: facets.dropped,
       rawKey: null,
+      lease: null,
     },
   ]);
   return captured?.saved === true;

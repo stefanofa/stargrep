@@ -207,6 +207,35 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 3
       }),
     );
 
+    // A capture's receipt_id trigger marks repo_facets rows, and a mint's invalidation marks them too, in another
+    // order. For a group of answers the two could deadlock, so a capture waits for any open vocabulary change.
+    test.effect("a capture waits for an open mint, so the two never mark facets rows at once", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const transactions = yield* Db.Transactions;
+        const ids = [yield* seedRepo({ id: 75_501 }), yield* seedRepo({ id: 75_502 })];
+        const held = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const minting = yield* Effect.forkChild(
+          transactions.withTransaction(
+            Effect.gen(function* () {
+              yield* db.knowledge.invalidate({ keys: [key("capture lock probe")], subjects: [] });
+              yield* Deferred.succeed(held, undefined);
+              yield* Deferred.await(release);
+            }),
+          ),
+        );
+        yield* Deferred.await(held);
+        const capturing = yield* Effect.forkChild(
+          db.knowledge.capture(ids.map((id, index) => answer(id, receiptId(75_501 + index)))),
+        );
+        expect(yield* lockWait).toEqual(["advisory"]);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(minting);
+        expect((yield* Fiber.join(capturing)).map((row) => row.saved)).toEqual([true, true]);
+      }),
+    );
+
     test.effect("two projections of one repo at once queue on its row and both finish", () =>
       Effect.gen(function* () {
         const db = yield* Db.Db;

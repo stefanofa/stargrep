@@ -36,7 +36,7 @@ const defaults = {
     recordEnrichFailures: unexpected("repos.recordEnrichFailures"),
     sweepable: unexpected("repos.sweepable"),
     lease: unexpected("repos.lease"),
-    release: unexpected("repos.release"),
+    settleFailures: unexpected("repos.settleFailures"),
   },
   stars: {
     upsert: unexpected("stars.upsert"),
