@@ -2,7 +2,7 @@
 
 Stargrep keeps what it knows about a repo as a set of small typed facts. Search filters, topic pages, digests, and the API all read those facts the same way. This page explains the six ideas the model rests on and the registries in `packages/knowledge` that define its closed parts.
 
-`packages/knowledge` is a leaf package that depends only on `effect`. It holds the registries, the atom and selection codecs, `labelKey`, `evidenceText`, `extractionLines`, the facets decoder, the curation fold, and the projection. `packages/ai`, `packages/db`, and `packages/core` import it. A cron projects every repo from its GitHub facts today. The summary call does not extract facets yet, so no repo has a receipt, and nothing writes a decision.
+`packages/knowledge` is a leaf package that depends only on `effect`. It holds the registries, the atom and selection codecs, `labelKey`, `evidenceText`, `extractionLines`, the input hash, the facets decoder, the curation fold, and the projection. `packages/ai`, `packages/db`, and `packages/core` import it. A cron projects every repo from its GitHub facts today. The summary call does not extract facets yet, so no repo has a receipt, and nothing writes a decision.
 
 ## Six primitives
 
@@ -91,7 +91,7 @@ Search reads nothing from the registry yet. `packages/core/src/search/vocabulary
 - **Decisions** are the curation log, which only grows. `subjects`, `subject_labels`, `subject_canonical`, `subject_closure`, and `subject_matches` are the vocabulary and the maps the log derives. `subject_matches` stores what a filter on each subject matches. Search reads it by subject and every count reads it by origin, so the two agree by construction.
 - **`extraction_batches`** will hold the bulk run's manifest, so a resumed run resends the request it already paid for.
 
-`repos` also has `input_hash`, `summary_input_hash`, `receipt_id`, and `gone_at`, which marks a repo GitHub stopped serving publicly. A gone repo has no atoms and no `repo_facets` row.
+`repos` also has `input_hash`, `summary_input_hash`, `receipt_id`, and `gone_at`, which marks a repo GitHub stopped serving publicly. A gone repo has no atoms and no `repo_facets` row. `saveFacts` sets `input_hash` from the facts it saves. `inputHash` in `input-hash.ts` hashes the README's object ID, the full name, the description, the topics, the language, and `inputVersion` as one JSON array with SHA-256. Bump `inputVersion` when the prompt starts reading those facts differently.
 
 Triggers keep `repo_facets` current. A new repo gets a stale row. A change to a repo's receipt, language, license, topics, or `gone_at` marks it stale again. Four views read the stored atoms: `knowledge_labels` for label resolution, `knowledge_self_origins` for the rule that a repo is never its own alternative and never built with itself, `effective_atoms` for what a repo holds, and `matching_atoms` for every key whose filter matches it. `knowledge_refresh_counts()` recounts each subject's repos from `matching_atoms`, and a subject is listed once two repos hold it.
 

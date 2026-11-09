@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -142,7 +143,7 @@ export const layer = (options: Options) =>
           knowledge: yield* Knowledge.make,
         });
       }),
-    ),
+    ).pipe(Layer.provide(Digest.layerWebCrypto)),
     Layer.effect(
       Transactions,
       Effect.gen(function* () {
