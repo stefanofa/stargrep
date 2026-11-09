@@ -11,6 +11,11 @@ export const retryDelays = [Duration.minutes(10), Duration.hours(1)] as const;
 
 export const sweepBatch = 100;
 
+// How long an attempt holds a repo before its paid summary call, so a second message, the sweep, or another consumer
+// skips it. It outlasts the queue consumer's 10-minute deadline, and capture gives it back with the answer, so a repo
+// whose attempt died becomes due again once it runs out.
+export const attemptLease = Duration.minutes(15);
+
 export const inBackoff = (repo: Pick<Db.StoredRepo, "enrichRetryAt">, now: DateTime.Utc) =>
   repo.enrichRetryAt !== null && DateTime.isGreaterThan(repo.enrichRetryAt, now);
 

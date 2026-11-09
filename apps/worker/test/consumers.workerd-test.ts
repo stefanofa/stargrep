@@ -378,7 +378,7 @@ describe("enrich-repo consumer", () => {
       enrichRepos: (ids) => {
         asked.push(ids);
         return Effect.succeed([
-          EnrichRepo.Enrichment.Summarized({ id: repoId(1), summary: { summary: "s", keywords: [], kind: null } }),
+          EnrichRepo.Enrichment.Summarized({ id: repoId(1), summary: { summary: "s", keywords: [] } }),
           EnrichRepo.Enrichment.Failed({
             id: repoId(2),
             error: new AiTimeout({ operation: "generate", model: "test", timeoutMillis: 60_000 }),
@@ -462,7 +462,7 @@ describe("enrich-repo consumer in chunks", () => {
     });
 
   const summarized = (ids: ReadonlyArray<RepoId>) =>
-    ids.map((id) => EnrichRepo.Enrichment.Summarized({ id, summary: { summary: "s", keywords: [], kind: null } }));
+    ids.map((id) => EnrichRepo.Enrichment.Summarized({ id, summary: { summary: "s", keywords: [] } }));
 
   const names = (indexes: ReadonlyArray<number>) => indexes.map((index) => `m${index}`);
   const logged = (verb: string, indexes: ReadonlyArray<number>) => names(indexes).map((name) => `${verb} ${name}`);
@@ -477,7 +477,7 @@ describe("enrich-repo consumer in chunks", () => {
       asked.includes(repoId(15))
         ? Effect.sleep("2 minutes").pipe(
             Effect.andThen(
-              Effect.fail(new DbQueryFailed({ operation: "repos.saveSummary", reason: "transport", sqlState: null })),
+              Effect.fail(new DbQueryFailed({ operation: "knowledge.capture", reason: "transport", sqlState: null })),
             ),
           )
         : Effect.as(Effect.sleep("1 minute"), summarized(asked)),

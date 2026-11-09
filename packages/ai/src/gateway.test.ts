@@ -1,5 +1,6 @@
-import { describe, expect, spyOn } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { GatewayInternalServerError, GatewayModelNotFoundError } from "@ai-sdk/gateway";
+import { decodeFacets } from "@stargrep/knowledge/claims";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
 import { APICallError } from "ai";
@@ -20,6 +21,7 @@ import * as Embeddings from "./embeddings.ts";
 import * as Gateway from "./gateway.ts";
 import * as Models from "./models.ts";
 import * as Port from "./port.ts";
+import recordedAnswers from "./prompts/summarize.recorded.json";
 import * as Summarize from "./prompts/summarize.ts";
 import * as TextGeneration from "./text-generation.ts";
 
@@ -88,17 +90,24 @@ const repo: Summarize.RepoFacts = {
   readme: "# Ratatui\n\nRatatui is a crate for building rich terminal user interfaces and dashboards.",
 };
 
-const validSummary: Summarize.RepoSummary = {
+const validAnswer = {
   summary: "A Rust library for building terminal user interfaces and dashboards.",
   keywords: ["tui", "terminal dashboard"],
-  kind: "library",
+  facets: [{ role: "is", term: "library" }],
 };
+
+const decoded = (answer: typeof validAnswer): Summarize.RepoSummary => ({
+  summary: answer.summary,
+  keywords: answer.keywords,
+  facets: decodeFacets(answer.facets, Summarize.promptInput(repo)),
+});
+const validSummary = decoded(validAnswer);
 
 describe("gateway text generation", () => {
   it.effect("decodes the model's JSON into the summary schema", () =>
     Summarize.summarize(repo).pipe(
       Effect.tap((summary) => Effect.sync(() => expect(summary).toEqual(validSummary))),
-      Effect.provide(textLayer(async () => textResult(JSON.stringify(validSummary)))),
+      Effect.provide(textLayer(async () => textResult(JSON.stringify(validAnswer)))),
     ),
   );
 
@@ -106,7 +115,7 @@ describe("gateway text generation", () => {
     const seen: Array<CallOptions["reasoning"]> = [];
     const answer = async (options: CallOptions) => {
       seen.push(options.reasoning);
-      return textResult(JSON.stringify(validSummary));
+      return textResult(JSON.stringify(validAnswer));
     };
     return Effect.gen(function* () {
       yield* Summarize.summarize(repo).pipe(Effect.provide(textLayer(answer)));
@@ -140,7 +149,9 @@ describe("gateway text generation", () => {
       const error = yield* Effect.flip(Summarize.summarize(repo));
       expect(error._tag).toBe("AiOutputInvalid");
       expect(JSON.stringify(error)).not.toContain("spaceship");
-    }).pipe(Effect.provide(textLayer(async () => textResult(JSON.stringify({ ...validSummary, kind: "spaceship" }))))),
+    }).pipe(
+      Effect.provide(textLayer(async () => textResult(JSON.stringify({ ...validAnswer, keywords: "spaceship" })))),
+    ),
   );
 
   it.effect("fails with AiTimeout and aborts the request once the clock passes 60 seconds", () => {
@@ -232,7 +243,7 @@ describe("gateway text generation", () => {
       Effect.provide(
         textLayer(async () => {
           tried.push(performance.now());
-          if (tried.length > 1) return textResult(JSON.stringify(validSummary));
+          if (tried.length > 1) return textResult(JSON.stringify(validAnswer));
           throw new APICallError({
             message: "rate limited",
             url: "https://ai-gateway.vercel.sh/v1",
@@ -307,7 +318,7 @@ describe("gateway text generation", () => {
       const before = yield* Port.tokensSpent("metered/model");
       yield* Summarize.summarize(repo);
       expect((yield* Port.tokensSpent("metered/model")).output - before.output).toBe(20);
-    }).pipe(Effect.provide(textLayer(async () => textResult(JSON.stringify(validSummary)), "metered/model"))),
+    }).pipe(Effect.provide(textLayer(async () => textResult(JSON.stringify(validAnswer)), "metered/model"))),
   );
 });
 
@@ -324,10 +335,17 @@ const succeeded = (id: string, text: string): BatchItem => ({
 
 type BatchCall = "start" | "status" | "results";
 
+// The user prompt a direct call sends.
+const promptOf = (options: CallOptions) =>
+  options.prompt.flatMap((message) =>
+    message.role === "user" ? message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])) : [],
+  )[0] ?? "";
+
 const fakeBatch = (options: {
   readonly items: ReadonlyArray<BatchItem>;
   readonly fails?: boolean;
   readonly throwOnce?: ReadonlyArray<BatchCall>;
+  readonly answer?: (prompt: string) => string;
 }) => {
   const starts: Array<StartOptions> = [];
   const direct = { calls: 0 };
@@ -341,9 +359,9 @@ const fakeBatch = (options: {
   };
   const languageModel = () =>
     new MockLanguageModelV4({
-      doGenerate: async () => {
+      doGenerate: async (call) => {
         direct.calls++;
-        return textResult(JSON.stringify(validSummary));
+        return textResult(options.answer?.(promptOf(call)) ?? JSON.stringify(validAnswer));
       },
     });
   const api: BatchApi = {
@@ -400,7 +418,7 @@ describe("gateway batch", () => {
     const fake = fakeBatch({
       items: [
         succeeded("2", "Sure! Here is the summary."),
-        succeeded("0", JSON.stringify(validSummary)),
+        succeeded("0", JSON.stringify(validAnswer)),
         { type: "text", id: "1", status: "failed", error: { message: "upstream", code: "server_error" } },
       ],
     });
@@ -424,8 +442,8 @@ describe("gateway batch", () => {
     const { spans, tracer } = collectSpans();
     const fake = fakeBatch({
       items: [
-        succeeded("0", JSON.stringify(validSummary)),
-        succeeded("1", JSON.stringify(validSummary)),
+        succeeded("0", JSON.stringify(validAnswer)),
+        succeeded("1", JSON.stringify(validAnswer)),
         { type: "text", id: "2", status: "failed", error: { message: "upstream", code: "server_error" } },
       ],
     });
@@ -450,8 +468,9 @@ describe("gateway batch", () => {
   });
 
   it.effect("answers an item the batch left out with a direct call, in prompt order", () => {
-    const other = { ...validSummary, summary: "A command-line fuzzy finder." };
-    const fake = fakeBatch({ items: [succeeded("1", JSON.stringify(other))] });
+    const otherAnswer = { ...validAnswer, summary: "A command-line fuzzy finder." };
+    const other = decoded(otherAnswer);
+    const fake = fakeBatch({ items: [succeeded("1", JSON.stringify(otherAnswer))] });
     return Effect.gen(function* () {
       const results = yield* summaries([repo, repo]);
       expect(results).toEqual([Result.succeed(validSummary), Result.succeed(other)]);
@@ -460,7 +479,7 @@ describe("gateway batch", () => {
   });
 
   it.effect("sends the same idempotency key for the same batch and a new one when a prompt changes", () => {
-    const fake = fakeBatch({ items: [succeeded("0", JSON.stringify(validSummary))] });
+    const fake = fakeBatch({ items: [succeeded("0", JSON.stringify(validAnswer))] });
     const keyOf = (start: StartOptions | undefined) =>
       (start?.providerOptions?.gateway as { readonly idempotencyKey?: string } | undefined)?.idempotencyKey;
     return Effect.gen(function* () {
@@ -494,7 +513,7 @@ describe("gateway batch", () => {
 
   it.effect("retries a failed start, status check, and result read without starting a second job", () => {
     const fake = fakeBatch({
-      items: [succeeded("0", JSON.stringify(validSummary)), succeeded("1", JSON.stringify(validSummary))],
+      items: [succeeded("0", JSON.stringify(validAnswer)), succeeded("1", JSON.stringify(validAnswer))],
       throwOnce: ["start", "status", "results"],
     });
     return Effect.gen(function* () {
@@ -612,7 +631,7 @@ describe("gateway privacy", () => {
       languageModel: () =>
         new MockLanguageModelV4({
           doGenerate: async () => ({
-            ...textResult(JSON.stringify({ ...validSummary, summary: outputCanary })),
+            ...textResult(JSON.stringify({ ...validAnswer, summary: outputCanary })),
             warnings: [warning],
           }),
         }),
@@ -649,7 +668,7 @@ describe("gateway privacy", () => {
   });
 
   const keyCanary = "sk-PRIVATE-GATEWAY-KEY-CANARY";
-  const rejected = JSON.stringify({ summary: keyCanary, keywords: "not a list", kind: "cli" });
+  const rejected = JSON.stringify({ summary: keyCanary, keywords: "not a list", facets: [] });
   const gatewayUsage = { inputTokens: { total: 1 }, outputTokens: { total: 1 } };
 
   const gatewayFetch = (direct: string) => {
@@ -706,7 +725,7 @@ describe("gateway privacy", () => {
   };
 
   it.effect("keeps rejected batch output out of every span when the direct fallback recovers", () =>
-    throughGateway(JSON.stringify(validSummary), ({ authorized }) =>
+    throughGateway(JSON.stringify(validAnswer), ({ authorized }) =>
       Effect.gen(function* () {
         expect(yield* summaries([{ ...repo, readme: keyCanary }, repo])).toEqual([
           Result.succeed(validSummary),
@@ -737,6 +756,72 @@ describe("gateway privacy", () => {
   );
 });
 
+// Answers the production model wrote for pilot 1, as the plain text a provider returns. Each decodes with every lane
+// complete, and none of these tests sends a request.
+const recorded: ReadonlyArray<{ readonly facts: Summarize.RepoFacts; readonly text: string }> = recordedAnswers;
+const recordedFor = new Map(recorded.map(({ facts, text }) => [Summarize.prompt(facts), text]));
+const answerFor = (prompt: string) => recordedFor.get(prompt) ?? "no recorded answer for this prompt";
+const recordedSummaries = recorded.map(({ facts, text }) => {
+  const answer = JSON.parse(text);
+  return Result.succeed<Summarize.RepoSummary>({
+    summary: answer.summary,
+    keywords: answer.keywords,
+    facets: decodeFacets(answer.facets, Summarize.promptInput(facts)),
+  });
+});
+const fenced = (text: string) => `\`\`\`json\n${text}\n\`\`\``;
+// Cut off just before the last fact, mid list.
+const cutOff = (text: string) => text.slice(0, text.lastIndexOf('{"role"'));
+
+describe("recorded answers", () => {
+  test("decode with every lane complete and keep every fact", () => {
+    for (const summary of recordedSummaries) {
+      const facets = Result.getOrThrow(summary).facets;
+      expect(new Set(Object.values(facets.lanes))).toEqual(new Set(["complete"]));
+      expect(facets.dropped).toEqual([]);
+      expect(facets.claims.length).toBeGreaterThanOrEqual(9);
+    }
+  });
+
+  it.effect("decode through the batch, where a fenced item and a cut-off item buy one direct call each", () => {
+    const [plain, fence, cut] = recorded;
+    const fake = fakeBatch({
+      items: [
+        succeeded("0", plain?.text ?? ""),
+        succeeded("1", fenced(fence?.text ?? "")),
+        succeeded("2", cutOff(cut?.text ?? "")),
+      ],
+      answer: answerFor,
+    });
+    return Effect.gen(function* () {
+      expect(yield* summaries(recorded.map(({ facts }) => facts))).toEqual(recordedSummaries);
+      expect(fake.starts).toHaveLength(1);
+      expect(fake.direct.calls).toBe(2);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  it.effect("decode through a direct call, where a fenced or cut-off answer is invalid after one call", () => {
+    let calls = 0;
+    let shape = (text: string) => text;
+    const layer = textLayer(async (call) => {
+      calls++;
+      return textResult(shape(answerFor(promptOf(call))));
+    });
+    return Effect.gen(function* () {
+      for (const [index, { facts }] of recorded.entries()) {
+        expect<unknown>(Result.succeed(yield* Summarize.summarize(facts))).toEqual(recordedSummaries[index]);
+      }
+      expect(calls).toBe(3);
+      for (const broken of [fenced, cutOff]) {
+        shape = broken;
+        const error = yield* Effect.flip(Summarize.summarize(recorded[0]?.facts ?? repo));
+        expect(error._tag).toBe("AiOutputInvalid");
+      }
+      expect(calls).toBe(5);
+    }).pipe(Effect.provide(layer));
+  });
+});
+
 describe("gateway without the batch API", () => {
   it.effect("answers a batch of prompts with one direct call each and never starts a batch job", () => {
     const { spans, tracer } = collectSpans();
@@ -744,7 +829,7 @@ describe("gateway without the batch API", () => {
     const layer = textLayer(
       () => {
         calls++;
-        return Promise.resolve(textResult(JSON.stringify(validSummary)));
+        return Promise.resolve(textResult(JSON.stringify(validAnswer)));
       },
       Models.summaryModel,
       { batch: false },
@@ -765,7 +850,7 @@ describe("gateway without the batch API", () => {
   it.effect("fails only the prompt whose call returns no output", () => {
     let calls = 0;
     const layer = textLayer(
-      () => Promise.resolve(++calls === 2 ? noTextResult : textResult(JSON.stringify(validSummary))),
+      () => Promise.resolve(++calls === 2 ? noTextResult : textResult(JSON.stringify(validAnswer))),
       Models.summaryModel,
       { batch: false },
     );

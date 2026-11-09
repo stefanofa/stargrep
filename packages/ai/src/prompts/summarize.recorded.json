@@ -1,0 +1,44 @@
+[
+  {
+    "facts": {
+      "fullName": "colinhacks/zod",
+      "description": "TypeScript-first schema validation with static type inference",
+      "topics": ["typescript", "schema-validation", "type-inference", "runtime-validation", "static-types"],
+      "language": "TypeScript",
+      "readme": "packages/zod/README.md"
+    },
+    "text": "{\"summary\":\"Zod is a TypeScript-first schema validation library that checks runtime data against a schema and infers static TypeScript types from that same schema. Developers use it to validate API inputs, form data, config files, and other untrusted data while keeping their types in sync.\",\"keywords\":[\"data validation\",\"runtime type checking\",\"type checker\",\"parsing\",\"joi alternative\",\"yup alternative\",\"io-ts\",\"typebox\",\"valibot\",\"form validation\"],\"facets\":[{\"role\":\"is\",\"term\":\"library\"},{\"role\":\"written_in\",\"term\":\"TypeScript\"},{\"role\":\"runs_on\",\"term\":\"Node.js\",\"means\":\"JavaScript runtime\"},{\"role\":\"runs_on\",\"term\":\"browser\",\"means\":\"JavaScript runtime in the browser\"},{\"role\":\"about\",\"term\":\"schema validation\"},{\"role\":\"about\",\"term\":\"type inference\",\"means\":\"deriving static TypeScript types from schemas\"},{\"role\":\"about\",\"term\":\"runtime validation\"},{\"role\":\"for\",\"term\":\"TypeScript\"},{\"role\":\"alternative_to\",\"term\":\"Yup\",\"quote\":\"schema validation\"},{\"role\":\"alternative_to\",\"term\":\"Joi\",\"quote\":\"schema validation\"}]}"
+  },
+  {
+    "facts": {
+      "fullName": "dmno-dev/dmno",
+      "description": "The missing middleware for your configuration and secrets.",
+      "topics": [
+        "config",
+        "configuration-management",
+        "env",
+        "environment-variables",
+        "leak-detection",
+        "nodejs",
+        "secret-sharing",
+        "secrets",
+        "secrets-detection",
+        "secrets-management",
+        "typescript"
+      ],
+      "language": "TypeScript",
+      "readme": "# DMNO [![npm](https://img.shields.io/npm/v/dmno?label=dmno)](https://www.npmjs.com/package/dmno)\n\n> **Maintenance mode:** DMNO receives critical bug and security fixes only. For a suitable replacement, see [Varlock](https://varlock.dev).\n\n>Full-stack configuration & secrets.\n>Batteries included.\n\n![DMNO](packages/docs-site/src/assets/blog/screenshot-with-comments.png)\n\nDMNO is a full-stack configuration tool that provides validation, leak detection/prevention, and type-safety for your environment variables and secrets. There are some features that will benefit you if you're in a monorepo, but DMNO is designed to work in any project.\n\nTo get started with DMNO, run: \n  \n```bash\nnpx dmno init\n```\n\nCheck out the [docs](https://dmno.dev/docs) for more information on [plugins](https://dmno.dev/docs/plugins/overview/), [integrations](https://dmno.dev/docs/integrations/overview/), and [platforms](https://dmno.dev/docs/platforms/overview/) we support.\n\n> If you notice anything weird or there's a feature you would like to see, let us know here on [GitHub](https://github.com/dmno-dev/dmno/issues/new/choose) or on [Discord](https://chat.dmno.dev).\n\n\n## Contributing\n\nIf you're interested in contributing, see [CONTRIBUTING.md](CONTRIBUTING.md) for more information.\n\n"
+    },
+    "text": "{\"summary\":\"DMNO is a TypeScript command-line tool for validating environment variables and secrets, with type safety and leak detection or prevention. Node.js developers, including those in monorepos, use it to manage configuration, and it is started with `npx dmno init`. The README says the project is in maintenance mode and points to Varlock as its replacement.\",\"keywords\":[\"env validation\",\"dotenv alternative\",\"secret scanning\",\"env schema\",\"config validation\",\"type-safe env\",\"secrets leak prevention\",\"monorepo config\",\"env type generation\",\"varlock\",\"secret sharing\",\"config management\"],\"facets\":[{\"role\":\"is\",\"term\":\"cli\",\"means\":\"command-line tool run with npx\"},{\"role\":\"is\",\"term\":\"library\"},{\"role\":\"written_in\",\"term\":\"TypeScript\"},{\"role\":\"runs_on\",\"term\":\"Node.js\",\"means\":\"JavaScript runtime\"},{\"role\":\"about\",\"term\":\"environment variables\"},{\"role\":\"about\",\"term\":\"secrets management\"},{\"role\":\"about\",\"term\":\"secrets detection\",\"means\":\"finding leaked secrets in code\"},{\"role\":\"about\",\"term\":\"configuration management\"},{\"role\":\"trait\",\"term\":\"monorepo support\",\"means\":\"features for monorepos\",\"quote\":\"There are some features that will benefit you if you're in a monorepo\"},{\"role\":\"status\",\"term\":\"maintenance mode\",\"quote\":\"**Maintenance mode:** DMNO receives critical bug and security fixes only.\"},{\"role\":\"replaced_by\",\"term\":\"Varlock\",\"means\":\"env and secrets tool at varlock.dev\",\"quote\":\"For a suitable replacement, see [Varlock](https://varlock.dev).\"}]}"
+  },
+  {
+    "facts": {
+      "fullName": "dylanaraps/neofetch",
+      "description": "🖼️  A command-line system information tool written in bash 3.2+",
+      "topics": ["commandline", "command-line", "bash", "script", "neofetch", "distro", "screenshot"],
+      "language": "Shell",
+      "readme": "<h3 align=\"center\"><img src=\"https://i.imgur.com/ZQI2EYz.png\" alt=\"logo\" height=\"100px\"></h3>\n<p align=\"center\">A command-line system information tool written in bash 3.2+</p>\n\n<p align=\"center\">\n<a href=\"./LICENSE.md\"><img src=\"https://img.shields.io/badge/license-MIT-blue.svg\"></a>\n<a href=\"https://github.com/dylanaraps/neofetch/releases\"><img src=\"https://img.shields.io/github/release/dylanaraps/neofetch.svg\"></a>\n<a href=\"https://repology.org/metapackage/neofetch\"><img src=\"https://repology.org/badge/tiny-repos/neofetch.svg\" alt=\"Packaging status\"></a>\n</p>\n\n<img src=\"https://i.imgur.com/GFmC5Ad.png\" alt=\"neofetch\" align=\"right\" height=\"240px\">\n\nNeofetch is a command-line system information tool written in `bash 3.2+`. Neofetch displays information about your operating system, software and hardware in an aesthetic and visually pleasing way.\n\nThe overall purpose of Neofetch is to be used in screen-shots of your system. Neofetch shows the information other people want to see. There are other tools available for proper system statistic/diagnostics.\n\nThe information by default is displayed alongside your operating system's logo. You can further configure Neofetch to instead use an image, a custom ASCII file, your wallpaper or nothing at all.\n\n<img src=\"https://i.imgur.com/lUrkQBN.png\" alt=\"neofetch\" align=\"right\" height=\"240px\">\n\nYou can further configure Neofetch to display exactly what you want it to. Through the use of command-line flags and the configuration file you can change existing information outputs or add your own custom ones.\n\nNeofetch supports almost 150 different operating systems. From Linux to Windows, all the way to more obscure operating systems like Minix, AIX and Haiku. If your favourite operating system is unsupported: Open up an issue and support will be added.\n\n\n### More: \\[[Dependencies](https://github.com/dylanaraps/neofetch/wiki/Dependencies)\\] \\[[Installation](https://github.com/dylanaraps/neofetch/wiki/Installation)\\] \\[[Wiki](https://github.com/dylanaraps/neofetch/wiki)\\]\n"
+    },
+    "text": "{\"summary\":\"Neofetch is a command-line system information tool written in bash 3.2+ that prints details about the operating system, software, and hardware alongside a logo, designed for showing in screenshots. It supports almost 150 operating systems, from Linux and Windows to Minix, AIX, and Haiku, and can be configured with flags and a config file.\",\"keywords\":[\"system information\",\"sysinfo\",\"system info tool\",\"terminal screenshot\",\"ascii logo\",\"distro info\",\"os info\",\"shell script\",\"system summary\",\"fetch tool\",\"screenfetch\",\"archey\"],\"facets\":[{\"role\":\"is\",\"term\":\"cli\"},{\"role\":\"is\",\"term\":\"app\"},{\"role\":\"written_in\",\"term\":\"Bash\"},{\"role\":\"runs_on\",\"term\":\"terminal\"},{\"role\":\"about\",\"term\":\"system information\",\"means\":\"displaying OS, software and hardware details\"},{\"role\":\"about\",\"term\":\"screenshots\",\"means\":\"terminal screenshots of system info\"},{\"role\":\"for\",\"term\":\"Linux\"},{\"role\":\"for\",\"term\":\"Windows\"},{\"role\":\"alternative_to\",\"term\":\"screenfetch\",\"quote\":\"Neofetch displays information about your operating system, software and hardware in an aesthetic and visually pleasing way.\"}]}"
+  }
+]

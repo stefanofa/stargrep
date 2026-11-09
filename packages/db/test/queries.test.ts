@@ -39,6 +39,7 @@ import {
   starred,
   stars,
 } from "./fixtures.ts";
+import { summarize } from "./summaries.ts";
 
 const syncCooldown = Duration.minutes(10);
 const summaryOf = (id: RepoId) => `summary of ${id}`;
@@ -62,7 +63,9 @@ const embeddingInput = (
 const embedSummarized = (db: Db.Db["Service"], id: RepoId, vector: Embedding) =>
   Effect.gen(function* () {
     const row = yield* db.repos.require(id);
-    yield* db.repos.saveSummary({ id, readmeOid: null, summary: summaryOf(id), keywords: [], kind: "app" });
+    yield* summarize({ id, readmeOid: null, summary: summaryOf(id), keywords: [], kind: "app" }).pipe(
+      Effect.provideService(Db.Db, db),
+    );
     return yield* db.repos.saveEmbedding(
       embeddingInput(id, summaryOf(id), {
         owner: row.owner,
@@ -307,7 +310,8 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         yield* db.stars.upsert({ accountId: reader, stars: [starred(id, "2025-02-01T00:00:00Z")] });
         yield* embedSummarized(db, id, embedding({ 0: 1 }));
 
-        yield* db.repos.saveSummary(better);
+        yield* db.repos.saveFacts({ ...facts(id), description: "a new description" });
+        yield* summarize(better);
         expect(yield* db.repos.getMany([id])).toEqual([
           expect.objectContaining({
             summary: "a better summary",
@@ -319,13 +323,17 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         expect(yield* db.repos.pendingEnrichment([id])).toEqual([id]);
 
         yield* db.repos.saveEmbedding(
-          embeddingInput(id, better.summary, { embedding: embedding({ 1: 1 }), keywords: better.keywords }),
+          embeddingInput(id, better.summary, {
+            embedding: embedding({ 1: 1 }),
+            keywords: better.keywords,
+            description: "a new description",
+          }),
         );
         expect(yield* db.repos.getMany([id])).toEqual([expect.objectContaining({ pending: false })]);
 
         const changed = readme("c");
         yield* database.query("update repos set readme_oid = $1 where id = $2", [changed, id]);
-        yield* db.repos.saveSummary({ ...better, readmeOid: changed });
+        yield* summarize({ ...better, readmeOid: changed });
         expect(yield* db.repos.getMany([id])).toEqual([
           expect.objectContaining({ embeddingModel: null, pending: true }),
         ]);
@@ -347,6 +355,74 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       );
       expect(indexes).toEqual([
         { predicate: expect.stringContaining(`summary_recipe IS DISTINCT FROM ${summaryRecipe}`) },
+      ]);
+      expect(indexes[0]).toEqual({
+        predicate: expect.stringContaining("summary_input_hash IS DISTINCT FROM input_hash"),
+      });
+      expect(indexes[0]).toEqual({ predicate: expect.stringContaining("gone_at IS NULL") });
+    }),
+  );
+
+  test.effect("makes a summary due again when its description, topics, or language change, and never a gone repo", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const [topics, gone] = [repoId(2545), repoId(2546)];
+      yield* db.repos.upsertRefs([ref(topics), ref(gone)]);
+      for (const id of [topics, gone]) {
+        yield* db.repos.saveFacts({ ...facts(id), topics: ["cli"] });
+        yield* embedSummarized(db, id, embedding({ 0: 1 }));
+      }
+      const sweep = db.repos.sweepable({ now: at("2026-05-01T00:00:00Z"), limit: 1000 });
+      expect(yield* db.repos.pendingEnrichment([topics, gone])).toEqual([]);
+
+      expect(yield* db.repos.saveFacts({ ...facts(topics), topics: ["cli", "tui"] })).toEqual({
+        pending: true,
+        inputHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      });
+      expect(yield* db.repos.pendingEnrichment([topics])).toEqual([topics]);
+      expect(yield* sweep).toContain(topics);
+      expect((yield* db.repos.getMany([topics]))[0]).toMatchObject({ pending: true, summaryRecipe });
+
+      yield* database.query("update repos set gone_at = now(), embedding_stale = true where id = $1", [gone]);
+      expect(yield* db.repos.pendingEnrichment([gone])).toEqual([]);
+      expect(yield* sweep).not.toContain(gone);
+      expect(
+        yield* db.repos.lease({ ids: [gone], now: at("2026-05-01T00:00:00Z"), until: at("2026-05-01T00:15:00Z") }),
+      ).toEqual([]);
+    }),
+  );
+
+  test.effect("leases only pending repos no attempt holds, and gives back only its own lease", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const [free, held, done] = [repoId(2547), repoId(2548), repoId(2549)];
+      yield* db.repos.upsertRefs([free, held, done].map((id) => ref(id)));
+      yield* embedSummarized(db, done, embedding({ 0: 1 }));
+      const now = at("2026-05-01T00:00:00Z");
+      const first = { now, until: at("2026-05-01T00:15:00Z") };
+      expect(yield* db.repos.lease({ ids: [held], ...first })).toEqual([held]);
+
+      const second = { now, until: at("2026-05-01T00:15:00.001Z") };
+      expect(yield* db.repos.lease({ ids: [done, held, free], ...second })).toEqual([free]);
+      expect(yield* db.repos.lease({ ids: [free, held], ...second })).toEqual([]);
+      expect(yield* db.repos.sweepable({ now, limit: 1000 })).not.toEqual(expect.arrayContaining([free]));
+      expect(yield* db.repos.sweepable({ now, limit: 1000 })).not.toEqual(expect.arrayContaining([held]));
+
+      yield* db.repos.release({ ids: [free, held], ...first });
+      const retryAt = (id: RepoId) =>
+        database.query(
+          "select to_char(enrich_retry_at at time zone 'utc', 'HH24:MI:SS.MS') as at from repos where id = $1",
+          [id],
+        );
+      expect([yield* retryAt(free), yield* retryAt(held)]).toEqual([[{ at: "00:15:00.001" }], [{ at: null }]]);
+
+      // A failure counts once its attempt gives the lease back, as it would with no lease.
+      yield* db.repos.release({ ids: [free], ...second });
+      yield* db.repos.recordEnrichFailures({ ids: [free], at: now, retryDelays: [Duration.minutes(10)] });
+      expect(yield* database.query("select enrich_failures from repos where id = $1", [free])).toEqual([
+        { enrich_failures: 1 },
       ]);
     }),
   );
@@ -704,7 +780,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       const db = yield* Db.Db;
       const [fresh, enriched, alsoFresh, missing] = [repoId(2051), repoId(2052), repoId(2053), repoId(2059)];
       yield* db.repos.upsertRefs([ref(fresh), ref(enriched), ref(alsoFresh)]);
-      yield* db.repos.saveSummary({ id: enriched, readmeOid: null, summary: "done", keywords: [], kind: "app" });
+      yield* summarize({ id: enriched, readmeOid: null, summary: "done", keywords: [], kind: "app" });
       yield* db.repos.saveEmbedding(embeddingInput(enriched, "done"));
 
       expect(yield* db.repos.pendingEnrichment([alsoFresh, missing, enriched, fresh])).toEqual([alsoFresh, fresh]);
@@ -718,7 +794,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       const db = yield* Db.Db;
       const id = repoId(2061);
       yield* db.repos.upsertRefs([ref(id)]);
-      yield* db.repos.saveSummary({ id, readmeOid: null, summary: "summarized", keywords: [], kind: "app" });
+      yield* summarize({ id, readmeOid: null, summary: "summarized", keywords: [], kind: "app" });
       expect(yield* db.repos.pendingEnrichment([id])).toEqual([id]);
 
       yield* db.repos.saveEmbedding(embeddingInput(id, "summarized"));
@@ -896,11 +972,8 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     Effect.gen(function* () {
       const db = yield* Db.Db;
       const id = repoId(2401);
-      const summary = yield* db.repos
-        .saveSummary({ id, readmeOid: null, summary: "", keywords: [], kind: "app" })
-        .pipe(Effect.flip);
       const vector = yield* db.repos.saveEmbedding(embeddingInput(id, summaryOf(id))).pipe(Effect.flip);
-      expect([summary._tag, vector._tag]).toEqual(["RepoNotFound", "RepoNotFound"]);
+      expect(vector._tag).toBe("RepoNotFound");
     }),
   );
 
@@ -970,7 +1043,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         [vectorOnly, "recipe manager", { 0: 1, 1: 0.1 }],
         [neither, "photo editor", { 2: 1 }],
       ] as const) {
-        yield* db.repos.saveSummary({ id: repo, readmeOid: null, summary, keywords: [], kind: "app" });
+        yield* summarize({ id: repo, readmeOid: null, summary, keywords: [], kind: "app" });
         yield* db.repos.saveEmbedding(embeddingInput(repo, summary, { embedding: embedding(weights) }));
       }
       yield* db.stars.upsert({
@@ -1095,9 +1168,13 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       const db = yield* Db.Db;
       const id = repoId(9001);
       yield* db.repos.saveFacts({ ...facts(id), readmeOid: readme("b") });
-      yield* db.repos.saveSummary({ id, readmeOid: readme("b"), summary: "NEW", keywords: ["new"], kind: "app" });
+      expect(yield* summarize({ id, readmeOid: readme("b"), summary: "NEW", keywords: ["new"], kind: "app" })).toBe(
+        true,
+      );
       yield* db.repos.saveEmbedding(embeddingInput(id, "NEW", { keywords: ["new"], readmeOid: readme("b") }));
-      yield* db.repos.saveSummary({ id, readmeOid: readme("a"), summary: "STALE", keywords: ["old"], kind: "cli" });
+      expect(yield* summarize({ id, readmeOid: readme("a"), summary: "STALE", keywords: ["old"], kind: "cli" })).toBe(
+        false,
+      );
 
       expect(Option.getOrThrow(yield* db.repos.get(id))).toMatchObject({
         summary: "NEW",
@@ -1110,20 +1187,9 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       expect(yield* db.repos.pendingEnrichment([id])).toEqual([]);
 
       yield* db.repos.saveFacts({ ...facts(id), readmeOid: readme("d") });
-      yield* db.repos.saveSummary({ id, readmeOid: readme("b"), summary: "LATE", keywords: [], kind: "app" });
+      yield* summarize({ id, readmeOid: readme("b"), summary: "LATE", keywords: [], kind: "app" });
       expect(Option.getOrThrow(yield* db.repos.get(id)).summary).toBe("NEW");
       expect(yield* db.repos.pendingEnrichment([id])).toEqual([id]);
-    }),
-  );
-
-  test.effect("reports whether saveSummary passed its README guard", () =>
-    Effect.gen(function* () {
-      const db = yield* Db.Db;
-      const id = repoId(9011);
-      yield* db.repos.saveFacts({ ...facts(id), readmeOid: readme("b") });
-      const summary = { id, summary: "NEW", keywords: [], kind: "app" };
-      expect(yield* db.repos.saveSummary({ ...summary, readmeOid: readme("a") })).toBe(false);
-      expect(yield* db.repos.saveSummary({ ...summary, readmeOid: readme("b") })).toBe(true);
     }),
   );
 
@@ -1134,13 +1200,13 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       const summary = { id, readmeOid: null, summary: "same sentence", keywords: ["old"], kind: "app" };
       const vector = embeddingInput(id, summary.summary);
       yield* db.repos.saveFacts({ ...facts(id), description: "old description" });
-      yield* db.repos.saveSummary(summary);
-      yield* db.repos.saveSummary({ ...summary, keywords: ["new", "keywords"] });
-      expect(yield* db.repos.saveEmbedding({ ...vector, keywords: ["old"], description: "old description" })).toBe(
+      yield* summarize(summary);
+      yield* db.repos.saveFacts({ ...facts(id), description: "new description" });
+      yield* summarize({ ...summary, keywords: ["new", "keywords"] });
+      expect(yield* db.repos.saveEmbedding({ ...vector, keywords: ["old"], description: "new description" })).toBe(
         false,
       );
       expect(Option.getOrThrow(yield* db.repos.get(id)).embeddingModel).toBeNull();
-      yield* db.repos.saveFacts({ ...facts(id), description: "new description" });
       expect(
         yield* db.repos.saveEmbedding({ ...vector, keywords: ["new", "keywords"], description: "old description" }),
       ).toBe(false);
@@ -1162,7 +1228,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         const summary = { id, summary: "same sentence", keywords: [], kind: "app", readmeOid: null };
         const vector = { ...ref(id), ...summary, description: null, embedding: embedding({ 0: 1 }) };
         yield* db.repos.saveFacts(facts(id));
-        yield* db.repos.saveSummary(summary);
+        yield* summarize(summary);
         yield* db.repos.upsertRefs([renamed]);
         expect(yield* db.repos.saveEmbedding(vector)).toBe(false);
         expect(Option.getOrThrow(yield* db.repos.get(id)).embeddingModel).toBeNull();
@@ -1176,7 +1242,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       const db = yield* Db.Db;
       const id = repoId(9021);
       yield* db.repos.saveFacts({ ...facts(id), readmeOid: readme("b") });
-      yield* db.repos.saveSummary({ id, readmeOid: readme("b"), summary: "NEW", keywords: [], kind: "app" });
+      yield* summarize({ id, readmeOid: readme("b"), summary: "NEW", keywords: [], kind: "app" });
       expect(yield* db.repos.saveEmbedding(embeddingInput(id, "OLD", { readmeOid: readme("b") }))).toBe(false);
       expect(yield* db.repos.saveEmbedding(embeddingInput(id, "NEW", { readmeOid: readme("a") }))).toBe(false);
 
@@ -1202,7 +1268,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       ];
       yield* db.repos.upsertRefs([ref(fresh), ref(done), ref(unembedded), ref(outdated)]);
       yield* embedSummarized(db, done, embedding({ 0: 1 }));
-      yield* db.repos.saveSummary({ id: unembedded, readmeOid: null, summary: "s", keywords: [], kind: "app" });
+      yield* summarize({ id: unembedded, readmeOid: null, summary: "s", keywords: [], kind: "app" });
       yield* embedSummarized(db, outdated, embedding({ 0: 1 }));
       yield* db.repos.saveFacts({ ...facts(outdated), readmeOid: readme("e") });
 

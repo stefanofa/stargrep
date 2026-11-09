@@ -5,12 +5,14 @@ import * as Gateway from "@stargrep/ai/gateway";
 import * as Models from "@stargrep/ai/models";
 import { tokensSpent } from "@stargrep/ai/port";
 import * as TextGeneration from "@stargrep/ai/text-generation";
+import { RepoKnowledge } from "@stargrep/core/knowledge";
 import { ModelAllowance, QueryPlanner, Search, SearchCache } from "@stargrep/core/search";
 import * as Db from "@stargrep/db";
 import { anyDistance, Embedding, EmbeddingModelId } from "@stargrep/db/embedding";
 import { createMigratedDatabase } from "@stargrep/db/local-database";
 import * as Memory from "@stargrep/db/memory";
 import { GitHubAccountId, Login, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
+import { decodeFacets } from "@stargrep/knowledge/claims";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -60,6 +62,14 @@ const writeLines = <A, I>(name: string, schema: Schema.Codec<A, I>, values: Read
 const decodeEmbedding = Schema.decodeUnknownEffect(Embedding);
 const embeddingModelId = Schema.decodeSync(EmbeddingModelId)(Models.embeddingModel.id);
 
+// The fixture keeps each repo's kind, not its README, so the kind is its only fact.
+const promptInput = (repo: EnrichedRepo) => ({
+  fullName: repo.fullName,
+  description: repo.description ?? "",
+  topics: repo.topics,
+  readme: "",
+});
+
 const starredAt = (index: number) =>
   DateTime.add(DateTime.makeUnsafe("2024-01-01T00:00:00Z"), { days: (index * 37) % 1030 });
 
@@ -89,7 +99,7 @@ const loadAccount = Effect.fn("Recall.loadAccount")(function* (repos: ReadonlyAr
     rows,
     ({ repo, ref }) =>
       Effect.gen(function* () {
-        yield* db.repos.saveFacts({
+        const { inputHash } = yield* db.repos.saveFacts({
           ...ref,
           description: repo.description,
           topics: repo.topics,
@@ -103,13 +113,20 @@ const loadAccount = Effect.fn("Recall.loadAccount")(function* (repos: ReadonlyAr
           ownerType: null,
           ownerAvatarUrl: null,
         });
-        yield* db.repos.saveSummary({
-          id: ref.id,
-          readmeOid: null,
-          summary: repo.summary,
-          keywords: repo.keywords,
-          kind: repo.kind,
-        });
+        yield* RepoKnowledge.accept([
+          {
+            repoId: ref.id,
+            readmeOid: null,
+            inputHash,
+            source: "model",
+            model: Models.summaryModel,
+            answer: {
+              summary: repo.summary,
+              keywords: repo.keywords,
+              facets: decodeFacets(repo.kind === null ? [] : [{ role: "is", term: repo.kind }], promptInput(repo)),
+            },
+          },
+        ]);
         const embedding = yield* decodeEmbedding({ model: embeddingModelId, vector: repo.vector }).pipe(Effect.orDie);
         yield* db.repos.saveEmbedding({
           id: ref.id,

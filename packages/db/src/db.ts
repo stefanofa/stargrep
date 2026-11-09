@@ -42,6 +42,7 @@ export type {
   Minted,
   Projected,
   Projection,
+  ReceiptSource,
   StoredAtom,
   VocabularyChange,
 } from "./queries/knowledge.ts";
@@ -52,13 +53,14 @@ export type {
   DueIcon,
   EnrichFailures,
   IconCheck,
+  Lease,
   Repo,
   RepoCounts,
   RepoEmbedding,
   RepoFacts,
   RepoOwner,
   RepoRef,
-  RepoSummary,
+  SavedFacts,
   StoredRepo,
   SweepQuery,
 } from "./queries/repos.ts";

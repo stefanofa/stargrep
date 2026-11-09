@@ -1,6 +1,7 @@
 import * as Embeddings from "@stargrep/ai/embeddings";
 import * as Summarize from "@stargrep/ai/summarize";
 import { Float32Vector } from "@stargrep/db/embedding";
+import { primaryKind } from "@stargrep/knowledge/projection";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -13,14 +14,11 @@ export const EnrichedRepo = Schema.Struct({
   language: Schema.NullOr(Schema.String),
   summary: Schema.String,
   keywords: Schema.Array(Schema.String),
-  kind: Schema.String,
+  kind: Schema.NullOr(Schema.String),
   vector: Float32Vector,
 });
 export type EnrichedRepo = typeof EnrichedRepo.Type;
 
-const summarySchema = Schema.toStandardJSONSchemaV1(Summarize.RepoSummary)["~standard"].jsonSchema.input({
-  target: "draft-07",
-});
 export const summaryFingerprint = (repo: Summarize.RepoFacts): string =>
   new Bun.CryptoHasher("sha256")
     .update(
@@ -34,13 +32,15 @@ export const summaryFingerprint = (repo: Summarize.RepoFacts): string =>
         },
         system: Summarize.system,
         prompt: Summarize.prompt(repo),
-        schema: summarySchema,
+        schema: Summarize.providerSchema,
       }),
     )
     .digest("hex");
 
 const SummaryEntry = Schema.Struct({ fingerprint: Schema.String, summary: Summarize.RepoSummary });
-const Summaries = Schema.Record(Schema.String, Schema.Union([SummaryEntry, Summarize.RepoSummary]));
+// Entries an older recipe wrote have another shape, and are summarized again.
+const Summaries = Schema.Record(Schema.String, Schema.Unknown);
+const isEntry = Schema.is(SummaryEntry);
 const Vectors = Schema.Record(Schema.String, Schema.Struct({ text: Schema.String, vector: Float32Vector }));
 
 const summaryConcurrency = 8;
@@ -81,8 +81,7 @@ export const enrich = Effect.fn("EnrichedCorpus.enrich")(function* (summaryModel
   const summaries: Record<string, typeof SummaryEntry.Type> = {};
   for (const repo of corpus) {
     const entry = cached[repo.fullName];
-    if (entry && "fingerprint" in entry && entry.fingerprint === summaryFingerprint(repo))
-      summaries[repo.fullName] = entry;
+    if (isEntry(entry) && entry.fingerprint === summaryFingerprint(repo)) summaries[repo.fullName] = entry;
   }
   const unsummarized = corpus.filter((repo) => summaries[repo.fullName] === undefined);
   if (unsummarized.length > 0) yield* Console.log(`Summarizing ${unsummarized.length} repos with ${summaryModel}`);
@@ -128,7 +127,7 @@ export const enrich = Effect.fn("EnrichedCorpus.enrich")(function* (summaryModel
       language: repo.language,
       summary: summary?.summary ?? repo.description ?? repo.fullName,
       keywords: summary?.keywords ?? [],
-      kind: summary?.kind ?? "other",
+      kind: summary === undefined ? null : primaryKind(summary.facets.claims),
       vector: vectors[repo.fullName]?.vector ?? [],
     };
   });

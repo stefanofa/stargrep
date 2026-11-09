@@ -140,20 +140,24 @@ interface EnrichmentColumns {
   readonly summaryReadmeOid: AnyPgColumn;
   readonly readmeOid: AnyPgColumn;
   readonly summaryRecipe: AnyPgColumn;
+  readonly summaryInputHash: AnyPgColumn;
+  readonly inputHash: AnyPgColumn;
   readonly embeddingModel: AnyPgColumn;
   readonly embeddingStale: AnyPgColumn;
   readonly enrichFailures: AnyPgColumn;
+  readonly goneAt: AnyPgColumn;
 }
 
 // A repo is read once it has a summary of its current README and an embedding of that summary.
 export const unreadEnrichment = (table: EnrichmentColumns) =>
   sql<boolean>`(${table.summary} is null or ${table.summaryReadmeOid} is distinct from ${table.readmeOid} or ${table.embeddingModel} is null)`;
 
-// Enrichment is due for an unread repo, for a read one whose summary an older recipe made, and for a read one whose
-// embedding describes the summary its new one replaced. Such a repo stays read, and search keeps using it. The recipe
-// is a literal so the partial index can match this predicate.
+// Enrichment is due for an unread repo, for a read one whose summary an older recipe made or other prompt inputs, such
+// as a new description or topic set, and for a read one whose embedding describes the summary its new one replaced.
+// Such a repo stays read, and search keeps using it. A gone repo is never due. The recipe is a literal so the partial
+// index can match this predicate.
 export const pendingEnrichment = (table: EnrichmentColumns) =>
-  sql<boolean>`(${unreadEnrichment(table)} or ${table.embeddingStale} or ${table.summaryRecipe} is distinct from ${sql.raw(String(summaryRecipe))})`;
+  sql<boolean>`(${unreadEnrichment(table)} or ${table.embeddingStale} or ${table.summaryRecipe} is distinct from ${sql.raw(String(summaryRecipe))} or ${table.summaryInputHash} is distinct from ${table.inputHash}) and ${table.goneAt} is null`;
 
 // The cap is a literal, not a parameter, so Postgres can match a query to the partial index on this predicate.
 export const retryableEnrichment = (table: EnrichmentColumns) =>

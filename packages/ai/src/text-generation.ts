@@ -40,6 +40,8 @@ export interface RunResult {
 export class TextGeneration extends Context.Service<
   TextGeneration,
   {
+    // Who answers: a provider such as the gateway, the claude-code CLI, or the fake stand-in.
+    readonly provider: string;
     readonly model: string;
     readonly generate: <A>(request: GenerateRequest<A>) => Effect.Effect<A, AiError>;
     readonly generateBatch: <A, I>(request: GenerateBatchRequest<A, I>) => Stream.Stream<BatchAnswer<A, I>>;
@@ -129,5 +131,5 @@ export const make = (options: {
     );
   };
 
-  return TextGeneration.of({ model, generate, generateBatch });
+  return TextGeneration.of({ provider, model, generate, generateBatch });
 };

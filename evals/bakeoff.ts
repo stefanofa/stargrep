@@ -24,6 +24,7 @@ import * as Stream from "effect/Stream";
 import * as Corpus from "./corpus.ts";
 import { embeddingLatencyBudgetMillis, type Row, rankEmbeddings, rankSummaries } from "./rank.ts";
 
+const emptySummary = { summary: "", keywords: [] };
 const embeddingCandidates: ReadonlyArray<Models.EmbeddingModel> = [
   "openai/text-embedding-3-small",
   "openai/text-embedding-3-large",
@@ -138,7 +139,7 @@ const summarizeCorpus = Effect.fn("Bakeoff.summarizeCorpus")(function* (
   );
   return {
     texts: corpus.map((repo, index) => {
-      const summary = results[index]?.summary ?? { summary: "", keywords: [], kind: "other" as const };
+      const summary = results[index]?.summary ?? emptySummary;
       return Summarize.embeddingText(repo, summary);
     }),
     millis: results.flatMap((result) => (result === undefined ? [] : [result.millis])),
@@ -248,8 +249,6 @@ const runBakeoff = Effect.fn("Bakeoff.run")(function* (limit: number | undefined
   yield* Console.log(`Total model cost: $${totalCost.toFixed(4)}`);
 });
 
-const emptySummary: Summarize.RepoSummary = { summary: "", keywords: [], kind: "other" };
-
 const scoreSummaryModel = Effect.fn("Bakeoff.scoreSummaryModel")(function* (model: string, providers: Providers) {
   const queries = yield* Corpus.loadQueries;
   const repos = new Set([...Corpus.expectedRepos(queries), ...(yield* Corpus.loadDistractors)]);
@@ -265,12 +264,13 @@ const scoreSummaryModel = Effect.fn("Bakeoff.scoreSummaryModel")(function* (mode
       Effect.provide(providers.text(model)),
     ),
   );
-  const texts = corpus.map((repo) =>
-    Summarize.embeddingText(
+  const texts = corpus.map((repo) => {
+    const answer = summaries.get(repo);
+    return Summarize.embeddingText(
       repo,
-      Result.getOrElse(summaries.get(repo) ?? Result.succeed(emptySummary), () => emptySummary),
-    ),
-  );
+      answer !== undefined && Result.isSuccess(answer) ? answer.success : emptySummary,
+    );
+  });
   const score = yield* scoreRetrieval(corpus, texts, queries).pipe(
     Effect.provide(providers.embeddings(Models.embeddingModel)),
   );

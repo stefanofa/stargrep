@@ -5,7 +5,6 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Fake from "../fake.ts";
 import * as Models from "../models.ts";
-import { toAiSchema } from "../schema-bridge.ts";
 import * as SummarizeFake from "./summarize.fake.ts";
 import * as Summarize from "./summarize.ts";
 
@@ -61,12 +60,12 @@ describe("summary recipe", () => {
         }),
         Summarize.prompt({ ...repo, readme: "# Tool\n\nUse it.\u0000" }),
         Summarize.prompt({ ...repo, readme: '<img src="x">\n\n---' }),
-        toAiSchema(Summarize.RepoSummary).jsonSchema,
+        Summarize.providerSchema,
       ]);
       expect({
         recipe: Models.summaryRecipe,
         digest: yield* digest.digestHex(Digest.sha256, new TextEncoder().encode(made)),
-      }).toEqual({ recipe: 1, digest: "7f676052dae2ac19afc2b65a8ee32cb08904999bb4f5ff80a3d164ed1d4744eb" });
+      }).toEqual({ recipe: 2, digest: "d752262f1787c0ebde84ffbe35c66e81a6340adf781a36dcdf4b8ffc2340ec66" });
     }).pipe(Effect.provide(Digest.layerWebCrypto)),
   );
 });
@@ -95,6 +94,149 @@ describe("summarize", () => {
       expect(Schema.is(Summarize.RepoSummary)(summary)).toBe(true);
       expect(summary.summary).toContain("terminal user interfaces");
       expect(summary.keywords).toEqual(["rust", "tui"]);
+    }).pipe(Effect.provide(Fake.layerTextGeneration(SummarizeFake.respond))),
+  );
+});
+
+describe("summarize: facts", () => {
+  const answering = (facets: unknown, summary = "A Rust library for terminal user interfaces.") =>
+    Fake.layerTextGeneration(() => ({ summary, keywords: ["tui"], ...(facets === undefined ? {} : { facets }) }));
+  const forked = {
+    ...repo,
+    readme: "<!-- deprecated -->\n# Ratatui\n\nRatatui was forked from the [tui-rs] crate in 2023.",
+  };
+  const notComplete = (summary: Summarize.RepoSummary) =>
+    Object.entries(summary.facets.lanes).filter(([, state]) => state !== "complete");
+
+  it.effect("decodes each fact against the text the prompt carried, after markdown is stripped from both", () =>
+    Effect.gen(function* () {
+      const summary = yield* Summarize.summarize(forked);
+      expect(notComplete(summary)).toEqual([]);
+      expect<unknown>(summary.facets.claims.map((claim) => [claim.role, claim.key, claim.found])).toEqual([
+        ["is", "library", "neither"],
+        ["alternative_to", "tui rs", "quote"],
+        ["status", "deprecated", "neither"],
+      ]);
+    }).pipe(
+      Effect.provide(
+        answering([
+          { role: "is", term: "library" },
+          { role: "alternative_to", term: "tui-rs", quote: "forked from the tui-rs crate in 2023" },
+          { role: "status", term: "deprecated", quote: "deprecated" },
+        ]),
+      ),
+    ),
+  );
+
+  it.effect("keeps the summary whatever the facts hold", () =>
+    Effect.gen(function* () {
+      const cases: ReadonlyArray<readonly [unknown, string]> = [
+        [undefined, "missing"],
+        ["is: library", "missing"],
+        [
+          [
+            { role: "is", term: "library" },
+            { role: "maintainer", term: "someone" },
+          ],
+          "invalid",
+        ],
+        [
+          [
+            { role: "is", term: "" },
+            { role: "about", term: "dashboards" },
+          ],
+          "is invalid",
+        ],
+      ];
+      for (const [facets, expected] of cases) {
+        const summary = yield* Summarize.summarize(forked).pipe(Effect.provide(answering(facets)));
+        expect(summary.summary).toBe("A Rust library for terminal user interfaces.");
+        const lanes = new Set(Object.values(summary.facets.lanes));
+        const described =
+          lanes.size === 1
+            ? [...lanes][0]
+            : `${notComplete(summary)
+                .map(([role]) => role)
+                .join(" ")} invalid`;
+        expect([facets, described]).toEqual([facets, expected]);
+      }
+    }),
+  );
+
+  it.effect("fails only an answer whose summary does not decode", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(Summarize.summarize(forked).pipe(Effect.provide(answering([], ""))));
+      expect(error._tag).toBe("AiOutputInvalid");
+    }),
+  );
+});
+
+describe("the stand-in", () => {
+  const prompt = (facts: Partial<Summarize.RepoFacts>) => Summarize.prompt({ ...repo, ...facts });
+  const facts = (answer: SummarizeFake.Answer) => answer.facets.map((fact) => [fact.role, fact.term, fact.quote]);
+
+  test("states the description's kind and platform words, the language, each topic, an alternative, and a deprecation", () => {
+    const answer = SummarizeFake.respond(
+      prompt({
+        description: "A deprecated CLI and library for macOS, an open source alternative to Google Analytics",
+        topics: ["analytics", "privacy"],
+        language: "Go",
+        readme: "# Tool",
+      }),
+    );
+    expect(facts(answer)).toEqual([
+      ["is", "CLI", undefined],
+      ["is", "library", undefined],
+      ["written_in", "Go", undefined],
+      ["runs_on", "macOS", undefined],
+      ["about", "analytics", "analytics"],
+      ["about", "privacy", "privacy"],
+      ["alternative_to", "Google Analytics", "alternative to Google Analytics"],
+      [
+        "status",
+        "deprecated",
+        "A deprecated CLI and library for macOS, an open source alternative to Google Analytics",
+      ],
+    ]);
+  });
+
+  test("never guesses a kind, a language, or a status the text lacks", () => {
+    const answer = SummarizeFake.respond(
+      prompt({ description: "Helps teams ship faster", topics: [], language: null, readme: null }),
+    );
+    expect(facts(answer)).toEqual([]);
+    expect(answer.summary).toBe("Helps teams ship faster");
+  });
+
+  test("reads a named alternative and a deprecation at the top of the README", () => {
+    const answer = SummarizeFake.respond(
+      prompt({
+        description: "Open source Notion alternative",
+        topics: [],
+        readme: "# Tool\n\n**This package is deprecated.** Use the new one.\n\nMore text.",
+      }),
+    );
+    expect(facts(answer).slice(-2)).toEqual([
+      ["alternative_to", "Notion", "Notion alternative"],
+      ["status", "deprecated", "**This package is deprecated.** Use the new one."],
+    ]);
+  });
+
+  it.effect("every stand-in fact decodes, and its quotes are found in the prompt it read", () =>
+    Effect.gen(function* () {
+      const summary = yield* Summarize.summarize({
+        ...repo,
+        description: "A deprecated Rust library, an alternative to tui-rs",
+        readme: "# Ratatui\n\nRatatui is deprecated.",
+      });
+      expect(new Set(Object.values(summary.facets.lanes))).toEqual(new Set(["complete"]));
+      expect(summary.facets.dropped).toEqual([]);
+      expect(summary.facets.claims.filter((claim) => claim.quote !== null).map((claim) => claim.found)).toEqual([
+        "quote",
+        "quote",
+        "quote",
+        "quote",
+      ]);
     }).pipe(Effect.provide(Fake.layerTextGeneration(SummarizeFake.respond))),
   );
 });

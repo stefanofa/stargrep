@@ -1,10 +1,14 @@
+import { summaryRecipe } from "@stargrep/ai/models";
+import type { RepoSummary } from "@stargrep/ai/summarize";
 import * as Db from "@stargrep/db";
 import type { DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
-import type { RepoId } from "@stargrep/github/schemas";
+import type { ObjectId, RepoId } from "@stargrep/github/schemas";
 import { fold, type KnowledgeState } from "@stargrep/knowledge/decisions";
-import type { Revision } from "@stargrep/knowledge/ids";
+import { type InputHash, ReceiptId, type Revision } from "@stargrep/knowledge/ids";
 import type { LabelKey } from "@stargrep/knowledge/label-key";
 import { type LabelEntry, lookupKeys, project } from "@stargrep/knowledge/projection";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 
 // Repos one projection transaction locks and writes.
@@ -110,6 +114,98 @@ export const reproject = Effect.fn("RepoKnowledge.reproject")(function* (
     if (ids.length < options.groupSize) break;
   }
   return { projected, minted, conflicts };
+});
+
+// A summary answer for one repo, with the README and the prompt inputs it describes.
+export interface Paid {
+  readonly repoId: RepoId;
+  readonly readmeOid: ObjectId | null;
+  readonly inputHash: InputHash;
+  readonly source: Db.ReceiptSource;
+  readonly model: string;
+  readonly answer: RepoSummary;
+}
+
+// Saved: the repo shows the receipt's summary, which a retried answer shares with the answer committed first. Stale:
+// the repo's README or inputs moved on, or it is gone, so the answer is kept only as history. NotFound: the repo has no
+// row, so nothing is kept.
+export type Captured = Data.TaggedEnum<{
+  Saved: {
+    readonly repoId: RepoId;
+    readonly receiptId: ReceiptId;
+    readonly summary: string;
+    readonly keywords: ReadonlyArray<string>;
+  };
+  Stale: { readonly repoId: RepoId };
+  NotFound: { readonly repoId: RepoId };
+}>;
+export const Captured = Data.taggedEnum<Captured>();
+
+const newReceiptId = SecureRandom.SecureRandom.use((random) => random.uuidV4()).pipe(
+  Effect.map(ReceiptId.make),
+  Effect.provide(SecureRandom.layerWebCrypto),
+);
+
+// Commit A for answers to distinct repos: each answer becomes a receipt, and every repo still at the README and inputs
+// its answer describes shows the answer's summary. It touches no vocabulary and writes no facet, so nothing in
+// projection can roll back an answer that was paid for.
+export const capture = Effect.fn("RepoKnowledge.capture")(function* (answers: ReadonlyArray<Paid>) {
+  const db = yield* Db.Db;
+  const captured = yield* db.knowledge.capture(
+    yield* Effect.forEach(answers, (paid) =>
+      Effect.map(
+        newReceiptId,
+        (receiptId): Db.Answer => ({
+          receiptId,
+          repoId: paid.repoId,
+          source: paid.source,
+          inputHash: paid.inputHash,
+          readmeOid: paid.readmeOid,
+          recipe: summaryRecipe,
+          model: paid.model,
+          batchId: null,
+          summary: paid.answer.summary,
+          keywords: paid.answer.keywords,
+          claims: paid.answer.facets.claims,
+          lanes: paid.answer.facets.lanes,
+          dropped: paid.answer.facets.dropped,
+          rawKey: null,
+        }),
+      ),
+    ),
+  );
+  const byRepo = new Map<number, Db.Captured>(captured.map((row) => [row.repoId, row]));
+  return answers.map(({ repoId }): Captured => {
+    const row = byRepo.get(repoId);
+    if (row === undefined) return Captured.NotFound({ repoId });
+    return row.saved
+      ? Captured.Saved({ repoId, receiptId: row.receiptId, summary: row.summary, keywords: row.keywords })
+      : Captured.Stale({ repoId });
+  });
+});
+
+// Commit B for repos whose answers were just saved. It never calls a model, so when it fails the summaries stay saved
+// and the projection sweep projects the repos from their receipts later. Returns whether it committed.
+export const projectSaved = Effect.fn("RepoKnowledge.projectSaved")(function* (ids: ReadonlyArray<RepoId>) {
+  if (ids.length === 0) return true;
+  return yield* projectRepos(ids).pipe(
+    Effect.as(true),
+    Effect.catch((error) =>
+      Effect.logWarning("Projection after capture failed, the sweep projects these repos later", {
+        repos: ids.length,
+        error: error._tag,
+      }).pipe(Effect.as(false)),
+    ),
+  );
+});
+
+// Both commits for one group of answers, as a caller that holds the group whole saves it.
+export const accept = Effect.fn("RepoKnowledge.accept")(function* (answers: ReadonlyArray<Paid>) {
+  const captured = yield* capture(answers);
+  const projected = yield* projectSaved(
+    captured.flatMap((outcome) => (outcome._tag === "Saved" ? [outcome.repoId] : [])),
+  );
+  return { captured, projected };
 });
 
 // The nightly count behind listing: every public subject's repo_count, from the same rows filters and chips read.

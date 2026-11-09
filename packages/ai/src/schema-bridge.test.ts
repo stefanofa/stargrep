@@ -1,29 +1,30 @@
 import { describe, expect } from "bun:test";
 import * as it from "@stargrep/testing";
 import * as Effect from "effect/Effect";
-import * as Summarize from "./prompts/summarize.ts";
+import * as Schema from "effect/Schema";
 import { toAiSchema } from "./schema-bridge.ts";
 
-const summary: Summarize.RepoSummary = { summary: "A terminal UI library.", keywords: ["tui"], kind: "library" };
+const Answer = Schema.Struct({ summary: Schema.String, kind: Schema.Literals(["library", "cli"]) });
+const answer = { summary: "A terminal UI library.", kind: "library" } as const;
 
 describe("toAiSchema", () => {
-  const aiSchema = toAiSchema(Summarize.RepoSummary);
+  const aiSchema = toAiSchema(Answer);
 
-  it.effect("gives providers a draft-07 JSON schema with the kind enum", () =>
+  it.effect("gives providers a draft-07 JSON schema with the literal enum", () =>
     Effect.sync(() => {
       expect(aiSchema.jsonSchema.$schema).toBe("http://json-schema.org/draft-07/schema#");
       expect(aiSchema.jsonSchema).toMatchObject({
         type: "object",
-        required: ["summary", "keywords", "kind"],
-        properties: { kind: { enum: [...Summarize.RepoKind.literals] } },
+        required: ["summary", "kind"],
+        properties: { kind: { enum: ["library", "cli"] } },
       });
     }),
   );
 
   it.effect("decodes with the Effect schema", () =>
     Effect.gen(function* () {
-      expect(yield* aiSchema.decode(summary)).toEqual(summary);
-      expect((yield* Effect.flip(aiSchema.decode({ ...summary, kind: "spaceship" })))._tag).toBe("SchemaError");
+      expect(yield* aiSchema.decode(answer)).toEqual(answer);
+      expect((yield* Effect.flip(aiSchema.decode({ ...answer, kind: "spaceship" })))._tag).toBe("SchemaError");
     }),
   );
 });

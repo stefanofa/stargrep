@@ -20,7 +20,6 @@ const describe = (name: string, outcome: EnrichRepo.Enrichment, dimensions: numb
       return [
         `${name}: ${outcome._tag === "Summarized" ? "summarized" : "embedded again"}`,
         `  summary: ${outcome.summary.summary}`,
-        `  kind: ${outcome.summary.kind ?? "none"}`,
         `  keywords: ${outcome.summary.keywords.join(", ")}`,
         `  embedding: ${dimensions} dimensions`,
       ].join("\n");
@@ -35,7 +34,7 @@ const describe = (name: string, outcome: EnrichRepo.Enrichment, dimensions: numb
     case "NoNodeId":
       return `${name}: no stored node id, run star sync first`;
     case "Stale":
-      return `${name}: README changed while enriching, left for the next run`;
+      return `${name}: README or other prompt inputs changed while enriching, left for the next run`;
   }
 };
 

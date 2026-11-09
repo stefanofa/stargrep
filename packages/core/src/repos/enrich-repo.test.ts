@@ -5,6 +5,7 @@ import * as TextGeneration from "@stargrep/ai/text-generation";
 import * as Db from "@stargrep/db";
 import { DbQueryFailed } from "@stargrep/db/errors";
 import * as TestDatabase from "@stargrep/db/test-database";
+import { summarize } from "@stargrep/db/testing";
 import { GitHubTokenMissing } from "@stargrep/github/errors";
 import * as GitHub from "@stargrep/github/github";
 import type { RepoId } from "@stargrep/github/schemas";
@@ -22,6 +23,7 @@ import * as IconQueue from "../icons/icon-queue.ts";
 import * as BlobStore from "./blob-store.ts";
 import { embeddingModel, fixture, id, oid, repo, wideOid } from "./enrich-repo.fixture.ts";
 import * as EnrichRepo from "./enrich-repo.ts";
+import * as EnrichRetry from "./enrich-retry.ts";
 
 {
   const f = fixture();
@@ -439,7 +441,14 @@ import * as EnrichRepo from "./enrich-repo.ts";
             const summary = SummarizeFake.respond(request.prompt);
             return db.repos.get(id(22)).pipe(
               Effect.map(Option.getOrThrow),
-              Effect.tap((row) => db.repos.saveSummary({ id: row.id, readmeOid: oid("8"), ...summary })),
+              Effect.tap((row) =>
+                summarize({
+                  id: row.id,
+                  readmeOid: oid("8"),
+                  summary: summary.summary,
+                  keywords: summary.keywords,
+                }).pipe(Effect.provideService(Db.Db, db)),
+              ),
               Effect.flatMap((row) => db.repos.saveFacts({ ...row, readmeOid: oid("9") })),
               Effect.orDie,
               Effect.as({ output: summary, usage: f.usage }),
@@ -703,7 +712,7 @@ import * as EnrichRepo from "./enrich-repo.ts";
       }),
     );
     it.effect(
-      "saves each summary as its answer arrives, so a run cut short keeps them and the next run only embeds",
+      "saves each summary as its answer arrives, so a run cut short keeps them and the next run only embeds them",
       () =>
         Effect.gen(function* () {
           const numbers = [280, 281, 282];
@@ -715,10 +724,12 @@ import * as EnrichRepo from "./enrich-repo.ts";
             Db.Db,
             Db.Db.of({
               ...db,
-              repos: {
-                ...db.repos,
-                saveSummary: (summary) =>
-                  Effect.tap(db.repos.saveSummary(summary), () => Queue.offer(saved, summary.id)),
+              knowledge: {
+                ...db.knowledge,
+                capture: (answers) =>
+                  Effect.tap(db.knowledge.capture(answers), () =>
+                    Effect.forEach(answers, (answer) => Queue.offer(saved, answer.repoId)),
+                  ),
               },
             }),
           );
@@ -753,9 +764,15 @@ import * as EnrichRepo from "./enrich-repo.ts";
           expect(yield* f.get(281)).toMatchObject({ summaryReadmeOid: wideOid(281), embeddingModel: null });
           expect((yield* f.get(282)).summary).toBeNull();
 
+          // The repo whose call was cut short stays leased, so nothing pays for it again until the lease runs out.
           asked.length = 0;
           const outcomes = yield* enrichAll.pipe(f.using(answerAfter(() => 0)));
-          expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Embedded", "Embedded", "Summarized"]);
+          expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Embedded", "Embedded", "Backoff"]);
+          expect(asked).toEqual([]);
+
+          yield* TestClock.adjust(EnrichRetry.attemptLease);
+          const later = yield* enrichAll.pipe(f.using(answerAfter(() => 0)));
+          expect(later.map((outcome) => outcome._tag)).toEqual(["Unchanged", "Unchanged", "Summarized"]);
           expect(asked).toEqual([expect.stringContaining("Repository: owner/repo-282\n")]);
         }),
     );
@@ -771,12 +788,14 @@ import * as EnrichRepo from "./enrich-repo.ts";
           Db.Db,
           Db.Db.of({
             ...db,
-            repos: {
-              ...db.repos,
-              saveSummary: (summary) =>
+            knowledge: {
+              ...db.knowledge,
+              capture: (answers) =>
                 Effect.andThen(
-                  summary.id === id(283) ? Deferred.await(unlock) : Effect.void,
-                  Effect.tap(db.repos.saveSummary(summary), () => Queue.offer(saved, summary.id)),
+                  answers.some((answer) => answer.repoId === id(283)) ? Deferred.await(unlock) : Effect.void,
+                  Effect.tap(db.knowledge.capture(answers), () =>
+                    Effect.forEach(answers, (answer) => Queue.offer(saved, answer.repoId)),
+                  ),
                 ),
             },
           }),

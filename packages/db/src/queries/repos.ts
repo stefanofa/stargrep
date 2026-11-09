@@ -1,5 +1,5 @@
-import { summaryRecipe } from "@stargrep/ai/models";
 import { Repo as GitHubRepo, Login, ObjectId, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
+import { InputHash } from "@stargrep/knowledge/ids";
 import { inputHash } from "@stargrep/knowledge/input-hash";
 import { and, asc, eq, getColumns, gt, isNotNull, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
@@ -24,7 +24,6 @@ import {
   repoMetrics,
   repos,
   retryableEnrichment,
-  unreadEnrichment,
 } from "../schema.ts";
 
 const RepoRow = createSelectSchema(repos, {
@@ -41,6 +40,8 @@ const RepoRow = createSelectSchema(repos, {
   embeddingModel: Schema.NullOr(EmbeddingModelId),
   enrichRetryAt: NullableTime,
   iconCheckedAt: NullableTime,
+  inputHash: Schema.NullOr(InputHash),
+  summaryInputHash: Schema.NullOr(InputHash),
 });
 
 export const IconSource = Schema.Literals(iconSource.enumValues);
@@ -161,13 +162,6 @@ export interface RepoCounts {
   readonly forks: number;
 }
 
-const RepoSummary = Schema.Struct({
-  ...Struct.pick(rowFields, ["id", "readmeOid", "keywords"]),
-  summary: Schema.String,
-  kind: Schema.String,
-});
-export type RepoSummary = typeof RepoSummary.Type;
-
 export interface RepoEmbedding {
   readonly id: RepoId;
   readonly owner: Repo["owner"];
@@ -193,7 +187,12 @@ export interface RepoOwner {
 const DueIcon = Schema.Struct({ id: RepoId, nodeId: RepoNodeId });
 export type DueIcon = typeof DueIcon.Type;
 
-const enrichFields = Struct.pick(RepoRow.fields, ["enrichFailures", "enrichRetryAt", "summaryRecipe"]);
+const enrichFields = Struct.pick(RepoRow.fields, [
+  "enrichFailures",
+  "enrichRetryAt",
+  "summaryRecipe",
+  "summaryInputHash",
+]);
 
 const StoredRepo = Schema.Struct({ ...rowFields, ...enrichFields, pending: Schema.Boolean }).pipe(
   Schema.decodeTo(
@@ -221,14 +220,28 @@ export interface SweepQuery {
   readonly limit: number;
 }
 
+// An enrichment attempt's hold on repos before its paid call. enrich_retry_at is the time before which no paid attempt
+// may start, so a lease is a retry time in the future, and until also names the lease, so the attempt can give back
+// only its own.
+export interface Lease {
+  readonly ids: ReadonlyArray<RepoId>;
+  readonly now: DateTime.Utc;
+  readonly until: DateTime.Utc;
+}
+
+export interface SavedFacts {
+  readonly pending: boolean;
+  // The hash of the prompt inputs these facts make, which an answer to that prompt must carry to be saved.
+  readonly inputHash: InputHash;
+}
+
 export interface Queries {
   readonly upsertRefs: (refs: ReadonlyArray<RepoRef>) => Effect.Effect<void, DbQueryFailed>;
   readonly pendingEnrichment: (
     ids: ReadonlyArray<RepoId>,
   ) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
-  readonly saveFacts: (facts: RepoFacts) => Effect.Effect<{ readonly pending: boolean }, DbQueryFailed | DbRowInvalid>;
+  readonly saveFacts: (facts: RepoFacts) => Effect.Effect<SavedFacts, DbQueryFailed | DbRowInvalid>;
   readonly saveCounts: (counts: RepoCounts) => Effect.Effect<void, DbQueryFailed>;
-  readonly saveSummary: (summary: RepoSummary) => Effect.Effect<boolean, DbQueryFailed | RepoNotFound>;
   readonly saveEmbedding: (
     input: RepoEmbedding,
   ) => Effect.Effect<boolean, DbQueryFailed | RepoNotFound | EmbeddingModelMismatch>;
@@ -246,6 +259,10 @@ export interface Queries {
     ids: ReadonlyArray<RepoId>,
   ) => Effect.Effect<ReadonlyArray<StoredRepo>, DbQueryFailed | DbRowInvalid>;
   readonly recordEnrichFailures: (failures: EnrichFailures) => Effect.Effect<void, DbQueryFailed>;
+  // Leases the pending repos no other attempt holds and returns them. A repo it leaves out is due to another attempt.
+  readonly lease: (lease: Lease) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
+  // Gives back this lease on repos it still holds, so the next attempt can start.
+  readonly release: (lease: Lease) => Effect.Effect<void, DbQueryFailed>;
   readonly sweepable: (query: SweepQuery) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
 }
 
@@ -257,10 +274,8 @@ const decodePending = rowsDecoder(Schema.Struct({ pending: Schema.Boolean }));
 const decodeDue = rowsDecoder(DueIcon);
 
 const needsEnrichment = pendingEnrichment(repos);
-const keepsEmbedding = sql<boolean>`not ${unreadEnrichment(repos)}`;
 const encodeRefs = writeEncoder(Schema.Array(RepoRef));
 const encodeFacts = writeEncoder(RepoFacts);
-const encodeSummary = writeEncoder(RepoSummary);
 
 const repoFound = (id: RepoId) => requireRow(() => new RepoNotFound({ repoId: id }));
 
@@ -278,7 +293,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
     }).pipe(Effect.provideService(Digest.Digest, digest));
 
   const applied =
-    (operation: "repos.saveSummary" | "repos.saveEmbedding", id: RepoId) =>
+    (operation: "repos.saveEmbedding", id: RepoId) =>
     (rows: ReadonlyArray<unknown>): Effect.Effect<boolean, DbQueryFailed | RepoNotFound> =>
       rows.length > 0
         ? Effect.succeed(true)
@@ -340,10 +355,11 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
               .values(values)
               .onConflictDoUpdate({ target: repos.id, set: changes })
               .returning({ pending: needsEnrichment }),
+          ).pipe(
+            Effect.flatMap(decodePending("repos.saveFacts")),
+            Effect.map((rows) => ({ pending: rows.some((row) => row.pending), inputHash: hash })),
           );
         }),
-        Effect.flatMap(decodePending("repos.saveFacts")),
-        Effect.map((rows) => ({ pending: rows.some((row) => row.pending) })),
       ),
     saveCounts: ({ id, stars, forks }) => {
       const counts = { stars, forks, refreshedAt: sql`now()` };
@@ -354,28 +370,6 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           .onConflictDoUpdate({ target: repoMetrics.repoId, set: counts }),
       );
     },
-    saveSummary: (summary) =>
-      encodeSummary(summary).pipe(
-        Effect.flatMap(({ id, readmeOid, ...values }) =>
-          run("repos.saveSummary", (db) =>
-            db
-              .update(repos)
-              // A new summary of the README a read repo's summary describes keeps the old embedding, marked stale, so
-              // the repo stays read and searchable until the new embedding replaces it. Any other clears it.
-              .set({
-                ...values,
-                summaryReadmeOid: readmeOid,
-                summaryRecipe,
-                embedding: sql`case when ${keepsEmbedding} then ${repos.embedding} end`,
-                embeddingModel: sql`case when ${keepsEmbedding} then ${repos.embeddingModel} end`,
-                embeddingStale: keepsEmbedding,
-              })
-              .where(and(eq(repos.id, id), sql`${repos.readmeOid} is not distinct from ${readmeOid}`))
-              .returning({ id: repos.id }),
-          ),
-        ),
-        Effect.flatMap(applied("repos.saveSummary", summary.id)),
-      ),
     saveEmbedding: (input) =>
       requireModel(configuredModel, input.embedding).pipe(
         Effect.flatMap((vector) =>
@@ -463,6 +457,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
             enrichFailures: repos.enrichFailures,
             enrichRetryAt: repos.enrichRetryAt,
             summaryRecipe: repos.summaryRecipe,
+            summaryInputHash: repos.summaryInputHash,
           })
           .from(repos)
           .where(sql`${repos.id} = any(${sql.param([...ids])}::bigint[])`),
@@ -483,6 +478,35 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
               })
               .where(
                 sql`${repos.id} in (select id from repos where id = any(${sql.param([...ids])}::bigint[]) order by id for no key update) and ${needsEnrichment} and (${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(at)})`,
+              ),
+          ),
+    lease: ({ ids, now, until }) =>
+      Arr.isReadonlyArrayEmpty(ids)
+        ? Effect.succeed([])
+        : run("repos.lease", (db) =>
+            db
+              .update(repos)
+              .set({ enrichRetryAt: sql`${timeParam(until)}` })
+              .where(
+                sql`${repos.id} in (select id from repos where id = any(${sql.param([...ids])}::bigint[]) order by id for no key update) and ${needsEnrichment} and (${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(now)})`,
+              )
+              .returning({ id: repos.id }),
+          ).pipe(
+            Effect.flatMap(decodeIds("repos.lease")),
+            Effect.map((rows) => {
+              const leased = new Set<number>(rows.map((row) => row.id));
+              return ids.filter((id) => leased.has(id));
+            }),
+          ),
+    release: ({ ids, until }) =>
+      Arr.isReadonlyArrayEmpty(ids)
+        ? Effect.void
+        : run("repos.release", (db) =>
+            db
+              .update(repos)
+              .set({ enrichRetryAt: null })
+              .where(
+                sql`${repos.id} in (select id from repos where id = any(${sql.param([...ids])}::bigint[]) order by id for no key update) and ${repos.enrichRetryAt} = ${timeParam(until)}`,
               ),
           ),
     sweepable: ({ now, limit }) =>

@@ -87,9 +87,10 @@ test("a preview's Workers summarize, embed, and plan without a network call", as
     readme: null,
   };
   const enriched = Effect.gen(function* () {
-    const summary = yield* Summarize.summarize(repo);
-    const [embedded] = yield* (yield* Embeddings.Embeddings).embed([summary.summary]);
-    return { summary, dimensions: embedded?.vector.length };
+    const { summary, keywords, facets } = yield* Summarize.summarize(repo);
+    const [embedded] = yield* (yield* Embeddings.Embeddings).embed([summary]);
+    const facts = facets.claims.map((claim) => `${claim.role}:${claim.term}`);
+    return { summary: { summary, keywords, facts }, dimensions: embedded?.vector.length };
   }).pipe(Effect.provide(layerModels(readBound(worker))));
   const searched = Effect.gen(function* () {
     const plan = yield* Effect.flip(Summarize.summarize(repo));
@@ -97,7 +98,14 @@ test("a preview's Workers summarize, embed, and plan without a network call", as
     return { planFailure: plan._tag, dimensions: embedded?.vector.length };
   }).pipe(Effect.provide(layerSearch(readBound(web))));
   expect(await Effect.runPromise(Effect.all([enriched, searched]))).toEqual([
-    { summary: { summary: "Terminal dashboards", keywords: ["tui"], kind: "other" }, dimensions: 1024 },
+    {
+      summary: {
+        summary: "Terminal dashboards",
+        keywords: ["tui"],
+        facts: ["written_in:Rust", "runs_on:Terminal", "about:tui"],
+      },
+      dimensions: 1024,
+    },
     { planFailure: "AiKeyMissing", dimensions: 1024 },
   ]);
   expect(fetches).not.toHaveBeenCalled();
