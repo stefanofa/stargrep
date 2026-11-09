@@ -139,7 +139,7 @@ Two baselines frame these numbers. The raw query with no planner reaches 0.988 w
 
 ### Atoms
 
-On 2026-11-09, with recipe 2 summaries and the cached plans, search with atom filters and boosts reached 0.992, against 0.990 on the same cache before. Kind, language, and license filters read atoms, and the summary model's language claims now reach a language filter, so `d3/d3` is found for "javascript charting library", which GitHub labels Shell. No subject is accepted until curation accepts one, so stated subject words still compiled to nothing in that run. Two runs on the same cache measured what happens once they resolve. `--accept-floor` accepts every subject that 3 repos from 2 owners hold, 405 of 2,506.
+On 2026-11-09, with recipe 2 summaries and the cached plans, search with atom filters and boosts reached 0.992, against 0.990 on the same cache before. Kind, language, and license filters read atoms, and the summary model's language claims now reach a language filter, so `d3/d3` is found for "javascript charting library", which GitHub labels Shell. No subject is accepted until curation accepts one, so stated subject words still compiled to nothing in that run. Two runs on the same cache measured what happens once they resolve. `--accept-floor` runs the usage floor, which accepts every subject that 3 repos from 2 owners hold, 405 of 2,506.
 
 | Run | recall@10 |
 |---|---|
@@ -151,7 +151,7 @@ Bare subjects therefore boost. As filters they dropped Alacritty, Ghostty, and k
 
 ### Judged queries
 
-None of the 129 recall queries has a negation or "only", so recall cannot see those paths. `evals/behavior.ts` lists 18 judged queries for negation, "only", built with, for, kinds, and platforms, among them "no-code app builder", "no dependency cli tool", "terminal emulator for linux only", and "only libraries for building apps". `evals/behavior.test.ts` runs each one through `Search` on the 29 recorded repos in `evals/fixtures/behavior-repos.jsonl`, with a guarded plan written into the case and a named repo's recorded vector standing in for the query's, so it makes no model call. It compares the search with atoms to the same search with every policy row off. It checks that the repos the case keeps are in both, and that the repos it drops were there before and are gone after. It runs once with no subject accepted and once with every subject accepted. Against the first version of the compiler, 24 of its 36 runs fail. `bun run evals/recall.ts --write-behavior` rewrites the fixture from the cache.
+None of the 129 recall queries has a negation, a contraction, "only", or "with" before a feature, so recall cannot see those paths. `evals/behavior.ts` lists 31 judged queries for negation, contractions, "only", built with, with, for, kinds, languages, and platforms, among them "no dependency cli tool", "apps that don’t run on windows", "cli tools built with rust", "typescript orm, not javascript", "llm apps with privacy", and "only libraries for building apps". `evals/behavior.test.ts` runs each one through `Search` on the 60 recorded repos in `evals/fixtures/behavior-repos.jsonl`, with a guarded plan written into the case and a named repo's recorded vector standing in for the query's, so it makes no model call. It compares the search with atoms to the same search with every policy row off. It checks that the repos the case keeps are in both, and that the repos it drops were there before and are gone after. It runs four times: with no subject accepted and after the usage floor, each through SQL alone and through the accepted-key cache the web server keeps. A few repos are in the fixture only because they hold privacy, GitHub, or AI, so the floor accepts those subjects there as it does on the whole corpus. Against the round 2 compiler, 40 of its 124 runs fail. `bun run evals/recall.ts --write-behavior` rewrites the fixture from the cache.
 
 ### Meaning floor
 
@@ -225,7 +225,7 @@ bun run evals/bakeoff.ts --fake
 
 `--limit N` scores only the first N queries against their own expected repos, without distractors, as a cheap smoke test. `--summary <model>` scores one summary model on the full corpus through one AI Gateway batch job, using the embedding model in `models.ts`. `--fake` runs the whole pipeline on the fake layers from `@stargrep/ai/fake` and needs no key. No run edits code. To adopt a result, update `packages/ai/src/models.ts`. A summary model, prompt, or schema change also requires a new summary recipe and its migration. An embedding model change requires the database migration and re-embedding described in `docs/architecture.md`. Regenerate the recall fixture after planner or model changes.
 
-The recall gate needs Postgres, from `docker compose up --detach --wait` or a `DATABASE_URL` that names an admin connection. It creates and migrates `stargrep_recall` on first use.
+The recall gate needs Postgres, from `docker compose up --detach --wait` or a `DATABASE_URL` that names an admin connection. Each run drops `stargrep_recall` and creates and migrates it again, so no earlier corpus or accepted subject carries over.
 
 ```sh
 AI_GATEWAY_API_KEY=... bun run evals/recall.ts
@@ -234,7 +234,7 @@ AI_GATEWAY_API_KEY=... bun run evals/recall.ts --max-distances 0.32,0.36,0.40
 bun run evals/recall.ts --fixture
 ```
 
-`--max-distances` scores search at each listed value of `maxMatchDistance` and prints one line per value. `--accept-floor` accepts every subject held by 3 repos from 2 owners before the queries run, and `--bare-filters` adds bare subjects as filters, so a change to the compiler's policy can be measured before it ships. Both need a fresh `stargrep_recall`, because a capture keeps the first receipt of each answer.
+`--max-distances` scores search at each listed value of `maxMatchDistance` and prints one line per value. `--accept-floor` runs the usage floor before the queries run, which accepts every subject held by 3 repos from 2 owners, and `--bare-filters` adds bare subjects as filters, so a change to the compiler's policy can be measured before it ships.
 
 `--summary-model ID` summarizes with another model. A full run from an empty cache used 4.96 million input and 0.19 million output tokens of `anthropic/claude-haiku-5.5` and 0.11 million tokens of `voyage/voyage-4`, about $0.60 at catalog prices. A rerun with a new planner prompt costs about 0.44 million input tokens, for 126 plans.
 
