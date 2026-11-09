@@ -50,7 +50,7 @@ describe("compileQuery", () => {
 
   test("takes languages and licenses only from the planner, so other language words stay ordinary", () => {
     expect(groups("convert pdf to markdown")).toEqual(["boost any[convert pdf markdown]"]);
-    expect(groups("tools in rust")).toEqual(["boost any[tools]"]);
+    expect(groups("parsers in rust")).toEqual(["boost any[parsers]"]);
     expect(groups("mit licensed chart libraries", { licenses: ["MIT"] })).toEqual([
       "filter license:MIT",
       "boost any[chart]",
@@ -63,12 +63,10 @@ describe("compileQuery", () => {
   });
 
   test("reads built-with cues, negations, and comparisons with closed values", () => {
-    expect(groups("apps built with tauri")).toEqual(["filter any,built_with[tauri]"]);
-    // "not" also makes every stated group strict.
-    expect(groups("editor not built with electron")).toEqual([
-      "filter any[editor]",
-      "exclude any,built_with[electron]",
-    ]);
+    expect(groups("apps built with tauri")).toEqual(["filter built_with[tauri]"]);
+    expect(groups("editor not built with electron")).toEqual(["boost any[editor]", "exclude built_with[electron]"]);
+    // "with" and "using" name a feature as often as a dependency.
+    expect(groups("apps using tauri")).toEqual(["filter any,built_with[tauri]"]);
     expect(groups("deno alternative to node")).toEqual(["boost platform:deno", "boost alt:platform:node"]);
     expect(groups("apps, not libraries", { kinds: ["app"] })).toEqual(["filter kind:app", "exclude kind:library"]);
     expect(groups("password manager without electron, for linux")).toEqual([
@@ -104,17 +102,95 @@ describe("compileQuery", () => {
     ]);
   });
 
-  test("applies kinds and statuses only in strict mode, and joins closed alternatives into one group", () => {
+  test("applies kinds and statuses only where only narrows them, and joins closed alternatives into one group", () => {
     expect(groups("cli apps for macos or linux")).toEqual(["boost platform:macos|platform:linux"]);
     expect(groups("only cli apps for macos or linux", { kinds: ["cli"] })).toEqual([
-      "filter kind:cli|kind:app",
-      "filter platform:macos|platform:linux",
+      "filter kind:cli",
+      "boost platform:macos|platform:linux",
     ]);
+    expect(groups("only apps or libraries")).toEqual(["filter kind:app|kind:library"]);
+    expect(groups("only cli apps")).toEqual(["filter kind:app"]);
     expect(groups("deprecated http clients")).toEqual(["boost any[http clients]"]);
+    expect(groups("only deprecated http clients")).toEqual(["filter status:deprecated", "filter any[http clients]"]);
+  });
+
+  // The reviews of PR 95 found these. A negation reached a kind or platform word after other words, and "not" or "only"
+  // anywhere made every kind and platform word a filter.
+  test("narrows only the target of a negation, and reads no-code and non-blocking as words", () => {
+    expect(groups("no-code app builder")).toEqual(["boost any[no code]", "boost any[builder]"]);
+    expect(groups("no-code apps")).toEqual(["boost any[no code]"]);
+    expect(groups("non-electron desktop apps")).toEqual(["boost any[non electron desktop]"]);
+    expect(groups("without electron desktop apps")).toEqual(["exclude any,built_with[electron desktop]"]);
+    expect(groups("no dependency cli tool")).toEqual(["exclude any,built_with[dependency]"]);
+    expect(groups("no-std rust libraries", { languages: ["Rust"] })).toEqual(["filter lang:rust", "boost any[no std]"]);
+    expect(groups("non blocking io libraries, no login notes app")).toEqual([
+      "exclude any,built_with[blocking io]",
+      "exclude any,built_with[login notes]",
+    ]);
+    expect(groups("alternative to notion ios app")).toEqual(["boost alternative_to[notion]", "boost platform:ios"]);
+  });
+
+  test("narrows only the target of only, and never promotes the rest of the query", () => {
+    expect(groups("terminal emulator for linux only")).toEqual([
+      "boost platform:terminal",
+      "boost any[emulator]",
+      "filter platform:linux",
+    ]);
+    expect(groups("configuration management tool, not puppet")).toEqual([
+      "boost any[management]",
+      "exclude any,built_with[puppet]",
+    ]);
+    expect(groups("tools for training models that do not need a gpu")).toEqual([
+      "boost any[training]",
+      "boost any[do]",
+      "exclude any,built_with[need gpu]",
+    ]);
+    expect(groups("only cli tools for macos", { kinds: ["cli"] })).toEqual(["filter kind:cli", "boost platform:macos"]);
+    expect(groups("only for macos or linux")).toEqual(["filter platform:macos|platform:linux"]);
+    // A generic noun ends the words before it as a kind word does, so trufflehog keeps its place for this one.
+    expect(groups("find secrets leaked in git repos")).toEqual(["boost any[find secrets leaked]", "boost any[git]"]);
+  });
+
+  test("keeps a relation's target out of the kinds the results may have", () => {
+    expect(groups("only libraries for building apps", { kinds: ["library"] })).toEqual([
+      "filter kind:library",
+      "boost any[building]",
+    ]);
+    expect(groups("only libraries for building apps")).toEqual(["filter kind:library", "boost any[building]"]);
+    expect(groups("only libraries, not apps", { kinds: ["library"] })).toEqual([
+      "filter kind:library",
+      "exclude kind:app",
+    ]);
+    expect(groups("only libraries, not app templates", { kinds: ["library"] })).toEqual([
+      "filter kind:library",
+      "exclude kind:app",
+    ]);
+  });
+
+  test("carries a relation's role and negation into languages and platforms", () => {
+    expect(groups("only apps built with node")).toEqual(["filter kind:app", "filter with:platform:node"]);
+    expect(groups("apps not built with node")).toEqual(["exclude with:platform:node"]);
+    expect(groups("terminal that runs on linux")).toEqual(["boost platform:terminal", "filter runs-on:platform:linux"]);
+    expect(groups("apps that do not run on windows")).toEqual(["boost any[do]", "exclude runs-on:platform:windows"]);
+    expect(groups("cli for node")).toEqual(["boost platform:node"]);
+    expect(groups("only apps built with javascript", { languages: ["JavaScript"] })).toEqual([
+      "filter with:lang:javascript",
+      "filter kind:app",
+    ]);
+    expect(groups("apps written in javascript", { languages: ["JavaScript"] })).toEqual([
+      "filter written-in:lang:javascript",
+    ]);
+    expect(groups("apps not written in javascript", { languages: ["JavaScript"] })).toEqual([
+      "exclude written-in:lang:javascript",
+    ]);
+    expect(groups("javascript apps not built with rust", { languages: ["JavaScript", "Rust"] })).toEqual([
+      "filter lang:javascript",
+      "exclude with:lang:rust",
+    ]);
   });
 
   test("drops what it cannot be sure of", () => {
-    expect(groups("tools for a very long winded subject phrase")).toEqual(["boost any[tools]"]);
+    expect(groups("parsers for a very long winded subject phrase")).toEqual(["boost any[parsers]"]);
     expect(groups("clients for foo or bar or baz or qux or quux")).toEqual(["boost any[clients]"]);
     expect(groups("stars for postgres starred last year with more than 200 stars")).toEqual(["filter any[postgres]"]);
     const many = groups("a1 for b1 with c1 using d1 for e1 with f1 using g1 for h1 with i1 using j1");

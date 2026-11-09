@@ -266,6 +266,59 @@ const fixture = () => {
       }),
     );
 
+    test.effect("tests the role each cue names, for languages and platforms, and excludes only that role", () =>
+      Effect.gen(function* () {
+        const app = (id: number, name: string, language: string, facts: Seed["facts"] = []): Seed => ({
+          id,
+          name,
+          summary: "a desktop app",
+          language,
+          starredAt: "2025-01-01T00:00:00Z",
+          kind: "app",
+          facts,
+        });
+        const scope = yield* seed(922, [
+          app(9221, "node-built", "Go", [{ role: "built_with", term: "Node.js" }]),
+          app(9222, "node-target", "Go", [{ role: "for", term: "Node.js" }]),
+          app(9223, "node-runtime", "Go", [{ role: "runs_on", term: "Node.js" }]),
+          app(9224, "js-built", "Rust", [{ role: "built_with", term: "JavaScript" }]),
+          app(9225, "js-written", "JavaScript"),
+          app(9226, "ts-written", "TypeScript"),
+          app(9227, "js-target", "Go", [{ role: "for", term: "JavaScript" }]),
+        ]);
+        respond = (prompt) =>
+          ormPlan(
+            /javascript/i.test(prompt) ? { languages: [{ language: "JavaScript", said: "javascript" }] } : {},
+            { _tag: "relevance" },
+            "a desktop app",
+          );
+        const everyApp = [
+          "js-built",
+          "js-target",
+          "js-written",
+          "node-built",
+          "node-runtime",
+          "node-target",
+          "ts-written",
+        ];
+        const found = (query: string) =>
+          search({ scope, query, limit: 10 }).pipe(Effect.map((outcome) => names(outcome)));
+        const without = (...names: ReadonlyArray<string>) => everyApp.filter((name) => !names.includes(name));
+
+        expect((yield* found("apps built with node")).sort()).toEqual(["node-built"]);
+        expect((yield* found("apps not built with node")).sort()).toEqual(without("node-built"));
+        expect((yield* found("apps that run on node")).sort()).toEqual(["node-runtime"]);
+        expect((yield* found("apps not running on node")).sort()).toEqual(without("node-runtime"));
+        const boosted = yield* found("apps for node");
+        expect([boosted.slice(0, 2).sort(), boosted.sort()]).toEqual([["node-runtime", "node-target"], everyApp]);
+        expect((yield* found("apps written in javascript")).sort()).toEqual(["js-written", "ts-written"]);
+        expect((yield* found("apps not written in javascript")).sort()).toEqual(without("js-written", "ts-written"));
+        expect((yield* found("apps built with javascript")).sort()).toEqual(["js-built"]);
+        expect((yield* found("apps not built with javascript")).sort()).toEqual(without("js-built"));
+        expect((yield* found("javascript apps")).sort()).toEqual(["js-target", "js-written", "ts-written"]);
+      }),
+    );
+
     test.effect("refuses network and global scopes until they exist", () =>
       Effect.gen(function* () {
         for (const scope of [{ _tag: "network", login: Login.make("user-906") }, { _tag: "global" }] as const) {

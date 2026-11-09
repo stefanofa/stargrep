@@ -11,6 +11,7 @@ import {
   languages,
   platforms,
   reservedKeys,
+  roles,
   statuses,
 } from "@stargrep/knowledge/registry";
 import * as Context from "effect/Context";
@@ -36,20 +37,38 @@ export interface CompiledQuery {
 
 export type Planned = Pick<QueryPlan.Filters, "languages" | "kinds" | "licenses">;
 
-// What a clause is, by the word that introduced it. Each row gives its mode outside strict mode and in it, and null
-// leaves the clause to full text and vectors. Promoting bare subjects to filters is a change to one row, gated by the
-// recall eval. A relation clause that a closed word cuts short, as "local" in "for local models", is cut: the closed
-// word is most likely the noun the clause describes.
-type Clause = "language" | "license" | "kind" | "status" | "platform" | "relation" | "cut" | "comparison" | "bare";
+// What a run of words or closed values is, by the cue that introduced it. Each row gives its mode, then its mode when
+// "only" narrows it, and null leaves it to full text and vectors. Promoting bare subjects to filters is a change to one
+// row, gated by the recall eval.
+//   negated: the target of "not", "without", or another negation, whatever it names.
+//   kind and status: a word in the clause that describes the results, never a relation's target.
+//   platform: a platform the results describe, or one after a cue that names no role, such as "for".
+//   named: a language or platform after a cue that names its role, such as "built with" or "runs on".
+//   cut: a relation's words that a closed word cuts short, as "local" in "for local models", where the closed word is
+//   most likely the noun they describe.
+type Row =
+  | "negated"
+  | "language"
+  | "license"
+  | "kind"
+  | "status"
+  | "platform"
+  | "named"
+  | "relation"
+  | "cut"
+  | "comparison"
+  | "bare";
 
-export type Policy = Readonly<Record<Clause, readonly [loose: Db.GroupMode | null, strict: Db.GroupMode | null]>>;
+export type Policy = Readonly<Record<Row, readonly [plain: Db.GroupMode | null, only: Db.GroupMode | null]>>;
 
 export const policy: Policy = {
+  negated: ["exclude", "exclude"],
   language: ["filter", "filter"],
   license: ["filter", "filter"],
   kind: [null, "filter"],
   status: [null, "filter"],
   platform: ["boost", "filter"],
+  named: ["filter", "filter"],
   relation: ["filter", "filter"],
   cut: ["boost", "filter"],
   comparison: ["boost", "boost"],
@@ -61,51 +80,84 @@ export const CurrentPolicy = Context.Reference<Policy>("@stargrep/core/search/co
   defaultValue: () => policy,
 });
 
-const member: Roles = ["any"];
-// A bare subject atom never reaches built_with, so words that may mean "built with" also take with: atoms.
-const memberOrBuilt: Roles = ["any", "built_with"];
 type Roles = readonly [AtomRole, ...Array<AtomRole>];
 
-type Cue =
-  | { readonly _tag: "Relation"; readonly roles: Roles }
-  | { readonly _tag: "Comparison" }
-  | { readonly _tag: "Negation" };
+const member: Roles = ["any"];
+// "with" and "using" can name a feature ("editor with vim keybindings") or a dependency ("apps using electron"), and a
+// bare subject atom never reaches built_with, so they take member and with: atoms both. So does a bare negation, as in
+// "without electron".
+const memberOrBuilt: Roles = ["any", "built_with"];
 
-const relation = (roles: Roles): Cue => ({ _tag: "Relation", roles });
-const comparison: Cue = { _tag: "Comparison" };
-const negation: Cue = { _tag: "Negation" };
+interface Relation {
+  readonly _tag: "Relation";
+  // The roles a subject target reaches.
+  readonly subjects: Roles;
+  // The role a language or platform target takes. A cue that names one makes its target a filter.
+  readonly language: AtomRole;
+  readonly platform: AtomRole;
+  readonly named: boolean;
+}
 
-const cues: ReadonlyMap<string, Cue> = new Map([
+type Cue = Relation | { readonly _tag: "Comparison" } | { readonly _tag: "Negation" } | { readonly _tag: "Only" };
+
+const relation = (
+  subjects: Roles,
+  named: { readonly language?: AtomRole; readonly platform?: AtomRole } = {},
+): Relation => ({
+  _tag: "Relation",
+  subjects,
+  language: named.language ?? "any",
+  platform: named.platform ?? "any",
+  named: named.language !== undefined || named.platform !== undefined,
+});
+const builtWith = relation(["built_with"], { language: "built_with", platform: "built_with" });
+const comparison = { _tag: "Comparison" } as const;
+
+const cues: ReadonlyMap<string, Cue> = new Map<string, Cue>([
   ["for", relation(member)],
   ["in", relation(member)],
   ["on", relation(member)],
-  ["runs on", relation(member)],
-  ["written in", relation(member)],
   ["supports", relation(member)],
   ["integrates with", relation(member)],
+  ["runs on", relation(member, { platform: "runs_on" })],
+  ["run on", relation(member, { platform: "runs_on" })],
+  ["running on", relation(member, { platform: "runs_on" })],
+  ["written in", relation(member, { language: "written_in" })],
   ["with", relation(memberOrBuilt)],
   ["using", relation(memberOrBuilt)],
-  ["built with", relation(memberOrBuilt)],
-  ["built on", relation(memberOrBuilt)],
-  ["built using", relation(memberOrBuilt)],
-  ["made with", relation(memberOrBuilt)],
-  ["alternative to", comparison],
-  ["alternatives to", comparison],
-  ["instead of", comparison],
-  ["replacement for", comparison],
-  ["replacements for", comparison],
-  ["replaces", comparison],
-  ["not", negation],
-  ["without", negation],
-  ["no", negation],
-  ["except", negation],
-  ["excluding", negation],
-  ["non", negation],
+  ["built with", builtWith],
+  ["built on", builtWith],
+  ["built using", builtWith],
+  ["made with", builtWith],
+  ...["alternative to", "alternatives to", "instead of", "replacement for", "replacements for", "replaces"].map(
+    (phrase) => [phrase, comparison] as const,
+  ),
+  ...["not", "without", "no", "except", "excluding", "non"].map((word) => [word, { _tag: "Negation" }] as const),
+  ...["only", "just", "exclusively"].map((word) => [word, { _tag: "Only" }] as const),
 ]);
 
 // After a clause, these make it a comparison, as in "open source Slack alternative".
 const comparisonMarkers = new Set(["alternative", "alternatives"]);
 const stopPhrases = new Set(["open source", "opensource", "oss"]);
+// Nouns every repo is. Like a kind word, one ends the words before it, so "in git repos" boosts git and "only cli tools"
+// asks for CLIs alone, and it names nothing itself.
+const genericNouns = new Set([
+  "tool",
+  "tools",
+  "utility",
+  "utilities",
+  "project",
+  "projects",
+  "repo",
+  "repos",
+  "repository",
+  "repositories",
+  "software",
+  "program",
+  "programs",
+  "thing",
+  "things",
+]);
 const maxPhrase = 4;
 const maxGroups = 8;
 const maxAlternatives = 4;
@@ -131,10 +183,12 @@ const idOf = (dim: ClosedDim, name: string): string | undefined => {
 
 export const version = Hash.string(
   JSON.stringify({
+    clauses: 2,
     policy,
     cues: [...cues],
     comparisonMarkers: [...comparisonMarkers],
     stopPhrases: [...stopPhrases],
+    genericNouns: [...genericNouns],
     closedWords: [...closedWords],
     bounds: [maxPhrase, maxGroups, maxAlternatives, maxWords],
   }),
@@ -180,12 +234,166 @@ const breaks = (gap: string) => /[.;:!?()[\]{}"]/.test(gap);
 const alternates = (gap: string) => /[,/]/.test(gap);
 const isStop = (word: string) => Vocabulary.isConnective(word) || Vocabulary.isFilterWord(word) || /^[0-9]/.test(word);
 
-interface ClauseContext {
-  readonly cue: Cue | null;
-  readonly negated: boolean;
+type Match =
+  | {
+      readonly _tag: "Closed";
+      readonly dim: ClosedDim;
+      readonly id: string;
+      readonly span: Span;
+      readonly length: number;
+    }
+  | { readonly _tag: "Cue"; readonly cue: Cue; readonly length: number }
+  | { readonly _tag: "Stop"; readonly length: number };
+
+// The longest closed value, cue, or stop phrase that starts at a token.
+const matcher =
+  (tokens: ReadonlyArray<Token>, languageWords: ReadonlyMap<LabelKey, string>) =>
+  (index: number): Match | null => {
+    for (let length = Math.min(maxPhrase, tokens.length - index); length > 0; length--) {
+      const run = tokens.slice(index, index + length);
+      if (!run.every((token, n) => !token.slashed && (n === 0 || joined(token.gap)))) continue;
+      const text = run.map((token) => token.word).join(" ");
+      const key = labelKey(text);
+      const span: Span = [run[0]?.start ?? 0, run.at(-1)?.end ?? 0];
+      const language = key === null ? undefined : languageWords.get(key);
+      if (language !== undefined) return { _tag: "Closed", dim: "language", id: language, span, length };
+      const word = key === null ? undefined : closedWords.get(key);
+      if (word !== undefined) return { _tag: "Closed", ...word, span, length };
+      const cue = cues.get(text);
+      if (cue !== undefined) return { _tag: "Cue", cue, length };
+      if (stopPhrases.has(text)) return { _tag: "Stop", length };
+    }
+    return null;
+  };
+
+interface ClosedAt {
+  readonly id: string;
+  readonly span: Span;
 }
 
-const none: ClauseContext = { cue: null, negated: false };
+// A run is what one cue can target: content words, split into alternatives by "or" and commas, or closed values of one
+// dimension that "or" or a comma joins.
+type WordRun = { readonly _tag: "Words"; readonly alternatives: Array<Array<Token>>; cut: boolean };
+type ClosedRun = { readonly _tag: "Closed"; readonly dim: ClosedDim; readonly values: Array<ClosedAt> };
+type NounRun = { readonly _tag: "Noun" };
+type Run = WordRun | ClosedRun | NounRun;
+
+// A clause is what one cue governs. A relation, a comparison, or a negation targets the clause's first run and nothing
+// else, so the runs after it form a tail clause that describes neither the cue's target nor the results. The clause
+// with no cue describes the results, and "only" narrows every run in it.
+interface Clause {
+  readonly cue: Relation | typeof comparison | null;
+  readonly negated: boolean;
+  readonly tail: boolean;
+  exclusive: boolean;
+  readonly runs: Array<Run>;
+}
+
+const clauseOf = (
+  cue: Clause["cue"],
+  options: { readonly negated?: boolean; readonly exclusive?: boolean; readonly tail?: boolean } = {},
+): Clause => ({
+  cue,
+  negated: options.negated ?? false,
+  tail: options.tail ?? false,
+  exclusive: options.exclusive ?? false,
+  runs: [],
+});
+
+const targets = (current: Clause) => current.cue !== null || current.negated;
+
+const parse = (tokens: ReadonlyArray<Token>, matchAt: (index: number) => Match | null): ReadonlyArray<Clause> => {
+  const clauses: Array<Clause> = [clauseOf(null)];
+  const current = () => clauses[clauses.length - 1] ?? clauseOf(null);
+  // The run a word joins: the clause's last run when it fits, else a new run, in a tail once the clause has a target.
+  const runFor = <R extends Run>(fits: (run: Run) => run is R, make: () => R): R => {
+    const last = current().runs.at(-1);
+    if (last !== undefined && fits(last)) return last;
+    if (last !== undefined && targets(current())) {
+      if (last._tag === "Words") last.cut = true;
+      clauses.push(clauseOf(null, { tail: true }));
+    }
+    const run = make();
+    current().runs.push(run);
+    return run;
+  };
+  let joiner = false;
+  for (let i = 0; i < tokens.length; ) {
+    const token = tokens[i];
+    if (token === undefined) break;
+    if (token.slashed || breaks(token.gap)) {
+      clauses.push(clauseOf(null));
+      joiner = false;
+      if (token.slashed) {
+        i++;
+        continue;
+      }
+    } else if (alternates(token.gap)) joiner = true;
+
+    const match = matchAt(i);
+    const next = tokens[i + (match?.length ?? 1)];
+    // "no-code", "non-blocking", and "no-std" are words, not negations.
+    const compound = match?._tag === "Cue" && match.cue._tag === "Negation" && next?.gap === "-";
+    if (match?._tag === "Closed") {
+      const { dim } = match;
+      const run = runFor(
+        (last): last is ClosedRun => last._tag === "Closed" && last.dim === dim && joiner,
+        (): ClosedRun => ({ _tag: "Closed", dim, values: [] }),
+      );
+      run.values.push({ id: match.id, span: match.span });
+      joiner = false;
+    } else if (match?._tag === "Cue" && !compound) {
+      const open = current();
+      const fresh = open.runs.length === 0;
+      if (match.cue._tag === "Only") {
+        // A leading "only" narrows the clause it opens, and a trailing one the clause it ends.
+        if (fresh) open.exclusive = true;
+        else {
+          const owner = open.tail ? clauses.findLast((candidate) => !candidate.tail) : open;
+          if (owner !== undefined) owner.exclusive = true;
+          clauses.push(clauseOf(null));
+        }
+      } else if (match.cue._tag === "Negation") {
+        clauses.push(clauseOf(null, { negated: true, exclusive: fresh && open.exclusive }));
+      } else {
+        // A negation reaches through a cue that follows it at once, as in "not built with".
+        clauses.push(clauseOf(match.cue, { negated: fresh && open.negated, exclusive: fresh && open.exclusive }));
+      }
+      joiner = false;
+    } else if (match?._tag !== "Stop") {
+      if (token.word === "or") joiner = true;
+      else if (comparisonMarkers.has(token.word)) {
+        const last = current().runs.at(-1);
+        if (last?._tag === "Words") {
+          current().runs.pop();
+          clauses.push({ ...clauseOf(comparison), runs: [last] });
+        }
+        clauses.push(clauseOf(null));
+        joiner = false;
+      } else if (genericNouns.has(token.word)) {
+        runFor(
+          (last): last is NounRun => last._tag === "Noun",
+          (): NounRun => ({ _tag: "Noun" }),
+        );
+        joiner = false;
+      } else if (compound || !isStop(token.word)) {
+        const run = runFor(
+          (last): last is WordRun => last._tag === "Words",
+          (): WordRun => ({ _tag: "Words", alternatives: [[]], cut: false }),
+        );
+        if (joiner && (run.alternatives.at(-1)?.length ?? 0) > 0) run.alternatives.push([]);
+        run.alternatives.at(-1)?.push(token);
+        joiner = false;
+      }
+    }
+    i += match?.length ?? 1;
+  }
+  return clauses;
+};
+
+// A role that does not accept the dimension, such as runs_on for a language, falls back to every default role.
+const atomOf = (role: AtomRole, dim: ClosedDim, id: string): Atom =>
+  ({ role: role === "any" || roles[role].accepts.includes(dim) ? role : "any", value: { dim, id } }) as Atom;
 
 export const compileQuery = (input: {
   readonly query: string;
@@ -195,9 +403,8 @@ export const compileQuery = (input: {
 }): CompiledQuery => {
   const { query, planned, explicit } = input;
   if (QueryPlan.queryKind(query) === "name") return { explicit, stated: [] };
-  const strict = Vocabulary.restrictsKind(query);
   const rules = input.policy ?? policy;
-  const modeOf = (clause: Clause) => rules[clause][strict ? 1 : 0];
+  const modeOf = (row: Row, narrowed: boolean) => rules[row][narrowed ? 1 : 0];
 
   const plannedLanguages = [...new Set(planned.languages.flatMap((name) => idOf("language", name) ?? []))];
   const languageWords = new Map(
@@ -205,162 +412,93 @@ export const compileQuery = (input: {
       .filter((value) => plannedLanguages.includes(value.id))
       .flatMap((value) => closedKeys(value).map((key) => [key, value.id] as const)),
   );
-  const languageSpans = new Map<string, Span>();
-  const kindWords = new Map<string, Span | null>(
-    planned.kinds.flatMap((kind) => {
-      const id = idOf("kind", kind);
-      return id === undefined ? [] : [[id, null] as const];
-    }),
-  );
-
-  const words: Array<Stated> = [];
   const tokens = tokenize(query);
-  let context = none;
-  // A closed word ends its clause. The cue it followed still reaches closed words joined to it by "or" or a comma, and
-  // nothing else.
-  let afterClosed = false;
-  let joinedByOr = false;
-  let alternatives: Array<Array<Token>> = [[]];
-  // The last closed group, while only "or" and separators follow it, so "macos or linux" is one group.
-  let open: { readonly dim: ClosedDim; readonly stated: Stated & { readonly group: Db.ClosedGroup } } | null = null;
+  const clauses = parse(tokens, matcher(tokens, languageWords));
 
-  // Ends the clause, and says whether it had words.
-  const flush = (ending: { readonly asComparison?: boolean; readonly byClosedWord?: boolean } = {}): boolean => {
-    const filled = alternatives.filter((words) => words.length > 0);
-    alternatives = [[]];
-    if (filled.length === 0) return false;
-    open = null;
-    if (filled.length > maxAlternatives || filled.some((words) => words.length > maxWords)) return true;
-    const keys = filled.map((words) => labelKey(words.map((token) => token.word).join(" ")));
-    if (keys.some((key) => key === null || reservedKeys.has(key))) return true;
-    const cue: Cue | null = ending.asComparison === true ? comparison : context.cue;
-    const mode = context.negated
-      ? "exclude"
-      : modeOf(
-          cue === null
-            ? "bare"
-            : cue._tag === "Comparison"
-              ? "comparison"
-              : ending.byClosedWord === true
-                ? "cut"
-                : "relation",
-        );
-    if (mode === null) return true;
-    const roles: Roles =
-      cue?._tag === "Comparison"
-        ? ["alternative_to"]
-        : cue?._tag === "Relation"
-          ? cue.roles
-          : context.negated
-            ? memberOrBuilt
-            : member;
-    const unique = [...new Map(keys.map((key, index) => [key as LabelKey, filled[index] ?? []]))];
-    const [first, ...rest] = unique;
-    if (first === undefined) return true;
-    words.push({
-      group: { _tag: "Subject", mode, roles, keys: [first[0], ...rest.map(([key]) => key)] },
-      spans: unique.map(([, words]) => [words[0]?.start ?? 0, words.at(-1)?.end ?? 0] as const),
+  // Each planned language takes the role and the negation of the first clause that names it.
+  const languagesAt = new Map<
+    string,
+    { readonly atom: Atom; readonly mode: Db.GroupMode | null; readonly span: Span }
+  >();
+  // The kinds the results may have: the planner's guarded kinds, or else the last kind run that "only" narrows in the
+  // clause describing the results, its head noun, so "only cli apps" asks for apps and "only apps or libraries" for
+  // either.
+  const plannedKinds = [...new Set(planned.kinds.flatMap((kind) => idOf("kind", kind) ?? []))];
+  const lexicalKinds: Array<ClosedRun> = [];
+  const words: Array<Stated> = [];
+  const closedStated = (mode: Db.GroupMode, run: ClosedRun, role: AtomRole) => {
+    const [first, ...rest] = run.values.map((value) => atomOf(role, run.dim, value.id));
+    if (first !== undefined) {
+      words.push({ group: { _tag: "Closed", mode, any: [first, ...rest] }, spans: run.values.map(({ span }) => span) });
+    }
+  };
+
+  for (const current of clauses) {
+    current.runs.forEach((run, index) => {
+      if (run._tag === "Noun") return;
+      const isTarget = index === 0 && targets(current);
+      const cue = isTarget ? current.cue : null;
+      const negated = current.negated && isTarget;
+      const narrowed = current.exclusive;
+      if (run._tag === "Words") {
+        const filled = run.alternatives.filter((alternative) => alternative.length > 0);
+        if (filled.length === 0 || filled.length > maxAlternatives) return;
+        if (filled.some((alternative) => alternative.length > maxWords)) return;
+        const keys = filled.map((alternative) => labelKey(alternative.map((token) => token.word).join(" ")));
+        if (keys.some((key) => key === null || reservedKeys.has(key))) return;
+        const row: Row =
+          cue === null ? "bare" : cue._tag === "Comparison" ? "comparison" : run.cut ? "cut" : "relation";
+        const mode = modeOf(negated ? "negated" : row, narrowed);
+        if (mode === null) return;
+        const reaches: Roles =
+          cue?._tag === "Comparison"
+            ? ["alternative_to"]
+            : cue?._tag === "Relation"
+              ? cue.subjects
+              : negated
+                ? memberOrBuilt
+                : member;
+        const unique = [...new Map(keys.map((key, n) => [key as LabelKey, filled[n] ?? []]))];
+        const [first, ...rest] = unique;
+        if (first === undefined) return;
+        words.push({
+          group: { _tag: "Subject", mode, roles: reaches, keys: [first[0], ...rest.map(([key]) => key)] },
+          spans: unique.map(([, alternative]) => [alternative[0]?.start ?? 0, alternative.at(-1)?.end ?? 0] as const),
+        });
+        return;
+      }
+      if (run.dim === "language") {
+        const role = cue?._tag === "Comparison" ? "alternative_to" : cue?._tag === "Relation" ? cue.language : "any";
+        const mode = modeOf(negated ? "negated" : role === "alternative_to" ? "comparison" : "language", narrowed);
+        for (const value of run.values) {
+          if (!languagesAt.has(value.id)) {
+            languagesAt.set(value.id, { atom: atomOf(role, "language", value.id), mode, span: value.span });
+          }
+        }
+        return;
+      }
+      if (run.dim === "kind" || run.dim === "status") {
+        // A kind or status that a relation targets, or one in a tail, describes something other than the results.
+        const describesResults = current.cue === null && !current.tail;
+        if (!describesResults) return;
+        if (negated) {
+          const mode = modeOf("negated", narrowed);
+          if (mode !== null) closedStated(mode, run, "any");
+        } else if (run.dim === "kind") {
+          if (modeOf("kind", narrowed) !== null) lexicalKinds.push(run);
+        } else {
+          const mode = modeOf("status", narrowed);
+          if (mode !== null) closedStated(mode, run, "any");
+        }
+        return;
+      }
+      const role = cue?._tag === "Comparison" ? "alternative_to" : cue?._tag === "Relation" ? cue.platform : "any";
+      const row: Row =
+        cue?._tag === "Comparison" ? "comparison" : cue?._tag === "Relation" && cue.named ? "named" : "platform";
+      const mode = modeOf(negated ? "negated" : row, narrowed);
+      if (mode !== null) closedStated(mode, run, role);
     });
-    return true;
-  };
-
-  const closedAtom = (dim: ClosedDim, id: string, span: Span) => {
-    if (dim === "language") {
-      languageSpans.set(id, span);
-      return;
-    }
-    if (dim === "kind" && !context.negated) {
-      if (modeOf("kind") !== null && (kindWords.get(id) ?? null) === null) kindWords.set(id, span);
-      return;
-    }
-    const role: AtomRole = context.cue?._tag === "Comparison" && dim === "platform" ? "alternative_to" : "any";
-    const mode = context.negated
-      ? "exclude"
-      : role === "alternative_to"
-        ? modeOf("comparison")
-        : modeOf(dim === "platform" ? "platform" : "status");
-    if (mode === null || (context.cue?._tag === "Comparison" && role !== "alternative_to")) return;
-    const atom = { role, value: { dim, id } } as Atom;
-    if (open !== null && open.dim === dim && open.stated.group.mode === mode) {
-      const group = open.stated.group;
-      const stated = { group: { ...group, any: [...group.any, atom] as const }, spans: [...open.stated.spans, span] };
-      words[words.indexOf(open.stated)] = stated;
-      open = { dim, stated };
-      return;
-    }
-    const stated = { group: { _tag: "Closed", mode, any: [atom] } as Db.ClosedGroup, spans: [span] };
-    words.push(stated);
-    open = { dim, stated };
-  };
-
-  for (let i = 0; i < tokens.length; ) {
-    const token = tokens[i];
-    if (token === undefined) break;
-    if (token.slashed || breaks(token.gap)) {
-      flush();
-      context = none;
-      open = null;
-      if (token.slashed) {
-        i++;
-        continue;
-      }
-    } else if (alternates(token.gap)) alternatives.push([]);
-
-    const phrases = [...Array(Math.min(maxPhrase, tokens.length - i)).keys()]
-      .map((n) => tokens.slice(i, i + n + 1))
-      .filter((run) => run.every((t, index) => !t.slashed && (index === 0 || joined(t.gap))))
-      .reverse();
-    const match = phrases
-      .map((run) => {
-        const text = run.map((t) => t.word).join(" ");
-        const key = labelKey(text);
-        const span: Span = [run[0]?.start ?? 0, run.at(-1)?.end ?? 0];
-        const language = key === null ? undefined : languageWords.get(key);
-        if (language !== undefined)
-          return { length: run.length, closed: { dim: "language" as const, id: language }, span };
-        const word = key === null ? undefined : closedWords.get(key);
-        if (word !== undefined) return { length: run.length, closed: word, span };
-        const cue = cues.get(text);
-        if (cue !== undefined) return { length: run.length, cue, span };
-        if (stopPhrases.has(text)) return { length: run.length, span };
-        return null;
-      })
-      .find((found) => found !== null);
-
-    if (afterClosed) {
-      if (token.word === "or") joinedByOr = true;
-      else if (match?.closed === undefined || !(joinedByOr || alternates(token.gap))) {
-        context = none;
-        afterClosed = false;
-        joinedByOr = false;
-      }
-      if (match?.closed !== undefined) joinedByOr = false;
-    }
-    if (match?.closed !== undefined) {
-      flush({ byClosedWord: true });
-      closedAtom(match.closed.dim, match.closed.id, match.span);
-      afterClosed = true;
-    } else if (match?.cue !== undefined) {
-      // A negation reaches through a cue that follows it at once, as in "not built with".
-      const ended = flush();
-      open = null;
-      context =
-        match.cue._tag === "Negation"
-          ? { cue: null, negated: true }
-          : { cue: match.cue, negated: context.negated && context.cue === null && !ended };
-    } else if (match === undefined || match === null) {
-      if (token.word === "or") alternatives.push([]);
-      else if (comparisonMarkers.has(token.word)) {
-        flush({ asComparison: true });
-        context = none;
-      } else if (!isStop(token.word)) {
-        open = null;
-        alternatives[alternatives.length - 1]?.push(token);
-      }
-    }
-    i += match?.length ?? 1;
   }
-  flush();
 
   const plannedGroups: Array<Stated> = [];
   const closedGroup = (mode: Db.GroupMode, atoms: ReadonlyArray<readonly [Atom, Span | null]>) => {
@@ -372,31 +510,33 @@ export const compileQuery = (input: {
       });
     }
   };
-  const languageMode = modeOf("language");
-  if (languageMode !== null) {
+  const languageAtoms = plannedLanguages.map(
+    (id) => languagesAt.get(id) ?? { atom: atomOf("any", "language", id), mode: modeOf("language", false), span: null },
+  );
+  for (const mode of ["filter", "exclude", "boost"] as const) {
     closedGroup(
-      languageMode,
-      plannedLanguages.map((id) => [
-        { role: "any", value: { dim: "language", id } } as Atom,
-        languageSpans.get(id) ?? null,
-      ]),
+      mode,
+      languageAtoms.filter((language) => language.mode === mode).map(({ atom, span }) => [atom, span] as const),
     );
   }
-  const licenseMode = modeOf("license");
+  const licenseMode = modeOf("license", false);
   if (licenseMode !== null) {
     closedGroup(
       licenseMode,
       [...new Set(planned.licenses.flatMap((name) => idOf("license", name) ?? []))].map((id) => [
-        { role: "any", value: { dim: "license", id } } as Atom,
+        atomOf("any", "license", id),
         null,
       ]),
     );
   }
-  const kindMode = modeOf("kind");
+  const kindMode = modeOf("kind", true);
   if (kindMode !== null) {
+    const lexical: ReadonlyArray<ClosedAt> = lexicalKinds.at(-1)?.values ?? [];
     closedGroup(
       kindMode,
-      [...kindWords].map(([id, span]) => [{ role: "any", value: { dim: "kind", id } } as Atom, span]),
+      plannedKinds.length > 0
+        ? plannedKinds.map((id) => [atomOf("any", "kind", id), lexical.find((value) => value.id === id)?.span ?? null])
+        : lexical.map(({ id, span }) => [atomOf("any", "kind", id), span]),
     );
   }
   return { explicit, stated: [...plannedGroups, ...words].slice(0, maxGroups) };

@@ -22,6 +22,7 @@ export interface Seed {
   readonly stars?: number;
   readonly kind?: string;
   readonly license?: string;
+  readonly facts?: ReadonlyArray<{ readonly role: string; readonly term: string }>;
 }
 
 export const seedLibrary = Effect.fn("test.seedLibrary")(function* (account: number, repos: ReadonlyArray<Seed>) {
@@ -68,6 +69,7 @@ export const seedLibrary = Effect.fn("test.seedLibrary")(function* (account: num
       summary: repo.summary,
       keywords: [],
       kind: repo.kind ?? "library",
+      ...(repo.facts === undefined ? {} : { facts: repo.facts }),
     });
     const [vector] = yield* embeddings.embed([repo.summary]);
     const input = {

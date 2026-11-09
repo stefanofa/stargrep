@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import type * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import type { EmbeddingModelId } from "./embedding.ts";
@@ -71,6 +72,7 @@ export type {
 } from "./queries/repos.ts";
 export { IconPlate, IconSource, maxIconSize, OwnerType, RepoIcon } from "./queries/repos.ts";
 export type {
+  AcceptedKeys,
   AtomQuery,
   ClosedGroup,
   GroupMode,
@@ -86,7 +88,7 @@ export type {
   StatedGroup,
   SubjectGroup,
 } from "./queries/search.ts";
-export { MetricFamily, MetricVariant, noAtoms, noFilters } from "./queries/search.ts";
+export { acceptedKeysTtl, MetricFamily, MetricVariant, noAtoms, noFilters } from "./queries/search.ts";
 export type {
   EnrichmentProgress,
   LibraryEntry,
@@ -128,6 +130,8 @@ export interface Options {
   readonly embeddingModel: EmbeddingModelId;
   /** Skips the embedding_settings read once a build that shares this Ref has passed it. */
   readonly adopted?: Ref.Ref<boolean>;
+  /** The accepted label keys a build that shares this Ref last read, so stated words no subject holds skip SQL work. */
+  readonly acceptedKeys?: Ref.Ref<Option.Option<Search.AcceptedKeys>>;
 }
 
 export interface NodePostgresOptions extends Options {
@@ -154,7 +158,7 @@ export const layer = (options: Options) =>
           accounts: yield* Accounts.make,
           repos: yield* Repos.make(embeddingModel),
           stars: yield* Stars.make,
-          search: yield* Search.make(embeddingModel),
+          search: yield* Search.make(embeddingModel, options.acceptedKeys),
           syncRequests: yield* SyncRequests.make,
           rateLines: yield* RateLines.make,
           usage: yield* Usage.make,

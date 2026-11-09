@@ -3,13 +3,14 @@ import { IconHost } from "@stargrep/api/icon-host";
 import type { AuthConfig } from "@stargrep/auth/config";
 import { ModelAllowance, QueryPlanner, Search } from "@stargrep/core/search";
 import { SyncRequests } from "@stargrep/core/stars";
+import type * as Db from "@stargrep/db";
 import type { BudgetShare } from "@stargrep/github/schemas";
 import { type AiSetup, layerSearch } from "@stargrep/runtime/ai-key";
 import * as DbRuntime from "@stargrep/runtime/db";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
-import type * as Option from "effect/Option";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import { layerSearchCache, layerSyncQueue } from "./adapters.ts";
@@ -22,6 +23,7 @@ import { layerAuth, layerViewers } from "./viewers.ts";
 const maxDatabaseConnections = 2;
 
 const adopted = Ref.makeUnsafe(false);
+const acceptedKeys = Ref.makeUnsafe(Option.none<Db.AcceptedKeys>());
 
 const connectionString = (env: WebEnv) => Redacted.make(env.DATABASE.connectionString);
 
@@ -35,7 +37,12 @@ const layerStorage = (env: WebEnv, { ai, budgetShare }: Pick<RequestConfig, "ai"
   Layer.mergeAll(SyncRequests.layer(budgetShare), FetchHttpClient.layer).pipe(
     Layer.provideMerge(Layer.merge(layerSyncQueue(env.SYNC_STARS), layerOwnerLookup(env.WORKER))),
     Layer.provideMerge(
-      DbRuntime.layerDb({ connectionString: connectionString(env), adopted, maxConnections: maxDatabaseConnections }),
+      DbRuntime.layerDb({
+        connectionString: connectionString(env),
+        adopted,
+        acceptedKeys,
+        maxConnections: maxDatabaseConnections,
+      }),
     ),
     Layer.provideMerge(layerSearch(ai)),
   );

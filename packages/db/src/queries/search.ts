@@ -4,8 +4,12 @@ import { SubjectId } from "@stargrep/knowledge/ids";
 import type { LabelKey } from "@stargrep/knowledge/label-key";
 import { and, eq, isNull, type SQL, sql } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
+import * as Clock from "effect/Clock";
 import type * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import {
   type Embedding,
@@ -16,7 +20,7 @@ import {
 } from "../embedding.ts";
 import { type DbQueryFailed, DbRowInvalid } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
-import { rowsDecoder, timeParam } from "../rows.ts";
+import { resultRows, rowsDecoder, timeParam } from "../rows.ts";
 import { repoMetrics, repos, stars } from "../schema.ts";
 import { any, closedTest, isClosed, subjectIndexTest, subjectTest, widens } from "./atom-predicates.ts";
 import { Repo, repoColumns } from "./repos.ts";
@@ -223,6 +227,8 @@ interface FacetFilter {
   readonly test: SQL;
   readonly missing: SQL;
   readonly applies: SQL | null;
+  // Every key of a stated group has an accepted meaning, so it most likely applies.
+  readonly likely: boolean;
   readonly drive: { readonly negated: boolean; readonly index: SQL; readonly subjects: SQL } | null;
 }
 
@@ -238,7 +244,7 @@ const originsNamed = (name: string): SQL => sql`(select ids from origins where n
 // The statement's parts, from the atoms: the resolution CTEs, the closed filters on repos, the filters that read
 // repo_facets, the boosts, and the envelope. Resolution reads every stated key in one inlined knowledge_key_meanings
 // and every origin set in one inlined knowledge_origin_ids, so the rules are planned once per statement, not per group.
-const plan = (atoms: AtomQuery) => {
+const plan = (atoms: AtomQuery, accepted: ReadonlySet<string> | null) => {
   const keyRows: Array<{ readonly group: number; readonly key: LabelKey }> = [];
   const widenings: Array<{ readonly group: number; readonly widen: boolean }> = [];
   const explicitOrigins: Array<{ readonly name: string; readonly id: SubjectId; readonly widen: boolean }> = [];
@@ -256,6 +262,11 @@ const plan = (atoms: AtomQuery) => {
       stated.push(sql`'[]'::jsonb`);
       return;
     }
+    // A key no accepted subject holds cannot resolve, so its group costs the statement nothing.
+    if (accepted !== null && !group.keys.every((key) => accepted.has(key))) {
+      stated.push(sql`null::jsonb`);
+      return;
+    }
     for (const key of group.keys) keyRows.push({ group: k, key });
     for (const widen of new Set(group.roles.map(widens))) widenings.push({ group: k, widen });
     const originsOf = (role: AtomRole) => originsNamed(`s${k}_${widens(role) ? "members" : "compared"}`);
@@ -271,6 +282,7 @@ const plan = (atoms: AtomQuery) => {
         test: negated ? sql`(not ${resolved} or not ${holds})` : sql`(not ${resolved} or ${holds})`,
         missing: negated ? sql`true` : sql`not ${resolved}`,
         applies: resolved,
+        likely: accepted !== null,
         drive: { negated, index, subjects: meaningOf(k) },
       });
     }
@@ -298,6 +310,7 @@ const plan = (atoms: AtomQuery) => {
       test: group.negate ? sql`not ${holds}` : holds,
       missing: group.negate ? sql`not ${closedHolds}` : closedHolds,
       applies: null,
+      likely: true,
       drive:
         closedPart === null
           ? {
@@ -339,7 +352,11 @@ const plan = (atoms: AtomQuery) => {
         where s.id = t.id and s.namespace = 'public' and k.status <> 'rejected')), '[]'::jsonb)`;
   const envelope =
     labels.length === 0
-      ? sql`${JSON.stringify({ stated: atoms.stated.map(() => []), labels: {}, unavailable: [] })}::jsonb`
+      ? sql`${JSON.stringify({
+          stated: atoms.stated.map((group) => (group._tag === "Closed" ? [] : null)),
+          labels: {},
+          unavailable: [],
+        })}::jsonb`
       : sql`jsonb_build_object(
     'stated', jsonb_build_array(${sql.join(stated, sql`, `)}),
     'labels', ${sql.join(
@@ -390,7 +407,12 @@ const plan = (atoms: AtomQuery) => {
 // filter resolved; b, the index shape, which reads the filter's matches from a GIN index, when they fit in the account's
 // star count; and c, the probe shape, one primary-key read of repo_facets per starred repo, otherwise. A boost is a
 // third rank list over the fused candidates.
-const ranked = (search: HybridSearch, vector: EmbeddingVector | null, model: EmbeddingModelId) => {
+const ranked = (
+  search: HybridSearch,
+  vector: EmbeddingVector | null,
+  model: EmbeddingModelId,
+  accepted: ReadonlySet<string> | null,
+) => {
   const aliases = new Map(search.metrics.map((metric, index) => [metric.id, sql.raw(`m${index}`)]));
   const alias = (metricId: string) => {
     const found = aliases.get(metricId);
@@ -400,7 +422,7 @@ const ranked = (search: HybridSearch, vector: EmbeddingVector | null, model: Emb
   const carry = (from: string) => sql.join([...aliases.values()].map((name) => sql`, ${sql.raw(from)}.${name}`));
   const { filters, rankBy } = search;
   const account = search.scope.accountId;
-  const parts = plan(search.atoms);
+  const parts = plan(search.atoms, accepted);
   const lateral =
     search.metrics.length === 0
       ? sql``
@@ -528,6 +550,9 @@ const ranked = (search: HybridSearch, vector: EmbeddingVector | null, model: Emb
     const test = allOf(facets.map((filter) => filter.test));
     const missing = allOf(facets.map((filter) => filter.missing));
     const conditional = facets.flatMap((filter) => (filter.applies === null ? [] : [filter.applies]));
+    // Today's pipeline runs when no stated filter resolved. When every filter's keys have an accepted meaning, it is
+    // left out, and a filter that still fails to resolve passes every row of the probe shape.
+    const today = conditional.length === facets.length && facets.some((filter) => !filter.likely);
     const applies = conditional.length === facets.length ? sql`(${sql.join(conditional, sql` or `)})` : sql`true`;
     const explicitDriver = facets.find(
       (filter) => filter.applies === null && filter.drive !== null && !filter.drive.negated,
@@ -578,15 +603,19 @@ const ranked = (search: HybridSearch, vector: EmbeddingVector | null, model: Emb
       );
       ctes.push(sql`shape as materialized (
     select case
-      when not applies then 'a'
+      when not applies then ${sql.raw(today ? "'a'" : "'c'")}
       when scan and (select count(*) from ${sql.raw(anti ? "excluded" : "matched")}) <= (select stars from account) then 'b'
       else 'c' end as route
     from reach
   )`);
     } else {
-      ctes.push(sql`shape as materialized (select case when ${applies} then 'c' else 'a' end as route)`);
+      ctes.push(
+        today
+          ? sql`shape as materialized (select case when ${applies} then 'c' else 'a' end as route)`
+          : sql`shape as materialized (select 'c' as route)`,
+      );
     }
-    if (conditional.length === facets.length) {
+    if (today) {
       ctes.push(pipeline("_a", starsJoin, []));
       picks.push(sql`select * from pick_a where (select route from shape) = 'a'`);
     }
@@ -634,6 +663,7 @@ export const hybridQuery = (
   search: HybridSearch,
   vector: EmbeddingVector | null,
   model: EmbeddingModelId,
+  accepted: ReadonlySet<string> | null = null,
 ) => {
   const hits = db
     .$with("ranked", {
@@ -646,7 +676,7 @@ export const hybridQuery = (
       metrics: sql<ReadonlyArray<number | null>>`metrics`.as("metrics"),
       position: sql<number>`position`.mapWith(Number).as("position"),
     })
-    .as(ranked(search, vector, model));
+    .as(ranked(search, vector, model, accepted));
   return db
     .with(hits)
     .select({
@@ -663,14 +693,49 @@ export const hybridQuery = (
     .orderBy(hits.position);
 };
 
-export const make = Effect.fn("Db.search.make")(function* (configuredModel: EmbeddingModelId) {
+// The label keys that name an accepted public subject, as one isolate last read them.
+export interface AcceptedKeys {
+  readonly keys: ReadonlySet<string>;
+  readonly readAt: number;
+}
+
+// A subject accepted since the last read applies to stated words within this long.
+export const acceptedKeysTtl = Duration.minutes(5);
+
+const decodeKeys = rowsDecoder(Schema.Struct({ key: Schema.String }));
+
+export const make = Effect.fn("Db.search.make")(function* (
+  configuredModel: EmbeddingModelId,
+  acceptedKeys?: Ref.Ref<Option.Option<AcceptedKeys>>,
+) {
   const { run } = yield* Postgres.Postgres;
   const decodeResolution = Schema.decodeUnknownEffect(Resolution);
+
+  // Every key with an accepted public meaning, a superset of the keys knowledge_key_meanings resolves. Null when no
+  // cache was given, so SQL resolves every key.
+  const accepted = Effect.fnUntraced(function* () {
+    if (acceptedKeys === undefined) return null;
+    const now = yield* Clock.currentTimeMillis;
+    const cached = yield* Ref.get(acceptedKeys);
+    if (Option.isSome(cached) && now - cached.value.readAt < Duration.toMillis(acceptedKeysTtl)) {
+      return cached.value.keys;
+    }
+    const rows = yield* run("search.acceptedKeys", (db) =>
+      db.execute(sql`select distinct l.key from knowledge_labels l
+        left join subject_canonical c on c.origin_id = l.subject_id
+        join subjects s on s.id = coalesce(c.canonical_id, l.subject_id) and s.status = 'accepted'
+        where l.namespace = 'public'`),
+    ).pipe(Effect.flatMap((result) => decodeKeys("search.acceptedKeys")(resultRows(result))));
+    const keys: ReadonlySet<string> = new Set(rows.map(({ key }) => key));
+    yield* Ref.set(acceptedKeys, Option.some({ keys, readAt: now }));
+    return keys;
+  });
 
   return {
     hybrid: Effect.fnUntraced(function* (search: HybridSearch) {
       const vector = search.embedding === null ? null : yield* requireModel(configuredModel, search.embedding);
-      const rows = yield* run("search.hybrid", (db) => hybridQuery(db, search, vector, configuredModel));
+      const keys = search.atoms.stated.some((group) => group._tag === "Subject") ? yield* accepted() : null;
+      const rows = yield* run("search.hybrid", (db) => hybridQuery(db, search, vector, configuredModel, keys));
       const resolution = yield* decodeResolution(rows[0]?.envelope).pipe(
         Effect.mapError(() => new DbRowInvalid({ operation: "search.hybrid", column: "envelope" })),
       );
