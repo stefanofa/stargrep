@@ -397,57 +397,60 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
 };
 
 it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 30_000 })("PGlite stars", starCases);
-it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }))("node-postgres stars", (test) => {
-  starCases(test);
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 30_000 })(
+  "node-postgres stars",
+  (test) => {
+    starCases(test);
 
-  test.effect("keeps a star event that read an older snapshot time from outliving a newer snapshot", () =>
-    Effect.gen(function* () {
-      const db = yield* Db.Db;
-      const database = yield* TestDatabase.TestDatabase;
-      const id = accountId(9801);
-      const repo = repoId(9801);
-      yield* db.accounts.upsert(account(id));
-      yield* db.repos.upsertRefs([ref(repo)]);
-      const blocker = yield* Effect.acquireRelease(
-        Effect.promise(async () => {
-          const client = new pg.Client({ connectionString: Option.getOrThrow(database.url) });
-          client.on("error", ignoreError);
-          await client.connect();
-          return client;
-        }),
-        (client) => Effect.promise(() => client.end()),
-      );
-      const lockWaits = database
-        .query(
-          "select count(*)::int as waiting from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'",
-        )
-        .pipe(
-          Effect.flatMap(decodeWaiting),
-          Effect.map((rows) => rows[0]?.waiting ?? 0),
+    test.effect("keeps a star event that read an older snapshot time from outliving a newer snapshot", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const database = yield* TestDatabase.TestDatabase;
+        const id = accountId(9801);
+        const repo = repoId(9801);
+        yield* db.accounts.upsert(account(id));
+        yield* db.repos.upsertRefs([ref(repo)]);
+        const blocker = yield* Effect.acquireRelease(
+          Effect.promise(async () => {
+            const client = new pg.Client({ connectionString: Option.getOrThrow(database.url) });
+            client.on("error", ignoreError);
+            await client.connect();
+            return client;
+          }),
+          (client) => Effect.promise(() => client.end()),
         );
-      const until = <E>(ready: Effect.Effect<boolean, E>) =>
-        ready.pipe(Effect.repeat({ until: (done) => done, times: 5000 }));
+        const lockWaits = database
+          .query(
+            "select count(*)::int as waiting from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'",
+          )
+          .pipe(
+            Effect.flatMap(decodeWaiting),
+            Effect.map((rows) => rows[0]?.waiting ?? 0),
+          );
+        const until = <E>(ready: Effect.Effect<boolean, E>) =>
+          ready.pipe(Effect.repeat({ until: (done) => done, times: 5000 }));
 
-      yield* Effect.promise(() => blocker.query("begin"));
-      yield* Effect.promise(() =>
-        blocker.query(
-          "insert into stars (account_id, repo_id, starred_at, observed_at, source) values ($1, $2, $3, $3, 'api')",
-          [id, repo, "2026-09-01T00:00:00Z"],
-        ),
-      );
-      const event = yield* Effect.forkChild(
-        db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-10-03T00:00:00Z")] }),
-      );
-      yield* until(Effect.map(lockWaits, (waiting) => waiting >= 1));
-      const snapshot = yield* Effect.forkChild(
-        db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-05T00:00:00Z") }),
-      );
-      yield* until(Effect.map(lockWaits, (waiting) => waiting >= 2 || snapshot.pollUnsafe() !== undefined));
-      yield* Effect.promise(() => blocker.query("rollback"));
-      yield* Fiber.join(event);
-      yield* Fiber.join(snapshot);
+        yield* Effect.promise(() => blocker.query("begin"));
+        yield* Effect.promise(() =>
+          blocker.query(
+            "insert into stars (account_id, repo_id, starred_at, observed_at, source) values ($1, $2, $3, $3, 'api')",
+            [id, repo, "2026-09-01T00:00:00Z"],
+          ),
+        );
+        const event = yield* Effect.forkChild(
+          db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-10-03T00:00:00Z")] }),
+        );
+        yield* until(Effect.map(lockWaits, (waiting) => waiting >= 1));
+        const snapshot = yield* Effect.forkChild(
+          db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-05T00:00:00Z") }),
+        );
+        yield* until(Effect.map(lockWaits, (waiting) => waiting >= 2 || snapshot.pollUnsafe() !== undefined));
+        yield* Effect.promise(() => blocker.query("rollback"));
+        yield* Fiber.join(event);
+        yield* Fiber.join(snapshot);
 
-      expect(yield* db.stars.list(id)).toEqual([]);
-    }),
-  );
-});
+        expect(yield* db.stars.list(id)).toEqual([]);
+      }),
+    );
+  },
+);
