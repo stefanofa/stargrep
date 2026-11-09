@@ -145,6 +145,18 @@ export const judged: ReadonlyArray<Judged> = [
   },
   { query: "apps that do not support windows", near: "ghostty-org/ghostty", keeps: terminals },
   {
+    query: "apps that never run on windows",
+    near: "ghostty-org/ghostty",
+    keeps: terminals,
+    drops: ["microsoft/terminal"],
+  },
+  {
+    query: "apps that shouldn't run on windows",
+    near: "ghostty-org/ghostty",
+    keeps: terminals,
+    drops: ["microsoft/terminal"],
+  },
+  {
     query: "apps that aren't built with electron",
     near: "tw93/Pake",
     keeps: ["tw93/Pake", "tauri-apps/tauri", "flutter/flutter"],
@@ -172,6 +184,13 @@ export const judged: ReadonlyArray<Judged> = [
     drops: ["astral-sh/uv"],
   },
   {
+    query: "web framework without orm go",
+    near: "gin-gonic/gin",
+    languages: ["Go"],
+    keeps: ["gin-gonic/gin", "gofiber/fiber", "labstack/echo"],
+    drops: ["expressjs/express", "tokio-rs/axum", "actix/actix-web", "fastapi/fastapi"],
+  },
+  {
     query: "typescript orm, not javascript",
     near: "drizzle-team/drizzle-orm",
     languages: ["TypeScript", "JavaScript"],
@@ -193,6 +212,28 @@ export const judged: ReadonlyArray<Judged> = [
     near: "zed-industries/zed",
     keeps: ["zed-industries/zed", "microsoft/vscode", "helix-editor/helix"],
   },
+  // The re-verify found these empty on prod's data, where "built on" and "powered by" tested with: atoms alone.
+  {
+    query: "apps built on node",
+    near: "n8n-io/n8n",
+    keeps: ["n8n-io/n8n", "vercel/next.js", "expressjs/express"],
+  },
+  {
+    query: "tools built with node.js",
+    near: "expressjs/express",
+    keeps: ["expressjs/express", "vercel/next.js", "n8n-io/n8n"],
+  },
+  {
+    query: "chatbot powered by openai",
+    near: "lobehub/lobehub",
+    keeps: ["lobehub/lobehub", "langchain-ai/langchain"],
+  },
+  {
+    query: "note app powered by ai",
+    near: "logseq/logseq",
+    keeps: ["logseq/logseq", "anyproto/anytype-ts", "AppFlowy-IO/AppFlowy"],
+  },
+  { query: "games made with godot", near: "godotengine/godot", keeps: ["godotengine/godot"] },
   {
     query: "login with github",
     near: "nextauthjs/next-auth",

@@ -321,6 +321,45 @@ const fixture = () => {
       }),
     );
 
+    test.effect("relaxes a filter the words imply to a boost when it leaves almost nothing, and says so", () =>
+      Effect.gen(function* () {
+        const app = (id: number, name: string, language: string, facts: Seed["facts"] = []): Seed => ({
+          id,
+          name,
+          summary: "a desktop app",
+          language,
+          starredAt: "2025-01-01T00:00:00Z",
+          kind: "app",
+          facts,
+        });
+        const scope = yield* seed(923, [
+          app(9231, "node-built", "Go", [{ role: "built_with", term: "Node.js" }]),
+          app(9232, "rusty", "Rust"),
+          ...[3, 4, 5, 6, 7].map((n) => app(9230 + n, `plain-${n}`, "Go")),
+        ]);
+        respond = (prompt) =>
+          ormPlan(
+            /rust/i.test(prompt) ? { languages: [{ language: "Rust", said: "rust" }] } : {},
+            { _tag: "relevance" },
+            "a desktop app",
+          );
+        const everyApp = ["node-built", "plain-3", "plain-4", "plain-5", "plain-6", "plain-7", "rusty"];
+
+        const relaxed = yield* search({ scope, query: "apps built on node", limit: 10 });
+        expect([names(relaxed)[0], [...names(relaxed)].sort()]).toEqual(["node-built", everyApp]);
+        expect(relaxed.applied.map(({ atom, mode, relaxed }) => [atom, mode, relaxed])).toEqual([
+          ["platform:node", "boost", true],
+          ["with:platform:node", "boost", true],
+        ]);
+
+        // The planner's language, the caller's filter, and an exclusion stay exact.
+        expect(names(yield* search({ scope, query: "rust apps", limit: 10 }))).toEqual(["rusty"]);
+        const node = Schema.decodeSync(SelectionKey)("platform:node");
+        expect(names(yield* search({ scope, query: "desktop apps", limit: 10, filter: node }))).toEqual(["node-built"]);
+        expect((yield* search({ scope, query: "apps not built on node", limit: 10 })).results).toHaveLength(6);
+      }),
+    );
+
     test.effect("refuses network and global scopes until they exist", () =>
       Effect.gen(function* () {
         for (const scope of [{ _tag: "network", login: Login.make("user-906") }, { _tag: "global" }] as const) {

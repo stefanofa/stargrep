@@ -63,11 +63,12 @@ describe("compileQuery", () => {
   });
 
   test("reads built-with cues, negations, and comparisons with closed values", () => {
-    expect(groups("apps built with tauri")).toEqual(["filter built_with[tauri]"]);
-    expect(groups("editor not built with electron")).toEqual(["boost any[editor]", "exclude built_with[electron]"]);
+    expect(groups("apps built with tauri")).toEqual(["filter any,built_with[tauri]"]);
+    expect(groups("editor not built with electron")).toEqual(["boost any[editor]", "exclude any,built_with[electron]"]);
     // "with" and "using" name a feature as often as a dependency, so they only boost.
     expect(groups("apps using tauri")).toEqual(["boost any,built_with[tauri]"]);
-    expect(groups("apps powered by electron")).toEqual(["filter built_with[electron]"]);
+    expect(groups("apps powered by electron")).toEqual(["filter any,built_with[electron]"]);
+    expect(groups("chatbot powered by openai")).toEqual(["boost any[chatbot]", "filter any,built_with[openai]"]);
     expect(groups("deno alternative to node")).toEqual(["boost platform:deno", "boost alt:platform:node"]);
     expect(groups("apps, not libraries", { kinds: ["app"] })).toEqual(["filter kind:app", "exclude kind:library"]);
     expect(groups("password manager without electron, for linux")).toEqual([
@@ -143,7 +144,7 @@ describe("compileQuery", () => {
     expect(groups("tools for training models that do not need a gpu")).toEqual([
       "boost any[training]",
       "boost any[do]",
-      "exclude any,built_with[need gpu]",
+      "exclude any,built_with[gpu]",
     ]);
     expect(groups("only cli tools for macos", { kinds: ["cli"] })).toEqual(["filter kind:cli", "boost platform:macos"]);
     expect(groups("only for macos or linux")).toEqual(["filter platform:macos|platform:linux"]);
@@ -168,8 +169,8 @@ describe("compileQuery", () => {
   });
 
   test("carries a relation's role and negation into languages and platforms", () => {
-    expect(groups("only apps built with node")).toEqual(["filter kind:app", "filter with:platform:node"]);
-    expect(groups("apps not built with node")).toEqual(["exclude with:platform:node"]);
+    expect(groups("only apps built with node")).toEqual(["filter kind:app", "filter platform:node|with:platform:node"]);
+    expect(groups("apps not built with node")).toEqual(["exclude platform:node|with:platform:node"]);
     expect(groups("terminal that runs on linux")).toEqual(["boost platform:terminal", "filter runs-on:platform:linux"]);
     expect(groups("apps that do not run on windows")).toEqual(["boost any[do]", "exclude runs-on:platform:windows"]);
     expect(groups("cli for node")).toEqual(["boost platform:node"]);
@@ -197,22 +198,54 @@ describe("compileQuery", () => {
       "apps that dont run on windows",
       "apps that can't run on windows",
       "apps that won’t run on windows",
+      "apps that never run on windows",
+      "apps that shouldn't run on windows",
+      "apps that hasn’t run on windows",
+      "apps that shouldnt run on windows",
+      "apps that dosen't run on windows",
+      "apps that DON'T run on windows",
     ]) {
       expect([query, groups(query)]).toEqual([query, ["exclude runs-on:platform:windows"]]);
     }
-    expect(groups("apps that aren't built with electron")).toEqual(["exclude built_with[electron]"]);
+    expect(groups("apps that aren't built with electron")).toEqual(["exclude any,built_with[electron]"]);
+    expect(groups("apps that ain't built with electron")).toEqual(["exclude any,built_with[electron]"]);
     expect(groups("a cli that isn't written in go", { languages: ["Go"] })).toEqual(["exclude written-in:lang:go"]);
-    expect(groups("tools that doesn’t need a gpu")).toEqual(["exclude any,built_with[need gpu]"]);
+    expect(groups("tools that doesn’t need a gpu")).toEqual(["exclude any,built_with[gpu]"]);
     const query = "apps that don’t run on windows";
     const [spans] = compile(query).stated.map(({ spans }) => spans.map((span) => span && query.slice(...span)));
     expect(spans).toEqual(["windows"]);
   });
 
-  test("never applies a closed value positively after a negation's target", () => {
-    expect(groups("apps that do not support windows")).toEqual(["boost any[do]", "exclude any,built_with[support]"]);
-    expect(groups("apps that do not support rust", { languages: ["Rust"] })).toEqual([
+  test("reaches through a verb right after a negation, as it reaches through a cue", () => {
+    expect(groups("apps that do not support windows")).toEqual(["boost any[do]", "exclude platform:windows"]);
+    expect(groups("apps that do not support python", { languages: ["Python"] })).toEqual([
+      "exclude written-in:lang:python|with:lang:python",
       "boost any[do]",
-      "exclude any,built_with[support]",
+    ]);
+    expect(groups("apps that don't use electron")).toEqual(["exclude any,built_with[electron]"]);
+    expect(groups("apps that don't work with docker")).toEqual(["exclude any,built_with[docker]"]);
+    expect(groups("support tickets without email")).toEqual([
+      "boost any[support tickets]",
+      "exclude any,built_with[email]",
+    ]);
+  });
+
+  test("applies no platform after a negation's target, and keeps a planned language there", () => {
+    expect(groups("web framework without orm go", { languages: ["Go"] })).toEqual([
+      "filter lang:go",
+      "boost any[web]",
+      "exclude any,built_with[orm]",
+    ]);
+    expect(groups("terminal not electron rust", { languages: ["Rust"] })).toEqual([
+      "filter lang:rust",
+      "boost platform:terminal",
+      "exclude any,built_with[electron]",
+    ]);
+    // A period ends the clause, so "rust" describes the results.
+    expect(groups("desktop apps without electron. rust", { languages: ["Rust"] })).toEqual([
+      "filter lang:rust",
+      "boost any[desktop]",
+      "exclude any,built_with[electron]",
     ]);
   });
 
@@ -229,7 +262,8 @@ describe("compileQuery", () => {
     expect(groups("cli tools not built with go", { languages: ["Go"] })).toEqual([
       "exclude written-in:lang:go|with:lang:go",
     ]);
-    expect(groups("apps built with node")).toEqual(["filter with:platform:node"]);
+    expect(groups("apps built with node")).toEqual(["filter platform:node|with:platform:node"]);
+    expect(groups("apps built on node")).toEqual(["filter platform:node|with:platform:node"]);
   });
 
   test("boosts what with and using name, and filters only on an explicit dependency cue", () => {
@@ -242,7 +276,7 @@ describe("compileQuery", () => {
       "boost lang:typescript",
       "boost any[web]",
     ]);
-    expect(groups("apps built using tauri")).toEqual(["filter built_with[tauri]"]);
+    expect(groups("apps built using tauri")).toEqual(["filter any,built_with[tauri]"]);
     expect(groups("apps not using langchain")).toEqual(["exclude any,built_with[langchain]"]);
   });
 

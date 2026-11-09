@@ -105,6 +105,8 @@ for (const mode of modes) {
           expect(before).toEqual(expect.arrayContaining([...entry.keeps, ...drops]));
           expect(after).toEqual(expect.arrayContaining([...entry.keeps]));
           expect(after.filter((name) => drops.includes(name))).toEqual([]);
+          // What the words imply never empties a search that finds more than a handful without them.
+          if (before.length > 5) expect(after.length).toBeGreaterThan(0);
         }),
       );
     }
