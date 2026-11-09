@@ -11,6 +11,7 @@
       "!repos",
       "!packages/db/migrations",
       "!evals/fixtures",
+      "!packages/core/seeds",
       "!packages/config/fixtures",
       "!apps/web/src/routeTree.gen.ts"
     ]

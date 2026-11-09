@@ -20,13 +20,17 @@ export type SplitRule = typeof SplitRule.Type;
 export const SubjectStatus = Schema.Literals(["candidate", "accepted", "rejected"]);
 export type SubjectStatus = typeof SubjectStatus.Type;
 
-const NewSubject = Schema.Struct({ label: Schema.String, definition: Schema.String });
+// What subjects.label and subjects.definition hold.
+const Label = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(120));
+const Definition = Schema.String.check(Schema.isMaxLength(400));
+
+const NewSubject = Schema.Struct({ label: Label, definition: Definition });
 
 // One curation step. docs/knowledge.md says what each one means.
 export const Decision = Schema.Union([
   Schema.TaggedStruct("Create", {
-    label: Schema.String,
-    definition: Schema.String,
+    label: Label,
+    definition: Definition,
     aliases: Schema.Array(Schema.String),
     status: SubjectStatus,
   }),
@@ -34,8 +38,8 @@ export const Decision = Schema.Union([
   Schema.TaggedStruct("Split", { subject: SubjectId, into: NewSubject, rule: SplitRule }),
   Schema.TaggedStruct("Rename", {
     subject: SubjectId,
-    label: Schema.optionalKey(Schema.String),
-    definition: Schema.optionalKey(Schema.String),
+    label: Schema.optionalKey(Label),
+    definition: Schema.optionalKey(Definition),
   }),
   Schema.TaggedStruct("Alias", { subject: SubjectId, label: Schema.String, add: Schema.Boolean }),
   Schema.TaggedStruct("Parent", { child: SubjectId, parent: Schema.NullOr(SubjectId) }),
@@ -50,12 +54,14 @@ export const Decision = Schema.Union([
 ]);
 export type Decision = typeof Decision.Type;
 
-// A decision as the log stores it. created is the subject a Create or Split made, allocated by the database inside
-// the decision's transaction, so folding the log is deterministic.
+// A decision as the log stores it. created is the subject a Create or Split made, allocated by the database before
+// the decision's transaction, so folding the log is deterministic. base is the label a minted subject had when a
+// Rename first gave it another, which undoing that Rename puts back.
 export interface StoredDecision {
   readonly revision: Revision;
   readonly decision: Decision;
   readonly created: SubjectId | null;
+  readonly base?: string;
 }
 
 // What decisions set on a subject. Null is untouched: a minted subject keeps its first surface form and is a candidate.
@@ -75,6 +81,15 @@ export interface SplitEntry {
 export interface Correction {
   readonly atom: Atom;
   readonly present: boolean;
+}
+
+// The decision that wrote each derived row, which the row names in the database.
+export interface Owners {
+  readonly labels: ReadonlyMap<LabelKey, Revision>;
+  readonly canonical: ReadonlyMap<SubjectId, Revision>;
+  readonly parents: ReadonlyMap<SubjectId, Revision>;
+  // Keyed "from:to".
+  readonly expands: ReadonlyMap<string, Revision>;
 }
 
 // The curated state, a pure function of the log. Subjects a projection minted appear only once a decision names them.
@@ -99,6 +114,7 @@ export interface KnowledgeState {
   // Unordered pairs, written "a:b" with a < b.
   readonly keepApart: ReadonlySet<string>;
   readonly corrections: ReadonlyMap<number, ReadonlyArray<Correction>>;
+  readonly owners: Owners;
 }
 
 // Refusals the state alone can prove. Namespace, slug, listing, and published-selection checks need the database.
@@ -136,6 +152,12 @@ interface Draft {
   readonly splits: Map<SubjectId, ReadonlyArray<SplitEntry>>;
   readonly keepApart: Set<string>;
   readonly corrections: Map<number, ReadonlyArray<Correction>>;
+  readonly owners: {
+    readonly labels: Map<LabelKey, Revision>;
+    readonly canonical: Map<SubjectId, Revision>;
+    readonly parents: Map<SubjectId, Revision>;
+    readonly expands: Map<string, Revision>;
+  };
 }
 
 // Inner collections are replaced on write, never mutated, so a draft shares them safely with the state it came from.
@@ -149,6 +171,12 @@ const draftOf = (state: KnowledgeState): Draft => ({
   splits: new Map(state.splits),
   keepApart: new Set(state.keepApart),
   corrections: new Map(state.corrections),
+  owners: {
+    labels: new Map(state.owners.labels),
+    canonical: new Map(state.owners.canonical),
+    parents: new Map(state.owners.parents),
+    expands: new Map(state.owners.expands),
+  },
 });
 
 export const empty: KnowledgeState = {
@@ -165,11 +193,13 @@ export const empty: KnowledgeState = {
   splits: new Map(),
   keepApart: new Set(),
   corrections: new Map(),
+  owners: { labels: new Map(), canonical: new Map(), parents: new Map(), expands: new Map() },
 };
 
 const untouched: SubjectState = { label: null, definition: null, status: null, repo: null };
 
 const pair = (a: SubjectId, b: SubjectId) => (a < b ? `${a}:${b}` : `${b}:${a}`);
+export const expandKey = (from: SubjectId, to: SubjectId) => `${from}:${to}`;
 
 const successors = (draft: Draft, node: SubjectId): ReadonlyArray<SubjectId> => [
   ...[...draft.parents].flatMap(([child, parent]) => (parent === node ? [child] : [])),
@@ -187,18 +217,34 @@ const predecessors = (draft: Draft, node: SubjectId): ReadonlyArray<SubjectId> =
 const longest = (draft: Draft, node: SubjectId, next: typeof successors): number =>
   Math.max(0, ...next(draft, node).map((other) => 1 + longest(draft, other, next)));
 
-const reaches = (draft: Draft, from: SubjectId, to: SubjectId): boolean =>
-  from === to || successors(draft, from).some((next) => reaches(draft, next, to));
+const classOf = (draft: Draft, id: SubjectId): ReadonlyArray<SubjectId> => [
+  id,
+  ...[...draft.canonical].flatMap(([origin, survivor]) => (survivor === id ? [origin] : [])),
+];
+
+const canonicalOf = (draft: Draft, id: SubjectId) => draft.canonical.get(id) ?? id;
+
+// Whether one subject's merge class reaches another's through Parent, Expand, and Split edges, each class taken as one
+// node. An edge decided before a merge stays on the ID it named, so a cycle can run through any member of a class.
+const reaches = (draft: Draft, from: SubjectId, to: SubjectId): boolean => {
+  const target = canonicalOf(draft, to);
+  const seen = new Set<SubjectId>();
+  const queue = [canonicalOf(draft, from)];
+  for (let node = queue.pop(); node !== undefined; node = queue.pop()) {
+    if (node === target) return true;
+    if (seen.has(node)) continue;
+    seen.add(node);
+    for (const member of classOf(draft, node)) {
+      for (const next of successors(draft, member)) queue.push(canonicalOf(draft, next));
+    }
+  }
+  return false;
+};
 
 const edgeRefusal = (draft: Draft, from: SubjectId, to: SubjectId): InvalidReason | null => {
   if (reaches(draft, to, from)) return "cycle";
   return longest(draft, from, predecessors) + 1 + longest(draft, to, successors) > maxDepth ? "too-deep" : null;
 };
-
-const classOf = (draft: Draft, id: SubjectId): ReadonlyArray<SubjectId> => [
-  id,
-  ...[...draft.canonical].flatMap(([origin, survivor]) => (survivor === id ? [origin] : [])),
-];
 
 const live = (draft: Draft, ...ids: ReadonlyArray<SubjectId>) => ids.every((id) => !draft.retired.has(id));
 const liveCanonical = (draft: Draft, ...ids: ReadonlyArray<SubjectId>) =>
@@ -221,6 +267,15 @@ const keysFor = (
   return keys;
 };
 
+// A key the owner already holds keeps the decision that gave it, so its row stays as it is.
+const label = (draft: Draft, owner: SubjectId, keys: ReadonlyArray<LabelKey>, revision: Revision) => {
+  for (const key of keys) {
+    if (draft.labels.get(key) === owner) continue;
+    draft.labels.set(key, owner);
+    draft.owners.labels.set(key, revision);
+  }
+};
+
 const present = (draft: Draft, id: SubjectId) => draft.subjects.get(id) ?? untouched;
 
 // Validates one decision against the draft, then applies it. The draft changes only when the result is null.
@@ -237,19 +292,23 @@ const applyOne = (draft: Draft, stored: StoredDecision): InvalidReason | null =>
         status: decision.status,
         repo: null,
       });
-      for (const key of keys) draft.labels.set(key, created);
+      label(draft, created, keys, revision);
       return null;
     }
     case "Merge": {
       const { from, into } = decision;
       if (!liveCanonical(draft, from, into)) return "not-live";
-      if (from === into) return "cycle";
+      // A merge across an edge would fold a hierarchy or a split into one meaning. Remove the edge first.
+      if (reaches(draft, from, into) || reaches(draft, into, from)) return "cycle";
       const moving = classOf(draft, from);
       const staying = classOf(draft, into);
       if (moving.some((a) => staying.some((b) => draft.keepApart.has(pair(a, b))))) return "keep-apart";
       const repos = new Set([...moving, ...staying].flatMap((id) => present(draft, id).repo ?? []));
       if (repos.size > 1) return "link-conflict";
-      for (const origin of moving) draft.canonical.set(origin, into);
+      for (const origin of moving) {
+        draft.canonical.set(origin, into);
+        draft.owners.canonical.set(origin, revision);
+      }
       return null;
     }
     case "Split": {
@@ -264,7 +323,7 @@ const applyOne = (draft: Draft, stored: StoredDecision): InvalidReason | null =>
         status: "candidate",
         repo: null,
       });
-      for (const key of keys) draft.labels.set(key, created);
+      label(draft, created, keys, revision);
       draft.splits.set(decision.subject, [
         ...(draft.splits.get(decision.subject) ?? []),
         { revision, into: created, rule: decision.rule },
@@ -281,7 +340,7 @@ const applyOne = (draft: Draft, stored: StoredDecision): InvalidReason | null =>
         label: decision.label ?? current.label,
         definition: decision.definition ?? current.definition,
       });
-      for (const key of keys) draft.labels.set(key, decision.subject);
+      label(draft, decision.subject, keys, revision);
       return null;
     }
     case "Alias": {
@@ -290,24 +349,33 @@ const applyOne = (draft: Draft, stored: StoredDecision): InvalidReason | null =>
         const key = labelKey(decision.label);
         if (key === null || draft.labels.get(key) !== decision.subject) return "not-live";
         draft.labels.delete(key);
+        draft.owners.labels.delete(key);
         return null;
       }
       const keys = keysFor(draft, decision.subject, [decision.label]);
       if (typeof keys === "string") return keys;
-      for (const key of keys) draft.labels.set(key, decision.subject);
+      label(draft, decision.subject, keys, revision);
       return null;
     }
     case "Parent": {
       const { child, parent } = decision;
       if (!liveCanonical(draft, child) || (parent !== null && !liveCanonical(draft, parent))) return "not-live";
       const previous = draft.parents.get(child);
+      const previousOwner = draft.owners.parents.get(child);
       draft.parents.delete(child);
+      draft.owners.parents.delete(child);
       const edge = parent === null ? null : edgeRefusal(draft, parent, child);
       if (edge !== null) {
-        if (previous !== undefined) draft.parents.set(child, previous);
+        if (previous !== undefined && previousOwner !== undefined) {
+          draft.parents.set(child, previous);
+          draft.owners.parents.set(child, previousOwner);
+        }
         return edge;
       }
-      if (parent !== null) draft.parents.set(child, parent);
+      if (parent !== null) {
+        draft.parents.set(child, parent);
+        draft.owners.parents.set(child, revision);
+      }
       return null;
     }
     case "Expand": {
@@ -316,12 +384,14 @@ const applyOne = (draft: Draft, stored: StoredDecision): InvalidReason | null =>
       const targets = draft.expands.get(from) ?? new Set<SubjectId>();
       if (!decision.add) {
         draft.expands.set(from, new Set([...targets].filter((id) => id !== to)));
+        draft.owners.expands.delete(expandKey(from, to));
         return null;
       }
       if (targets.has(to)) return null;
       const edge = edgeRefusal(draft, from, to);
       if (edge !== null) return edge;
       draft.expands.set(from, new Set([...targets, to]));
+      draft.owners.expands.set(expandKey(from, to), revision);
       return null;
     }
     case "KeepApart": {
@@ -331,7 +401,7 @@ const applyOne = (draft: Draft, stored: StoredDecision): InvalidReason | null =>
         draft.keepApart.delete(pair(a, b));
         return null;
       }
-      if ((draft.canonical.get(a) ?? a) === (draft.canonical.get(b) ?? b)) return "keep-apart";
+      if (canonicalOf(draft, a) === canonicalOf(draft, b)) return "keep-apart";
       draft.keepApart.add(pair(a, b));
       return null;
     }
@@ -344,10 +414,10 @@ const applyOne = (draft: Draft, stored: StoredDecision): InvalidReason | null =>
       const { subject, repo } = decision;
       if (!liveCanonical(draft, subject)) return "not-live";
       if (repo !== null) {
-        const members = classOf(draft, subject);
-        const elsewhere = [...draft.subjects].some(([id, state]) => state.repo === repo && !members.includes(id));
-        const merged = members.some((id) => (present(draft, id).repo ?? repo) !== repo);
-        if (elsewhere || merged) return "link-conflict";
+        // One subject row per linked repo, a merged origin's included, as the unique index on subjects.repo_id holds.
+        const taken = [...draft.subjects].some(([id, state]) => state.repo === repo && id !== subject);
+        const merged = classOf(draft, subject).some((id) => (present(draft, id).repo ?? repo) !== repo);
+        if (taken || merged) return "link-conflict";
       }
       draft.subjects.set(subject, { ...present(draft, subject), repo });
       return null;
@@ -411,24 +481,112 @@ export const fold = (
   return { state: freeze(draft, log, undone, new Set(invalid.map((entry) => entry.revision))), invalid };
 };
 
+// The merges, split rules, and corrections a log describes, replayed without checking any decision. Curation checked
+// each one when it wrote it and keeps every active decision valid, so this is what fold gives, from those rows and the
+// undos alone. A check needs the rest of the log, such as a split child's label freed by an Alias removal.
+export const rules = (
+  decisions: ReadonlyArray<StoredDecision>,
+): Pick<KnowledgeState, "canonical" | "splits" | "corrections"> => {
+  const log = [...decisions].sort((a, b) => a.revision - b.revision);
+  const undone = new Set<Revision>();
+  for (const stored of [...log].reverse()) {
+    if (stored.decision._tag === "Undo" && !undone.has(stored.revision)) undone.add(stored.decision.revision);
+  }
+  const canonical = new Map<SubjectId, SubjectId>();
+  const splits = new Map<SubjectId, ReadonlyArray<SplitEntry>>();
+  const corrections = new Map<number, ReadonlyArray<Correction>>();
+  for (const { decision, revision, created } of log) {
+    if (undone.has(revision)) continue;
+    switch (decision._tag) {
+      case "Merge": {
+        for (const [origin, survivor] of canonical)
+          if (survivor === decision.from) canonical.set(origin, decision.into);
+        canonical.set(decision.from, decision.into);
+        break;
+      }
+      case "Split": {
+        if (created === null) break;
+        splits.set(decision.subject, [
+          ...(splits.get(decision.subject) ?? []),
+          { revision, into: created, rule: decision.rule },
+        ]);
+        break;
+      }
+      case "Correct": {
+        const key = formatAtom(decision.atom);
+        corrections.set(decision.repo, [
+          ...(corrections.get(decision.repo) ?? []).filter((correction) => formatAtom(correction.atom) !== key),
+          { atom: decision.atom, present: decision.present },
+        ]);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  return { canonical, splits, corrections };
+};
+
+// Decisions other than Undo on top of the state, in order, each at the revision after the one before. The first that
+// is invalid against the state before it refuses them all.
+export const extend = (
+  state: KnowledgeState,
+  decisions: ReadonlyArray<StoredDecision>,
+): Exclude<Applied, { readonly _tag: "Conflict" }> => {
+  const draft = draftOf(state);
+  let head = state.revision;
+  for (const stored of decisions) {
+    const reason = stored.revision !== head + 1 ? "not-live" : applyOne(draft, stored);
+    if (reason !== null) return { _tag: "Invalid", invalid: { revision: stored.revision, reason } };
+    head = stored.revision;
+  }
+  return { _tag: "Applied", state: freeze(draft, [...state.log, ...decisions], state.undone, state.skipped) };
+};
+
+// The Undo rows that take target out of the fold, from revision at on: target alone, or with cascade also every later
+// decision that would turn invalid without it, newest first, so each row undoes something nothing still leans on.
+export const undoing = (
+  state: KnowledgeState,
+  target: Revision,
+  cascade: boolean,
+  at: Revision,
+):
+  | { readonly _tag: "Applied"; readonly state: KnowledgeState; readonly rows: ReadonlyArray<StoredDecision> }
+  | Exclude<Applied, { readonly _tag: "Applied" }> => {
+  const refuse = { _tag: "Invalid", invalid: { revision: at, reason: "not-live" } } as const;
+  const known = state.log.some((entry) => entry.revision === target);
+  if (at !== state.revision + 1 || !known || state.undone.has(target) || state.skipped.has(target)) return refuse;
+  const targets = new Set([target]);
+  for (;;) {
+    const rows = [...targets]
+      .sort((a, b) => b - a)
+      .map(
+        (revision, index): StoredDecision => ({
+          revision: Revision.make(at + index),
+          decision: { _tag: "Undo", revision, cascade },
+          created: null,
+        }),
+      );
+    const next = fold([...state.log, ...rows]);
+    const broken = next.invalid.map((entry) => entry.revision).filter((revision) => !state.skipped.has(revision));
+    if (broken.length === 0) return { _tag: "Applied", state: next.state, rows };
+    if (!cascade) return { _tag: "Conflict", revisions: broken };
+    for (const revision of broken) targets.add(revision);
+  }
+};
+
 // One more decision on top of the state, as the log would fold it. An Undo folds the log without its target and
 // reports a Conflict when that turns later decisions invalid.
 export const apply = (state: KnowledgeState, stored: StoredDecision): Applied => {
-  const refuse = (reason: InvalidReason): Applied => ({
-    _tag: "Invalid",
-    invalid: { revision: stored.revision, reason },
-  });
-  if (stored.revision <= state.revision) return refuse("not-live");
-  if (stored.decision._tag === "Undo") {
-    const target = stored.decision.revision;
-    const known = state.log.some((entry) => entry.revision === target);
-    if (!known || state.undone.has(target) || state.skipped.has(target)) return refuse("not-live");
-    const next = fold([...state.log, stored]);
-    const broken = next.invalid.map((entry) => entry.revision).filter((revision) => !state.skipped.has(revision));
-    return broken.length > 0 ? { _tag: "Conflict", revisions: broken } : { _tag: "Applied", state: next.state };
+  if (stored.revision <= state.revision)
+    return { _tag: "Invalid", invalid: { revision: stored.revision, reason: "not-live" } };
+  if (stored.decision._tag !== "Undo") return extend(state, [stored]);
+  const target = stored.decision.revision;
+  const known = state.log.some((entry) => entry.revision === target);
+  if (!known || state.undone.has(target) || state.skipped.has(target)) {
+    return { _tag: "Invalid", invalid: { revision: stored.revision, reason: "not-live" } };
   }
-  const draft = draftOf(state);
-  const reason = applyOne(draft, stored);
-  if (reason !== null) return refuse(reason);
-  return { _tag: "Applied", state: freeze(draft, [...state.log, stored], state.undone, state.skipped) };
+  const next = fold([...state.log, stored]);
+  const broken = next.invalid.map((entry) => entry.revision).filter((revision) => !state.skipped.has(revision));
+  return broken.length > 0 ? { _tag: "Conflict", revisions: broken } : { _tag: "Applied", state: next.state };
 };

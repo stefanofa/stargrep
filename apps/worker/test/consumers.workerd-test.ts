@@ -778,19 +778,31 @@ describe("knowledge crons", () => {
     ]);
   });
 
-  it("logs how many subjects the nightly count changed, or that it failed", async () => {
+  it("logs the nightly count and the usage floor after it, and skips the floor when the count fails", async () => {
     const { logs, layer } = capture();
+    const floorDown = new DbQueryFailed({ operation: "knowledge.floor", reason: "transport", sqlState: null });
     await Effect.runPromise(
-      KnowledgeCount.run(knowledgeRuntime({ count: Effect.succeed(3) })).pipe(Effect.provide(layer)),
+      KnowledgeCount.run(knowledgeRuntime({ count: Effect.succeed(3), floor: Effect.succeed([]) })).pipe(
+        Effect.provide(layer),
+      ),
+    );
+    await Effect.runPromise(
+      KnowledgeCount.run(knowledgeRuntime({ count: Effect.succeed(0), floor: Effect.fail(floorDown) })).pipe(
+        Effect.provide(layer),
+      ),
     );
     await Effect.runPromise(
       KnowledgeCount.run(knowledgeRuntime({ count: Effect.fail(down) })).pipe(Effect.provide(layer)),
     );
     expect(logs.map((log) => [log.level, log.message[0]])).toEqual([
       ["Info", "Knowledge count ran"],
+      ["Info", "Usage floor ran"],
+      ["Info", "Knowledge count ran"],
+      ["Error", "Usage floor failed"],
       ["Error", "Knowledge count failed"],
     ]);
     expect(logs[0]?.message[1]).toEqual({ changed: 3 });
+    expect(logs[1]?.message[1]).toEqual({ accepted: 0 });
   });
 });
 

@@ -3,10 +3,10 @@ import type { RepoSummary } from "@stargrep/ai/summarize";
 import * as Db from "@stargrep/db";
 import type { DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
 import type { ObjectId, RepoId } from "@stargrep/github/schemas";
-import { fold, type KnowledgeState } from "@stargrep/knowledge/decisions";
+import { rules as replayRules } from "@stargrep/knowledge/decisions";
 import { type InputHash, ReceiptId, type Revision } from "@stargrep/knowledge/ids";
 import type { LabelKey } from "@stargrep/knowledge/label-key";
-import { type LabelEntry, lookupKeys, project } from "@stargrep/knowledge/projection";
+import { type LabelEntry, lookupKeys, project, type Rules } from "@stargrep/knowledge/projection";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Data from "effect/Data";
 import type * as DateTime from "effect/DateTime";
@@ -25,7 +25,7 @@ const labelIndex = (labels: ReadonlyArray<Db.Label>) => {
   return index;
 };
 
-type RulesAt = (revision: Revision) => Effect.Effect<KnowledgeState, DbQueryFailed | DbRowInvalid>;
+type RulesAt = (revision: Revision) => Effect.Effect<Rules, DbQueryFailed | DbRowInvalid>;
 
 // Projects one group under the shared lock. A repo whose claims need a subject minted is left stale and returned with
 // its mints, because its atoms would be incomplete.
@@ -62,15 +62,18 @@ const projectGroup = Effect.fn("RepoKnowledge.projectGroup")(function* (ids: Rea
 });
 
 // The rules a projection reads must be those of the revision it holds the shared lock at, since no decision commits
-// while it holds it. The fold is cached by revision and refolded only when a decision lands between groups.
+// while it holds it. They replay the merges, splits, corrections, and undos alone, unchecked, because curation checked
+// each decision when it wrote it, so a large seed or floor batch costs projection nothing. They are cached by the head
+// they were read at and read again only when a decision lands between groups.
 const rulesCache = (db: Db.Db["Service"]): RulesAt => {
-  let cached: KnowledgeState | null = null;
+  let cached: { readonly at: Revision; readonly rules: Rules } | null = null;
   return (revision) =>
-    cached !== null && cached.revision === revision
-      ? Effect.succeed(cached)
-      : Effect.map(db.knowledge.decisions, (decisions) => {
-          cached = fold(decisions).state;
-          return cached;
+    cached !== null && cached.at === revision
+      ? Effect.succeed(cached.rules)
+      : Effect.map(db.knowledge.rules, (decisions) => {
+          const rules = replayRules(decisions);
+          cached = { at: revision, rules };
+          return rules;
         });
 };
 

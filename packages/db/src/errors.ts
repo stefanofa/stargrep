@@ -62,6 +62,13 @@ export const Operation = Schema.Literals([
   "knowledge.revision",
   "knowledge.decide",
   "knowledge.decisions",
+  "knowledge.rules",
+  "knowledge.subjects",
+  "knowledge.minted",
+  "knowledge.reach",
+  "knowledge.examples",
+  "knowledge.floor",
+  "knowledge.variants",
   "knowledge.keepLegacy",
 ]);
 export type Operation = typeof Operation.Type;
@@ -122,5 +129,17 @@ export class StaleRevision extends Schema.TaggedError<StaleRevision, { readonly 
 ) {
   override get message(): string {
     return `A decision expected curation revision ${this.expected}, but the log is at ${this.head}`;
+  }
+}
+
+// A decision gives a subject a label key that projection already minted for another subject. That is a merge, which
+// keeps both IDs stable, not an alias.
+export class KeyMinted extends Schema.TaggedError<KeyMinted, { readonly brand: unique symbol }>()("KeyMinted", {
+  key: Schema.String,
+  subjectId: Schema.Int,
+  holder: Schema.Int,
+}) {
+  override get message(): string {
+    return `Label key '${this.key}' for subject ${this.subjectId} is already minted for subject ${this.holder}`;
   }
 }

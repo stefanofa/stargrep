@@ -29,6 +29,7 @@ import {
   nextRevision,
   projectAtoms,
   receiptId,
+  revision,
   seedRepo,
 } from "./knowledge-fixtures.ts";
 
@@ -509,8 +510,18 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
       const { minted } = yield* db.knowledge.mint([{ key: key("ratatui"), label: "Ratatui", receiptId: receipt }]);
       const curated = yield* createSubject("ratatui (curated)");
       const aliased = yield* nextRevision;
-      yield* decide("alias", {
+      const fresh = yield* decide("alias", {
         labelsAdded: [{ key: key("ratatui"), subjectId: curated, isDefault: true, revision: aliased }],
+      }).pipe(Effect.flip);
+      expect(fresh).toMatchObject({
+        _tag: "KeyMinted",
+        key: "ratatui",
+        subjectId: curated,
+        holder: minted[0]?.subjectId,
+      });
+      // An undo puts back a row that names an older decision, and it sits in its own slot beside the mint.
+      yield* decide("alias", {
+        labelsAdded: [{ key: key("ratatui"), subjectId: curated, isDefault: true, revision: revision(aliased - 1) }],
       });
       expect(yield* db.knowledge.labels([key("ratatui")])).toEqual([
         { key: key("ratatui"), subjectId: curated, isDefault: true, source: "decision" },
@@ -947,11 +958,7 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
       const stale = yield* db.knowledge
         .decide({
           expected: (head - 1) as typeof head,
-          kind: "status",
-          payload: { _tag: "Status" },
-          undoes: null,
-          actor: "test",
-          reason: "test",
+          rows: [{ kind: "status", payload: { _tag: "Status" }, undoes: null, actor: "test", reason: "test" }],
           change: Db.noChange,
         })
         .pipe(Effect.flip);
