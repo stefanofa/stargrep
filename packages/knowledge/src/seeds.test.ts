@@ -57,6 +57,7 @@ describe("spells", () => {
       ["model-context-protocol", "mcp"],
       ["text-based-user-interface", "Text-based user interface"],
       ["Remote Procedure Call (RPC)", "rpc"],
+      ["Localization (l10n)", "localization"],
       ["X (Twitter)", "twitter"],
     ];
     const no: ReadonlyArray<readonly [string, string]> = [

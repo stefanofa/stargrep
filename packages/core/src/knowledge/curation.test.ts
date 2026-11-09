@@ -710,46 +710,80 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
     }),
   );
 
-  test.effect("the floor leaves alone a candidate a curator rejects or merges after the floor reads its list", () =>
+  test.effect(
+    "the floor leaves alone a candidate a curator decides on, or undoes, after the floor reads its list",
+    () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const made = yield* record({
+          _tag: "Create",
+          label: "race created",
+          definition: "",
+          aliases: [],
+          status: "candidate",
+        });
+        const created = yield* createdBy(made);
+        const terms = ["race rejected", "race merged", "race survivor", "race accepted", "race created"];
+        yield* seed(
+          [61_001, 61_002, 61_003].map((id, index) => ({
+            id,
+            owner: index === 0 ? "ann" : "bob",
+            facets: terms.map((term) => ({ role: "about", term, quote: "x" })),
+          })),
+        );
+        yield* sweepAll;
+        yield* RepoKnowledge.count();
+        const ids = new Map((yield* db.knowledge.labels(terms.map(key))).map((row) => [row.key, row.subjectId]));
+        const rejected = ids.get(key("race rejected"));
+        const merged = ids.get(key("race merged"));
+        const survivor = ids.get(key("race survivor"));
+        const accepted = ids.get(key("race accepted"));
+        if (rejected === undefined || merged === undefined || survivor === undefined || accepted === undefined)
+          return yield* Effect.die("fixture");
+        expect(ids.get(key("race created"))).toBe(created);
+        const curator = Effect.gen(function* () {
+          yield* decideOne({ _tag: "Status", subject: rejected, status: "rejected" });
+          yield* decideOne({ _tag: "Merge", from: merged, into: survivor });
+          yield* decideOne({ _tag: "Status", subject: accepted, status: "accepted" });
+          yield* undoOne(made);
+        }).pipe(Effect.provideService(Db.Db, db), Effect.orDie);
+        const racing = Db.Db.of({
+          ...db,
+          knowledge: { ...db.knowledge, floor: Effect.tap(db.knowledge.floor, () => curator) },
+        });
+        const read = yield* db.knowledge.floor;
+        expect([rejected, merged, survivor, accepted, created].every((id) => read.includes(id))).toBe(true);
+        const floored = yield* Curation.floor().pipe(Effect.provideService(Db.Db, racing));
+        expect(floored.accepted).toBe(read.length - 4);
+        const state = fold(yield* db.knowledge.decisions).state;
+        expect([state.subjects.get(rejected)?.status, state.subjects.get(survivor)?.status]).toEqual([
+          "rejected",
+          "accepted",
+        ]);
+        expect(state.canonical.get(merged)).toBe(survivor);
+        expect(state.retired.has(created)).toBe(true);
+        const statusesOf = (subject: SubjectId) =>
+          state.log.flatMap((entry) =>
+            entry.decision._tag === "Status" && entry.decision.subject === subject ? [entry.decision.status] : [],
+          );
+        expect([statusesOf(merged), statusesOf(accepted), statusesOf(created)]).toEqual([[], ["accepted"], []]);
+      }),
+  );
+
+  test.effect("examples reach a comparison only through the subject itself and its splits, never a parent edge", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
-      const terms = ["race rejected", "race merged", "race survivor"];
-      yield* seed(
-        [61_001, 61_002, 61_003].map((id, index) => ({
-          id,
-          owner: index === 0 ? "ann" : "bob",
-          facets: terms.map((term) => ({ role: "about", term, quote: "x" })),
-        })),
-      );
-      yield* sweepAll;
-      yield* RepoKnowledge.count();
-      const ids = new Map((yield* db.knowledge.labels(terms.map(key))).map((row) => [row.key, row.subjectId]));
-      const rejected = ids.get(key("race rejected"));
-      const merged = ids.get(key("race merged"));
-      const survivor = ids.get(key("race survivor"));
-      if (rejected === undefined || merged === undefined || survivor === undefined) return yield* Effect.die("fixture");
-      const curator = Effect.gen(function* () {
-        yield* decideOne({ _tag: "Status", subject: rejected, status: "rejected" });
-        yield* decideOne({ _tag: "Merge", from: merged, into: survivor });
-      }).pipe(Effect.provideService(Db.Db, db), Effect.orDie);
-      const racing = Db.Db.of({
-        ...db,
-        knowledge: { ...db.knowledge, floor: Effect.tap(db.knowledge.floor, () => curator) },
-      });
-      const read = yield* db.knowledge.floor;
-      expect([rejected, merged, survivor].every((id) => read.includes(id))).toBe(true);
-      const { accepted } = yield* Curation.floor().pipe(Effect.provideService(Db.Db, racing));
-      expect(accepted).toBe(read.length - 2);
-      const state = fold(yield* db.knowledge.decisions).state;
-      expect([state.subjects.get(rejected)?.status, state.subjects.get(survivor)?.status]).toEqual([
-        "rejected",
-        "accepted",
+      const parent = yield* create("examples parent");
+      const child = yield* create("examples child");
+      yield* decideOne({ _tag: "Parent", child, parent });
+      const [member, rival] = yield* seed([
+        { id: 65_001, facets: [{ role: "about", term: "examples child", quote: "x" }] },
+        { id: 65_002, facets: [{ role: "alternative_to", term: "examples child", quote: "x" }] },
       ]);
-      expect(state.canonical.get(merged)).toBe(survivor);
-      const statuses = state.log.flatMap((entry) =>
-        entry.decision._tag === "Status" && entry.decision.subject === merged ? [entry.decision.status] : [],
-      );
-      expect(statuses).toEqual([]);
+      if (member === undefined || rival === undefined) return yield* Effect.die("fixture");
+      yield* sweepAll;
+      const examples = yield* db.knowledge.examples([parent, child], 3);
+      expect([examples.get(parent), examples.get(child)]).toEqual([[member], [member, rival]]);
     }),
   );
 

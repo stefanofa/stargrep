@@ -31,6 +31,7 @@ const reviewed: ReadonlyMap<string, ReadonlyArray<string>> = new Map([
   ["godot", ["godot-engine", "godotengine"]],
   ["redis", ["redisdb", "redis-db"]],
   ["discord", ["discordapp"]],
+  ["edge", ["edge-browser"]],
 ]);
 
 // Topics whose display name names the topic though it does not spell the slug, as AT Protocol does atproto, reviewed by
@@ -107,6 +108,7 @@ const namedByLabel: ReadonlySet<string> = new Set([
   "squeak",
   "ss13",
   "suckless",
+  "swift-vapor",
   "tailwind",
   "thedreamlab",
   "tldr",
@@ -147,18 +149,33 @@ const relabeled: ReadonlyMap<string, string> = new Map([
   ["riot-os", "RIOT OS"],
   ["source-engine", "Source engine"],
   ["squirrel-lang", "Squirrel lang"],
-  ["swift-vapor", "Swift Vapor"],
+  ["casejs", "CASE.js"],
+]);
+
+// Explore aliases that a spelling rule would keep but that name something else on GitHub, as case names string-case
+// and test-case tools and backbone names vision model backbones. The seed leaves them free.
+const notNames: ReadonlyMap<string, ReadonlyArray<string>> = new Map([
+  ["casejs", ["case"]],
+  ["backbonejs", ["backbone"]],
+]);
+
+// Topics whose own slug means something broader on GitHub, given a key and label of their own, as edge means edge
+// runtimes more than the browser. The slug stays free.
+const rekeyed: ReadonlyMap<string, { readonly key: string; readonly label: string }> = new Map([
+  ["edge", { key: "microsoft-edge", label: "Microsoft Edge" }],
 ]);
 
 export const exploreEntries = (file: ExploreFile): ReadonlyArray<SeedEntry> =>
   file.topics.map((topic) => {
     const synonyms = reviewed.get(topic.topic) ?? [];
+    const unnamed = notNames.get(topic.topic) ?? [];
+    const rekey = rekeyed.get(topic.topic);
     return {
-      key: topic.topic,
-      label: relabeled.get(topic.topic) ?? topic.label,
+      key: rekey?.key ?? topic.topic,
+      label: rekey?.label ?? relabeled.get(topic.topic) ?? topic.label,
       ...(namedByLabel.has(topic.topic) ? { reviewedLabel: true } : {}),
       definition: topic.definition,
-      aliases: topic.aliases.filter((alias) => !synonyms.includes(alias)),
+      aliases: topic.aliases.filter((alias) => !synonyms.includes(alias) && !unnamed.includes(alias)),
       synonyms: synonyms.filter((synonym) => topic.aliases.includes(synonym)),
       status: "accepted",
       reason: `GitHub explore topic ${topic.topic} (github/explore ${file.commit.slice(0, 12)}, CC-BY-4.0)`,
