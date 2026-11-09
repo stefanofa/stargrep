@@ -256,13 +256,14 @@ const plan = (atoms: AtomQuery, accepted: ReadonlySet<string> | null) => {
 
   atoms.stated.forEach((group, k) => {
     if (group._tag === "Closed") {
-      const test = any(group.any.filter(isClosed).map(closedTest));
+      const use = group.mode === "exclude" ? "exclude" : "include";
+      const test = any(group.any.filter(isClosed).map((atom) => closedTest(atom, use)));
       if (group.mode === "boost") boosts.push({ test, reads: "repos", resolved: null });
       else closedFilters.push(group.mode === "exclude" ? sql`not ${test}` : test);
       stated.push(sql`'[]'::jsonb`);
       return;
     }
-    // A key no accepted subject holds cannot resolve, so its group costs the statement nothing.
+    // A key that names no accepted subject, or two, cannot resolve, so its group costs the statement nothing.
     if (accepted !== null && !group.keys.every((key) => accepted.has(key))) {
       stated.push(sql`null::jsonb`);
       return;
@@ -290,7 +291,8 @@ const plan = (atoms: AtomQuery, accepted: ReadonlySet<string> | null) => {
 
   for (const group of atoms.explicit.all) {
     const closedAtoms = group.any.filter(isClosed);
-    const closedPart = closedAtoms.length === 0 ? null : any(closedAtoms.map(closedTest));
+    const use = group.negate ? "exclude" : "include";
+    const closedPart = closedAtoms.length === 0 ? null : any(closedAtoms.map((atom) => closedTest(atom, use)));
     const subjectAtoms = group.any.flatMap((atom) =>
       atom.value.dim === "subject" ? [{ role: atom.role, id: atom.value.id }] : [],
     );
@@ -711,8 +713,8 @@ export const make = Effect.fn("Db.search.make")(function* (
   const { run } = yield* Postgres.Postgres;
   const decodeResolution = Schema.decodeUnknownEffect(Resolution);
 
-  // Every key with an accepted public meaning, a superset of the keys knowledge_key_meanings resolves. Null when no
-  // cache was given, so SQL resolves every key.
+  // Every key that names exactly one accepted public subject, the rule knowledge_key_meanings applies, so an ambiguous
+  // key never reaches the statement. Null when no cache was given, so SQL resolves every key.
   const accepted = Effect.fnUntraced(function* () {
     if (acceptedKeys === undefined) return null;
     const now = yield* Clock.currentTimeMillis;
@@ -721,10 +723,12 @@ export const make = Effect.fn("Db.search.make")(function* (
       return cached.value.keys;
     }
     const rows = yield* run("search.acceptedKeys", (db) =>
-      db.execute(sql`select distinct l.key from knowledge_labels l
+      db.execute(sql`select l.key from knowledge_labels l
         left join subject_canonical c on c.origin_id = l.subject_id
         join subjects s on s.id = coalesce(c.canonical_id, l.subject_id) and s.status = 'accepted'
-        where l.namespace = 'public'`),
+        where l.namespace = 'public'
+        group by l.key
+        having count(distinct s.id) = 1`),
     ).pipe(Effect.flatMap((result) => decodeKeys("search.acceptedKeys")(resultRows(result))));
     const keys: ReadonlySet<string> = new Set(rows.map(({ key }) => key));
     yield* Ref.set(acceptedKeys, Option.some({ keys, readAt: now }));

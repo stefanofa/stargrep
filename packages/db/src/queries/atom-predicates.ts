@@ -29,11 +29,15 @@ const anyOf = (tests: ReadonlyArray<SQL>): SQL => sql`(${sql.join([...tests], sq
 export const isClosed = (atom: Atom): atom is Atom & { readonly value: { readonly dim: ClosedDim } } =>
   atom.value.dim !== "subject";
 
-// Every role the atom reaches, ORed. A membership role also matches the registry's expansions, so lang:javascript
-// matches a TypeScript repo. A comparison matches its value alone.
-export const closedTest = (atom: Atom & { readonly value: { readonly dim: ClosedDim } }): SQL => {
+// Every role the atom reaches, ORed. A membership role that includes also matches the registry's expansions, so
+// lang:javascript matches a TypeScript repo. An exclusion and a comparison match the value alone, so excluding JavaScript
+// keeps TypeScript.
+export const closedTest = (
+  atom: Atom & { readonly value: { readonly dim: ClosedDim } },
+  use: "include" | "exclude",
+): SQL => {
   const { dim, id } = atom.value;
-  const expands = closed[dim].find((value) => value.id === id)?.expands ?? [];
+  const expands = use === "include" ? (closed[dim].find((value) => value.id === id)?.expands ?? []) : [];
   return anyOf(
     reached(atom.role, dim).map((role) => {
       const ids = isComparison(role) ? [id] : [id, ...expands];
