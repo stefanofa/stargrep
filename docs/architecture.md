@@ -65,7 +65,7 @@ packages/
     src/search/     query parsing, hybrid search, ranking
     src/icons/      icon discovery and normalization
     src/limits/     rate lines and admission costs
-    src/knowledge/  the projection sweep and the nightly subject count
+    src/knowledge/  the projection sweep, the nightly subject count, and the legacy receipt backfill
   api/              oRPC contracts and router
   db/               Drizzle schema, migrations, query functions
   github/           GitHub client, reply classification, token budget
@@ -102,7 +102,7 @@ Better Auth owns `user`, `session`, `account`, and `verification`, declared in `
 | `sync_requests` | lowercase login | when a sync was last requested, when its sync starts once its message is sent, and its outcome: `claimed` while admission reserves and sends, `pending` once sent, `failed`, or `missing` when GitHub has no such login |
 | `rate_lines` | line key | the row's generation, the time given back from the line in all, and the time until which it is busy: `all` for every signed-out sync, and `caller/<key>` for one network's lookups and first reads, and `model/all` and `model/<key>` for planner and query embedding calls, see "Admission" and "Limits" |
 
-The knowledge tables (`receipts`, `extraction_batches`, `decisions`, `subjects`, `subject_labels`, `subject_canonical`, `subject_closure`, `subject_matches`, and `repo_facets`) hold what the summary model said about each repo, the curated vocabulary, and each repo's subject atoms. `docs/knowledge.md` explains them. Only their triggers write to them so far.
+The knowledge tables (`receipts`, `extraction_batches`, `decisions`, `subjects`, `subject_labels`, `subject_canonical`, `subject_closure`, `subject_matches`, and `repo_facets`) hold what the summary model said about each repo, the curated vocabulary, and each repo's subject atoms. `docs/knowledge.md` explains them. So far the projection sweep writes atoms and mints subjects, and a one-off backfill writes legacy receipts.
 
 The schema also reserves follows, collections, search events, and API usage. Their presence does not mean the app imports follows, serves collections, or records search analytics.
 

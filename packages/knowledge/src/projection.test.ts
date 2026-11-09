@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { formatAtom } from "./atom.ts";
-import { type Claim, carry, decodeFacets, type PromptInput } from "./claims.ts";
+import { type Claim, carry, decodeFacets, legacyFacets, type PromptInput } from "./claims.ts";
 import { empty, type KnowledgeState, type SplitEntry } from "./decisions.ts";
 import { ReceiptId, Revision, SubjectId } from "./ids.ts";
 import { type LabelKey, labelKey } from "./label-key.ts";
@@ -605,5 +605,35 @@ describe("project: subjects and the curated rules", () => {
     expect(atomsOf({ claims, labels: index, facts })).toEqual(
       atomsOf({ claims: [...claims].reverse(), labels: index, facts: reversed }),
     );
+  });
+});
+
+describe("project: legacy summaries", () => {
+  const legacyAtoms = (kind: string | null, keywords: ReadonlyArray<string>, known: LabelIndex = new Map()) => {
+    const projection = run({ claims: legacyFacets({ kind, keywords }).claims, labels: known });
+    return {
+      atoms: projection.atoms.map((atom) => formatAtom(atom)),
+      mints: projection.mints.map((mint) => mint.label),
+    };
+  };
+
+  test("each kind of the summary model projects as the primary kind, before any keyword that spells another", () => {
+    for (const kind of closed.kind.map((entry) => entry.id)) {
+      const other = kind === "library" ? "framework" : "library";
+      expect(legacyAtoms(kind, [other, kind]).atoms).toEqual([`kind:${kind}`]);
+    }
+  });
+
+  test("other projects to no kind", () => {
+    expect(legacyAtoms("other", ["dotfiles manager"], labels({ "dotfiles manager": 7 })).atoms).toEqual([
+      "about:subject:7",
+    ]);
+  });
+
+  test("keywords resolve or mint as about subjects, and reserved spellings are dropped", () => {
+    expect(legacyAtoms("cli", ["terminal ui", "rust", "macos", "git client"], labels({ "git client": 12 }))).toEqual({
+      atoms: ["kind:cli", "about:subject:12"],
+      mints: ["terminal ui"],
+    });
   });
 });

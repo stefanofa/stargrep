@@ -2,7 +2,7 @@
 
 Stargrep keeps what it knows about a repo as a set of small typed facts. Search filters, topic pages, digests, and the API all read those facts the same way. This page explains the six ideas the model rests on and the registries in `packages/knowledge` that define its closed parts.
 
-`packages/knowledge` is a leaf package that depends only on `effect`. It holds the registries, the atom and selection codecs, `labelKey`, `evidenceText`, `extractionLines`, the input hash, the facets decoder, the curation fold, and the projection. `packages/ai`, `packages/db`, and `packages/core` import it. A cron projects every repo from its GitHub facts today. The summary call does not extract facets yet, so no repo has a receipt, and nothing writes a decision.
+`packages/knowledge` is a leaf package that depends only on `effect`. It holds the registries, the atom and selection codecs, `labelKey`, `evidenceText`, `extractionLines`, the input hash, the facets decoder, the curation fold, and the projection. `packages/ai`, `packages/db`, and `packages/core` import it. A cron projects every repo from its receipt and its GitHub facts. The summary call does not extract facets yet, so the only receipts are legacy ones, made from summaries saved before receipts existed. Nothing writes a decision yet.
 
 ## Six primitives
 
@@ -129,6 +129,15 @@ Claims come first, in the model's order, then the facts.
 Each claim and fact gets a verdict with its reason, which projection stores on the receipt.
 
 `fold(log)` in `decisions.ts` turns the curation log into the state projection reads: merges, split rules, corrections, and the rest of what decisions set. An Undo removes its target from the fold, and undoing an Undo restores it. `apply(state, decision)` checks one more decision against the state and refuses what the state alone can prove wrong: a keep-apart pair joined by a merge, a cycle or a path deeper than three levels across Parent, Expand, and Split edges, a retired or merged-away subject, a repo linked twice, a label another subject holds or no subject may hold, and a correction with no role. An Undo that would make a later decision invalid is a conflict that names it. Checks that need the database, such as slugs and listing, belong to the curation service.
+
+## Legacy receipts
+
+Summaries saved before receipts existed are kept as `legacy` receipts, so projection reads the same kind and keywords that search reads today, with no model call. `bun run --cwd packages/core legacy-receipts` writes them. `DATABASE_URL` names the database.
+
+- `legacyFacets` in `claims.ts` turns a summary's kind into the primary `is` claim and each keyword into an `about` claim, in order, and decodes them like a model's list. The kind `other` gives no claim, so the repo projects to no kind. A keyword that spells a closed value is dropped as a reserved label, so a keyword never changes the primary kind. Any other keyword resolves to a subject or mints one, which is unlisted until a second repo holds it.
+- The receipt's input hash uses the README object ID the summary describes and the repo's facts at the time of the run, the closest record of the prompt that is left. Its model is `legacy`, its recipe is the summary's, and its lanes other than `is` and `about` are `missing`.
+- The backfill walks live repos with a summary in ID order, 128 to a page, and each page is one transaction. It takes the shared knowledge lock, locks the page's `repos` rows `for no key update` in ID order, inserts the receipts, and points each repo at its receipt. The `receipt_id` trigger then marks the repo stale, and the sweep projects it. The shared lock keeps a mint's invalidation from marking `repo_facets` rows while the page's trigger marks them too.
+- A repo whose legacy receipt already holds its summary, keywords, and recipe is skipped, so a rerun writes nothing. The summary model wrote the kind with them, so it never changes alone. A run that dies loses only its open page, and the next run starts again from the lowest ID. A repo summarized again since its last run gets a new receipt, and the old one stays as history. A repo with a model receipt is never touched.
 
 ## The sweep and the nightly count
 

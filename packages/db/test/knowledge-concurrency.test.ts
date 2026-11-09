@@ -5,8 +5,8 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Db from "../src/db.ts";
 import * as TestDatabase from "./database.ts";
-import { facts, model } from "./fixtures.ts";
-import { answer, atom, facetsOf, key, receiptId, seedRepo } from "./knowledge-fixtures.ts";
+import { facts, model, readme, repoId } from "./fixtures.ts";
+import { allComplete, answer, atom, facetsOf, hash, key, receiptId, seedRepo } from "./knowledge-fixtures.ts";
 
 // PGlite has one connection, so these run only where two transactions can interleave.
 
@@ -104,6 +104,53 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 3
             [id],
           ),
         ).toEqual([{ language: "Rust", atoms: ["go"], stale: true }]);
+      }),
+    );
+
+    test.effect("a legacy page holds its repos from read to write, so a summary saved meanwhile waits for it", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const database = yield* TestDatabase.TestDatabase;
+        const id = repoId(75_301);
+        yield* database.query(
+          `insert into repos (id, owner, name, readme_oid, summary_readme_oid, summary, keywords, kind)
+           values ($1, 'probe', 'legacy', $2, $2, 'Old summary', '["old"]', 'cli')`,
+          [id, readme("1")],
+        );
+        const read = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const page = yield* Effect.forkChild(
+          db.knowledge.keepLegacy({ after: id - 1, limit: 1 }, (repos) =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(read, undefined);
+              yield* Deferred.await(release);
+              return repos.map((repo) => ({
+                repoId: repo.id,
+                inputHash: hash("c"),
+                recipe: repo.summaryRecipe,
+                summary: repo.summary,
+                keywords: repo.keywords,
+                claims: [],
+                lanes: allComplete,
+                dropped: [],
+              }));
+            }),
+          ),
+        );
+        yield* Deferred.await(read);
+        const saving = yield* Effect.forkChild(
+          db.repos.saveSummary({ id, readmeOid: readme("1"), summary: "New summary", keywords: ["new"], kind: "app" }),
+        );
+        expect(yield* lockWait).toEqual(["transactionid"]);
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(page)).toMatchObject({ read: 1, inserted: 1, pointed: 1 });
+        yield* Fiber.join(saving);
+        expect(
+          yield* database.query(
+            "select r.summary, r.kind, c.summary as receipt from repos r join receipts c on c.id = r.receipt_id where r.id = $1",
+            [id],
+          ),
+        ).toEqual([{ summary: "New summary", kind: "app", receipt: "Old summary" }]);
       }),
     );
 
