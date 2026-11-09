@@ -2,7 +2,7 @@
 
 Stargrep keeps what it knows about a repo as a set of small typed facts. Search filters, topic pages, digests, and the API all read those facts the same way. This page explains the six ideas the model rests on and the registries in `packages/knowledge` that define its closed parts.
 
-`packages/knowledge` is a leaf package that depends only on `effect`. It holds the registries, the atom and selection codecs, `labelKey`, `evidenceText`, `extractionLines`, the input hash, the facets decoder, the curation fold, and the projection. `packages/ai`, `packages/db`, and `packages/core` import it. A cron projects every repo from its receipt and its GitHub facts. The summary call extracts facets, and every answer is kept as a receipt. Repos summarized before that have legacy receipts, made from their old summaries. Nothing writes a decision yet.
+`packages/knowledge` is a leaf package that depends only on `effect`. It holds the registries, the atom and selection codecs, `labelKey`, `evidenceText`, `extractionLines`, the input hash, the facets decoder, the curation fold, and the projection. `packages/ai`, `packages/db`, and `packages/core` import it. A cron projects every repo from its receipt and its GitHub facts. The summary call extracts facets, and every answer is kept as a receipt. Repos summarized before that have legacy receipts, made from their old summaries. Curation writes decisions through an operator CLI, two seed batches, and a nightly rule.
 
 ## Six primitives
 
@@ -137,7 +137,58 @@ Claims come first, in the model's order, then the facts.
 
 Each claim and fact gets a verdict with its reason, which projection stores on the receipt.
 
-`fold(log)` in `decisions.ts` turns the curation log into the state projection reads: merges, split rules, corrections, and the rest of what decisions set. An Undo removes its target from the fold, and undoing an Undo restores it. `apply(state, decision)` checks one more decision against the state and refuses what the state alone can prove wrong: a keep-apart pair joined by a merge, a cycle or a path deeper than three levels across Parent, Expand, and Split edges, a retired or merged-away subject, a repo linked twice, a label another subject holds or no subject may hold, and a correction with no role. An Undo that would make a later decision invalid is a conflict that names it. Checks that need the database, such as slugs and listing, belong to the curation service.
+`fold(log)` in `decisions.ts` turns the curation log into the state projection reads: merges, split rules, corrections, and the rest of what decisions set. An Undo removes its target from the fold, and undoing an Undo restores it. `apply(state, decision)` checks one more decision against the state and refuses what the state alone can prove wrong: a keep-apart pair joined by a merge, a cycle or a path deeper than three levels across Parent, Expand, and Split edges, a retired or merged-away subject, a repo linked twice, a label another subject holds or no subject may hold, and a correction with no role. A merge between two subjects that a Parent, Expand, or Split path joins, such as a child into its own parent, is a cycle too, because it would fold the hierarchy into one meaning. Remove the edge first. An Undo that would make a later decision invalid is a conflict that names it. Checks that need the database belong to the curation service.
+
+## Curation
+
+`Curation` in `packages/core/src/knowledge/curation.ts` writes decisions. Every write goes through one path.
+
+1. Read the log, fold it, and fail with `StaleRevision` when its head is not the caller's expected revision.
+2. Check each decision of the batch against the fold before it with `extend`, or plan an undo with `undoing`. A refusal is `CurationRefused`, with the decision's index and reason. An undo that would leave a later decision invalid is `CurationConflict`, which names the later revisions. With `cascade`, the undo takes them out too, each as its own Undo, newest first.
+3. Refuse a label key that projection already minted for another subject as `label-taken`, naming that subject. That case is a merge, which keeps both IDs.
+4. Count the repos each decision moves. A decision that moves more than 1,000 needs the operator flag, or it fails with `OperatorRequired`.
+5. Hand the rows and their change to `Db.knowledge.decide`, one transaction under the exclusive lock.
+
+`changeBetween(before, after)` in `packages/knowledge/src/curation.ts` computes that change from two folds, so undo is the same code as any decision. `derive(state)` gives every row the log owns, each naming the decision that wrote it: subject presentation, decision labels, the merge map, and the closure, with every path of up to three edges, its weakest edge, and the decision that finished it. A Rename of a minted subject stores the label it replaces as `base`, and undoing the Rename puts it back. The change also names the subjects whose `subject_matches` rows to rebuild, and `knowledge_refresh_matches` rebuilds those and their ancestors' rows. The full rebuild is the same function over every subject, and a test checks the two agree after every random decision.
+
+The invalidation follows from the two folds.
+
+| Change | Marks stale |
+|---|---|
+| A key gains a decision label, from Create, Alias, Rename, a Split child, or an undo that puts one back | repos whose `unresolved_keys` hold the key, and the holders of a minted subject the label now outranks |
+| A key loses its decision label, or moves to another subject | the holders of the subject that lost it |
+| A merge or its undo, when a subject in either class has a split rule | the holders of both classes and of their split children |
+| A split or its undo | the holders of the broad subject, of the IDs merged into it, and of the child |
+| A correction or its undo | that repo |
+| Status, Link, Parent, Expand, KeepApart | none |
+
+A subject's holders are the repos whose stored arrays name it. The decision only marks rows stale, and the sweep re-projects them from their receipts.
+
+Projection folds only the merges, splits, corrections, and undos (`Db.knowledge.rules`). Curation keeps every active decision valid, so those rows fold to the same rules as the whole log, which a property test checks. A seed batch of two thousand Creates and Renames costs projection nothing.
+
+Publish and Retire wait for pages. No selection exists yet, so both are refused as `not-live`, and the refusals that need selections or private namespaces arrive with them.
+
+### Seeds and the usage floor
+
+`planSeeds` in `packages/knowledge/src/seeds.ts` turns seed entries into decisions against the vocabulary as it is. An entry that no subject holds becomes a Create. Otherwise the plan adopts the subject that holds the entry's own key, or the one that most repos hold. The other holders merge into it, and an accepting seed gives it the seed's label and definition unless a decision already set them. The seed's free keys become aliases, and the subject takes the seed's status. An accepting seed never adopts a rejected subject and never overrides a status that is not candidate. A second run plans nothing.
+
+- `seed:noise` rejects Hacktoberfest and its variants, open source, opensource, oss, and bare awesome. Their keys then resolve to a rejected subject and hide, instead of minting.
+- `seed:github-explore` creates or adopts the 1,278 curated topics of [GitHub Explore](https://github.com/github/explore), with their aliases and short descriptions, as accepted. It skips a topic whose key is reserved and leaves the noise keys alone. `packages/core/seeds/github-explore.json` holds the topics under CC-BY-4.0 with their attribution, and `bun run --cwd packages/core github-explore <checkout> <commit>` regenerates it.
+
+`Curation.floor` runs right after the nightly count. It accepts every canonical candidate on at least 3 repos, by that count, whose repos have at least 2 owners. Each acceptance is a Status decision with actor `rule:floor`, so it shows in the log and can be undone.
+
+### The CLI
+
+`bun run --cwd packages/core curate <command>` runs curation against `DATABASE_URL`.
+
+- `preview <json>` prints what a Decision, or an array of them, would do, and writes nothing.
+- `decide <json> --reason <why>` appends them in one transaction. `--operator` lets through a decision that moves more than 1,000 repos.
+- `undo <revision> --reason <why>` takes a decision out of the fold. `--cascade` also takes out the later ones that lean on it.
+- `log` prints the newest decisions, and `queue` prints merge proposals ranked by the repos they move.
+- `seed noise` and `seed github-explore` print a seed's plan and the repos it would move. `--apply` writes it, and `--json` prints every decision with its count.
+- `floor` runs the nightly count and the usage floor now.
+
+The queue proposes merges from spelling variants only: keys that differ by a separator, a plural s, or a js suffix. Keys of three characters or fewer never pair. A plural merges into its singular only when the singular has at least 5% of the plural's repos. The subject with more repos survives, else the shorter key. A judge decides each proposal. The embedding, ambiguity, and comparison-gap channels need data this repo does not keep yet.
 
 ## Legacy receipts
 
@@ -151,7 +202,7 @@ Summaries saved before receipts existed are kept as `legacy` receipts, so projec
 
 ## The sweep and the nightly count
 
-`RepoKnowledge.reproject` in `packages/core/src/knowledge` projects stale `repo_facets` rows, lowest repo ID first, in groups of 64, at most 50 groups a run. A cron in `apps/worker/src/crons.ts` runs it every 10 minutes, from the same handler and on the same minutes as the enrichment sweep. Neon suspends a compute after 5 idle minutes, so a sweep at any other minute would keep the database from ever scaling to zero. Each group is one transaction under the shared lock. Its locked read names the receipt whose claims it read. A writer that moves `receipt_id` while the read waits on the row leaves Postgres re-reading the row but not the receipt, so that name differs from the row's, the guard skips the write, and the row stays stale for the next group. It folds the decision log at the revision it holds the lock at, loads the labels its repos look up, and writes the closed arrays on `repos` only where they changed, so a projection that changes no closed atom leaves the hot row untouched. A repo that needs a new subject stays stale, its keys are minted under the exclusive lock, which marks stale every repo that looked them up, and it is projected again. A group that loses a deadlock is retried within the run, and the run goes on. Every multi-row writer of `repos` locks its rows in ID order, so the sweep and star sync never wait on each other in a cycle. The rows the sweep converges to are the same whatever order repos were first projected in, which a test checks against random orders.
+`RepoKnowledge.reproject` in `packages/core/src/knowledge` projects stale `repo_facets` rows, lowest repo ID first, in groups of 64, at most 50 groups a run. A cron in `apps/worker/src/crons.ts` runs it every 10 minutes, from the same handler and on the same minutes as the enrichment sweep. Neon suspends a compute after 5 idle minutes, so a sweep at any other minute would keep the database from ever scaling to zero. Each group is one transaction under the shared lock. Its locked read names the receipt whose claims it read. A writer that moves `receipt_id` while the read waits on the row leaves Postgres re-reading the row but not the receipt, so that name differs from the row's, the guard skips the write, and the row stays stale for the next group. It folds the decision log's rules at the revision it holds the lock at, loads the labels its repos look up, and writes the closed arrays on `repos` only where they changed, so a projection that changes no closed atom leaves the hot row untouched. A repo that needs a new subject stays stale, its keys are minted under the exclusive lock, which marks stale every repo that looked them up, and it is projected again. A group that loses a deadlock is retried within the run, and the run goes on. Every multi-row writer of `repos` locks its rows in ID order, so the sweep and star sync never wait on each other in a cycle. The rows the sweep converges to are the same whatever order repos were first projected in, which a test checks against random orders.
 
-`RepoKnowledge.count` runs `knowledge_refresh_counts()` every night at 03:30 UTC, a sweep minute. It sets each public subject's `repo_count` from `matching_atoms`, and `listed` follows from it.
+`RepoKnowledge.count` runs `knowledge_refresh_counts()` every night at 03:30 UTC, a sweep minute. It sets each public subject's `repo_count` from `matching_atoms`, and `listed` follows from it. The usage floor runs in the same handler right after it, and a failed count skips the floor.
 
