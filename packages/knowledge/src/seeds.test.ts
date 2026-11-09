@@ -11,8 +11,10 @@ const entry = (
   aliases: ReadonlyArray<string> = [],
   seedKey?: string,
   synonyms: ReadonlyArray<string> = [],
+  reviewedLabel = false,
 ): SeedEntry => ({
   ...(seedKey === undefined ? {} : { key: seedKey }),
+  ...(reviewedLabel ? { reviewedLabel } : {}),
   label,
   definition: `about ${label}`,
   aliases,
@@ -54,6 +56,8 @@ describe("spells", () => {
       ["laravel-10", "laravel"],
       ["model-context-protocol", "mcp"],
       ["text-based-user-interface", "Text-based user interface"],
+      ["Remote Procedure Call (RPC)", "rpc"],
+      ["X (Twitter)", "twitter"],
     ];
     const no: ReadonlyArray<readonly [string, string]> = [
       ["headless", "headless-browser"],
@@ -64,6 +68,10 @@ describe("spells", () => {
       ["paper", "bukkit"],
       ["d2", "d"],
       ["api-server", "api-client"],
+      ["https", "http"],
+      ["coaps", "coap"],
+      ["Squirrel", "squirrel-lang"],
+      ["Micro", "m3o"],
     ];
     for (const [alias, name] of [...yes, ...no]) {
       expect([alias, name, spells(key(alias), key(name))]).toEqual([alias, name, yes.some(([a]) => a === alias)]);
@@ -104,7 +112,7 @@ describe("planSeeds", () => {
 
   test("adopts the holder of the label's key when the entry's own key is free, and takes the free key", () => {
     const result = plan(
-      [entry("Text-based user interface", [], "tui")],
+      [entry("Text-based user interface", [], "tui", [], true)],
       [["text based user interface", holder(7, "text based user interface")]],
     );
     expect(decisionsOf(result)).toEqual([
@@ -121,7 +129,7 @@ describe("planSeeds", () => {
 
   test("keeps the adopted subject's label, and leaves the label's spellings, when another subject holds the label's key", () => {
     const result = plan(
-      [entry("Tailwind CSS", ["tailwind-css", "tailwindcss"], "tailwind")],
+      [entry("Tailwind CSS", ["tailwind-css", "tailwindcss"], "tailwind", [], true)],
       [
         ["tailwind", holder(1950, "Tailwind")],
         ["tailwind css", holder(1229, "Tailwind CSS")],
@@ -145,6 +153,39 @@ describe("planSeeds", () => {
     expect(decisionsOf(result).filter((decision) => decision._tag === "Rename")).toEqual([
       { _tag: "Rename", subject: s(8), definition: "about turn-based-strategy" },
       { _tag: "Rename", subject: s(9), definition: "about Large Language Model" },
+    ]);
+  });
+
+  test("never adopts or claims a display name that drops its key's disambiguator", () => {
+    const result = plan(
+      [
+        entry("Micro", ["micro-services"], "m3o"),
+        entry("Squirrel", ["squirrel-language"], "squirrel-lang"),
+        entry("Amp", [], "amphp"),
+      ],
+      [
+        ["micro", holder(1218, "micro")],
+        ["squirrel", holder(1228, "Squirrel")],
+        ["amp", holder(6375, "amp")],
+      ],
+    );
+    expect(decisionsOf(result)).toEqual([
+      { _tag: "Create", label: "M3o", definition: "about Micro", aliases: [], status: "accepted" },
+      { _tag: "Create", label: "Squirrel lang", definition: "about Squirrel", aliases: [], status: "accepted" },
+      { _tag: "Create", label: "Amphp", definition: "about Amp", aliases: [], status: "accepted" },
+    ]);
+    expect(result.proposals).toEqual([]);
+  });
+
+  test("adopts by a reviewed display name, and goes by its key's words otherwise", () => {
+    const held: ReadonlyArray<readonly [string, Holder]> = [["at protocol", holder(3034, "AT Protocol")]];
+    expect(decisionsOf(plan([entry("AT Protocol", [], "atproto", [], true)], held)).map((d) => d._tag)).toEqual([
+      "Rename",
+      "Alias",
+      "Status",
+    ]);
+    expect(decisionsOf(plan([entry("AT Protocol", [], "atproto")], held))).toEqual([
+      { _tag: "Create", label: "Atproto", definition: "about AT Protocol", aliases: [], status: "accepted" },
     ]);
   });
 

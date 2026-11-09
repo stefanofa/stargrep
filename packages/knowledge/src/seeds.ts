@@ -4,11 +4,13 @@ import { type LabelKey, labelKey } from "./label-key.ts";
 import { reservedKeys } from "./registry.ts";
 
 // One concept a seed batch names, and the status it should end with. key is the term the seed is known by, such as a
-// GitHub topic, when it differs from the label. aliases are other names the source lists, kept only when they spell
+// GitHub topic, when it differs from the label. The label names the concept only when it spells the key or
+// reviewedLabel says someone checked that it does. aliases are other names the source lists, kept only when they spell
 // the key or the label another way. synonyms are names someone reviewed, kept as they are.
 export interface SeedEntry {
   readonly key?: string;
   readonly label: string;
+  readonly reviewedLabel?: boolean;
   readonly definition: string;
   readonly aliases: ReadonlyArray<string>;
   readonly synonyms: ReadonlyArray<string>;
@@ -79,8 +81,25 @@ export const noise: ReadonlyArray<SeedEntry> = [
 ];
 
 const squash = (key: LabelKey) => key.replace(/[\s.]/g, "");
-const close = (a: string, b: string) =>
-  a === b || a === `${b}s` || b === `${a}s` || a === `${b}es` || b === `${a}es` || a === `${b}js` || b === `${a}js`;
+// Protocol schemes whose secure variant adds an s, which is no plural.
+const secure = new Set([
+  "https",
+  "wss",
+  "ftps",
+  "sftp",
+  "smtps",
+  "imaps",
+  "pop3s",
+  "ldaps",
+  "coaps",
+  "mqtts",
+  "amqps",
+  "rtmps",
+  "sips",
+  "nntps",
+]);
+const plural = (more: string, one: string) => (more === `${one}s` || more === `${one}es`) && !secure.has(more);
+const close = (a: string, b: string) => a === b || plural(a, b) || plural(b, a) || a === `${b}js` || b === `${a}js`;
 // A version number at the end, as in python3 or laravel10, unless only one letter is left, since d2 is not D.
 const unversioned = (word: string) => {
   const bare = word.replace(/(?<=\D)\d+$/, "");
@@ -95,10 +114,25 @@ const initials = (key: LabelKey) =>
 // Whether alias spells name another way: the same letters apart from separators and dots, a plural s or es, a js
 // suffix, or a version number, or the words its initials abbreviate, as model context protocol is MCP. A source's
 // other aliases often name a narrower or a neighboring concept, as 3d-printing for 3d, so they are left out.
-export const spells = (alias: LabelKey, name: LabelKey) => {
+export const spells = (alias: LabelKey, name: LabelKey): boolean => {
   const a = squash(alias);
   const b = squash(name);
-  return close(a, b) || close(unversioned(a), unversioned(b)) || (alias.includes(" ") && initials(alias) === b);
+  if (close(a, b) || close(unversioned(a), unversioned(b)) || (alias.includes(" ") && initials(alias) === b))
+    return true;
+  // A name with a gloss in parentheses, as "Remote Procedure Call (RPC)" or "X (Twitter)", spells either part. labelKey
+  // trims the closing parenthesis.
+  const glossed = /^(.+?) \((.+)$/.exec(alias);
+  return (
+    glossed?.[1] !== undefined &&
+    glossed[2] !== undefined &&
+    (spells(glossed[1] as LabelKey, name) || spells(glossed[2] as LabelKey, name))
+  );
+};
+
+// A key's words as a label, as Argo floats for argo-floats.
+const titled = (key: string) => {
+  const words = key.replace(/[-_]+/g, " ").trim();
+  return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
 };
 
 // A Create's subject before the database allocates it. The plan only uses it to check the batch against the fold.
@@ -157,7 +191,13 @@ export const planSeeds = (input: {
 
   for (const entry of input.entries) {
     const own = labelKey(entry.key ?? entry.label);
-    const labelled = labelKey(entry.label);
+    const shown = labelKey(entry.label);
+    // A source's display name often drops the disambiguator its key carries, as Argo does for argo-floats, so it names
+    // the entry only when it spells the key or someone reviewed it. Otherwise the entry goes by its key's words.
+    const trusted =
+      own !== null && shown !== null && (shown === own || spells(shown, own) || entry.reviewedLabel === true);
+    const label = trusted ? entry.label : titled(entry.key ?? entry.label);
+    const labelled = trusted ? shown : own;
     if (own === null || labelled === null || reservedKeys.has(own) || reservedKeys.has(labelled)) {
       skipped.push({ label: entry.label, reason: "reserved" });
       continue;
@@ -183,7 +223,7 @@ export const planSeeds = (input: {
       const key = labelKey(text);
       if (key !== null && !names.has(key)) names.set(key, text);
     };
-    name(entry.label);
+    name(label);
     if (entry.key !== undefined) name(entry.key);
     // An alias counts only when it spells a name that is free or already the adopted subject's, so one spelling
     // family never ends up split between two subjects.
@@ -226,33 +266,27 @@ export const planSeeds = (input: {
     if (survivor === undefined) {
       if (!free.has(labelled)) continue;
       const aliases = [...free].filter(([key]) => key !== labelled).map(([, text]) => text);
-      add(
-        { _tag: "Create", label: entry.label, definition: entry.definition, aliases, status: entry.status },
-        entry.reason,
-      );
+      add({ _tag: "Create", label, definition: entry.definition, aliases, status: entry.status }, entry.reason);
       continue;
     }
 
     const decided = state.subjects.get(survivor);
     const current = info(survivor);
     // A relabel only fixes how the subject's own name is written, such as its case, so it never adds a key or a
-    // meaning. A source label that is just its slug, such as turn-based-strategy, reads worse than the mint. The label
-    // row names the raw subject, so the key must be free or already the survivor's own.
-    const labelOwner = rawHolder(labelled);
+    // meaning. A source label that is just its slug, such as turn-based-strategy, reads worse than the mint.
     const relabel =
       decided?.label == null &&
       current !== undefined &&
-      current.label !== entry.label &&
+      current.label !== label &&
       labelKey(current.label) === labelled &&
-      entry.label !== entry.key &&
-      (labelOwner === undefined || labelOwner === survivor);
+      label !== entry.key;
     const define = decided?.definition == null && entry.definition !== "" && current?.definition !== entry.definition;
     if (accepting && (relabel || define)) {
       add(
         {
           _tag: "Rename",
           subject: survivor,
-          ...(relabel ? { label: entry.label } : {}),
+          ...(relabel ? { label } : {}),
           ...(define ? { definition: entry.definition } : {}),
         },
         entry.reason,

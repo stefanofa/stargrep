@@ -1027,19 +1027,28 @@ export const make = Effect.gen(function* () {
                 as i (n integer, keys text[], subjects bigint[], repos bigint[])
               order by i.n`,
           ).pipe(Effect.map((rows) => rows.map((row) => row.repos))),
+    // Each subject's origins are resolved once, so every lookup below is one GIN probe of one array.
     examples: (ids, limit) =>
       query(
         "knowledge.examples",
         decodeExamples,
         sql`
+          with t as (
+            select u.id, knowledge_origins(array[u.id], true) as widened,
+              knowledge_origins(array[u.id], false) as compared
+            from unnest(${sql.param([...ids])}::bigint[]) as u (id)
+          )
           select t.id::float8 as "subjectId", array(
-            select f.repo_id::float8 from repo_facets f
-            where f.members && knowledge_origins(array[t.id], true)
-              or f.built_with && knowledge_origins(array[t.id], true)
-              or f.alternative_to && knowledge_origins(array[t.id], false)
-            order by f.repo_id limit ${limit}
+            select x.repo_id::float8 from (
+              (select f.repo_id from repo_facets f where f.members && t.widened order by f.repo_id limit ${limit})
+              union
+              (select f.repo_id from repo_facets f where f.built_with && t.widened order by f.repo_id limit ${limit})
+              union
+              (select f.repo_id from repo_facets f where f.alternative_to && t.compared order by f.repo_id limit ${limit})
+            ) x
+            order by x.repo_id limit ${limit}
           ) as repos
-          from unnest(${sql.param([...ids])}::bigint[]) as t (id)`,
+          from t`,
       ).pipe(Effect.map((rows) => new Map(rows.map((row) => [row.subjectId, row.repos])))),
     floor: query(
       "knowledge.floor",

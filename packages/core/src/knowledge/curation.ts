@@ -12,7 +12,7 @@ import {
 } from "@stargrep/knowledge/decisions";
 import { Revision, SubjectId } from "@stargrep/knowledge/ids";
 import { type LabelKey, labelKey } from "@stargrep/knowledge/label-key";
-import { type Holder, type Planned, planSeeds, type SeedEntry } from "@stargrep/knowledge/seeds";
+import { type Holder, type Planned, planSeeds, type SeedEntry, spells } from "@stargrep/knowledge/seeds";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -422,6 +422,8 @@ export const queue = Effect.fn("Curation.queue")(function* (input: {
   }
   for (const variant of variants) {
     const [a, b] = [variant.a, variant.b];
+    // The same spelling rule as the seeds, which knows that https is no plural of http.
+    if (!spells(a.key, b.key)) continue;
     if (variant.channel === "plural" && held(a.subjectId) < 0.05 * held(b.subjectId)) continue;
     const aFirst =
       held(a.subjectId) !== held(b.subjectId) ? held(a.subjectId) > held(b.subjectId) : a.key.length <= b.key.length;
@@ -500,25 +502,40 @@ export const seed = Effect.fn("Curation.seed")(function* (input: {
 
 // The usage floor, run right after the nightly count: every candidate on at least three public repos from at least
 // two owners becomes accepted, by Status decisions with actor rule:floor, so each acceptance shows in the log and can
-// be undone. A batch that loses a race to another decision is planned again against the new head.
+// be undone. A subject a curator rejected, accepted, or merged after the list was read is left alone, and a batch
+// that loses a race to another decision is planned again against the new head.
 export const floor = Effect.fn("Curation.floor")(function* () {
   const db = yield* Db.Db;
   const ids = yield* db.knowledge.floor;
   let accepted = 0;
   for (let start = 0; start < ids.length; start += floorBatch) {
-    const decisions = ids.slice(start, start + floorBatch).map(
-      (subject): Proposed => ({
-        decision: { _tag: "Status", subject, status: "accepted" },
-        reason: "usage floor: at least 3 public repos from at least 2 owners",
-      }),
-    );
+    const batch = ids.slice(start, start + floorBatch);
+    // The list was read before this batch, so a curator may have decided on one of its subjects since. Each attempt
+    // keeps only the subjects the fold at its head still holds as live, canonical candidates, and the decide's head
+    // check makes that fold the one it writes against.
     const attempt = Effect.gen(function* () {
       const state = yield* current;
-      const plan = yield* planDecisions(state, decisions, db.knowledge.allocate);
-      return yield* write(plan, "rule:floor", false);
+      const candidates = batch.filter(
+        (subject) =>
+          !state.retired.has(subject) &&
+          !state.canonical.has(subject) &&
+          (state.subjects.get(subject)?.status ?? "candidate") === "candidate",
+      );
+      if (candidates.length === 0) return 0;
+      const plan = yield* planDecisions(
+        state,
+        candidates.map(
+          (subject): Proposed => ({
+            decision: { _tag: "Status", subject, status: "accepted" },
+            reason: "usage floor: at least 3 public repos from at least 2 owners",
+          }),
+        ),
+        db.knowledge.allocate,
+      );
+      yield* write(plan, "rule:floor", false);
+      return candidates.length;
     });
-    yield* attempt.pipe(Effect.retry({ while: (error) => error._tag === "StaleRevision", times: 3 }));
-    accepted += decisions.length;
+    accepted += yield* attempt.pipe(Effect.retry({ while: (error) => error._tag === "StaleRevision", times: 3 }));
   }
   return { accepted };
 });

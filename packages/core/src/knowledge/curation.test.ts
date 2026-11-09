@@ -11,6 +11,7 @@ import { noise, type SeedEntry } from "@stargrep/knowledge/seeds";
 import * as it from "@stargrep/testing";
 import * as Effect from "effect/Effect";
 import * as Curation from "./curation.ts";
+import { exploreEntries } from "./explore.ts";
 import { answer, create, createdBy, embeddingModel, key, record, seed, split, sweepAll } from "./knowledge.fixture.ts";
 import * as RepoKnowledge from "./repo-knowledge.ts";
 
@@ -706,6 +707,125 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
       const second = yield* split(two, "freed label", ["browser"]);
       yield* sweepAll;
       expect(yield* aboutOf(59_002)).toEqual([second]);
+    }),
+  );
+
+  test.effect("the floor leaves alone a candidate a curator rejects or merges after the floor reads its list", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const terms = ["race rejected", "race merged", "race survivor"];
+      yield* seed(
+        [61_001, 61_002, 61_003].map((id, index) => ({
+          id,
+          owner: index === 0 ? "ann" : "bob",
+          facets: terms.map((term) => ({ role: "about", term, quote: "x" })),
+        })),
+      );
+      yield* sweepAll;
+      yield* RepoKnowledge.count();
+      const ids = new Map((yield* db.knowledge.labels(terms.map(key))).map((row) => [row.key, row.subjectId]));
+      const rejected = ids.get(key("race rejected"));
+      const merged = ids.get(key("race merged"));
+      const survivor = ids.get(key("race survivor"));
+      if (rejected === undefined || merged === undefined || survivor === undefined) return yield* Effect.die("fixture");
+      const curator = Effect.gen(function* () {
+        yield* decideOne({ _tag: "Status", subject: rejected, status: "rejected" });
+        yield* decideOne({ _tag: "Merge", from: merged, into: survivor });
+      }).pipe(Effect.provideService(Db.Db, db), Effect.orDie);
+      const racing = Db.Db.of({
+        ...db,
+        knowledge: { ...db.knowledge, floor: Effect.tap(db.knowledge.floor, () => curator) },
+      });
+      const read = yield* db.knowledge.floor;
+      expect([rejected, merged, survivor].every((id) => read.includes(id))).toBe(true);
+      const { accepted } = yield* Curation.floor().pipe(Effect.provideService(Db.Db, racing));
+      expect(accepted).toBe(read.length - 2);
+      const state = fold(yield* db.knowledge.decisions).state;
+      expect([state.subjects.get(rejected)?.status, state.subjects.get(survivor)?.status]).toEqual([
+        "rejected",
+        "accepted",
+      ]);
+      expect(state.canonical.get(merged)).toBe(survivor);
+      const statuses = state.log.flatMap((entry) =>
+        entry.decision._tag === "Status" && entry.decision.subject === merged ? [entry.decision.status] : [],
+      );
+      expect(statuses).toEqual([]);
+    }),
+  );
+
+  test.effect("the queue never proposes a merge the fold refuses, such as a keep-apart pair", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      yield* seed([
+        { id: 62_001, facets: [{ role: "about", term: "fold pair", quote: "x" }] },
+        { id: 62_002, facets: [{ role: "about", term: "fold pair", quote: "x" }] },
+        { id: 62_003, facets: [{ role: "about", term: "fold pairs", quote: "x" }] },
+      ]);
+      yield* sweepAll;
+      const ids = new Map(
+        (yield* db.knowledge.labels([key("fold pair"), key("fold pairs")])).map((row) => [row.key, row.subjectId]),
+      );
+      const one = ids.get(key("fold pair"));
+      const more = ids.get(key("fold pairs"));
+      if (one === undefined || more === undefined) return yield* Effect.die("fixture");
+      const pairs = (proposals: ReadonlyArray<Curation.Proposal>) =>
+        proposals.flatMap(({ decision }) =>
+          decision._tag === "Merge" && [one, more].includes(decision.from) ? [decision] : [],
+        );
+      expect(pairs(yield* Curation.queue({ limit: 500 }))).toEqual([{ _tag: "Merge", from: more, into: one }]);
+      yield* decideOne({ _tag: "KeepApart", a: one, b: more, add: true });
+      expect(pairs(yield* Curation.queue({ limit: 500 }))).toEqual([]);
+    }),
+  );
+
+  test.effect("the queue reads https as the secure variant of http, not its plural", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      yield* seed([
+        { id: 64_001, facets: [{ role: "about", term: "coap", quote: "x" }] },
+        { id: 64_002, facets: [{ role: "about", term: "coap", quote: "x" }] },
+        { id: 64_003, facets: [{ role: "about", term: "coaps", quote: "x" }] },
+      ]);
+      yield* sweepAll;
+      const ids = new Map(
+        (yield* db.knowledge.labels([key("coap"), key("coaps")])).map((row) => [row.key, row.subjectId]),
+      );
+      const coaps = ids.get(key("coaps"));
+      if (coaps === undefined) return yield* Effect.die("fixture");
+      const queued = yield* Curation.queue({ limit: 500 });
+      expect(queued.filter(({ decision }) => decision._tag === "Merge" && decision.from === coaps)).toEqual([]);
+    }),
+  );
+
+  test.effect("a reviewed Explore synonym proposes the merge of the subject that holds it", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      yield* seed([
+        { id: 63_001, facets: [{ role: "about", term: "PostgreSQL", quote: "x" }] },
+        { id: 63_002, facets: [{ role: "about", term: "Postgres", quote: "x" }] },
+      ]);
+      yield* sweepAll;
+      const ids = new Map(
+        (yield* db.knowledge.labels([key("postgresql"), key("postgres")])).map((row) => [row.key, row.subjectId]),
+      );
+      const postgresql = ids.get(key("postgresql"));
+      const postgres = ids.get(key("postgres"));
+      if (postgresql === undefined || postgres === undefined) return yield* Effect.die("fixture");
+      const entries = exploreEntries({
+        commit: "0".repeat(40),
+        topics: [
+          {
+            topic: "postgresql",
+            label: "PostgreSQL",
+            definition: "An object-relational database.",
+            aliases: ["postgres", "psql"],
+          },
+        ],
+      });
+      const plan = yield* Curation.planSeed(entries, new Set());
+      expect(plan.proposals.map(({ decision }) => decision)).toEqual([
+        { _tag: "Merge", from: postgres, into: postgresql },
+      ]);
     }),
   );
 
