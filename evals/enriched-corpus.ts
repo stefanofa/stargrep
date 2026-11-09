@@ -1,7 +1,7 @@
 import * as Embeddings from "@stargrep/ai/embeddings";
 import * as Summarize from "@stargrep/ai/summarize";
 import { Float32Vector } from "@stargrep/db/embedding";
-import { primaryKind } from "@stargrep/knowledge/projection";
+import { DecodedFacets, decodeFacets } from "@stargrep/knowledge/claims";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -14,7 +14,8 @@ export const EnrichedRepo = Schema.Struct({
   language: Schema.NullOr(Schema.String),
   summary: Schema.String,
   keywords: Schema.Array(Schema.String),
-  kind: Schema.NullOr(Schema.String),
+  // The facts the summary model stated, as decoded against the prompt it saw.
+  facets: DecodedFacets,
   vector: Float32Vector,
 });
 export type EnrichedRepo = typeof EnrichedRepo.Type;
@@ -127,7 +128,7 @@ export const enrich = Effect.fn("EnrichedCorpus.enrich")(function* (summaryModel
       language: repo.language,
       summary: summary?.summary ?? repo.description ?? repo.fullName,
       keywords: summary?.keywords ?? [],
-      kind: summary === undefined ? null : primaryKind(summary.facets.claims),
+      facets: summary?.facets ?? decodeFacets([], { fullName: repo.fullName, description: "", topics: [], readme: "" }),
       vector: vectors[repo.fullName]?.vector ?? [],
     };
   });

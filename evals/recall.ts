@@ -6,13 +6,12 @@ import * as Models from "@stargrep/ai/models";
 import { tokensSpent } from "@stargrep/ai/port";
 import * as TextGeneration from "@stargrep/ai/text-generation";
 import { RepoKnowledge } from "@stargrep/core/knowledge";
-import { ModelAllowance, QueryPlanner, Search, SearchCache } from "@stargrep/core/search";
+import { Compile, ModelAllowance, QueryPlanner, Search, SearchCache } from "@stargrep/core/search";
 import * as Db from "@stargrep/db";
 import { anyDistance, Embedding, EmbeddingModelId } from "@stargrep/db/embedding";
 import { createMigratedDatabase } from "@stargrep/db/local-database";
 import * as Memory from "@stargrep/db/memory";
 import { GitHubAccountId, Login, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
-import { decodeFacets } from "@stargrep/knowledge/claims";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -61,14 +60,6 @@ const writeLines = <A, I>(name: string, schema: Schema.Codec<A, I>, values: Read
 
 const decodeEmbedding = Schema.decodeUnknownEffect(Embedding);
 const embeddingModelId = Schema.decodeSync(EmbeddingModelId)(Models.embeddingModel.id);
-
-// The fixture keeps each repo's kind, not its README, so the kind is its only fact.
-const promptInput = (repo: EnrichedRepo) => ({
-  fullName: repo.fullName,
-  description: repo.description ?? "",
-  topics: repo.topics,
-  readme: "",
-});
 
 const starredAt = (index: number) =>
   DateTime.add(DateTime.makeUnsafe("2024-01-01T00:00:00Z"), { days: (index * 37) % 1030 });
@@ -123,7 +114,7 @@ const loadAccount = Effect.fn("Recall.loadAccount")(function* (repos: ReadonlyAr
             answer: {
               summary: repo.summary,
               keywords: repo.keywords,
-              facets: decodeFacets(repo.kind === null ? [] : [{ role: "is", term: repo.kind }], promptInput(repo)),
+              facets: repo.facets,
             },
             lease: null,
           },
@@ -447,10 +438,42 @@ const sweep = Effect.fn("Recall.sweep")(function* (
   }
 });
 
+// Subjects are accepted by curation, which the eval database has none of. This accepts every subject the floor rule
+// would, held by at least 3 repos from 2 owners, so stated subject groups resolve as they will once curation runs.
+const acceptAtFloor = (url: string) =>
+  Effect.promise(async () => {
+    const db = new Bun.SQL(url);
+    try {
+      const [row] = await db`
+        with held as (
+          select substring(m.atom from 'subject:([0-9]+)$')::bigint as subject_id, m.repo_id, r.owner
+          from matching_atoms m join repos r on r.id = m.repo_id
+          where m.atom ~ '^((with|alt|replaced-by):)?subject:[0-9]+$'
+        ),
+        floor as (
+          select subject_id from held group by 1 having count(distinct repo_id) >= 3 and count(distinct owner) >= 2
+        ),
+        accepted as (
+          update subjects s set status = 'accepted' from floor f
+          where s.id = f.subject_id and s.status = 'candidate' and s.owner_id is null
+          returning 1
+        )
+        select count(*)::int as accepted, (select count(*)::int from subjects) as subjects from accepted`;
+      return row as { readonly accepted: number; readonly subjects: number };
+    } finally {
+      await db.close();
+    }
+  });
+
+// Bare stated subjects as filters, a policy change this eval gates.
+const bareFilters: Compile.Policy = { ...Compile.policy, bare: ["filter", "filter"] };
+
 const real = Effect.fn("Recall.real")(function* (options: {
   readonly summaryModel: string;
   readonly writeFixture: boolean;
   readonly maxDistances: ReadonlyArray<number>;
+  readonly acceptFloor: boolean;
+  readonly bareFilters: boolean;
 }) {
   const repos = yield* enrich(options.summaryModel).pipe(
     Effect.provide(Gateway.layerTextGeneration(options.summaryModel).pipe(Layer.provide(Gateway.layerProviderConfig))),
@@ -461,10 +484,15 @@ const real = Effect.fn("Recall.real")(function* (options: {
   const db = Db.layerNodePostgres({ embeddingModel: embeddingModelId, connectionString: Redacted.make(url) });
   return yield* Effect.gen(function* () {
     yield* loadAccount(repos);
+    if (options.acceptFloor) {
+      const { accepted, subjects } = yield* acceptAtFloor(url);
+      yield* Console.log(`Accepted ${accepted} of ${subjects} subjects at the floor of 3 repos from 2 owners`);
+    }
     const sets = yield* loadSets;
     if (options.maxDistances.length > 0) return yield* sweep(sets, options.maxDistances);
     const results = yield* runSets(sets).pipe(
       Effect.provide(layerSearch(Gateway.layerPlannerTextGeneration, fileCache), { local: true }),
+      Effect.provideService(Compile.CurrentPolicy, options.bareFilters ? bareFilters : Compile.policy),
     );
     const recall = yield* report(results, repos.length);
     yield* Console.log(`tokens: ${(yield* tokenCounts).join("; ")}`);
@@ -509,6 +537,8 @@ const main = args.includes("--fixture")
         summaryModel: summaryIndex === -1 ? Models.summaryModel : (args[summaryIndex + 1] ?? Models.summaryModel),
         writeFixture: args.includes("--write-fixture"),
         maxDistances: distances,
+        acceptFloor: args.includes("--accept-floor"),
+        bareFilters: args.includes("--bare-filters"),
       }),
     ).pipe(
       Effect.provide(Gateway.layerEmbeddings(Models.embeddingModel).pipe(Layer.provide(Gateway.layerProviderConfig))),
