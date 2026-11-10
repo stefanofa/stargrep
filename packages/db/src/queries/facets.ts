@@ -1,16 +1,7 @@
 import { RepoId } from "@stargrep/github/schemas";
 import { formatAtom } from "@stargrep/knowledge/atom";
 import { labelKey } from "@stargrep/knowledge/label-key";
-import {
-  type ClosedDim,
-  closed,
-  closedKeys,
-  closedLabel,
-  Dim,
-  dimPrefix,
-  roleIds,
-  roles,
-} from "@stargrep/knowledge/registry";
+import { type ClosedDim, closed, closedKeys, closedLabel, Dim, dimPrefix, roleIds } from "@stargrep/knowledge/registry";
 import { sql } from "drizzle-orm";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -96,10 +87,6 @@ const labelOf = (atom: string, subjects: Readonly<Record<string, string>>) => {
   return dim === undefined ? atom : dim === "subject" ? (subjects[id] ?? atom) : closedLabel(dim, id);
 };
 
-// A role-qualified key, such as "for:subject:812", names a role a bare atom already matches. Library chips count the
-// bare key, so the payload leaves these out.
-const qualifiedWires = roleIds.filter((role) => roles[role].matches === "bare").map((role) => roles[role].wire);
-
 const likePrefix = (key: string) => `${key.replace(/[\\%_]/g, "\\$&")}%`;
 
 const closedDims = Dim.literals.filter((dim): dim is ClosedDim => dim !== "subject");
@@ -154,8 +141,7 @@ export const make = Effect.gen(function* () {
       sql`
         with m as (
           select distinct repo_id, atom from matching_atoms
-          where repo_id = any(${sql.param([...ids])}::bigint[]) and listed
-            and not (split_part(atom, ':', 3) <> '' and split_part(atom, ':', 1) = any(${sql.param(qualifiedWires)}::text[]))
+          where repo_id = any(${sql.param([...ids])}::bigint[]) and listed and not qualified
         )
         select
           coalesce((
