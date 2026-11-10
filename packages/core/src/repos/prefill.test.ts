@@ -293,6 +293,46 @@ for (const [adapter, database] of adapters) {
         }),
     );
 
+    it.effect("asks an item the batch answered badly directly, and counts a repo whose answers never decode", () =>
+      Effect.gen(function* () {
+        f.seed([5001, 5002, 5003]);
+        const invalid = { summary: "", keywords: [] };
+        const names =
+          (...numbers: ReadonlyArray<number>) =>
+          (prompt: string) =>
+            numbers.some((n) => prompt.startsWith(`Repository: owner/repo-${n}\n`));
+        const batchBroken = names(5001, 5002);
+        const alwaysBroken = names(5001);
+        const asked: Array<string> = [];
+        const models = Layer.merge(
+          Fake.batches((prompt) => (batchBroken(prompt) ? invalid : SummarizeFake.respond(prompt)), "fake/summary")
+            .layer,
+          Fake.layerTextGeneration((prompt) => {
+            asked.push(prompt);
+            return alwaysBroken(prompt) ? invalid : SummarizeFake.respond(prompt);
+          }, "fake/summary"),
+        );
+        const report = yield* run([ref(5001), ref(5002), ref(5003)]).pipe(
+          Effect.provide(Layer.fresh(Prefill.layer).pipe(Layer.provide(models))),
+        );
+        expect(tally(report)).toEqual({ saved: 2, failed: 1 });
+        expect(report.direct.map(Number).sort()).toEqual([5001, 5002]);
+        expect(asked).toHaveLength(2);
+        expect(
+          yield* query(
+            "select id::int, enrich_failures as failures, enrich_retry_at is not null as waiting, receipt_id is not null as saved from repos where id between 5001 and 5003 order by id",
+          ),
+        ).toEqual([
+          { id: 5001, failures: 1, waiting: true, saved: false },
+          { id: 5002, failures: 0, waiting: false, saved: true },
+          { id: 5003, failures: 0, waiting: false, saved: true },
+        ]);
+        expect(yield* query("select state from extraction_batches where $1 = any(repo_ids)", [5001])).toEqual([
+          { state: "captured" },
+        ]);
+      }),
+    );
+
     it.effect("answers stale when facts move while the batch is open, and leaves the repo pending", () =>
       Effect.gen(function* () {
         const db = yield* Db.Db;

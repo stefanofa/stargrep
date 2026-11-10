@@ -380,11 +380,22 @@ const make = Effect.gen(function* () {
       yield* projector.projectSaved(saved.map(({ item }) => item.repoId));
       yield* embed(saved);
       const failures = [
-        ...failedCalls.map(({ entry, error }) => ({ id: entry.item.repoId, settled: settlement(error) })),
+        ...failedCalls.map(({ entry, error }) => ({ id: entry.item.repoId, error })),
         ...results.flatMap(([{ entry }, outcome]) =>
-          Result.isFailure(outcome) ? [{ id: entry.item.repoId, settled: settlement(outcome.failure) }] : [],
+          Result.isFailure(outcome) ? [{ id: entry.item.repoId, error: outcome.failure }] : [],
         ),
-      ];
+      ].map(({ id, error }) => ({ id, error, settled: settlement(error) }));
+      yield* Effect.forEach(
+        failures,
+        ({ id, error, settled }) =>
+          Effect.logWarning("Prefill item failed", {
+            repoId: id,
+            error: error._tag,
+            settled,
+            detail: error.message,
+          }),
+        { discard: true },
+      );
       yield* db.repos.settleFailures({
         until: manifest.leaseUntil,
         failures: failures.flatMap(({ id, settled }) =>
