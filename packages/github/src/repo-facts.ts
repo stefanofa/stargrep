@@ -53,7 +53,7 @@ const RepoNode = Schema.Struct({
   pushedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   isArchived: Schema.Boolean,
   isFork: Schema.Boolean,
-  isPrivate: Schema.optionalKey(Schema.Boolean),
+  isPrivate: Schema.Boolean,
   stargazerCount: Schema.Int,
   forkCount: Schema.Int,
   root: Schema.NullOr(Schema.Struct({ entries: Schema.optionalKey(Schema.Array(TreeEntry)) })),
@@ -95,12 +95,17 @@ export const nodeError = (error: GraphQLError): NodeError | null => {
   return error.type === "NOT_FOUND" || error.type === "FORBIDDEN" ? { kind: error.type, index } : null;
 };
 
+// A private repo is forbidden whatever token read it. A personal token reads its owner's private repos, and nothing
+// private may reach a model, the blob store, or a public table, so every caller of a facts read sees it as forbidden.
 export const settle = (
   ids: ReadonlyArray<RepoNodeId>,
   body: { readonly data?: typeof Data.Type | null; readonly errors?: ReadonlyArray<GraphQLError> },
 ) => {
   const classified = (body.errors ?? []).map((error) => ({ error, node: nodeError(error) }));
-  const forbidden = new Set(classified.flatMap(({ node }) => (node?.kind === "FORBIDDEN" ? [node.index] : [])));
+  const forbidden = new Set([
+    ...classified.flatMap(({ node }) => (node?.kind === "FORBIDDEN" ? [node.index] : [])),
+    ...(body.data?.nodes ?? []).flatMap((node, index) => (node?.isPrivate === true ? [index] : [])),
+  ]);
   return {
     facts: (body.data?.nodes ?? []).flatMap((node, index) =>
       node === null || forbidden.has(index) ? [] : [toFacts(node)],
@@ -117,12 +122,12 @@ export interface ArchiveRef {
   readonly name: RepoName;
 }
 
-// Why an archive ref resolved to no repo: GitHub has no repo by that name, the token may not read it, the name now
-// belongs to a repo with another ID, such as one created after the archived repo was deleted or renamed away, or the
-// repo is private now. A personal token can read its owner's private repos, and none may reach a public table.
+// Why an archive ref resolved to no repo: GitHub has no repo by that name, the token may not read it or the repo is
+// private, or the name now belongs to a repo with another ID, such as one created after the archived repo was deleted
+// or renamed away.
 export type Unresolved = {
   readonly id: RepoId;
-  readonly reason: "missing" | "forbidden" | "other-repo" | "private";
+  readonly reason: "missing" | "forbidden" | "other-repo";
 };
 
 const alias = (index: number) => `r${index}`;
@@ -174,10 +179,9 @@ export const settleResolved = (
   const unresolved: Array<Unresolved> = [];
   refs.forEach((ref, index) => {
     const node = body.data[alias(index)] ?? null;
-    if (forbidden.has(index)) unresolved.push({ id: ref.id, reason: "forbidden" });
+    if (forbidden.has(index) || node?.isPrivate === true) unresolved.push({ id: ref.id, reason: "forbidden" });
     else if (node === null) unresolved.push({ id: ref.id, reason: "missing" });
     else if (node.databaseId !== ref.id) unresolved.push({ id: ref.id, reason: "other-repo" });
-    else if (node.isPrivate === true) unresolved.push({ id: ref.id, reason: "private" });
     else facts.push(toFacts(node));
   });
   return { facts, unresolved };

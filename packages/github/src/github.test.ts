@@ -386,6 +386,7 @@ const node = (n: number) => ({
   pushedAt: null,
   isArchived: false,
   isFork: false,
+  isPrivate: false,
   stargazerCount: 10,
   forkCount: 1,
   root:
@@ -471,6 +472,23 @@ describe("repoFacts", () => {
       );
       expect(fake.sent).toHaveLength(1);
       expect(logs).toContainEqual(["GitHub forbade repos to the token", { nodeIds: ["R_5", "R_9"] }]);
+    }).pipe(Effect.provide(Layer.merge(fake.layer, capture)));
+  });
+
+  effect("leaves out a repo that is private, whatever the token may read, and logs it as forbidden", () => {
+    const fake = Fake.layer((sent) => ({
+      headers: Fake.rateLimitHeaders(4000, 3600, "graphql"),
+      body: {
+        data: { nodes: graphqlIds(sent).map((id) => ({ ...node(Number(id.slice(2))), isPrivate: id === "R_2" })) },
+      },
+    }));
+    const logs: Array<unknown> = [];
+    const capture = Logger.layer([Logger.make(({ message }) => logs.push(message))]);
+    return Effect.gen(function* () {
+      const github = yield* GitHub.GitHub;
+      const facts = yield* github.repoFacts(["R_1", "R_2", "R_3"].map((id) => id as RepoNodeId));
+      expect(facts.map((fact): number => fact.id)).toEqual([1, 3]);
+      expect(logs).toContainEqual(["GitHub forbade repos to the token", { nodeIds: ["R_2"] }]);
     }).pipe(Effect.provide(Layer.merge(fake.layer, capture)));
   });
 
@@ -572,7 +590,7 @@ describe("resolveRepos", () => {
         [7, "missing"],
         [8, "forbidden"],
         [30, "other-repo"],
-        [31, "private"],
+        [31, "forbidden"],
       ]);
     }).pipe(Effect.provide(fake.layer));
   });

@@ -54,6 +54,7 @@ export const fixture = () => {
     pushedAt: "2026-10-01T00:00:00Z",
     isArchived: remote.archived ?? false,
     isFork: false,
+    isPrivate: false,
     stargazerCount: remote.stars ?? 10,
     forkCount: remote.forks ?? 1,
     root: { entries: remote.readme === undefined ? [] : [{ name: "README.md", type: "blob", oid: remote.readme.oid }] },
