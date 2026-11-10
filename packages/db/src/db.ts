@@ -2,7 +2,7 @@ import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type * as Option from "effect/Option";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import type { EmbeddingModelId } from "./embedding.ts";
@@ -126,7 +126,7 @@ export interface Options {
   readonly embeddingModel: EmbeddingModelId;
   /** Skips the embedding_settings read once a build that shares this Ref has passed it. */
   readonly adopted?: Ref.Ref<boolean>;
-  /** The accepted label keys a build that shares this Ref last read, so stated words no subject holds skip SQL work. */
+  /** Shares the accepted label keys a build last read across builds. Each build keeps its own when this is left out. */
   readonly acceptedKeys?: Ref.Ref<Option.Option<Search.AcceptedKeys>>;
 }
 
@@ -154,7 +154,10 @@ export const layer = (options: Options) =>
           accounts: yield* Accounts.make,
           repos: yield* Repos.make(embeddingModel),
           stars: yield* Stars.make,
-          search: yield* Search.make(embeddingModel, options.acceptedKeys),
+          search: yield* Search.make(
+            embeddingModel,
+            options.acceptedKeys ?? (yield* Ref.make(Option.none<Search.AcceptedKeys>())),
+          ),
           syncRequests: yield* SyncRequests.make,
           rateLines: yield* RateLines.make,
           usage: yield* Usage.make,

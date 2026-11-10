@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { SubjectId } from "./ids.ts";
 import {
+  type ClosedDim,
   Dim,
   defaultRoles,
   dimPrefix,
@@ -45,6 +46,10 @@ export const Atom = Schema.Struct({ role: AtomRole, value: FacetRef }).check(
   ),
 );
 export type Atom = typeof Atom.Type;
+
+export type ClosedAtom = Atom & { readonly value: { readonly dim: ClosedDim } };
+
+export const isClosed = (atom: Atom): atom is ClosedAtom => atom.value.dim !== "subject";
 
 const prefixDims = new Map(Dim.literals.map((dim) => [dimPrefix[dim], dim]));
 const wireRoles = new Map(roleIds.map((role) => [roles[role].wire, role]));

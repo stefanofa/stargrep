@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { everything, formatAtom, SelectionKey } from "@stargrep/knowledge/atom";
 import type { SubjectId } from "@stargrep/knowledge/ids";
+import { closedDims, closedIndex, reservedKeys } from "@stargrep/knowledge/registry";
 import * as Schema from "effect/Schema";
 import * as Compile from "./compile.ts";
 import * as QueryPlan from "./query-plan.ts";
@@ -359,5 +360,26 @@ describe("applied", () => {
       { atom: "subject:812", label: "PostgreSQL", mode: "filter", from: "query", span: [23, 31], relaxed: false },
       { atom: "subject:9031", label: "SQLite", mode: "filter", from: "query", span: [35, 41], relaxed: false },
     ]);
+  });
+});
+
+describe("version", () => {
+  const withAlias = (alias: string) => {
+    const language = new Map(Compile.tables.closed.language);
+    language.set(alias, "rust");
+    return Compile.versionOf({ ...Compile.tables, closed: { ...Compile.tables.closed, language } });
+  };
+
+  test("is the version of the tables the compiler reads, which are the registry's", () => {
+    expect(Compile.versionOf(Compile.tables)).toBe(Compile.version);
+    for (const dim of closedDims) expect(Compile.tables.closed[dim]).toBe(closedIndex(dim));
+    expect(Compile.tables.reserved).toBe(reservedKeys);
+  });
+
+  test("changes with a registry alias or a stop word", () => {
+    expect(withAlias("rustlang")).not.toBe(Compile.version);
+    expect(withAlias("ferris")).not.toBe(withAlias("rustlang"));
+    const stopWords = new Set([...Compile.tables.stopWords, "kindly"]);
+    expect(Compile.versionOf({ ...Compile.tables, stopWords })).not.toBe(Compile.version);
   });
 });

@@ -95,6 +95,9 @@ const subjectGroup = (
   keys: [key(keys[0]), ...keys.slice(1).map((term) => key(term))],
 });
 
+// The tests in a block share one accepted-key cache, so a test that accepts subjects lets it expire before searching.
+const expireAcceptedKeys = TestClock.adjust(Db.acceptedKeysTtl);
+
 const search = (owner: GitHubAccountId, atoms: Partial<Db.AtomQuery>, search: Partial<Db.HybridSearch> = {}) =>
   Effect.flatMap(Effect.service(Db.Db), (db) =>
     db.search.hybrid(
@@ -149,6 +152,7 @@ const atomCases = (test: { readonly effect: it.Tester<Services> }) => {
         { id: plain, distance: 0.4 },
         { id: graphLib, distance: 0.5, atoms: [about(graphs)] },
       ]);
+      yield* expireAcceptedKeys;
       const everyone = [pgcli, sqliteUtils, both, mysqlClient, plain, graphLib];
 
       expect(yield* everyShape(owner, { stated: [subjectGroup("filter", ["postgres"])] })).toEqual([pgcli, both]);
@@ -205,6 +209,7 @@ const atomCases = (test: { readonly effect: it.Tester<Services> }) => {
         { id: mac, distance: 0.6, atoms: [atom("runs_on", { dim: "platform", id: "macos" })] },
         { id: rival, distance: 0.9, atoms: [holds("alternative_to", slack)] },
       ]);
+      yield* expireAcceptedKeys;
       const ranked = (stated: ReadonlyArray<Db.StatedGroup>) =>
         search(owner, { stated }).pipe(Effect.map(({ ids }) => ids));
 
@@ -245,6 +250,7 @@ const atomCases = (test: { readonly effect: it.Tester<Services> }) => {
         { id: clean, distance: 0.4 },
         { id: unprojected, distance: 0.6 },
       ]);
+      yield* expireAcceptedKeys;
       yield* database.query("delete from repo_facets where repo_id = $1", [unprojected]);
 
       expect(

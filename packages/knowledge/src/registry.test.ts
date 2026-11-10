@@ -51,6 +51,21 @@ describe("closed values", () => {
     }
   });
 
+  test("index every label key and lowercased id to its value", () => {
+    for (const dim of closedDims) {
+      const index = Registry.closedIndex(dim);
+      for (const entry of Registry.closed[dim]) {
+        for (const key of [...Registry.closedKeys(entry), entry.id.toLowerCase()]) {
+          expect([dim, key, index.get(key)]).toEqual([dim, key, entry.id]);
+        }
+        expect(Registry.closedValue(dim, entry.id)).toBe(entry);
+      }
+    }
+    expect(Registry.closedValue("language", "app")).toBeUndefined();
+    expect(Registry.closedLabel("license", "Apache-2.0")).toBe("Apache 2.0");
+    expect(Registry.closedLabel("license", "gone")).toBe("gone");
+  });
+
   test("keep the audited spellings off the closed values they only neighbor", () => {
     const owner = (term: string) => [...(owners().get(labelKey(term) ?? "") ?? [])];
     expect(owner("node")).toEqual(["platform:node"]);

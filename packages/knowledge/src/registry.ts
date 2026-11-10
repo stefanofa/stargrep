@@ -406,6 +406,39 @@ export const reservedKeys: ReadonlySet<LabelKey> = new Set(
   reservingDims.flatMap((dim) => closed[dim].flatMap(closedKeys)),
 );
 
+export const closedDims = Dim.literals.filter((dim): dim is ClosedDim => dim !== "subject");
+
+const perDim = <A>(build: (dim: ClosedDim) => A): Readonly<Record<ClosedDim, A>> => ({
+  kind: build("kind"),
+  language: build("language"),
+  license: build("license"),
+  platform: build("platform"),
+  status: build("status"),
+});
+
+const byId = perDim(
+  (dim): ReadonlyMap<string, ClosedValue<string>> => new Map(closed[dim].map((entry) => [entry.id, entry])),
+);
+
+// Every label key of a value, and its id in lowercase, to its id. A label key never holds "-", and an id without one is
+// its own label key, so no two values share an entry.
+const indexes = perDim(
+  (dim): ReadonlyMap<string, string> =>
+    new Map(
+      closed[dim].flatMap((entry) => [
+        ...closedKeys(entry).map((key): readonly [string, string] => [key, entry.id]),
+        [entry.id.toLowerCase(), entry.id] as const,
+      ]),
+    ),
+);
+
+export const closedValue = (dim: ClosedDim, id: string): ClosedValue<string> | undefined => byId[dim].get(id);
+
+// The value's label, or the id itself for an id the registry no longer holds.
+export const closedLabel = (dim: ClosedDim, id: string): string => closedValue(dim, id)?.label ?? id;
+
+export const closedIndex = (dim: ClosedDim): ReadonlyMap<string, string> => indexes[dim];
+
 export const RecipeId = Schema.Literals(["top", "trending_7d"]);
 export type RecipeId = typeof RecipeId.Type;
 
