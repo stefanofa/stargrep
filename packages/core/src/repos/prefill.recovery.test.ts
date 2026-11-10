@@ -35,6 +35,16 @@ for (const [adapter, database] of adapters) {
   const f = fixture();
   const fresh = <ROut, E>(replacing: Layer.Layer<ROut, E>) =>
     Effect.provide(Layer.fresh(Prefill.layer).pipe(Layer.provide(replacing)));
+  // Whether a driver has finished, given a moment of real time. A test that moves the clock past a driver's deadline
+  // moves it again only while the driver still waits, since a release of the prefill still in flight when the clock
+  // jumps would time out and leave the claim held.
+  const finished = <A, E>(driver: Fiber.Fiber<A, E>) =>
+    TestClock.withLive(
+      Effect.raceFirst(
+        Fiber.await(driver).pipe(Effect.as(true)),
+        Effect.sleep(Duration.seconds(1)).pipe(Effect.as(false)),
+      ),
+    );
   const manifestOf = (n: number) =>
     query(
       `select id, state, provider_batch_id is not null as sent, request_object as object from extraction_batches
@@ -284,13 +294,17 @@ for (const [adapter, database] of adapters) {
         ).pipe(Effect.map((rows) => (rows[0] as { at: number }).at));
         for (let hour = 1; hour <= 27; hour++) {
           yield* TestClock.adjust("1 hour");
-          if (hour >= 25) continue;
-          const renewedBy = (yield* Clock.currentTimeMillis) + Duration.toMillis(Duration.hours(25));
-          yield* leaseOf.pipe(Effect.repeat({ until: (at) => at > renewedBy, times: 500 }));
+          if (hour < 25) {
+            const renewedBy = (yield* Clock.currentTimeMillis) + Duration.toMillis(Duration.hours(25));
+            yield* leaseOf.pipe(Effect.repeat({ until: (at) => at > renewedBy, times: 500 }));
+          }
+          expect((yield* sweepAndConsume).filter((n) => ids.includes(n))).toEqual([]);
+          if (hour >= 25 && (yield* finished(first))) break;
         }
+        expect(tally(yield* Fiber.join(first))).toEqual({ waiting: 2 });
+        yield* TestClock.adjust("2 hours");
         expect((yield* sweepAndConsume).filter((n) => ids.includes(n))).toEqual([]);
         expect(askedFor(f.asked, ids)).toEqual([]);
-        expect(tally(yield* Fiber.join(first))).toEqual({ waiting: 2 });
         expect(yield* leased(ids)).toBe(2);
         f.batches.control.collecting = undefined;
         expect(tally(yield* run(ids.map(ref)))).toEqual({ saved: 2 });
@@ -365,6 +379,9 @@ for (const [adapter, database] of adapters) {
         yield* Deferred.await(paused);
         yield* query("update prefill_owner set heartbeat_at = now() - interval '2 minutes'");
         const other = yield* Effect.forkChild(run([]));
+        // The second driver goes as far as it can while the first is stalled before the first wakes. On Postgres it
+        // finishes. On PGlite it waits for the stalled transaction, which holds the one connection.
+        yield* TestClock.withLive(Effect.raceFirst(Fiber.await(other), Effect.sleep(Duration.seconds(2))));
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.await(stalling);
         expect((yield* Fiber.join(other)).manifests.dropped).toBe(0);
@@ -409,10 +426,13 @@ for (const [adapter, database] of adapters) {
             yield* leaseOf.pipe(Effect.repeat({ until: (at) => at > renewedBy, times: 500 }));
           }
           expect((yield* sweepAndConsume).filter((n) => ids.includes(n))).toEqual([]);
+          if (hour >= 25 && (yield* finished(resuming))) break;
         }
-        f.batches.control.collecting = undefined;
         const report = yield* Fiber.join(resuming);
         expect(tally(report)).toEqual({ saved: 2, waiting: 4 });
+        yield* TestClock.adjust("5 hours");
+        expect((yield* sweepAndConsume).filter((n) => ids.includes(n))).toEqual([]);
+        f.batches.control.collecting = undefined;
         expect(askedFor(f.asked, ids)).toEqual([]);
         expect(tally(yield* run([]))).toEqual({ saved: 4 });
       }),
