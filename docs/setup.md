@@ -168,7 +168,9 @@ The first command prints the summary, kind, and embedding size, and prints `unch
 
 ## Prefill repos
 
-`bun run --cwd packages/core prefill --ids <file>` summarizes every repo in a list through resumable provider batches, as "The prefill" in `docs/knowledge.md` explains. The list holds one `<numeric id> <owner>/<name>` per line. Stop it at any point and run it again, and it resumes the batches the first run sent without paying for them twice. `--out report.json` writes the run's outcomes, tokens, and statement counts.
+`bun run --cwd packages/core prefill --ids <file>` summarizes every repo in a list through resumable provider batches, as "The prefill" in `docs/knowledge.md` explains. The list holds one `<numeric id> <owner>/<name>` per line. Stop it at any point and run it again, and it resumes the batches the first run sent without paying for them twice. A rerun right after a crash waits up to a minute for the crashed run's claim to go stale. `--out report.json` writes the run's outcomes, tokens, and statement counts, also when you stop the run with Ctrl-C. A SIGKILL writes none.
+
+A Gateway batch run keeps its paid requests in the stage's R2 bucket and refuses to start without `PREFILL_R2_BUCKET`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY`.
 
 ```sh
 bun run --cwd packages/core prefill --ids prefill.txt --adapter batch --chunk 250
