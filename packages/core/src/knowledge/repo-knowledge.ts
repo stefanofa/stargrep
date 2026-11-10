@@ -31,40 +31,43 @@ type RulesAt = (revision: Revision) => Effect.Effect<Rules, DbQueryFailed | DbRo
 // its mints, because its atoms would be incomplete.
 const projectGroup = Effect.fn("RepoKnowledge.projectGroup")(function* (ids: ReadonlyArray<RepoId>, rulesAt: RulesAt) {
   const db = yield* Db.Db;
-  let mints: Array<Db.MintClaim> = [];
-  let waiting: Array<RepoId> = [];
-  const written = yield* db.knowledge.project(ids, (locked, revision) =>
+  const { projected, carry } = yield* db.knowledge.project(ids, (locked, revision) =>
     Effect.gen(function* () {
       const rules = yield* rulesAt(revision);
       const labels = labelIndex(yield* db.knowledge.labels(locked.flatMap((repo) => lookupKeys(repo.claims, repo))));
-      const projected = locked.map((repo) => ({
+      const projections = locked.map((repo) => ({
         repo,
         projection: project({ repo, facts: repo, claims: repo.claims, labels, rules }),
       }));
-      const incomplete = projected.filter(({ projection }) => projection.mints.length > 0);
-      waiting = incomplete.map(({ repo }) => repo.id);
-      mints = incomplete.flatMap(({ repo, projection }) => {
-        const receiptId = repo.receiptId;
-        return receiptId === null ? [] : projection.mints.map((mint) => ({ ...mint, receiptId }));
-      });
-      return projected
-        .filter(({ projection }) => projection.mints.length === 0)
-        .map(({ repo, projection }) => ({
-          repoId: repo.id,
-          receiptId: repo.receiptId,
-          atoms: projection.atoms,
-          unresolvedKeys: projection.unresolvedKeys,
-          verdicts: projection.verdicts,
-        }));
+      const incomplete = projections.filter(({ projection }) => projection.mints.length > 0);
+      return {
+        write: projections
+          .filter(({ projection }) => projection.mints.length === 0)
+          .map(({ repo, projection }) => ({
+            repoId: repo.id,
+            receiptId: repo.receiptId,
+            atoms: projection.atoms,
+            unresolvedKeys: projection.unresolvedKeys,
+            verdicts: projection.verdicts,
+          })),
+        carry: {
+          waiting: incomplete.map(({ repo }) => repo.id),
+          mints: incomplete.flatMap(({ repo, projection }): Array<Db.MintClaim> => {
+            const receiptId = repo.receiptId;
+            return receiptId === null ? [] : projection.mints.map((mint) => ({ ...mint, receiptId }));
+          }),
+        },
+      };
     }),
   );
-  return { projected: written.projected, mints, waiting };
+  return { projected, ...carry };
 });
 
 // The rules a projection reads must be those of the revision it holds the shared lock at, since no decision commits
 // while it holds it. They replay the merges, splits, corrections, and undos alone, unchecked, because curation checked
 // each decision when it wrote it, so a large seed or floor batch costs projection nothing. They are cached by the head
-// they were read at and read again only when a decision lands between groups.
+// they were read at, under the same lock, so a decision that lands mid-run moves the head and the next group reads them
+// again.
 const rulesCache = (db: Db.Db["Service"]): RulesAt => {
   let cached: { readonly at: Revision; readonly rules: Rules } | null = null;
   return (revision) =>
@@ -77,20 +80,52 @@ const rulesCache = (db: Db.Db["Service"]): RulesAt => {
         });
 };
 
-// Projects these repos from their receipts and GitHub facts, with no model call. Repos that need new subjects get them
-// minted under the exclusive lock, which marks stale every repo that looked their keys up, and are projected again.
-const projectWith = Effect.fn("RepoKnowledge.projectWith")(function* (ids: ReadonlyArray<RepoId>, rulesAt: RulesAt) {
+// Projection for one run, such as a sweep or an enrichment, which holds one rules cache across every group it projects.
+export interface Projector {
+  // Projects these repos from their receipts and GitHub facts, with no model call. Repos that need new subjects get
+  // them minted under the exclusive lock, which marks stale every repo that looked their keys up, and are projected
+  // again.
+  readonly project: (
+    ids: ReadonlyArray<RepoId>,
+  ) => Effect.Effect<{ readonly projected: number; readonly minted: number }, DbQueryFailed | DbRowInvalid>;
+  // Commit B for repos whose answers were just saved. It never calls a model, so when it fails the summaries stay saved
+  // and the projection sweep projects the repos from their receipts later. Returns whether it committed.
+  readonly projectSaved: (ids: ReadonlyArray<RepoId>) => Effect.Effect<boolean>;
+}
+
+export const projector: Effect.Effect<Projector, never, Db.Db> = Effect.gen(function* () {
   const db = yield* Db.Db;
-  const first = yield* projectGroup(ids, rulesAt);
-  if (first.waiting.length === 0) return { projected: first.projected, minted: 0 };
-  const { minted } = yield* db.knowledge.mint(first.mints);
-  const second = yield* projectGroup(first.waiting, rulesAt);
-  return { projected: first.projected + second.projected, minted: minted.length };
+  const rulesAt = rulesCache(db);
+  const projectWith = Effect.fn("RepoKnowledge.projectRepos")(
+    function* (ids: ReadonlyArray<RepoId>) {
+      const first = yield* projectGroup(ids, rulesAt);
+      if (first.waiting.length === 0) return { projected: first.projected, minted: 0 };
+      const { minted } = yield* db.knowledge.mint(first.mints);
+      const second = yield* projectGroup(first.waiting, rulesAt);
+      return { projected: first.projected + second.projected, minted: minted.length };
+    },
+    Effect.provideService(Db.Db, db),
+  );
+  const projectSaved = Effect.fn("RepoKnowledge.projectSaved")(function* (ids: ReadonlyArray<RepoId>) {
+    if (ids.length === 0) return true;
+    return yield* projectWith(ids).pipe(
+      Effect.as(true),
+      Effect.catch((error) =>
+        Effect.logWarning("Projection after capture failed, the sweep projects these repos later", {
+          repos: ids.length,
+          error: error._tag,
+        }).pipe(Effect.as(false)),
+      ),
+    );
+  });
+  return { project: projectWith, projectSaved };
 });
 
-export const projectRepos = Effect.fn("RepoKnowledge.projectRepos")(function* (ids: ReadonlyArray<RepoId>) {
-  return yield* projectWith(ids, rulesCache(yield* Db.Db));
-});
+export const projectRepos = (ids: ReadonlyArray<RepoId>) =>
+  Effect.flatMap(projector, (projection) => projection.project(ids));
+
+export const projectSaved = (ids: ReadonlyArray<RepoId>) =>
+  Effect.flatMap(projector, (projection) => projection.projectSaved(ids));
 
 const lostRace = (error: DbQueryFailed | DbRowInvalid) => error._tag === "DbQueryFailed" && error.reason === "conflict";
 
@@ -101,14 +136,14 @@ export const reproject = Effect.fn("RepoKnowledge.reproject")(function* (
   options: { readonly groupSize: number; readonly groups: number } = { groupSize, groups: groupsPerSweep },
 ) {
   const db = yield* Db.Db;
-  const rulesAt = rulesCache(db);
+  const projection = yield* projector;
   let projected = 0;
   let minted = 0;
   let conflicts = 0;
   for (let group = 0; group < options.groups; group++) {
     const ids = yield* db.knowledge.stale(options.groupSize);
     if (ids.length === 0) break;
-    const result = yield* projectWith(ids, rulesAt).pipe(Effect.catchIf(lostRace, () => Effect.succeed(null)));
+    const result = yield* projection.project(ids).pipe(Effect.catchIf(lostRace, () => Effect.succeed(null)));
     if (result === null) {
       conflicts++;
       continue;
@@ -189,21 +224,6 @@ export const capture = Effect.fn("RepoKnowledge.capture")(function* (answers: Re
       ? Captured.Saved({ repoId, receiptId: row.receiptId, summary: row.summary, keywords: row.keywords })
       : Captured.Stale({ repoId });
   });
-});
-
-// Commit B for repos whose answers were just saved. It never calls a model, so when it fails the summaries stay saved
-// and the projection sweep projects the repos from their receipts later. Returns whether it committed.
-export const projectSaved = Effect.fn("RepoKnowledge.projectSaved")(function* (ids: ReadonlyArray<RepoId>) {
-  if (ids.length === 0) return true;
-  return yield* projectRepos(ids).pipe(
-    Effect.as(true),
-    Effect.catch((error) =>
-      Effect.logWarning("Projection after capture failed, the sweep projects these repos later", {
-        repos: ids.length,
-        error: error._tag,
-      }).pipe(Effect.as(false)),
-    ),
-  );
 });
 
 // Both commits for one group of answers, as a caller that holds the group whole saves it.

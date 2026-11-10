@@ -48,13 +48,16 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 3
               const labels = yield* db.knowledge.labels([protocol]);
               yield* Deferred.succeed(read, undefined);
               yield* Deferred.await(release);
-              return locked.map((repo) => ({
-                repoId: repo.id,
-                receiptId: repo.receiptId,
-                atoms: labels.map((label) => atom("tagged", { dim: "subject", id: label.subjectId })),
-                unresolvedKeys: labels.length === 0 ? [protocol] : [],
-                verdicts: [],
-              }));
+              return {
+                write: locked.map((repo) => ({
+                  repoId: repo.id,
+                  receiptId: repo.receiptId,
+                  atoms: labels.map((label) => atom("tagged", { dim: "subject", id: label.subjectId })),
+                  unresolvedKeys: labels.length === 0 ? [protocol] : [],
+                  verdicts: [],
+                })),
+                carry: undefined,
+              };
             }),
           ),
         );
@@ -64,7 +67,7 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 3
         );
         expect(yield* lockWait).toEqual(["advisory"]);
         yield* Deferred.succeed(release, undefined);
-        expect(yield* Fiber.join(projecting)).toEqual({ projected: 1, skipped: 0 });
+        expect(yield* Fiber.join(projecting)).toEqual({ projected: 1, skipped: 0, carry: undefined });
         expect((yield* Fiber.join(minting)).invalidated).toBe(1);
         expect(yield* facetsOf(consumer)).toMatchObject({ stale: true, tagged: [], unresolved: [protocol] });
       }),
@@ -81,13 +84,16 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 3
             Effect.gen(function* () {
               yield* Deferred.succeed(locked, undefined);
               yield* Deferred.await(release);
-              return repos.map((repo) => ({
-                repoId: repo.id,
-                receiptId: repo.receiptId,
-                atoms: [atom("written_in", { dim: "language", id: "go" })],
-                unresolvedKeys: [],
-                verdicts: [],
-              }));
+              return {
+                write: repos.map((repo) => ({
+                  repoId: repo.id,
+                  receiptId: repo.receiptId,
+                  atoms: [atom("written_in", { dim: "language", id: "go" })],
+                  unresolvedKeys: [],
+                  verdicts: [],
+                })),
+                carry: undefined,
+              };
             }),
           ),
         );
@@ -95,7 +101,7 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 3
         const saving = yield* Effect.forkChild(db.repos.saveFacts({ ...facts(id), language: "Rust" }));
         expect(yield* lockWait).toEqual(["transactionid"]);
         yield* Deferred.succeed(release, undefined);
-        expect(yield* Fiber.join(projecting)).toEqual({ projected: 1, skipped: 0 });
+        expect(yield* Fiber.join(projecting)).toEqual({ projected: 1, skipped: 0, carry: undefined });
         yield* Fiber.join(saving);
         const database = yield* TestDatabase.TestDatabase;
         expect(
@@ -149,13 +155,16 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 3
             Effect.gen(function* () {
               yield* Deferred.succeed(started, undefined);
               yield* Deferred.await(release);
-              return repos.map((repo) => ({
-                repoId: repo.id,
-                receiptId: repo.receiptId,
-                atoms: [atom("is", { dim: "kind", id: kind })],
-                unresolvedKeys: [],
-                verdicts: [],
-              }));
+              return {
+                write: repos.map((repo) => ({
+                  repoId: repo.id,
+                  receiptId: repo.receiptId,
+                  atoms: [atom("is", { dim: "kind", id: kind })],
+                  unresolvedKeys: [],
+                  verdicts: [],
+                })),
+                carry: undefined,
+              };
             }),
           );
         const [firstStarted, firstRelease, secondStarted, secondRelease] = [
@@ -171,8 +180,8 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 3
         expect(yield* lockWait).toEqual(["transactionid"]);
         expect(yield* Deferred.isDone(secondStarted)).toBe(false);
         yield* Deferred.succeed(firstRelease, undefined);
-        expect(yield* Fiber.join(first)).toEqual({ projected: 1, skipped: 0 });
-        expect(yield* Fiber.join(second)).toEqual({ projected: 1, skipped: 0 });
+        expect(yield* Fiber.join(first)).toEqual({ projected: 1, skipped: 0, carry: undefined });
+        expect(yield* Fiber.join(second)).toEqual({ projected: 1, skipped: 0, carry: undefined });
         const database = yield* TestDatabase.TestDatabase;
         expect(yield* database.query("select kinds::text[] as kinds from repos where id = $1", [id])).toEqual([
           { kinds: ["app"] },

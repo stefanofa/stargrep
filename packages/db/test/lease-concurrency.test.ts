@@ -51,7 +51,10 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 3
         const release = yield* Deferred.make<void>();
         const holding = yield* Effect.forkChild(
           db.knowledge.project([highest], () =>
-            Deferred.succeed(held, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.as([])),
+            Deferred.succeed(held, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.as({ write: [], carry: undefined }),
+            ),
           ),
         );
         yield* Deferred.await(held);

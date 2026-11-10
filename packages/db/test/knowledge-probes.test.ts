@@ -109,7 +109,7 @@ const orderCases = (test: { readonly effect: it.Tester<Services> }) => {
                     verdicts: [],
                   };
                 }),
-              ),
+              ).pipe(Effect.map((write) => ({ write, carry: undefined }))),
             );
           });
         for (const position of order) yield* projectOne(ids[position] ?? ids[0] ?? (0 as RepoId));
