@@ -191,6 +191,6 @@ describe("PlannerPrompt", () => {
   // The version keys the plan cache and the answer cache. A change here empties both and is never a side effect of
   // the knowledge registry, so search keeps its own kind list.
   test("keeps the version that keys the plan and answer caches", () => {
-    expect(PlannerPrompt.version).toBe(-671718650);
+    expect(PlannerPrompt.version).toBe(-897997569);
   });
 });

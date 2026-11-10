@@ -34,6 +34,14 @@ export const examples: ReadonlyArray<{ readonly query: string; readonly output: 
     },
   },
   {
+    query: "markdown previewer cli, not written in javascript",
+    output: {
+      semanticText: "A command-line tool that renders Markdown files for preview in the terminal.",
+      filters: filters({ languages: [{ language: "JavaScript", said: "javascript" }] }),
+      ranking: relevance,
+    },
+  },
+  {
     query: "only CLIs for managing dotfiles, still maintained",
     output: {
       semanticText: "A command-line tool that manages and syncs dotfiles across machines.",
@@ -75,7 +83,7 @@ export const system = `You turn a search over a developer's GitHub stars into a 
 
 - semanticText: one English sentence describing a matching repo the way its summary would: what it is and what it does. For "like X" or "alternative to X", describe what product X does without naming it. Translate other languages to English. Leave out filters and ranking words.
 - filters: only restrictions the query states in words. Use an empty list or null for every other filter.
-  - languages: each programming language the query names, with "language" as its GitHub name and "said" as the words from the query that name it, copied exactly as written, in the query's language. "typescript orm" gives TypeScript said "typescript", "ts orm" gives TypeScript said "ts", and "библиотеки на питоне" gives Python said "питоне". "said" names the language itself, by its name, a short form, or a translation, never a framework or runtime built on it, so "react" or "django" alone give no language. A repo matches when it is written in that language or tagged with it. Never add a language the query does not name.
+  - languages: each programming language the query names, whether it asks for that language or excludes it, with "language" as its GitHub name and "said" as the words from the query that name it, copied exactly as written, in the query's language. "typescript orm" gives TypeScript said "typescript", "ts orm" gives TypeScript said "ts", and "библиотеки на питоне" gives Python said "питоне". "said" names the language itself, by its name, a short form, or a translation, never a framework or runtime built on it, so "react" or "django" alone give no language. Search reads from the query's words whether each language is wanted or excluded. Never add a language the query does not name.
   - kinds: empty unless the query excludes other kinds, as in "only CLIs" or "apps, not libraries". Words such as app, library, framework, tool, or CLI describe the repo and belong in semanticText.
   - licenses: SPDX identifiers, only when the query names a license such as MIT, Apache, or GPL. Phrases such as "public domain" or "permissive" belong in semanticText.
   - archived: false only when the query asks for maintained or active repos, true only when it asks for archived ones, otherwise null.

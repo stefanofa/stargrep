@@ -315,7 +315,19 @@ describe("compileQuery", () => {
   test("keeps the caller's selection whatever the words say, and skips the compiler for a name", () => {
     const explicit = selection("lang:rust -kind:list");
     const compiled = Compile.compileQuery({ query: "ratatui", planned: QueryPlan.noFilters, explicit });
-    expect(compiled).toEqual({ explicit, stated: [] });
+    expect(compiled).toEqual({ explicit, stated: [], text: "ratatui" });
+  });
+
+  test("leaves each negation, from its word through its target, out of the words full text searches", () => {
+    const text = (query: string, planned: Partial<Compile.Planned> = {}) => compile(query, planned).text;
+    expect(text("a cli not written in go", { languages: ["Go"] })).toBe("a cli");
+    expect(text("a non-go cli", { languages: ["Go"] })).toBe("a cli");
+    expect(text("code editor not based on electron")).toBe("code editor");
+    expect(text("typescript orm, not javascript", { languages: ["TypeScript", "JavaScript"] })).toBe("typescript orm,");
+    expect(text("apps that don't run on windows")).toBe("apps that");
+    expect(text("web framework without orm go", { languages: ["Go"] })).toBe("web framework go");
+    expect(text("non-blocking io libraries")).toBe("non-blocking io libraries");
+    expect(text("rust tui libraries", { languages: ["Rust"] })).toBe("rust tui libraries");
   });
 
   test("records where each atom and key sits in the query", () => {
