@@ -75,9 +75,10 @@ const allLanes = (state: LaneState): Record<ModelRole, LaneState> =>
 
 const letterOrDigit = /[\p{L}\p{N}]/u;
 
-// Model text can hold lone surrogates and U+0000, which Postgres refuses in jsonb and text. Surrogates become U+FFFD,
-// U+0000 goes, and the quote is cut on a code point boundary.
-const storable = (text: string) => text.toWellFormed().replaceAll("\u0000", "").trim();
+// Model text can hold lone surrogates and U+0000, which Postgres refuses in jsonb and text. Surrogates become U+FFFD and
+// U+0000 goes.
+export const storable = (text: string): string => text.toWellFormed().replaceAll("\u0000", "");
+// A quote is also cut on a code point boundary.
 const clip = (text: string) => {
   let clipped = "";
   for (const point of text) {
@@ -101,11 +102,11 @@ const readItem = (item: unknown, ordinal: number, occurs: (text: string) => bool
   const fields = item as Record<string, unknown>;
   const role = typeof fields.role === "string" ? fields.role.trim() : "";
   if (!isModelRole(role)) return dropped("unknown-role");
-  const term = typeof fields.term === "string" ? storable(fields.term) : "";
+  const term = typeof fields.term === "string" ? storable(fields.term).trim() : "";
   if (term.length > maxTermLength) return dropped("too-long", role);
   const key = labelKey(term);
   if (key === null) return dropped(letterOrDigit.test(term.normalize("NFKC")) ? "too-long" : "empty-term", role);
-  const quoted = typeof fields.quote === "string" ? clip(storable(fields.quote)) : "";
+  const quoted = typeof fields.quote === "string" ? clip(storable(fields.quote).trim()) : "";
   const quote = quoted.length > 0 ? quoted : null;
   const found = quote !== null && occurs(quote) ? "quote" : occurs(term) ? "term" : "neither";
   return { _tag: "Claim", claim: { ordinal, role, term, key, quote, found } };

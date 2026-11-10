@@ -87,7 +87,7 @@ describe("claude code text generation", () => {
       expect(yield* Summarize.summarize(repo)).toEqual({
         summary: summary.summary,
         keywords: summary.keywords,
-        facets: decodeFacets(summary.facets, Summarize.promptInput(repo)),
+        facets: decodeFacets(summary.facets, Summarize.promptOf(repo).input),
       });
       expect(seen.args).toContain("--json-schema");
       expect(seen.args.slice(seen.args.indexOf("--model"), seen.args.indexOf("--model") + 2)).toEqual([
@@ -110,7 +110,7 @@ describe("claude code text generation", () => {
             expect(summary).toEqual({
               summary: answer.summary,
               keywords: answer.keywords,
-              facets: decodeFacets(answer.facets, Summarize.promptInput(facts)),
+              facets: decodeFacets(answer.facets, Summarize.promptOf(facts).input),
             }),
           ),
         ),

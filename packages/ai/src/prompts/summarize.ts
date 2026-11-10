@@ -1,4 +1,4 @@
-import { DecodedFacets, decodeFacets, type PromptInput } from "@stargrep/knowledge/claims";
+import { DecodedFacets, decodeFacets, type PromptInput, storable } from "@stargrep/knowledge/claims";
 import { extractionLines } from "@stargrep/knowledge/extraction";
 import type { JSONSchema7 } from "ai";
 import * as Effect from "effect/Effect";
@@ -28,9 +28,8 @@ export type RepoFacts = typeof RepoFacts.Type;
 
 export const readmeLimit = 24_000;
 
-// Model text can hold lone surrogates and U+0000, which Postgres refuses in jsonb, so a summary or keyword holding one
-// would fail the commit that saves it. Surrogates become U+FFFD and U+0000 goes, as for facts.
-const storable = (text: string) => text.toWellFormed().replaceAll("\u0000", "");
+// A summary or keyword holding a lone surrogate or U+0000 would fail the commit that saves it, so it is made storable as
+// facts are.
 const ModelText = <S extends Schema.Codec<string>>(to: S) =>
   Schema.String.pipe(
     Schema.decodeTo(to, SchemaTransformation.transform({ decode: storable, encode: (text: string) => text })),
@@ -175,58 +174,57 @@ export const readmeText = (readme: string): string | null => {
   return wordCharacter.test(text) ? text : null;
 };
 
-const readmeSection = (readme: string | null) => {
-  const text = readme === null ? null : readmeText(readme);
-  return text === null ? "none" : trimReadme(text);
-};
+// A prompt and the evidence it carried, built from one cleaned README, so every quote and term is matched against the
+// exact text the model saw.
+export interface Prompted {
+  readonly text: string;
+  readonly input: PromptInput;
+}
 
-export const prompt = (repo: RepoFacts): string =>
-  [
-    `Repository: ${repo.fullName}`,
-    `Description: ${repo.description ?? "none"}`,
-    `Topics: ${repo.topics.length > 0 ? repo.topics.join(", ") : "none"}`,
-    `Language: ${repo.language ?? "unknown"}`,
-    "README:",
-    readmeSection(repo.readme),
-  ].join("\n");
-
-// The text the prompt carried, which every quote and term is matched against.
-export const promptInput = (repo: RepoFacts): PromptInput => {
-  const text = repo.readme === null ? null : readmeText(repo.readme);
+export const promptOf = (repo: RepoFacts): Prompted => {
+  const cleaned = repo.readme === null ? null : readmeText(repo.readme);
+  const readme = cleaned === null ? null : trimReadme(cleaned);
   return {
-    fullName: repo.fullName,
-    description: repo.description ?? "",
-    topics: repo.topics,
-    readme: text === null ? "" : trimReadme(text),
+    text: [
+      `Repository: ${repo.fullName}`,
+      `Description: ${repo.description ?? "none"}`,
+      `Topics: ${repo.topics.length > 0 ? repo.topics.join(", ") : "none"}`,
+      `Language: ${repo.language ?? "unknown"}`,
+      "README:",
+      readme ?? "none",
+    ].join("\n"),
+    input: { fullName: repo.fullName, description: repo.description ?? "", topics: repo.topics, readme: readme ?? "" },
   };
 };
 
-const answer = (repo: RepoFacts, envelope: Envelope): RepoSummary => ({
+const answer = (input: PromptInput, envelope: Envelope): RepoSummary => ({
   summary: envelope.summary,
   keywords: envelope.keywords,
-  facets: decodeFacets(envelope.facets, promptInput(repo)),
+  facets: decodeFacets(envelope.facets, input),
 });
 
 export const summarize = Effect.fnUntraced(function* (repo: RepoFacts) {
   const textGeneration = yield* TextGeneration.TextGeneration;
-  const envelope = yield* textGeneration.generate({ schema: answerSchema, system, prompt: prompt(repo) });
-  return answer(repo, envelope);
+  const { text, input } = promptOf(repo);
+  const envelope = yield* textGeneration.generate({ schema: answerSchema, system, prompt: text });
+  return answer(input, envelope);
 });
 
 export const summarizeBatch = <I>(items: ReadonlyArray<I>, facts: (item: I) => RepoFacts) =>
   Stream.unwrap(
-    Effect.map(TextGeneration.TextGeneration, (textGeneration) =>
-      textGeneration
-        .generateBatch({ schema: answerSchema, system, items, prompt: (item) => prompt(facts(item)) })
+    Effect.map(TextGeneration.TextGeneration, (textGeneration) => {
+      const prompted = items.map((item) => ({ item, prompt: promptOf(facts(item)) }));
+      return textGeneration
+        .generateBatch({ schema: answerSchema, system, items: prompted, prompt: ({ prompt }) => prompt.text })
         .pipe(
           Stream.map(
-            ([item, result]): TextGeneration.BatchAnswer<RepoSummary, I> => [
+            ([{ item, prompt }, result]): TextGeneration.BatchAnswer<RepoSummary, I> => [
               item,
-              Result.map(result, (envelope) => answer(facts(item), envelope)),
+              Result.map(result, (envelope) => answer(prompt.input, envelope)),
             ],
           ),
-        ),
-    ),
+        );
+    }),
   );
 
 export const embeddingText = (
