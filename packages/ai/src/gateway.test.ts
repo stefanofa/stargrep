@@ -553,6 +553,52 @@ describe("gateway batch", () => {
     );
   });
 
+  const failedWith = (completed: number | undefined) => () =>
+    Promise.resolve({
+      status: "failed" as const,
+      error: { message: "expired", code: "batch_expired" },
+      ...(completed === undefined ? {} : { requestCounts: { total: 2, pending: 0, completed, failed: 2 - completed } }),
+    });
+
+  it.effect("reads the answers a failed batch did give, so only its unanswered items are asked again", () => {
+    const fake = fakeBatch({ items: [succeeded("0", JSON.stringify(validAnswer))], status: failedWith(1) });
+    return viaBatches(
+      fake,
+      Effect.gen(function* () {
+        const batches = yield* Batches.Batches;
+        const collected = yield* batches.collect("job_1", 2);
+        expect(collected._tag).toBe("Answered");
+        expect(collected._tag === "Answered" && collected.items.map((item) => item !== undefined)).toEqual([
+          true,
+          false,
+        ]);
+      }),
+    );
+  });
+
+  it.effect("collects a failed batch that answered nothing, or whose results cannot be read, as Failed", () => {
+    const none = fakeBatch({ items: [], status: failedWith(0) });
+    const unreadable = fakeBatch({ items: [], status: failedWith(undefined), throwOnce: ["results"] });
+    return Effect.gen(function* () {
+      const failed = Batches.Collected.Failed({ detail: "batch failed with batch_expired" });
+      expect(
+        yield* viaBatches(
+          none,
+          Effect.flatMap(Batches.Batches, (batches) => batches.collect("job_1", 2)),
+        ),
+      ).toEqual(failed);
+      expect(none.calls.results).toBe(0);
+      const reading = yield* Effect.forkChild(
+        viaBatches(
+          unreadable,
+          Effect.flatMap(Batches.Batches, (batches) => batches.collect("job_1", 2)),
+        ),
+      );
+      const exit = yield* drive(reading, "1 second", 60);
+      expect(exit._tag === "Success" && exit.value).toEqual(failed);
+    });
+  });
+
   it.effect("collects a batch ID the provider does not know as Unknown", () => {
     const fake = fakeBatch({
       items: [],

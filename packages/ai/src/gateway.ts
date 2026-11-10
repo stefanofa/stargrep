@@ -208,17 +208,23 @@ const batchApi = (provider: AiProvider["Service"], model: string) => {
       completed: finished.requestCounts?.completed ?? null,
       failed: finished.requestCounts?.failed ?? null,
     });
-    if (finished.status === "failed") {
-      return Batches.Collected.Failed({
-        detail: `batch failed with ${finished.error?.code ?? finished.error?.type ?? "no code"}`,
-      });
-    }
-    const items = yield* call(async (abortSignal) => {
+    const results = call(async (abortSignal) => {
       const reader = (await provider.experimental_batch().doGetBatchResults({ batchId, abortSignal })).getReader();
       const read: Array<BatchItem> = [];
       for (let next = await reader.read(); !next.done; next = await reader.read()) read.push(next.value);
       return read;
     }, resultsDeadline);
+    const failed = Batches.Collected.Failed({
+      detail: `batch failed with ${finished.error?.code ?? finished.error?.type ?? "no code"}`,
+    });
+    // A batch the provider failed may still have answered, and billed, some items. Their answers are read so only the
+    // rest are asked again. When the provider reports none, or serves no results for a failed batch, it failed whole.
+    if (finished.status === "failed" && finished.requestCounts?.completed === 0) return failed;
+    const items =
+      finished.status === "failed"
+        ? yield* results.pipe(Effect.orElseSucceed((): ReadonlyArray<BatchItem> => []))
+        : yield* results;
+    if (finished.status === "failed" && items.length === 0) return failed;
     const byId = new Map<string, BatchItem>(items.map((item) => [item.id, item]));
     return Batches.Collected.Answered({
       items: yield* Effect.forEach(Arr.makeBy(size, String), (id) => {
