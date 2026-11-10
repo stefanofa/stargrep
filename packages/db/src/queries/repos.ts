@@ -1,6 +1,7 @@
 import { Repo as GitHubRepo, Login, ObjectId, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
 import { InputHash } from "@stargrep/knowledge/ids";
 import { inputHash } from "@stargrep/knowledge/input-hash";
+import { KindId } from "@stargrep/knowledge/registry";
 import { and, asc, eq, getColumns, gt, isNotNull, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import * as Arr from "effect/Array";
@@ -92,7 +93,8 @@ const internalColumns = [
   "replacedByPlatforms",
 ] as const;
 
-const rowFields = Struct.omit(RepoRow.fields, internalColumns);
+// kind is the repo's primary kind atom, which projection keeps first in kinds.
+const rowFields = { ...Struct.omit(RepoRow.fields, internalColumns), kind: Schema.NullOr(KindId) };
 const iconColumns = ["iconKey", "iconSource", "iconPlate", "iconSize"] as const;
 
 interface IconColumns {
@@ -132,10 +134,9 @@ export const Repo = RepoColumns.pipe(
 );
 export type Repo = typeof Repo.Type;
 
-// kind is the repo's primary kind atom, which projection keeps first in kinds, not the legacy kind column.
 export const repoColumns = {
-  ...Struct.omit(getColumns(repos), [...internalColumns, "kind"]),
-  kind: sql<string | null>`(${repos.kinds})[1]::text`,
+  ...Struct.omit(getColumns(repos), internalColumns),
+  kind: sql<KindId | null>`(${repos.kinds})[1]::text`,
 };
 
 const RepoRef = GitHubRepo;
