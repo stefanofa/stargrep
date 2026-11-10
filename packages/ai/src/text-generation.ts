@@ -35,7 +35,12 @@ export interface RunBatchRequest extends Omit<RunRequest, "prompt"> {
 
 export interface RunResult {
   readonly output: unknown;
-  readonly usage: { readonly inputTokens: number | undefined; readonly outputTokens: number | undefined };
+  // reasoningTokens is the share of outputTokens the model spent thinking, when the provider reports it.
+  readonly usage: {
+    readonly inputTokens: number | undefined;
+    readonly outputTokens: number | undefined;
+    readonly reasoningTokens?: number | undefined;
+  };
 }
 
 export class TextGeneration extends Context.Service<

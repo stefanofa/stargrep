@@ -90,7 +90,7 @@ export const ownError = (error: EnrichRepoError): boolean =>
 // How a failed paid summary call ends the attempt's lease. A save that failed for a reason any repo could hit keeps its
 // lease, so the repo waits it out and the sweep sends it again, as for a run cut short. Otherwise the failure is counted
 // and backs the repo off, or the lease is given back.
-const settlement = (error: EnrichRepoError): "count" | "release" | "keep" =>
+export const settlement = (error: EnrichRepoError): "count" | "release" | "keep" =>
   error._tag === "AnswerNotSaved" && !error.refused ? "keep" : ownError(error) ? "count" : "release";
 
 // What an attempt logs about a failed repo: the failure's tag, whether it counts toward the cap, and the error's own

@@ -88,6 +88,7 @@ const fixture = () => {
                   pushedAt: null,
                   isArchived: false,
                   isFork: false,
+                  isPrivate: false,
                   stargazerCount: 1,
                   forkCount: 0,
                   root: { entries: readme === undefined ? [] : [{ name: "README.md", type: "blob", oid: readme.oid }] },

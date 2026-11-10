@@ -17,7 +17,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Fake from "./github.fixture.ts";
 import * as GitHub from "./github.ts";
-import { type BudgetShare, Login, ObjectId, RepoName, type RepoNodeId } from "./schemas.ts";
+import { type BudgetShare, Login, ObjectId, RepoId, RepoName, type RepoNodeId } from "./schemas.ts";
 
 const login = "octocat" as Login;
 
@@ -386,6 +386,7 @@ const node = (n: number) => ({
   pushedAt: null,
   isArchived: false,
   isFork: false,
+  isPrivate: false,
   stargazerCount: 10,
   forkCount: 1,
   root:
@@ -474,6 +475,23 @@ describe("repoFacts", () => {
     }).pipe(Effect.provide(Layer.merge(fake.layer, capture)));
   });
 
+  effect("leaves out a repo that is private, whatever the token may read, and logs it as forbidden", () => {
+    const fake = Fake.layer((sent) => ({
+      headers: Fake.rateLimitHeaders(4000, 3600, "graphql"),
+      body: {
+        data: { nodes: graphqlIds(sent).map((id) => ({ ...node(Number(id.slice(2))), isPrivate: id === "R_2" })) },
+      },
+    }));
+    const logs: Array<unknown> = [];
+    const capture = Logger.layer([Logger.make(({ message }) => logs.push(message))]);
+    return Effect.gen(function* () {
+      const github = yield* GitHub.GitHub;
+      const facts = yield* github.repoFacts(["R_1", "R_2", "R_3"].map((id) => id as RepoNodeId));
+      expect(facts.map((fact): number => fact.id)).toEqual([1, 3]);
+      expect(logs).toContainEqual(["GitHub forbade repos to the token", { nodeIds: ["R_2"] }]);
+    }).pipe(Effect.provide(Layer.merge(fake.layer, capture)));
+  });
+
   effect("keeps a repo that GitHub returned with a NOT_FOUND on one of its fields", () => {
     const fake = Fake.layer((sent) => ({
       headers: Fake.rateLimitHeaders(4000, 3600, "graphql"),
@@ -522,6 +540,73 @@ describe("repoFacts", () => {
       yield* TestClock.adjust("10 seconds");
       expect(yield* Fiber.join(fiber)).toHaveLength(1);
       expect(fake.sent).toHaveLength(2);
+    }).pipe(Effect.provide(fake.layer));
+  });
+});
+
+const archiveRef = (n: number) => ({
+  id: RepoId.make(n),
+  owner: Login.make("owner"),
+  name: RepoName.make(`repo-${n}`),
+});
+
+// The names a resolve query asks for, in alias order.
+const resolvedNames = (sent: Fake.Sent): ReadonlyArray<string> => {
+  const variables: Record<string, string> = JSON.parse(sent.body ?? "{}").variables;
+  return Object.keys(variables)
+    .filter((key) => key.startsWith("n"))
+    .map((key) => variables[key] ?? "");
+};
+
+describe("resolveRepos", () => {
+  effect("looks repos up by name 25 at a time and keeps only those whose ID is the archive's", () => {
+    const fake = Fake.layer((sent) => {
+      const names = resolvedNames(sent);
+      const data = Object.fromEntries(
+        names.map((name, index) => {
+          const n = Number(name.slice("repo-".length));
+          if (n === 7 || n === 8) return [`r${index}`, null];
+          if (n === 31) return [`r${index}`, { ...node(31), isPrivate: true }];
+          return [`r${index}`, n === 30 ? { ...node(30), databaseId: 99_030 } : node(n)];
+        }),
+      );
+      const errors = names.flatMap((name, index) => {
+        if (name === "repo-7") return [{ type: "NOT_FOUND", path: [`r${index}`], message: "Could not resolve" }];
+        if (name === "repo-8") return [{ type: "FORBIDDEN", path: [`r${index}`], message: "Not accessible" }];
+        if (name === "repo-12") return [{ type: "NOT_FOUND", path: [`r${index}`, "root"], message: "Empty repo" }];
+        return [];
+      });
+      return { headers: Fake.rateLimitHeaders(4000, 3600, "graphql"), body: { data, errors } };
+    });
+    return Effect.gen(function* () {
+      const github = yield* GitHub.GitHub;
+      const { facts, unresolved } = yield* github.resolveRepos(Array.from({ length: 40 }, (_, i) => archiveRef(i + 1)));
+      expect(fake.sent.map((sent) => resolvedNames(sent).length)).toEqual([25, 15]);
+      expect(facts.map((fact): number => fact.id)).toEqual(
+        Array.from({ length: 40 }, (_, i) => i + 1).filter((n) => ![7, 8, 30, 31].includes(n)),
+      );
+      expect(facts[0]).toMatchObject({ id: 1, nodeId: "R_1", owner: "owner", name: "repo-1" });
+      expect(unresolved.map(({ id, reason }) => [Number(id), reason])).toEqual([
+        [7, "missing"],
+        [8, "forbidden"],
+        [30, "other-repo"],
+        [31, "forbidden"],
+      ]);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("fails the batch on an error that names no alias", () => {
+    const fake = Fake.layer((sent) => ({
+      headers: Fake.rateLimitHeaders(4000, 3600, "graphql"),
+      body: {
+        data: Object.fromEntries(resolvedNames(sent).map((_, index) => [`r${index}`, node(index + 1)])),
+        errors: [{ type: "FORBIDDEN", message: "Resource not accessible by personal access token" }],
+      },
+    }));
+    return Effect.gen(function* () {
+      const github = yield* GitHub.GitHub;
+      const error = yield* Effect.flip(github.resolveRepos([archiveRef(1), archiveRef(2)]));
+      expect(error._tag).toBe("GitHubRequestFailed");
     }).pipe(Effect.provide(fake.layer));
   });
 });

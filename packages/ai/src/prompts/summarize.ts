@@ -6,6 +6,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Stream from "effect/Stream";
+import type { BatchRequest } from "../batches.ts";
 import type { AiSchema } from "../schema-bridge.ts";
 import * as TextGeneration from "../text-generation.ts";
 
@@ -203,12 +204,26 @@ const answer = (input: PromptInput, envelope: Envelope): RepoSummary => ({
   facets: decodeFacets(envelope.facets, input),
 });
 
-export const summarize = Effect.fnUntraced(function* (repo: RepoFacts) {
+// One direct call for a prompt already built, such as one a provider batch did not answer.
+export const summarizePrompted = Effect.fnUntraced(function* ({ text, input }: Prompted) {
   const textGeneration = yield* TextGeneration.TextGeneration;
-  const { text, input } = promptOf(repo);
   const envelope = yield* textGeneration.generate({ schema: answerSchema, system, prompt: text });
   return answer(input, envelope);
 });
+
+export const summarize = (repo: RepoFacts) => summarizePrompted(promptOf(repo));
+
+// The provider batch request for these prompts, in order, as the prefill stores and sends it.
+export const batchRequest = (model: string, prompts: ReadonlyArray<Prompted>): BatchRequest => ({
+  model,
+  system,
+  jsonSchema: providerSchema,
+  prompts: prompts.map((prompt) => prompt.text),
+});
+
+// A raw batch answer decoded against the prompt it answers. A SchemaError means the answer is invalid as a whole.
+export const answerOf = (input: PromptInput, output: unknown) =>
+  Effect.map(answerSchema.decode(output), (envelope) => answer(input, envelope));
 
 export const summarizeBatch = <I>(items: ReadonlyArray<I>, facts: (item: I) => RepoFacts) =>
   Stream.unwrap(

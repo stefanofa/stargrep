@@ -155,6 +155,7 @@ it("caches a fetched README in the real R2 binding through the enrichment queue 
           pushedAt: null,
           isArchived: false,
           isFork: false,
+          isPrivate: false,
           stargazerCount: 1,
           forkCount: 0,
           root: { entries: [{ name: "README.md", type: "blob", oid }] },

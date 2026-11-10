@@ -1,3 +1,4 @@
+import { summaryRecipe } from "@stargrep/ai/models";
 import { Repo as GitHubRepo, Login, ObjectId, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
 import { InputHash } from "@stargrep/knowledge/ids";
 import { inputHash } from "@stargrep/knowledge/input-hash";
@@ -6,7 +7,7 @@ import { and, asc, eq, getColumns, gt, isNotNull, type SQL, sql } from "drizzle-
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import * as Arr from "effect/Array";
 import * as Digest from "effect/crypto/Digest";
-import type * as DateTime from "effect/DateTime";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
@@ -28,6 +29,7 @@ import {
   retryableEnrichment,
   summaryDue,
 } from "../schema.ts";
+import { sharedLock } from "./knowledge/lock.ts";
 
 const RepoRow = createSelectSchema(repos, {
   id: RepoId,
@@ -247,6 +249,22 @@ export interface LeaseFailures {
   readonly retryDelays: ReadonlyArray<Duration.Duration>;
 }
 
+// The prefill's facts for one chunk, with the batch lease each repo takes in the statement that saves them.
+export interface LeasedFacts {
+  readonly repos: ReadonlyArray<RepoFacts & RepoCounts & { readonly nodeId: RepoNodeId }>;
+  readonly now: DateTime.Utc;
+  readonly until: DateTime.Utc;
+  // Leases a repo whose summary is current too, for a pilot that must ask repos the sweep already answered.
+  readonly askCurrent: boolean;
+}
+
+// leased says this statement took the repo's lease, so its summary is due and no other attempt held it.
+export interface FactsLease {
+  readonly id: RepoId;
+  readonly inputHash: InputHash;
+  readonly leased: boolean;
+}
+
 export interface SavedFacts {
   readonly pending: boolean;
   // The hash of the prompt inputs these facts make, which an answer to that prompt must carry to be saved.
@@ -260,6 +278,18 @@ export interface Queries {
   ) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
   readonly saveFacts: (facts: RepoFacts) => Effect.Effect<SavedFacts, DbQueryFailed | DbRowInvalid>;
   readonly saveCounts: (counts: RepoCounts) => Effect.Effect<void, DbQueryFailed>;
+  // Saves a chunk's facts and takes the lease of every repo whose summary is due and that no other attempt holds, in
+  // one statement, so no sweep or consumer can find one of them due before the batch holds it. Then saves the counts,
+  // which need the rows. It takes the shared knowledge lock first, so the caller runs it in its own transaction.
+  readonly saveFactsAndLease: (
+    lease: LeasedFacts,
+  ) => Effect.Effect<ReadonlyArray<FactsLease>, DbQueryFailed | DbRowInvalid>;
+  // The repos that need no prefill: gone, or summarized under the current recipe. With askCurrent, gone, or listed by
+  // a prefill manifest of the current recipe, so a pilot asks each repo once however current its summary is.
+  readonly summarized: (
+    ids: ReadonlyArray<RepoId>,
+    askCurrent?: boolean,
+  ) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
   readonly saveEmbedding: (
     input: RepoEmbedding,
   ) => Effect.Effect<boolean, DbQueryFailed | RepoNotFound | EmbeddingModelMismatch>;
@@ -292,6 +322,7 @@ const decodeIds = rowsDecoder(Schema.Struct({ id: RepoId }));
 const decodeStored = rowsDecoder(StoredRepo);
 const decodePending = rowsDecoder(Schema.Struct({ pending: Schema.Boolean }));
 const decodeDue = rowsDecoder(DueIcon);
+const decodeLeases = rowsDecoder(Schema.Struct({ id: RepoId, inputHash: InputHash, leased: Schema.Boolean }));
 
 const needsEnrichment = pendingEnrichment(repos);
 const encodeRefs = writeEncoder(Schema.Array(RepoRef));
@@ -379,6 +410,99 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
             Effect.map((rows) => ({ pending: rows.some((row) => row.pending), inputHash: hash })),
           );
         }),
+      ),
+    saveFactsAndLease: Effect.fn("Db.repos.saveFactsAndLease")(function* ({
+      repos: chunk,
+      now,
+      until,
+      askCurrent,
+    }: LeasedFacts) {
+      const sorted = inIdOrder(chunk);
+      // The summary is due for the facts this statement saves, so the README and input hash come from excluded.
+      const dueOnSave = sql`(${repos.summary} is null or ${repos.summaryReadmeOid} is distinct from ${excluded(repos.readmeOid)} or ${repos.summaryRecipe} is distinct from ${sql.raw(String(summaryRecipe))} or ${repos.summaryInputHash} is distinct from ${excluded(repos.inputHash)}) and ${repos.goneAt} is null`;
+      const free = sql`(${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(now)})`;
+      const askable = sql`${repos.goneAt} is null`;
+      const counts = sorted.map((repo) => ({
+        repoId: repo.id,
+        stars: repo.stars,
+        forks: repo.forks,
+        refreshedAt: sql`now()`,
+      }));
+      if (Arr.isReadonlyArrayEmpty(sorted)) return [];
+      {
+        const rows = yield* Effect.forEach(sorted, (repo) =>
+          Effect.all([encodeFacts(repo), hashOf(repo)]).pipe(
+            Effect.map(([encoded, hash]) => ({
+              ...encoded,
+              nodeId: repo.nodeId,
+              inputHash: hash,
+              enrichRetryAt: DateTime.toDateUtc(until),
+            })),
+          ),
+        );
+        // Shared first, as capture takes it: the facts update marks repo_facets rows stale, and a mint's
+        // invalidation marks them too, in heap order, under the exclusive lock.
+        yield* run("repos.saveFactsAndLease", (db) => db.execute(sharedLock));
+        const leases = yield* run("repos.saveFactsAndLease", (db) =>
+          db
+            .insert(repos, ...factColumns, "nodeId", "inputHash", "enrichRetryAt")
+            .values(rows)
+            .onConflictDoUpdate({
+              target: repos.id,
+              set: {
+                nodeId: excluded(repos.nodeId),
+                owner: excluded(repos.owner),
+                name: excluded(repos.name),
+                description: excluded(repos.description),
+                topics: excluded(repos.topics),
+                language: excluded(repos.language),
+                license: excluded(repos.license),
+                homepage: excluded(repos.homepage),
+                createdAt: excluded(repos.createdAt),
+                pushedAt: excluded(repos.pushedAt),
+                archived: excluded(repos.archived),
+                readmeOid: excluded(repos.readmeOid),
+                ownerType: excluded(repos.ownerType),
+                ownerAvatarUrl: excluded(repos.ownerAvatarUrl),
+                inputHash: excluded(repos.inputHash),
+                enrichRetryAt: sql`case when ${askCurrent ? askable : dueOnSave} and ${free} then ${excluded(repos.enrichRetryAt)} else ${repos.enrichRetryAt} end`,
+              },
+            })
+            .returning({
+              id: repos.id,
+              inputHash: repos.inputHash,
+              leased: sql<boolean>`${repos.enrichRetryAt} is not distinct from ${timeParam(until)}`,
+            }),
+        ).pipe(Effect.flatMap(decodeLeases("repos.saveFactsAndLease")));
+        yield* run("repos.saveCounts", (db) =>
+          db
+            .insert(repoMetrics)
+            .values(counts)
+            .onConflictDoUpdate({
+              target: repoMetrics.repoId,
+              set: {
+                stars: excluded(repoMetrics.stars),
+                forks: excluded(repoMetrics.forks),
+                refreshedAt: sql`now()`,
+              },
+            }),
+        );
+        return leases;
+      }
+    }),
+    summarized: (ids, askCurrent = false) =>
+      run("repos.summarized", (db) =>
+        db
+          .select({ id: repos.id })
+          .from(repos)
+          .where(
+            askCurrent
+              ? sql`${repos.id} = any(${sql.param([...ids])}::bigint[]) and (${repos.goneAt} is not null or exists (select 1 from extraction_batches b where b.recipe = ${sql.raw(String(summaryRecipe))} and ${repos.id} = any(b.repo_ids)))`
+              : sql`${repos.id} = any(${sql.param([...ids])}::bigint[]) and (${repos.goneAt} is not null or (${repos.summary} is not null and ${repos.summaryRecipe} = ${sql.raw(String(summaryRecipe))}))`,
+          ),
+      ).pipe(
+        Effect.flatMap(decodeIds("repos.summarized")),
+        Effect.map((rows) => rows.map((row) => row.id)),
       ),
     saveCounts: ({ id, stars, forks }) => {
       const counts = { stars, forks, refreshedAt: sql`now()` };
