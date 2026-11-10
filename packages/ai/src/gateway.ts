@@ -29,6 +29,7 @@ import {
   AiModelNotFound,
   AiOutputInvalid,
   AiRequestFailed,
+  AiTimeout,
   AiUnavailable,
   type Operation,
 } from "./errors.ts";
@@ -59,6 +60,19 @@ const batchCallRetry = {
   times: retries,
   while: (error: AiError) => error._tag === "AiUnavailable",
 };
+// Each batch API call has its own deadline, so a stalled request never holds a driver past its lease.
+const startDeadline = Duration.minutes(2);
+const statusDeadline = Duration.minutes(1);
+const resultsDeadline = Duration.minutes(10);
+// A status check during a wait of up to 24 hours rides out an outage of about half an hour, backing off to a minute
+// between tries, rather than give up on a batch the provider is still running after a few seconds of 5xx.
+const pollRetry = {
+  schedule: Schedule.exponential("2 seconds").pipe(
+    Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, Duration.minutes(1)))),
+  ),
+  times: 30,
+  while: (error: AiError) => error._tag === "AiUnavailable" || error._tag === "AiTimeout",
+};
 
 const silenceSdkWarnings = () => {
   globalThis.AI_SDK_LOG_WARNINGS = false;
@@ -69,6 +83,9 @@ const detailOf = (cause: unknown) => {
   if (GatewayError.isInstance(cause)) return `${cause.name} with status ${cause.statusCode}`;
   return cause instanceof Error ? cause.name : "unknown error";
 };
+
+const statusOf = (cause: unknown) =>
+  APICallError.isInstance(cause) || GatewayError.isInstance(cause) ? cause.statusCode : undefined;
 
 const isRetryable = (cause: unknown) =>
   (APICallError.isInstance(cause) || GatewayError.isInstance(cause)) && cause.isRetryable;
@@ -120,29 +137,43 @@ const batchItemResult = (model: string, item: BatchItem): Effect.Effect<TextGene
 
 type BatchStatus = Awaited<ReturnType<BatchApi["doGetBatchStatus"]>>;
 
+// A status check answered with 404 names a batch the provider does not know, which is a value, not a
+// failure: a caller holding a batch ID from an earlier run sends its request again.
+class BatchNotFound extends Schema.TaggedError<BatchNotFound, { readonly brand: unique symbol }>()(
+  "BatchNotFound",
+  {},
+) {}
+
 const batchApi = (provider: AiProvider["Service"], model: string) => {
-  const call = <A>(run: (abortSignal: AbortSignal) => PromiseLike<A>) =>
-    Effect.tryPromise({ try: run, catch: fromSdkError("generate", model) }).pipe(Effect.retry(batchCallRetry));
+  const timedOut = (deadline: Duration.Duration) =>
+    new AiTimeout({ operation: "generate", model, timeoutMillis: Duration.toMillis(deadline) });
+  const call = <A>(run: (abortSignal: AbortSignal) => PromiseLike<A>, deadline: Duration.Duration) =>
+    Effect.tryPromise({ try: run, catch: fromSdkError("generate", model) }).pipe(
+      Effect.timeoutOrElse({ duration: deadline, orElse: () => Effect.fail(timedOut(deadline)) }),
+      Effect.retry(batchCallRetry),
+    );
 
   const start = Effect.fn("Gateway.startBatch")(function* (request: Batches.BatchRequest) {
     const key = yield* Batches.requestKey(request);
-    const started = yield* call((abortSignal) =>
-      provider.experimental_batch().doStartBatch({
-        requests: request.prompts.map((prompt, index) => ({
-          id: String(index),
-          type: "text" as const,
-          modelId: request.model,
-          options: {
-            prompt: [
-              { role: "system" as const, content: request.system },
-              { role: "user" as const, content: [{ type: "text" as const, text: prompt }] },
-            ],
-            responseFormat: { type: "json" as const, schema: request.jsonSchema },
-          },
-        })),
-        providerOptions: { gateway: { idempotencyKey: key } },
-        abortSignal,
-      }),
+    const started = yield* call(
+      (abortSignal) =>
+        provider.experimental_batch().doStartBatch({
+          requests: request.prompts.map((prompt, index) => ({
+            id: String(index),
+            type: "text" as const,
+            modelId: request.model,
+            options: {
+              prompt: [
+                { role: "system" as const, content: request.system },
+                { role: "user" as const, content: [{ type: "text" as const, text: prompt }] },
+              ],
+              responseFormat: { type: "json" as const, schema: request.jsonSchema },
+            },
+          })),
+          providerOptions: { gateway: { idempotencyKey: key } },
+          abortSignal,
+        }),
+      startDeadline,
     );
     yield* Effect.annotateCurrentSpan({ "ai.batch.id": started.batchId, "ai.batch.size": request.prompts.length });
     yield* Effect.logInfo("Gateway batch started", {
@@ -153,11 +184,20 @@ const batchApi = (provider: AiProvider["Service"], model: string) => {
     return started;
   });
 
+  const status = (batchId: string) =>
+    Effect.tryPromise({
+      try: (abortSignal) => provider.experimental_batch().doGetBatchStatus({ batchId, abortSignal }),
+      catch: (cause) => (statusOf(cause) === 404 ? new BatchNotFound() : fromSdkError("generate", model)(cause)),
+    }).pipe(
+      Effect.timeoutOrElse({ duration: statusDeadline, orElse: () => Effect.fail(timedOut(statusDeadline)) }),
+      Effect.retry({ ...pollRetry, while: (error) => error._tag !== "BatchNotFound" && pollRetry.while(error) }),
+    );
+
   const poll = (batchId: string) =>
-    call((abortSignal) => provider.experimental_batch().doGetBatchStatus({ batchId, abortSignal })).pipe(
+    status(batchId).pipe(
       Effect.repeat({
         schedule: Schedule.spaced(batchPollInterval),
-        until: (status) => status.status !== "pending",
+        until: (current) => current.status !== "pending",
       }),
     );
 
@@ -169,33 +209,59 @@ const batchApi = (provider: AiProvider["Service"], model: string) => {
       failed: finished.requestCounts?.failed ?? null,
     });
     if (finished.status === "failed") {
-      const code = finished.error?.code ?? finished.error?.type ?? "no code";
-      return yield* new AiRequestFailed({ operation: "generate", model, detail: `batch failed with ${code}` });
+      return Batches.Collected.Failed({
+        detail: `batch failed with ${finished.error?.code ?? finished.error?.type ?? "no code"}`,
+      });
     }
     const items = yield* call(async (abortSignal) => {
       const reader = (await provider.experimental_batch().doGetBatchResults({ batchId, abortSignal })).getReader();
       const read: Array<BatchItem> = [];
       for (let next = await reader.read(); !next.done; next = await reader.read()) read.push(next.value);
       return read;
-    });
+    }, resultsDeadline);
     const byId = new Map<string, BatchItem>(items.map((item) => [item.id, item]));
-    return yield* Effect.forEach(Arr.makeBy(size, String), (id) => {
-      const item = byId.get(id);
-      return item === undefined ? Effect.undefined : Effect.result(batchItemResult(model, item));
+    return Batches.Collected.Answered({
+      items: yield* Effect.forEach(Arr.makeBy(size, String), (id) => {
+        const item = byId.get(id);
+        return item === undefined ? Effect.undefined : Effect.result(batchItemResult(model, item));
+      }),
     });
   });
+
+  const answered = (collected: Batches.Collected) =>
+    Batches.Collected.$match(collected, {
+      Answered: ({ items }) => Effect.succeed(items),
+      Failed: ({ detail }) => Effect.fail(new AiRequestFailed({ operation: "generate", model, detail })),
+      Unknown: () =>
+        Effect.fail(new AiRequestFailed({ operation: "generate", model, detail: "the provider has no such batch" })),
+    });
 
   // A batch the start found already finished, such as a replay of one paid for earlier, is read without polling.
   const run = Effect.fn("Gateway.runBatch")(function* (request: TextGeneration.RunBatchRequest) {
     const started = yield* start({ model, ...request });
-    const finished = started.status !== "pending" ? started : yield* poll(started.batchId);
-    return yield* read(started.batchId, finished, request.prompts.length);
+    const finished =
+      started.status !== "pending"
+        ? started
+        : yield* poll(started.batchId).pipe(
+            Effect.catchTags({
+              BatchNotFound: () =>
+                Effect.fail(
+                  new AiRequestFailed({ operation: "generate", model, detail: "the provider has no such batch" }),
+                ),
+            }),
+          );
+    return yield* Effect.flatMap(read(started.batchId, finished, request.prompts.length), answered);
   });
 
   const submit = (request: Batches.BatchRequest) => Effect.map(start(request), (started) => started.batchId);
 
   const collect = Effect.fn("Gateway.collectBatch")(function* (batchId: string, size: number) {
-    return yield* read(batchId, yield* poll(batchId), size);
+    const finished = yield* poll(batchId).pipe(
+      Effect.map((current): BatchStatus | null => current),
+      Effect.catchTags({ BatchNotFound: () => Effect.succeed(null) }),
+    );
+    if (finished === null) return Batches.Collected.Unknown({ batchId });
+    return yield* read(batchId, finished, size);
   });
 
   return { run, submit, collect };

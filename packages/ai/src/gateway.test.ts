@@ -347,6 +347,8 @@ const fakeBatch = (options: {
   readonly fails?: boolean;
   readonly throwOnce?: ReadonlyArray<BatchCall>;
   readonly answer?: (prompt: string) => string;
+  // Answers the nth status check in place of the default, which completes or fails the batch.
+  readonly status?: (call: number) => ReturnType<BatchApi["doGetBatchStatus"]>;
 }) => {
   const starts: Array<StartOptions> = [];
   const direct = { calls: 0 };
@@ -377,6 +379,7 @@ const fakeBatch = (options: {
     },
     doGetBatchStatus: async () => {
       attempt("status");
+      if (options.status !== undefined) return options.status(calls.status);
       return options.fails
         ? { status: "failed", error: { message: "rejected", code: "invalid_batch" } }
         : { status: "completed" };
@@ -510,13 +513,96 @@ describe("gateway batch", () => {
       ]);
       const batchId = yield* batches.submit(request);
       expect(keyOf(fake.starts[0])).toBe(yield* Batches.requestKey(request));
-      const items = yield* batches.collect(batchId, 2);
-      expect(items[0]).toBeUndefined();
-      expect(items[1]).toEqual(
-        Result.succeed({ output: validAnswer, usage: { inputTokens: 100, outputTokens: 20, reasoningTokens: 5 } }),
+      const collected = yield* batches.collect(batchId, 2);
+      expect(collected).toEqual(
+        Batches.Collected.Answered({
+          items: [
+            undefined,
+            Result.succeed({ output: validAnswer, usage: { inputTokens: 100, outputTokens: 20, reasoningTokens: 5 } }),
+          ],
+        }),
       );
       expect(fake.direct.calls).toBe(0);
     }).pipe(Effect.provide(Gateway.layerBatches("test/model").pipe(Layer.provide(fake.provider))));
+  });
+
+  const viaBatches = <A, E>(fake: ReturnType<typeof fakeBatch>, check: Effect.Effect<A, E, Batches.Batches>) =>
+    check.pipe(Effect.provide(Gateway.layerBatches("test/model").pipe(Layer.provide(fake.provider))));
+
+  // Moves the clock in steps, yielding first so each fake promise settles, until the fiber is done.
+  const drive = <A, E>(fiber: Fiber.Fiber<A, E>, step: Duration.Input, steps: number) =>
+    Effect.gen(function* () {
+      for (let at = 0; at < steps && fiber.pollUnsafe() === undefined; at++) {
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(step);
+      }
+      return yield* Fiber.await(fiber);
+    });
+
+  it.effect("collects a batch the provider failed as Failed, and asks nothing directly", () => {
+    const fake = fakeBatch({ items: [], fails: true });
+    return viaBatches(
+      fake,
+      Effect.gen(function* () {
+        const batches = yield* Batches.Batches;
+        expect(yield* batches.collect("job_1", 2)).toEqual(
+          Batches.Collected.Failed({ detail: "batch failed with invalid_batch" }),
+        );
+        expect(fake.direct.calls).toBe(0);
+      }),
+    );
+  });
+
+  it.effect("collects a batch ID the provider does not know as Unknown", () => {
+    const fake = fakeBatch({
+      items: [],
+      status: () =>
+        Promise.reject(
+          new APICallError({ message: "not found", url: "https://gateway", requestBodyValues: {}, statusCode: 404 }),
+        ),
+    });
+    return viaBatches(
+      fake,
+      Effect.gen(function* () {
+        const batches = yield* Batches.Batches;
+        expect(yield* batches.collect("job_9", 1)).toEqual(Batches.Collected.Unknown({ batchId: "job_9" }));
+        expect(fake.calls.status).toBe(1);
+      }),
+    );
+  });
+
+  it.effect("rides out ten failed status checks in a row, backing off between them", () => {
+    const fake = fakeBatch({
+      items: [succeeded("0", JSON.stringify(validAnswer))],
+      status: (call) =>
+        call <= 10
+          ? Promise.reject(new GatewayInternalServerError({ message: "Internal server error" }))
+          : Promise.resolve({ status: "completed" as const }),
+    });
+    return viaBatches(
+      fake,
+      Effect.gen(function* () {
+        const batches = yield* Batches.Batches;
+        const fiber = yield* Effect.forkChild(batches.collect("job_1", 1));
+        const exit = yield* drive(fiber, "10 seconds", 100);
+        expect(exit._tag).toBe("Success");
+        expect(fake.calls.status).toBe(11);
+      }),
+    );
+  });
+
+  it.effect("gives up on a status check that never answers, with AiTimeout, instead of hanging", () => {
+    const fake = fakeBatch({ items: [], status: () => new Promise(() => undefined) });
+    return viaBatches(
+      fake,
+      Effect.gen(function* () {
+        const batches = yield* Batches.Batches;
+        const fiber = yield* Effect.forkChild(batches.collect("job_1", 1));
+        const exit = yield* drive(fiber, "1 minute", 300);
+        expect(exit._tag === "Failure" && exit.cause.toString()).toContain("AiTimeout");
+        expect(fake.calls.status).toBe(31);
+      }),
+    );
   });
 
   it.effect("answers a single prompt directly, without starting a batch job", () => {
