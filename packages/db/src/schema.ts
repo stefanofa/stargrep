@@ -449,6 +449,9 @@ export const extractionBatches = pgTable(
     // The manifest whose badly answered items this one asks again, as a second batch with its own key. Its own bad
     // answers are final.
     retryOf: uuid("retry_of").references((): AnyPgColumn => extractionBatches.id, { onDelete: "set null" }),
+    // Items whose answer failed for good: the fallback's own bad answers, and failed CLI calls. A gate can count them
+    // even when an answer to a repo's current input converged on a receipt it already had.
+    failedRepoIds: bigint("failed_repo_ids", { mode: "number" }).array().notNull().default(sql`'{}'`),
     createdAt: time("created_at").notNull().defaultNow(),
     updatedAt: time("updated_at").notNull().defaultNow(),
   },

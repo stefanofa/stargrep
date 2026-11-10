@@ -83,6 +83,7 @@ const defaults = {
     claimPrefill: unexpected("knowledge.claimPrefill"),
     heartbeatPrefill: unexpected("knowledge.heartbeatPrefill"),
     releasePrefill: unexpected("knowledge.releasePrefill"),
+    recordFailed: unexpected("knowledge.recordFailed"),
     mint: unexpected("knowledge.mint"),
     labels: unexpected("knowledge.labels"),
     project: unexpected("knowledge.project"),

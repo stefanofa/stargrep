@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { BatchId, InputHash } from "@stargrep/knowledge/ids";
 import * as it from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -59,6 +60,7 @@ for (const [adapter, database] of adapters) {
         yield* db.repos.lease({ ids: [repoId(5002)], now, until: DateTime.makeUnsafe("2026-11-10T12:15:00Z") });
 
         const leases = yield* db.repos.saveFactsAndLease({
+          askCurrent: false,
           repos: [prefillFacts(5003), prefillFacts(5001), { ...prefillFacts(5002), description: "Moved" }].map(
             (repo) => (repo.id === 5003 ? { ...repo, readmeOid: readme("3") } : repo),
           ),
@@ -82,7 +84,12 @@ for (const [adapter, database] of adapters) {
     test.effect("extends, closes, and drops a manifest by the repos still holding its lease", () =>
       Effect.gen(function* () {
         const db = yield* Db.Db;
-        yield* db.repos.saveFactsAndLease({ repos: [6001, 6002, 6003].map(prefillFacts), now, until: lease });
+        yield* db.repos.saveFactsAndLease({
+          repos: [6001, 6002, 6003].map(prefillFacts),
+          now,
+          until: lease,
+          askCurrent: false,
+        });
         const sent = manifest("00000000-0000-4000-8000-000000006001", [6001, 6002, 6003]);
         yield* db.knowledge.prepareBatch(sent);
         yield* db.knowledge.submittedBatch({ id: sent.id, providerBatchId: "batch_1" });
@@ -130,7 +137,12 @@ for (const [adapter, database] of adapters) {
     test.effect("drops only a manifest that was never sent, and only for the driver that holds the prefill", () =>
       Effect.gen(function* () {
         const db = yield* Db.Db;
-        yield* db.repos.saveFactsAndLease({ repos: [6201, 6202].map(prefillFacts), now, until: lease });
+        yield* db.repos.saveFactsAndLease({
+          repos: [6201, 6202].map(prefillFacts),
+          now,
+          until: lease,
+          askCurrent: false,
+        });
         const unsent = manifest("00000000-0000-4000-8000-000000006201", [6201]);
         const sent = manifest("00000000-0000-4000-8000-000000006202", [6202]);
         yield* db.knowledge.prepareBatch(unsent);
@@ -138,7 +150,7 @@ for (const [adapter, database] of adapters) {
         yield* db.knowledge.submittedBatch({ id: sent.id, providerBatchId: "batch_paid" });
         const owner = "00000000-0000-4000-8000-0000000062aa";
         expect(yield* db.knowledge.dropBatch({ manifest: unsent, owner })).toBe(false);
-        expect(yield* db.knowledge.claimPrefill({ owner, now, stale: now })).toBe(true);
+        expect(yield* db.knowledge.claimPrefill({ owner, stale: Duration.minutes(1) })).toBe(true);
         expect(yield* db.knowledge.dropBatch({ manifest: sent, owner })).toBe(false);
         expect(yield* retryAt(6202)).toBe("2026-11-11 14:00");
         expect(yield* db.knowledge.dropBatch({ manifest: unsent, owner })).toBe(true);
@@ -152,28 +164,97 @@ for (const [adapter, database] of adapters) {
       }),
     );
 
-    test.effect("lets one driver hold the prefill until its heartbeat goes stale", () =>
+    // The database's clock decides, so two drivers on machines whose clocks disagree still agree on who holds it.
+    test.effect("lets one driver hold the prefill until its heartbeat, on the database's clock, goes stale", () =>
       Effect.gen(function* () {
         const db = yield* Db.Db;
         const first = "00000000-0000-4000-8000-0000000063aa";
         const second = "00000000-0000-4000-8000-0000000063bb";
-        const minute = (n: number) => DateTime.makeUnsafe(`2026-11-10T12:0${n}:00Z`);
-        expect(yield* db.knowledge.claimPrefill({ owner: first, now: minute(0), stale: minute(0) })).toBe(true);
-        expect(yield* db.knowledge.claimPrefill({ owner: second, now: minute(0), stale: minute(0) })).toBe(false);
-        expect(yield* db.knowledge.heartbeatPrefill({ owner: first, now: minute(1) })).toBe(true);
-        expect(yield* db.knowledge.claimPrefill({ owner: second, now: minute(2), stale: minute(1) })).toBe(false);
-        expect(yield* db.knowledge.claimPrefill({ owner: second, now: minute(3), stale: minute(2) })).toBe(true);
-        expect(yield* db.knowledge.heartbeatPrefill({ owner: first, now: minute(3) })).toBe(false);
+        const stale = Duration.minutes(1);
+        const age = (seconds: number) =>
+          query(`update prefill_owner set heartbeat_at = now() - interval '${seconds} seconds'`);
+        expect(yield* db.knowledge.claimPrefill({ owner: first, stale })).toBe(true);
+        expect(yield* db.knowledge.claimPrefill({ owner: second, stale })).toBe(false);
+        yield* age(50);
+        expect(yield* db.knowledge.claimPrefill({ owner: second, stale })).toBe(false);
+        expect(yield* db.knowledge.heartbeatPrefill(first)).toBe(true);
+        yield* age(90);
+        expect(yield* db.knowledge.claimPrefill({ owner: second, stale })).toBe(true);
+        expect(yield* db.knowledge.heartbeatPrefill(first)).toBe(false);
         yield* db.knowledge.releasePrefill(first);
-        expect(yield* db.knowledge.heartbeatPrefill({ owner: second, now: minute(4) })).toBe(true);
+        expect(yield* db.knowledge.heartbeatPrefill(second)).toBe(true);
         yield* db.knowledge.releasePrefill(second);
+      }),
+    );
+
+    test.effect("leaves the repos an open fallback lists to that fallback, even when their leases match", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        yield* db.repos.saveFactsAndLease({
+          repos: [6501, 6502].map(prefillFacts),
+          now,
+          until: lease,
+          askCurrent: false,
+        });
+        const parent = manifest("00000000-0000-4000-8000-000000006501", [6501, 6502]);
+        const child = {
+          ...manifest("00000000-0000-4000-8000-000000006502", [6502]),
+          retryOf: parent.id,
+        };
+        yield* db.knowledge.prepareBatch(parent);
+        yield* db.knowledge.submittedBatch({ id: parent.id, providerBatchId: "batch_parent" });
+        yield* db.knowledge.prepareBatch(child);
+        yield* query("update repos set enrich_retry_at = null where id = 6501");
+        expect(yield* db.knowledge.extendBatch({ manifest: parent, until: later })).toEqual([]);
+        expect(yield* retryAt(6502)).toBe("2026-11-11 14:00");
+        expect(yield* db.knowledge.closeBatch(parent)).toBe(true);
+        expect((yield* db.knowledge.extendBatch({ manifest: child, until: later })).map(Number)).toEqual([6502]);
+      }),
+    );
+
+    test.effect("records a manifest's final failures once each", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const failing = manifest("00000000-0000-4000-8000-000000006601", [6601, 6602]);
+        yield* db.knowledge.prepareBatch(failing);
+        yield* db.knowledge.recordFailed({ id: failing.id, repoIds: [repoId(6601)] });
+        yield* db.knowledge.recordFailed({ id: failing.id, repoIds: [repoId(6601), repoId(6602)] });
+        expect(
+          yield* query(
+            "select array(select unnest(failed_repo_ids)::int order by 1) as failed from extraction_batches where id = $1",
+            [failing.id],
+          ),
+        ).toEqual([{ failed: [6601, 6602] }]);
+      }),
+    );
+
+    test.effect("asks a repo whose summary is current only when askCurrent is set, and only once per recipe", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        yield* db.repos.upsertRefs([ref(repoId(6701))]);
+        yield* db.repos.saveFacts({ ...facts(repoId(6701)), readmeOid: readme("7") });
+        yield* summarize({ id: repoId(6701), readmeOid: readme("7"), summary: "Done", keywords: [] });
+        const current = { ...prefillFacts(6701), readmeOid: readme("7") };
+        expect((yield* db.repos.summarized([repoId(6701)])).map(Number)).toEqual([6701]);
+        expect((yield* db.repos.summarized([repoId(6701)], true)).map(Number)).toEqual([]);
+        const quiet = yield* db.repos.saveFactsAndLease({ repos: [current], now, until: lease, askCurrent: false });
+        expect(quiet.map(({ leased }) => leased)).toEqual([false]);
+        const asked = yield* db.repos.saveFactsAndLease({ repos: [current], now, until: lease, askCurrent: true });
+        expect(asked.map(({ leased }) => leased)).toEqual([true]);
+        yield* db.knowledge.prepareBatch(manifest("00000000-0000-4000-8000-000000006701", [6701]));
+        expect((yield* db.repos.summarized([repoId(6701)], true)).map(Number)).toEqual([6701]);
       }),
     );
 
     test.effect("hands a lease over only from repos that still hold it", () =>
       Effect.gen(function* () {
         const db = yield* Db.Db;
-        yield* db.repos.saveFactsAndLease({ repos: [6301, 6302].map(prefillFacts), now, until: lease });
+        yield* db.repos.saveFactsAndLease({
+          repos: [6301, 6302].map(prefillFacts),
+          now,
+          until: lease,
+          askCurrent: false,
+        });
         yield* query("update repos set enrich_retry_at = null where id = 6302");
         const moved = yield* db.knowledge.moveLease({ ids: [repoId(6301), repoId(6302)], from: lease, to: later });
         expect(moved.map(Number)).toEqual([6301]);
@@ -203,7 +284,9 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 3
           minting.query("select pg_advisory_xact_lock(hashtextextended('stargrep:knowledge:public', 0))"),
         );
         const saving = yield* Effect.forkChild(
-          transactions.withTransaction(db.repos.saveFactsAndLease({ repos: [prefillFacts(6401)], now, until: lease })),
+          transactions.withTransaction(
+            db.repos.saveFactsAndLease({ repos: [prefillFacts(6401)], now, until: lease, askCurrent: false }),
+          ),
         );
         yield* database.query(`
           do $$ begin

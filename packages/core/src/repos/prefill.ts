@@ -101,7 +101,9 @@ export const outcomes = [
 ] as const;
 export type Outcome = (typeof outcomes)[number];
 
+// Tokens one batch answer used. A resume collects the same answer again, so a reader counts each manifest and repo once.
 export interface ItemUsage {
+  readonly manifest: BatchId;
   readonly repoId: RepoId;
   readonly inputTokens: number | undefined;
   readonly outputTokens: number | undefined;
@@ -114,6 +116,18 @@ export interface CaptureTime {
   readonly seconds: number;
 }
 
+// A manifest kept open because the driver cannot safely send or read it, with what an operator needs to unblock it.
+// Its leases are kept until they run out, so nothing pays for its repos while someone restores the object or confirms
+// the batch is gone.
+export interface Stuck {
+  readonly id: BatchId;
+  readonly requestObject: string;
+  readonly providerBatchId: string | null;
+  // missing: the request object is gone. unreadable: it does not decode. changed: it no longer hashes to the
+  // manifest's key. unknown-batch: the provider no longer knows the recorded batch.
+  readonly reason: "missing" | "unreadable" | "changed" | "unknown-batch";
+}
+
 export interface PrefillReport {
   readonly outcomes: ReadonlyMap<RepoId, Outcome>;
   readonly unresolved: ReadonlyArray<GitHub.Unresolved>;
@@ -124,9 +138,7 @@ export interface PrefillReport {
     readonly closed: number;
     // Fallback manifests: second batches for items the first answered badly.
     readonly fallbacks: number;
-    // Open manifests whose stored request is missing or does not match their key. They are kept, never given back,
-    // so restoring the object resumes them, and their leases run out on their own if nobody does.
-    readonly stuck: ReadonlyArray<BatchId>;
+    readonly stuck: ReadonlyArray<Stuck>;
   };
   // Tokens each batch answer used, as the provider reported them.
   readonly usage: ReadonlyArray<ItemUsage>;
@@ -144,7 +156,7 @@ export interface Progress {
   readonly unresolved: Array<GitHub.Unresolved>;
   readonly usage: Array<ItemUsage>;
   readonly counts: { resumed: number; dropped: number; created: number; closed: number; fallbacks: number };
-  readonly stuck: Array<BatchId>;
+  readonly stuck: Array<Stuck>;
   readonly retried: Array<RepoId>;
   readonly captures: Array<CaptureTime>;
   repaid: number;
@@ -177,6 +189,11 @@ export interface PrefillOptions {
   readonly chunk: number;
   readonly concurrency: number;
   readonly progress?: Progress;
+  // Asks repos whose summary is current under the recipe too, once per recipe, for a pilot on a branch of prod.
+  readonly askCurrent?: boolean;
+  // Sends a recorded batch's request again when the provider says it does not know the batch. Off, such a manifest is
+  // stuck, since a wrong 404, such as from a key of another project, would pay for the batch again.
+  readonly resendUnknown?: boolean;
 }
 
 // Another driver holds the prefill and its heartbeat is fresh.
@@ -346,6 +363,7 @@ const make = Effect.gen(function* () {
 
     // A batch answer decoded against its prompt, with the tokens the provider reported for it.
     const decode = (
+      manifestId: BatchId,
       { stored: item }: Item,
       raw: Batches.BatchItems[number],
       answerModel: string,
@@ -355,7 +373,7 @@ const make = Effect.gen(function* () {
       return Effect.all([
         countTokens(answerModel, "input", used.inputTokens),
         countTokens(answerModel, "output", used.outputTokens),
-        Effect.sync(() => usage.push({ repoId: item.repoId, ...used })),
+        Effect.sync(() => usage.push({ manifest: manifestId, repoId: item.repoId, ...used })),
       ]).pipe(
         Effect.andThen(Summarize.answerOf(item.input, output)),
         Effect.map((summary) => Result.succeed<Summarize.RepoSummary>(summary)),
@@ -474,6 +492,11 @@ const make = Effect.gen(function* () {
         at: yield* DateTime.now,
         retryDelays: EnrichRetry.retryDelays,
       });
+      // Every failure that reaches a flush is final: the first batch's bad answers go to a fallback instead.
+      yield* db.knowledge.recordFailed({
+        id: manifest.id,
+        repoIds: failures.flatMap(({ id, settled }) => (settled === "keep" ? [] : [id])),
+      });
       yield* Effect.forEach(
         failures,
         ({ id, error, settled }) =>
@@ -539,6 +562,18 @@ const make = Effect.gen(function* () {
         const recorded = yield* Effect.result(batches.collect(manifest.providerBatchId, size));
         if (Result.isFailure(recorded)) return yield* keepOpen("collect", recorded.failure);
         if (recorded.success._tag !== "Unknown") return Option.some(recorded.success);
+        if (!options.resendUnknown) {
+          stuck.push({
+            id: manifest.id,
+            requestObject: manifest.requestObject,
+            providerBatchId: manifest.providerBatchId,
+            reason: "unknown-batch",
+          });
+          yield* Effect.logError("Prefill provider says it does not know the recorded batch, so it is kept", {
+            manifest: manifest.id,
+          });
+          return Option.none();
+        }
         yield* Effect.logWarning("Prefill provider no longer knows the recorded batch, sending its request again", {
           manifest: manifest.id,
         });
@@ -564,9 +599,9 @@ const make = Effect.gen(function* () {
       return Option.some(collected.success);
     });
 
-    // A second batch for the items a first answered badly, under a key of its own. The items' leases move to it in the
-    // transaction that writes it, so a crash leaves each item owed by exactly one manifest, and its own bad answers
-    // are final.
+    // A second batch for the items a first answered badly, under a key of its own. The items' leases move to it, and its
+    // request object is stored, in the transaction that writes it, so a crash leaves each item owed by exactly one
+    // resumable manifest, and its own bad answers are final.
     const fallback = Effect.fn("Prefill.fallback")(function* (
       parent: Db.Manifest,
       stored: StoredRequest,
@@ -590,11 +625,14 @@ const make = Effect.gen(function* () {
         leaseUntil: until,
         retryOf: parent.id,
       };
+      const childStored: StoredRequest = { request, items: items.map(({ stored: item }) => item) };
+      const object = yield* Effect.orDie(encodeStored(childStored));
       const written = yield* transactions.withTransaction(
         Effect.gen(function* () {
           const id = yield* db.knowledge.prepareBatch(draft);
           if (Option.isNone(id)) return Option.none();
           const moved = yield* db.knowledge.moveLease({ ids: draft.repoIds, from: parent.leaseUntil, to: until });
+          yield* blobs.put(draft.requestObject, object);
           return Option.some({ id: id.value, moved });
         }),
       );
@@ -605,8 +643,6 @@ const make = Effect.gen(function* () {
       const manifest: Db.Manifest = { ...draft, id: written.value.id, providerBatchId: null, state: "prepared" };
       counts.fallbacks++;
       retried.push(...written.value.moved);
-      const childStored: StoredRequest = { request, items: items.map(({ stored: item }) => item) };
-      yield* blobs.put(manifest.requestObject, yield* Effect.orDie(encodeStored(childStored)));
       yield* settle(manifest, childStored, new Set(written.value.moved), false);
     });
 
@@ -626,6 +662,12 @@ const make = Effect.gen(function* () {
         }
         if (yield* db.knowledge.closeBatch(closing)) counts.closed++;
       });
+      // A manifest never sent that owes nothing, such as one whose repos another attempt took, is deleted: it paid for
+      // nothing, and a Gateway manifest cannot close without a batch.
+      if (pending.length === 0 && manifest.providerBatchId === null && manifest.adapter === "gateway-batch") {
+        if (yield* db.knowledge.dropBatch({ manifest, owner })) counts.dropped++;
+        return;
+      }
       if (pending.length === 0) return yield* close(manifest);
       if (manifest.adapter === "claude-code") {
         if (resumed) done.repaid += pending.length;
@@ -658,7 +700,7 @@ const make = Effect.gen(function* () {
       const batch = collected.value;
       const results = yield* Effect.forEach(pending, ({ item, index }) =>
         (batch._tag === "Answered"
-          ? decode(item, batch.items[index], answerModel)
+          ? decode(manifest.id, item, batch.items[index], answerModel)
           : Effect.succeed(
               Result.fail<AiError>(
                 new AiRequestFailed({ operation: "generate", model: answerModel, detail: batch.detail }),
@@ -677,10 +719,11 @@ const make = Effect.gen(function* () {
       return yield* close(current);
     });
 
-    // A manifest a run left open. Its stored request must still hash to its key, so a resend can only ever find the
-    // batch it already started. A manifest that was never sent and has no request is deleted and its leases given
-    // back. Any other unreadable request is kept, with its leases, until someone restores it.
-    const resume = Effect.fn("Prefill.resume")(function* (manifest: Db.Manifest) {
+    // Readies a manifest a run left open. Its stored request must still hash to its key, so a resend can only ever find
+    // the batch it already started. A manifest never sent that has no request is deleted and its leases given back.
+    // Any other unreadable one is kept, with its leases, until someone restores the object, and closes once its repos
+    // have all moved on. Otherwise its lease, with every repo still holding it, moves 26 hours forward.
+    const ready = Effect.fn("Prefill.ready")(function* (manifest: Db.Manifest) {
       const object = yield* blobs.get(manifest.requestObject);
       const stored = Option.flatMap(object, decodeStored);
       const key = Option.isSome(stored) ? yield* Batches.requestKey(stored.value.request) : null;
@@ -688,21 +731,45 @@ const make = Effect.gen(function* () {
         const unsent = Option.isNone(object) && manifest.providerBatchId === null && manifest.state === "prepared";
         if (unsent && (yield* db.knowledge.dropBatch({ manifest, owner }))) {
           counts.dropped++;
-          return;
+          return Option.none();
         }
-        stuck.push(manifest.id);
+        const closable = manifest.providerBatchId !== null || manifest.adapter === "claude-code";
+        if (closable && (yield* db.knowledge.closeBatch(manifest))) {
+          counts.closed++;
+          return Option.none();
+        }
+        const reason = Option.isNone(object) ? "missing" : Option.isNone(stored) ? "unreadable" : "changed";
+        stuck.push({
+          id: manifest.id,
+          requestObject: manifest.requestObject,
+          providerBatchId: manifest.providerBatchId,
+          reason,
+        });
         mark(manifest.repoIds, "waiting");
         yield* Effect.logError("Prefill manifest has no readable request, so it is kept until the object is restored", {
           manifest: manifest.id,
-          missing: Option.isNone(object),
+          reason,
           sent: manifest.providerBatchId !== null,
         });
-        return;
+        return Option.none();
       }
       const until = DateTime.addDuration(yield* DateTime.now, batchLease);
       const open = yield* db.knowledge.extendBatch({ manifest, until });
       counts.resumed++;
-      yield* settle({ ...manifest, leaseUntil: until }, stored.value, new Set(open), true);
+      return Option.some({ manifest: { ...manifest, leaseUntil: until }, stored: stored.value, open: new Set(open) });
+    });
+
+    // Every open manifest's lease moves before any of them waits on its batch, and they all wait at once, each
+    // renewing its own lease, so none waits its turn behind slow batches until its lease runs out.
+    const resumeAll = Effect.gen(function* () {
+      const readied = yield* Effect.forEach(yield* db.knowledge.openBatches, ready, {
+        concurrency: options.concurrency,
+      });
+      yield* Effect.forEach(
+        readied.flatMap(Option.toArray),
+        ({ manifest, stored, open }) => settle(manifest, stored, open, true),
+        { concurrency: "unbounded", discard: true },
+      );
     });
 
     // GitHub facts for a chunk: by node ID where Stargrep knows it, and by name otherwise or when the node is gone or
@@ -760,6 +827,7 @@ const make = Effect.gen(function* () {
               })),
               now,
               until,
+              askCurrent: options.askCurrent ?? false,
             });
             const leased = Arr.sort(
               leases.filter((lease) => lease.leased),
@@ -809,10 +877,11 @@ const make = Effect.gen(function* () {
             const id = yield* db.knowledge.prepareBatch(draft);
             if (Option.isNone(id)) return yield* new KeyHeld({ repos: draft.repoIds.length });
             const manifest: Db.Manifest = { ...draft, id: id.value, providerBatchId: null, state: "prepared" };
-            return {
-              held,
-              written: Option.some({ manifest, stored: { request, items: prompted.map(({ item }) => item) } }),
-            };
+            const stored: StoredRequest = { request, items: prompted.map(({ item }) => item) };
+            // The object is stored before the manifest commits, so every committed manifest can be resumed. A run that
+            // stalls after the commit leaves a manifest the next driver resumes rather than drops.
+            yield* blobs.put(manifest.requestObject, yield* Effect.orDie(encodeStored(stored)));
+            return { held, written: Option.some({ manifest, stored }) };
           }),
         )
         .pipe(
@@ -828,7 +897,12 @@ const make = Effect.gen(function* () {
     });
 
     const chunk = Effect.fn("Prefill.chunk")(function* (refs: ReadonlyArray<GitHub.ArchiveRef>) {
-      const done = new Set<number>(yield* db.repos.summarized(refs.map((ref) => ref.id)));
+      const done = new Set<number>(
+        yield* db.repos.summarized(
+          refs.map((ref) => ref.id),
+          options.askCurrent ?? false,
+        ),
+      );
       mark(
         refs.filter((ref) => done.has(ref.id)).map((ref) => ref.id),
         "done",
@@ -854,15 +928,11 @@ const make = Effect.gen(function* () {
       if (Option.isNone(prepared)) return;
       const { manifest, stored } = prepared.value;
       counts.created++;
-      yield* blobs.put(manifest.requestObject, yield* Effect.orDie(encodeStored(stored)));
       yield* settle(manifest, stored, new Set(manifest.repoIds), false);
     });
 
     const work = Effect.gen(function* () {
-      yield* Effect.forEach(yield* db.knowledge.openBatches, resume, {
-        concurrency: options.concurrency,
-        discard: true,
-      });
+      yield* resumeAll;
       const sorted = Arr.sort(
         Arr.dedupeWith(options.refs, (a, b) => a.id === b.id),
         Order.mapInput(Order.Number, (ref: GitHub.ArchiveRef) => ref.id),
@@ -875,16 +945,11 @@ const make = Effect.gen(function* () {
 
     // The driver holds the prefill for the whole run, so no other driver resumes, drops, or pays for its manifests.
     // A heartbeat that finds the claim taken stops the run.
-    const now = yield* DateTime.now;
-    const claimed = yield* db.knowledge.claimPrefill({
-      owner,
-      now,
-      stale: DateTime.subtractDuration(now, ownerStale),
-    });
+    const claimed = yield* db.knowledge.claimPrefill({ owner, stale: ownerStale });
     if (!claimed) return yield* new PrefillBusy();
     // A heartbeat that cannot reach the database is tried again at the next tick. Only another driver's claim stops it.
     const heartbeat = Effect.gen(function* () {
-      const held = yield* db.knowledge.heartbeatPrefill({ owner, now: yield* DateTime.now }).pipe(
+      const held = yield* db.knowledge.heartbeatPrefill(owner).pipe(
         Effect.catchTags({
           DbQueryFailed: (error) =>
             Effect.logWarning("Prefill heartbeat failed, trying again", { error: error.reason }).pipe(Effect.as(true)),

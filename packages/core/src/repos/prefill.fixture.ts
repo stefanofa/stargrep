@@ -127,10 +127,12 @@ export const fixture = () => {
   return { remotes, github, asked, batches, broken, layer, seed };
 };
 
-export const run = (refs: ReadonlyArray<GitHub.ArchiveRef>) =>
+export const runWith = (refs: ReadonlyArray<GitHub.ArchiveRef>, options: Partial<Prefill.PrefillOptions>) =>
   Effect.flatMap(Prefill.Prefill, (prefill) =>
-    prefill.run({ refs, adapter: "gateway-batch", chunk: 250, concurrency: 4 }),
+    prefill.run({ refs, adapter: "gateway-batch", chunk: 250, concurrency: 4, ...options }),
   );
+
+export const run = (refs: ReadonlyArray<GitHub.ArchiveRef>) => runWith(refs, {});
 
 export const tally = (report: Prefill.PrefillReport) => {
   const counts: Partial<Record<Prefill.Outcome, number>> = {};

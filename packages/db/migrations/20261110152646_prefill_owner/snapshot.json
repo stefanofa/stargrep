@@ -2,7 +2,7 @@
   "type": "diff",
   "version": "9",
   "dialect": "postgres",
-  "id": "17d5c5c7-f715-4bc5-9707-2afb2d8c6f23",
+  "id": "bb407374-aa6b-44ef-9759-f3177381b7b6",
   "prevIds": [
     "2f25a989-868d-48d0-bf0f-086f76fbeb73"
   ],
@@ -38,6 +38,24 @@
         "s|col|public.extraction_batches.retry_of",
         "n|col|public.extraction_batches.retry_of",
         "e|col|public.extraction_batches.retry_of"
+      ],
+      "reads": [
+        "n|tbl|public.extraction_batches",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "extraction_batches",
+        "failed_repo_ids"
+      ],
+      "writes": [
+        "s|col|public.extraction_batches.failed_repo_ids",
+        "n|col|public.extraction_batches.failed_repo_ids",
+        "e|col|public.extraction_batches.failed_repo_ids"
       ],
       "reads": [
         "n|tbl|public.extraction_batches",
@@ -89,6 +107,22 @@
         "notNull": false,
         "dimensions": 0,
         "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "failed_repo_ids",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 1,
+        "default": "'{}'",
         "generated": null,
         "identity": null,
         "entityType": "columns"

@@ -18,6 +18,7 @@ import {
   range,
   ref,
   run,
+  runWith,
   sweepAndConsume,
   tally,
 } from "./prefill.fixture.ts";
@@ -102,6 +103,37 @@ for (const [adapter, database] of adapters) {
         expect(
           yield* query("select count(*)::int as manifests from extraction_batches where repo_ids && '{1151,1152}'"),
         ).toEqual([{ manifests: 0 }]);
+      }),
+    );
+
+    // Pilot 2 asks prod repos the sweep already summarized under the current recipe, so it can compare their batch
+    // answers with recipe 1. The answer converges on the receipt the repo has, and the manifest records it was asked.
+    it.effect("asks repos whose summary is current only with askCurrent, and each once per recipe", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const ids = range(1301, 2);
+        f.seed(ids);
+        yield* db.repos.upsertRefs(
+          ids.map((n) => ({
+            id: RepoId.make(n),
+            nodeId: RepoNodeId.make(`R_${n}`),
+            owner: Login.make("owner"),
+            name: RepoName.make(`repo-${n}`),
+          })),
+        );
+        yield* Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) =>
+          enricher.enrichRepos(ids.map((n) => RepoId.make(n))),
+        );
+        const paidBefore = f.batches.paid.length;
+        expect(tally(yield* run(ids.map(ref)))).toEqual({ done: 2 });
+        expect(f.batches.paid.length - paidBefore).toBe(0);
+        expect(tally(yield* runWith(ids.map(ref), { askCurrent: true }))).toEqual({ saved: 2 });
+        expect(f.batches.paid.length - paidBefore).toBe(2);
+        expect(tally(yield* runWith(ids.map(ref), { askCurrent: true }))).toEqual({ done: 2 });
+        expect(f.batches.paid.length - paidBefore).toBe(2);
+        expect(
+          yield* query("select count(*)::int as receipts from receipts where repo_id = any($1::bigint[])", [ids]),
+        ).toEqual([{ receipts: 2 }]);
       }),
     );
 
@@ -258,7 +290,7 @@ for (const [adapter, database] of adapters) {
       }),
     );
 
-    it.effect("drops a manifest whose request was never stored, and prefills its repos again", () =>
+    it.effect("leaves no manifest and no lease when a request cannot be stored, and prefills its repos again", () =>
       Effect.gen(function* () {
         const blobs = yield* BlobStore.BlobStore;
         f.seed([4001, 4002]);
@@ -277,11 +309,16 @@ for (const [adapter, database] of adapters) {
           run([ref(4001), ref(4002)]).pipe(Effect.provide(Layer.fresh(Prefill.layer).pipe(Layer.provide(lost)))),
         );
         expect(failed._tag).toBe("BlobStoreFailed");
-        expect(yield* query("select count(*)::int as open from extraction_batches where state = 'prepared'")).toEqual([
-          { open: 1 },
-        ]);
+        expect(
+          yield* query("select count(*)::int as manifests from extraction_batches where repo_ids && '{4001,4002}'"),
+        ).toEqual([{ manifests: 0 }]);
+        expect(
+          yield* query(
+            "select count(*)::int as leased from repos where id in (4001, 4002) and enrich_retry_at is not null",
+          ),
+        ).toEqual([{ leased: 0 }]);
         const report = yield* run([ref(4001), ref(4002)]);
-        expect(report.manifests).toEqual({ ...quiet, dropped: 1, created: 1, closed: 1 });
+        expect(report.manifests).toEqual({ ...quiet, created: 1, closed: 1 });
         expect(tally(report)).toEqual({ saved: 2 });
         expect(f.batches.submissions.length - submitted).toBe(1);
       }),

@@ -2,6 +2,7 @@ import { RepoId } from "@stargrep/github/schemas";
 import { BatchId, InputHash } from "@stargrep/knowledge/ids";
 import { sql } from "drizzle-orm";
 import type * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -38,10 +39,11 @@ export type Manifest = typeof Manifest.Type;
 
 export type NewManifest = Omit<Manifest, "providerBatchId" | "state">;
 
-// The driver that holds the prefill, at a moment of its clock.
+// The driver that holds the prefill, and how old its heartbeat may grow, on the database's clock, before another
+// driver may take the prefill.
 export interface Ownership {
   readonly owner: string;
-  readonly now: DateTime.Utc;
+  readonly stale: Duration.Duration;
 }
 
 export interface Queries {
@@ -58,7 +60,8 @@ export interface Queries {
   // Every manifest a run left prepared or submitted, oldest first.
   readonly openBatches: Effect.Effect<ReadonlyArray<Manifest>, DbQueryFailed | DbRowInvalid>;
   // Moves a manifest's lease to until, with every repo that still holds it, in one statement, and returns those repos:
-  // the items that still owe an answer. A repo whose lease ran out and that another attempt took is not one of them.
+  // the items that still owe an answer. A repo whose lease ran out and that another attempt took is not one of them,
+  // nor is one an open fallback of this manifest lists, which owes that repo's answer even when the two leases match.
   readonly extendBatch: (input: {
     readonly manifest: Manifest;
     readonly until: DateTime.Utc;
@@ -69,7 +72,7 @@ export interface Queries {
     readonly from: DateTime.Utc;
     readonly to: DateTime.Utc;
   }) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
-  // Marks a manifest captured once no repo holds its lease, and says whether it did.
+  // Marks a manifest captured once no repo it still owes holds its lease, and says whether it did.
   readonly closeBatch: (manifest: Manifest) => Effect.Effect<boolean, DbQueryFailed | DbRowInvalid>;
   // Deletes a manifest that was never sent and gives back its repos' leases, but only while owner holds the prefill.
   // A manifest that may have been sent is never dropped, so its paid answers stay recoverable. Says whether it dropped.
@@ -77,14 +80,22 @@ export interface Queries {
     readonly manifest: Manifest;
     readonly owner: string;
   }) => Effect.Effect<boolean, DbQueryFailed | DbRowInvalid>;
-  // Claims the prefill for owner when nobody holds it, owner already does, or the holder's heartbeat is before stale.
-  readonly claimPrefill: (
-    input: Ownership & { readonly stale: DateTime.Utc },
-  ) => Effect.Effect<boolean, DbQueryFailed | DbRowInvalid>;
+  // Claims the prefill for owner when nobody holds it, owner already does, or the holder's heartbeat is stale.
+  readonly claimPrefill: (input: Ownership) => Effect.Effect<boolean, DbQueryFailed | DbRowInvalid>;
   // Renews owner's heartbeat, and says whether owner still holds the prefill.
-  readonly heartbeatPrefill: (input: Ownership) => Effect.Effect<boolean, DbQueryFailed | DbRowInvalid>;
+  readonly heartbeatPrefill: (owner: string) => Effect.Effect<boolean, DbQueryFailed | DbRowInvalid>;
+  // Adds repos to a manifest's final failures.
+  readonly recordFailed: (input: {
+    readonly id: BatchId;
+    readonly repoIds: ReadonlyArray<RepoId>;
+  }) => Effect.Effect<void, DbQueryFailed>;
   readonly releasePrefill: (owner: string) => Effect.Effect<void, DbQueryFailed>;
 }
+
+// The repos an open fallback of a manifest lists, which that fallback owes rather than the manifest.
+const openChildListing = (parent: BatchId, repo: ReturnType<typeof sql>) =>
+  sql`select 1 from extraction_batches child
+    where child.retry_of = ${parent} and child.state in ('prepared', 'submitted') and ${repo} = any(child.repo_ids)`;
 
 const decodeManifests = rowsDecoder(Manifest);
 const decodeIds = rowsDecoder(Schema.Struct({ id: RepoId }));
@@ -138,6 +149,7 @@ export const make = Effect.gen(function* () {
         sql`with held as (
             update repos set enrich_retry_at = ${timeParam(until)}
             where id in (${lockedRepoIds(manifest.repoIds)}) and enrich_retry_at = ${timeParam(manifest.leaseUntil)}
+              and not exists (${openChildListing(manifest.id, sql`repos.id`)})
             returning id
           ),
           moved as (
@@ -163,6 +175,7 @@ export const make = Effect.gen(function* () {
             and not exists (
               select 1 from repos r
               where r.id = any(extraction_batches.repo_ids) and r.enrich_retry_at = extraction_batches.lease_until
+                and not exists (${openChildListing(manifest.id, sql`r.id`)})
             )
           returning id`,
       ).pipe(Effect.map((rows) => rows.length > 0)),
@@ -183,22 +196,31 @@ export const make = Effect.gen(function* () {
           )
           select count(*)::int as count from dropped`,
       ).pipe(Effect.map((rows) => (rows[0]?.count ?? 0) > 0)),
-    claimPrefill: ({ owner, now, stale }) =>
+    claimPrefill: ({ owner, stale }) =>
       query(
         "knowledge.claimPrefill",
         decodeOwners,
-        sql`insert into prefill_owner (singleton, owner, heartbeat_at) values (true, ${owner}::uuid, ${timeParam(now)})
+        sql`insert into prefill_owner (singleton, owner, heartbeat_at) values (true, ${owner}::uuid, now())
           on conflict (singleton) do update set owner = excluded.owner, heartbeat_at = excluded.heartbeat_at
-          where prefill_owner.owner = excluded.owner or prefill_owner.heartbeat_at < ${timeParam(stale)}
+          where prefill_owner.owner = excluded.owner
+            or prefill_owner.heartbeat_at < now() - ${Duration.toMillis(stale)} * interval '1 millisecond'
           returning owner::text as owner`,
       ).pipe(Effect.map((rows) => rows.length > 0)),
-    heartbeatPrefill: ({ owner, now }) =>
+    heartbeatPrefill: (owner) =>
       query(
         "knowledge.heartbeatPrefill",
         decodeOwners,
-        sql`update prefill_owner set heartbeat_at = ${timeParam(now)} where owner = ${owner}::uuid
-          returning owner::text as owner`,
+        sql`update prefill_owner set heartbeat_at = now() where owner = ${owner}::uuid returning owner::text as owner`,
       ).pipe(Effect.map((rows) => rows.length > 0)),
+    recordFailed: ({ id, repoIds }) =>
+      repoIds.length === 0
+        ? Effect.void
+        : execute(
+            "knowledge.recordFailed",
+            sql`update extraction_batches
+              set failed_repo_ids = array(select distinct unnest(failed_repo_ids || ${sql.param([...repoIds])}::bigint[]))
+              where id = ${id}`,
+          ),
     releasePrefill: (owner) =>
       execute("knowledge.releasePrefill", sql`delete from prefill_owner where owner = ${owner}::uuid`),
   } satisfies Queries;

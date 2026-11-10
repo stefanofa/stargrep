@@ -65,6 +65,7 @@ export const Operation = Schema.Literals([
   "knowledge.claimPrefill",
   "knowledge.heartbeatPrefill",
   "knowledge.releasePrefill",
+  "knowledge.recordFailed",
   "knowledge.mint",
   "knowledge.labels",
   "knowledge.project",
