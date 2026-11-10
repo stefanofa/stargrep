@@ -399,7 +399,7 @@ export const apiUsage = pgTable(
 
 // Structured repo knowledge (docs/knowledge.md). Receipts and decisions are the sources of truth. Subjects, their
 // labels, and the derived maps are the vocabulary, and repo_facets with the closed arrays on repos is the projection.
-// queries/knowledge.ts is the only writer. The knowledge migration adds the triggers, views, and functions that read
+// queries/knowledge/ is the only writer. The knowledge migration adds the triggers, views, and functions that read
 // and guard these tables.
 
 export const receiptSource = pgEnum("receipt_source", ["model", "stand-in", "legacy"]);

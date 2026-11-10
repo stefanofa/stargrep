@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import type { RepoId } from "@stargrep/github/schemas";
 import { formatAtom } from "@stargrep/knowledge/atom";
+import type { Change } from "@stargrep/knowledge/curation";
 import type { SubjectId } from "@stargrep/knowledge/ids";
 import { type ClosedDim, closed, Dim, defaultRoles, type RoleId, roleIds, roles } from "@stargrep/knowledge/registry";
 import * as it from "@stargrep/testing";
@@ -88,7 +89,7 @@ const membershipCases = (test: { readonly effect: it.Tester<Services> }) => {
             });
           }
         }
-        const edges: Array<Db.VocabularyChange["edgesAdded"][number]> = [];
+        const edges: Array<Change["edgesAdded"][number]> = [];
         const decided = revision((yield* db.knowledge.revision) + 1);
         for (const [descendant, first] of parent) {
           let { parent: ancestor, via } = first;
