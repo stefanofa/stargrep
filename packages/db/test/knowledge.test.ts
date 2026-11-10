@@ -26,6 +26,7 @@ import {
   membersMatching,
   newSubjectId,
   nextRevision,
+  noChange,
   projectAtoms,
   receiptId,
   revision,
@@ -185,7 +186,9 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
           [tauri],
         ),
       ).toEqual([{ id: builtWith }]);
-      expect(yield* (yield* Db.Db).knowledge.invalidate({ keys: [], subjects: [tauri] })).toBe(2);
+      expect(
+        yield* database.query("select knowledge_invalidate('{}'::text[], array[$1]::bigint[]) as count", [tauri]),
+      ).toEqual([{ count: 2 }]);
     }),
   );
 
@@ -760,7 +763,7 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
         .decide({
           expected: (head - 1) as typeof head,
           rows: [{ kind: "status", payload: { _tag: "Status" }, undoes: null, actor: "test", reason: "test" }],
-          change: Db.noChange,
+          change: noChange,
         })
         .pipe(Effect.flip);
       expect(stale).toMatchObject({ _tag: "StaleRevision", expected: head - 1, head });

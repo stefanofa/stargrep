@@ -129,24 +129,6 @@ export interface Invalidation {
   readonly subjects: ReadonlyArray<SubjectId>;
 }
 
-// The derived rows a run of decisions changes, as the fold computes them against the log at the expected revision.
-// Every revision is explicit: a new row names the decision that owns it, which an undo may name instead of itself.
-// Only decision rows change. Projection's minted labels stay.
-export type VocabularyChange = Change;
-
-export const noChange: VocabularyChange = {
-  created: [],
-  presented: [],
-  labelsAdded: [],
-  labelsRemoved: [],
-  merged: [],
-  unmerged: [],
-  edgesAdded: [],
-  edgesRemoved: [],
-  refresh: [],
-  invalidate: { keys: [], subjects: [], repos: [] },
-};
-
 export interface DecisionRow {
   readonly kind: DecisionKind;
   // The decision as the Decision schema in packages/knowledge encodes it, plus created, the subject a Create or Split
@@ -161,7 +143,7 @@ export interface Decision {
   // The head revision the caller computed the change against. The rows take the revisions after it, in order.
   readonly expected: Revision;
   readonly rows: ReadonlyArray<DecisionRow>;
-  readonly change: VocabularyChange;
+  readonly change: Change;
 }
 
 export interface Decided {
@@ -223,7 +205,6 @@ export interface Queries {
   // The rows projection replays for its rules: merges, splits, corrections, and undos.
   readonly rules: Effect.Effect<ReadonlyArray<Decisions.StoredDecision>, DbQueryFailed | DbRowInvalid>;
   readonly stale: (limit: number) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
-  readonly invalidate: (invalidation: Invalidation) => Effect.Effect<number, DbQueryFailed | DbRowInvalid>;
   // The nightly count behind listing. Returns how many subjects changed.
   readonly count: Effect.Effect<number, DbQueryFailed | DbRowInvalid>;
   // The nightly count of each closed value's bare key, which lookups read. Returns how many rows changed.
@@ -822,12 +803,6 @@ export const make = Effect.gen(function* () {
         decodeIds,
         sql`select repo_id::float8 as id from repo_facets where stale order by repo_id limit ${limit}`,
       ).pipe(Effect.map((rows) => rows.map((row) => row.id))),
-    invalidate: (invalidation) =>
-      withTransaction(
-        execute("knowledge.invalidate", exclusiveLock).pipe(
-          Effect.andThen(invalidated("knowledge.invalidate", invalidation)),
-        ),
-      ),
     count: query("knowledge.count", decodeCount, sql`select knowledge_refresh_counts() as count`).pipe(
       Effect.flatMap(only),
       Effect.map((row) => row.count),

@@ -114,12 +114,16 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 3
         const db = yield* Db.Db;
         const transactions = yield* Db.Transactions;
         const ids = [yield* seedRepo({ id: 75_501 }), yield* seedRepo({ id: 75_502 })];
+        const origin = yield* seedRepo({ id: 75_503 });
+        yield* db.knowledge.capture([answer(origin, receiptId(75_503))]);
         const held = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
         const minting = yield* Effect.forkChild(
           transactions.withTransaction(
             Effect.gen(function* () {
-              yield* db.knowledge.invalidate({ keys: [key("capture lock probe")], subjects: [] });
+              yield* db.knowledge.mint([
+                { key: key("capture lock probe"), label: "capture lock probe", receiptId: receiptId(75_503) },
+              ]);
               yield* Deferred.succeed(held, undefined);
               yield* Deferred.await(release);
             }),

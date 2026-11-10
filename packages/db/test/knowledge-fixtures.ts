@@ -1,6 +1,7 @@
 import type { RepoId } from "@stargrep/github/schemas";
 import type { FacetRef } from "@stargrep/knowledge/atom";
 import type { Claim } from "@stargrep/knowledge/claims";
+import type { Change } from "@stargrep/knowledge/curation";
 import { BatchId, InputHash, ReceiptId, Revision, SubjectId } from "@stargrep/knowledge/ids";
 import { type LabelKey, labelKey } from "@stargrep/knowledge/label-key";
 import type { RoleId } from "@stargrep/knowledge/registry";
@@ -21,6 +22,19 @@ export const key = (term: string): LabelKey => {
   const result = labelKey(term);
   if (result === null) throw new Error(`no label key for ${term}`);
   return result;
+};
+
+export const noChange: Change = {
+  created: [],
+  presented: [],
+  labelsAdded: [],
+  labelsRemoved: [],
+  merged: [],
+  unmerged: [],
+  edgesAdded: [],
+  edgesRemoved: [],
+  refresh: [],
+  invalidate: { keys: [], subjects: [], repos: [] },
 };
 
 export const atom = (role: RoleId, value: FacetRef): Db.StoredAtom => ({ role, value });
@@ -137,12 +151,11 @@ export const nextRevision = Effect.gen(function* () {
 
 // A change written by hand: created rows default to no link and the decision's own revision, and the invalidation to
 // no corrected repo.
-export interface HandChange extends Partial<Omit<Db.VocabularyChange, "created" | "invalidate">> {
+export interface HandChange extends Partial<Omit<Change, "created" | "invalidate">> {
   readonly created?: ReadonlyArray<
-    Omit<Db.VocabularyChange["created"][number], "repoId" | "revision"> &
-      Partial<Db.VocabularyChange["created"][number]>
+    Omit<Change["created"][number], "repoId" | "revision"> & Partial<Change["created"][number]>
   >;
-  readonly invalidate?: Omit<Db.VocabularyChange["invalidate"], "repos"> & Partial<Db.VocabularyChange["invalidate"]>;
+  readonly invalidate?: Omit<Change["invalidate"], "repos"> & Partial<Change["invalidate"]>;
 }
 
 // A decision against the current head. Curation computes the subjects whose matches to rebuild, and here they are every
@@ -155,11 +168,11 @@ export const decide = Effect.fn("decide")(function* (
   const db = yield* Db.Db;
   const expected = yield* db.knowledge.revision;
   const own = revision(expected + 1);
-  const change: Db.VocabularyChange = {
-    ...Db.noChange,
+  const change: Change = {
+    ...noChange,
     ...hand,
     created: (hand.created ?? []).map((row) => ({ repoId: null, revision: own, ...row })),
-    invalidate: { repos: [], ...(hand.invalidate ?? Db.noChange.invalidate) },
+    invalidate: { repos: [], ...(hand.invalidate ?? noChange.invalidate) },
   };
   const refresh = new Set<SubjectId>([
     ...change.created.map((row) => row.id),

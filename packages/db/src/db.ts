@@ -35,7 +35,6 @@ export type {
   Decided,
   Decision,
   DecisionRow,
-  Invalidation,
   Label,
   LockedRepo,
   MintClaim,
@@ -47,9 +46,7 @@ export type {
   StoredAtom,
   SubjectInfo,
   Variant,
-  VocabularyChange,
 } from "./queries/knowledge.ts";
-export { noChange } from "./queries/knowledge.ts";
 export type { Reservation, Reserved } from "./queries/rate-lines.ts";
 export { CallerKey, LineKey } from "./queries/rate-lines.ts";
 export type {
