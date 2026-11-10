@@ -164,7 +164,17 @@ bun run --cwd packages/core enrich repo effect-ts/effect
 bun run --cwd packages/core enrich stars <login> --limit 200
 ```
 
-The first command prints the summary, kind, and embedding size, and prints `unchanged` when you run it again. The second batch-enriches an account's newest stars through one AI Gateway batch job, which can take many minutes. Stop it and run it again, and it waits for the same job. `bun run --cwd packages/core bench <login>` times 20 single enrichments, each followed by an unchanged run, and splits each enrichment into model, embedding, GitHub, and local time.
+The first command prints the summary, kind, and embedding size, and prints `unchanged` when you run it again. The second batch-enriches an account's newest stars through one AI Gateway batch job, which can take many minutes. A rerun inside the batch's 24-hour lease skips the repos the first run holds, so use `prefill` for a bulk run that must survive being stopped. `bun run --cwd packages/core bench <login>` times 20 single enrichments, each followed by an unchanged run, and splits each enrichment into model, embedding, GitHub, and local time.
+
+## Prefill repos
+
+`bun run --cwd packages/core prefill --ids <file>` summarizes every repo in a list through resumable provider batches, as "The prefill" in `docs/knowledge.md` explains. The list holds one `<numeric id> <owner>/<name>` per line. Stop it at any point and run it again, and it resumes the batches the first run sent without paying for them twice. `--out report.json` writes the run's outcomes, tokens, and statement counts.
+
+```sh
+bun run --cwd packages/core prefill --ids prefill.txt --adapter batch --chunk 250
+```
+
+With `AI_TEXT_PROVIDER=fake` and `AI_EMBEDDINGS_PROVIDER=fake` it pays for nothing: the stand-in answers, and its batches are files under `.cache/stand-in-batches`, so a killed run resumes as it would on the Gateway. `prefill-check` runs a kill, a resume, and a rerun beside the real sweep and consumer on a throwaway database. Never point either at a stage's branch with the stand-in models.
 
 ## Search
 
