@@ -36,8 +36,17 @@ const Report = Schema.Struct({
   elapsedMillis: Schema.Int,
   outcomes: Schema.Array(Schema.Tuple([Schema.Int, Schema.String])),
   unresolved: Schema.Array(Schema.Struct({ id: Schema.Int, reason: Schema.String })),
-  manifests: Schema.Struct({ resumed: Schema.Int, dropped: Schema.Int, created: Schema.Int, closed: Schema.Int }),
-  directRepos: Schema.Array(Schema.Int),
+  // Whether the run ended on its own, or was stopped and wrote what it had done so far.
+  finished: Schema.Boolean,
+  manifests: Schema.Struct({
+    resumed: Schema.Int,
+    dropped: Schema.Int,
+    created: Schema.Int,
+    closed: Schema.Int,
+    fallbacks: Schema.Int,
+    stuck: Schema.Array(Schema.String),
+  }),
+  retriedRepos: Schema.Array(Schema.Int),
   repaid: Schema.Int,
   captures: Schema.Array(Schema.Struct({ items: Schema.Int, seconds: Schema.Finite })),
   usage: Schema.Array(

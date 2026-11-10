@@ -168,6 +168,26 @@ export const statementCounts = () =>
     .filter(([name]) => name.startsWith("Db.") && name !== "Db.transaction")
     .toSorted(([a], [b]) => a.localeCompare(b));
 
+// Where a prefill keeps its READMEs and request objects. A Gateway batch is paid for, and only its stored request can
+// resume it, so a Gateway run needs the stage's R2 bucket and refuses to start on a local directory another checkout
+// or machine would not see. The stand-in and the CLI have nothing to lose and use the local directory. A Gateway batch
+// run also needs a provider with a batch API.
+export const requestStore = (
+  adapter: "batch" | "cli",
+  provider: string,
+  bucket: Option.Option<string>,
+): Result.Result<"r2" | "local", string> => {
+  if (adapter === "batch" && provider === "claude-code") {
+    return Result.fail(
+      "--adapter batch needs AI_TEXT_PROVIDER gateway or fake, since the Claude Code CLI has no batch API",
+    );
+  }
+  if (Option.isSome(bucket)) return Result.succeed("r2");
+  return adapter === "batch" && provider === "gateway"
+    ? Result.fail("a Gateway batch run keeps its paid requests in R2, so set PREFILL_R2_BUCKET and the R2_* keys")
+    : Result.succeed("local");
+};
+
 // READMEs and prefill request objects: the stage's R2 bucket through its S3 API when PREFILL_R2_BUCKET names one, and a
 // local directory otherwise. The Worker reads READMEs from the same keys.
 export const layerBlobs = Layer.unwrap(
@@ -260,14 +280,16 @@ export const layerStandInBatches = (dir: string) =>
           const text = yield* store.get(batchId).pipe(Effect.mapError(unreadable));
           if (text === undefined) return yield* unreadable();
           const batch = yield* Schema.decodeEffect(StandInBatch)(text).pipe(Effect.mapError(unreadable));
-          return Array.from({ length: size }, (_, index) =>
-            index < batch.outputs.length
-              ? Result.succeed({
-                  output: batch.outputs[index],
-                  usage: { inputTokens: undefined, outputTokens: undefined },
-                })
-              : undefined,
-          );
+          return Batches.Collected.Answered({
+            items: Array.from({ length: size }, (_, index) =>
+              index < batch.outputs.length
+                ? Result.succeed({
+                    output: batch.outputs[index],
+                    usage: { inputTokens: undefined, outputTokens: undefined },
+                  })
+                : undefined,
+            ),
+          });
         }),
       });
     }),

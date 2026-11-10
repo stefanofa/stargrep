@@ -156,9 +156,11 @@ export const reproject = Effect.fn("RepoKnowledge.reproject")(function* (
 });
 
 // A summary answer for one repo, with the README and the prompt inputs it describes, and the enrichment lease its
-// attempt holds, if any. Capture clears only that lease. A prefill answer names the manifest of the batch it came from.
+// attempt holds, if any. Capture clears only that lease. A prefill answer names the manifest of the batch it came from,
+// and the recipe that batch was asked under, which a batch resumed after a recipe bump keeps.
 export interface Paid {
   readonly batchId?: BatchId;
+  readonly recipe?: number;
   readonly repoId: RepoId;
   readonly readmeOid: ObjectId | null;
   readonly inputHash: InputHash;
@@ -203,7 +205,7 @@ export const capture = Effect.fn("RepoKnowledge.capture")(function* (answers: Re
           source: paid.source,
           inputHash: paid.inputHash,
           readmeOid: paid.readmeOid,
-          recipe: summaryRecipe,
+          recipe: paid.recipe ?? summaryRecipe,
           model: paid.model,
           batchId: paid.batchId ?? null,
           summary: paid.answer.summary,
