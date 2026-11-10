@@ -107,7 +107,7 @@ Search reads two rules as functions. `knowledge_key_meanings(keys)` gives each l
 - **Matching atoms** come from `matching_atoms`. The library and `stars` pages carry each repo's as `atoms`, with one `labels` dictionary per response. They are bare keys, built_with's `with:` keys, and comparison keys, never role-qualified keys such as `for:subject:812`, and a subject key only once the subject is listed. So counting them gives the number of repos each chip's filter returns, and no chip shows a concept one repo names.
 - **`lookupFacets`** finds atoms whose label key starts with the query's. Closed values come from the registry, and their counts from `atom_stats`. Subjects are public, listed, and not rejected, resolved to their merge survivor, with their `repo_count`. Both counts are nightly, so a lookup reads no repos. The most-held come first.
 
-`kind` on the API is the first of `kinds`, the primary kind atom. No code reads or writes the legacy `repos.kind` column, and a lint rule keeps it that way until a migration drops the column.
+`kind` on the API is the first of `kinds`, the primary kind atom. No code reads or writes the legacy `repos.kind` column. The Biome rule `packages/config/no-repos-kind.grit` keeps it that way until a migration drops the column. It flags `repos.kind` and `r.kind`, SQL that inserts, updates, or selects a bare `kind` on `repos`, and a Drizzle `insert(repos)` or `select().from(repos)` with no column list, which names every column. `bun run check` runs it against `packages/config/fixtures/no-repos-kind`.
 
 ## Decoding an answer
 

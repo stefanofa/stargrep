@@ -90,6 +90,10 @@
     {
       "includes": ["**", "!packages/telemetry/**"],
       "plugins": ["./packages/config/no-raw-tracer-import.grit", "./packages/config/no-raw-tracer-call.grit"]
+    },
+    {
+      "includes": ["**"],
+      "plugins": ["./packages/config/no-repos-kind.grit"]
     }
   ]
 }
