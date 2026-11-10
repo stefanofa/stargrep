@@ -854,6 +854,24 @@ describe("the demo answer cache", () => {
     }),
   );
 
+  it.effect("keeps serving a stale answer when its refresh fails with an outage", () =>
+    Effect.gen(function* () {
+      const demo = demoSearch();
+      const query = { scope: { kind: "stars" as const, login: "ada" }, q: "chat apps", filter: "lang:rust" };
+      expect((yield* demo.call(query)).cache).toBe("miss");
+      yield* TestClock.adjust("6 minutes");
+      const down = Effect.succeed(
+        services({
+          search: () =>
+            Effect.fail(new DbQueryFailed({ operation: "search.hybrid", reason: "transport", sqlState: null })),
+        }),
+      );
+      expect((yield* demo.call(query, down)).cache).toBe("stale");
+      expect(demo.memory.entries.size).toBe(1);
+      expect((yield* demo.call(query, down)).cache).toBe("stale");
+    }),
+  );
+
   it.effect("never stores an answer the planner could not plan", () =>
     Effect.gen(function* () {
       const demo = demoSearch("fallback");

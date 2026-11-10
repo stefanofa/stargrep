@@ -310,8 +310,21 @@ const atomCases = (test: { readonly effect: it.Tester<Services> }) => {
       expect(labelled.resolution).toEqual({ stated: [], labels: { [reactjs]: "React" }, unavailable: [] });
 
       const unknown = 999_999_999 as SubjectId;
-      const refused = yield* search(owner, { explicit: selection(`subject:${noise}|subject:${unknown} kind:app`) });
-      expect([refused.ids, refused.resolution.unavailable]).toEqual([[], [noise, unknown]]);
+      const database = yield* TestDatabase.TestDatabase;
+      yield* database.query(
+        `insert into "user" (id, name, email) values ('okapi-owner', 'Okapi', 'okapi@example.test')`,
+      );
+      const [mine] = (yield* database.query(
+        "insert into subjects (owner_id, label, repo_count) values ('okapi-owner', 'okapi notes', 5) returning id::float8 as id",
+      )) as ReadonlyArray<{ readonly id: number }>;
+      const ownSubject = mine?.id as SubjectId;
+      const refused = yield* search(owner, {
+        explicit: selection(`subject:${noise}|subject:${unknown}|subject:${ownSubject} kind:app`),
+      });
+      expect([refused.ids, refused.resolution.unavailable]).toEqual([
+        [],
+        [noise, ownSubject, unknown].sort((a, b) => a - b),
+      ]);
     }),
   );
 };
