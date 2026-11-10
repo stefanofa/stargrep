@@ -107,7 +107,7 @@ Search reads two rules as functions. `knowledge_key_meanings(keys)` gives each l
 - **Matching atoms** come from `matching_atoms`. The library and `stars` pages carry each repo's as `atoms`, with one `labels` dictionary per response. They are bare keys, built_with's `with:` keys, and comparison keys, never role-qualified keys such as `for:subject:812`, and a subject key only once the subject is listed. So counting them gives the number of repos each chip's filter returns, and no chip shows a concept one repo names.
 - **`lookupFacets`** finds atoms whose label key starts with the query's. Closed values come from the registry, and their counts from `atom_stats`. Subjects are public, listed, and not rejected, resolved to their merge survivor, with their `repo_count`. Both counts are nightly, so a lookup reads no repos. The most-held come first.
 
-`kind` on the API is the first of `kinds`, the primary kind atom. No running code reads `repos.kind`. Capture still writes it, and the legacy backfill script still selects it to build legacy receipts.
+`kind` on the API is the first of `kinds`, the primary kind atom. No running code reads `repos.kind`. Capture still writes it.
 
 ## Decoding an answer
 
@@ -210,13 +210,7 @@ The queue proposes merges from two channels. One is spelling variants, keys that
 
 ## Legacy receipts
 
-Summaries saved before receipts existed are kept as `legacy` receipts, so projection reads the kind that search reads today, with no model call. `bun run --cwd packages/core legacy-receipts` writes them. `DATABASE_URL` names the database.
-
-- `legacyFacets` in `claims.ts` turns a summary's kind into the receipt's only claim, `is`, decoded like a model's list. The kind `other` gives no claim, so the repo projects to no kind. Only the `is` lane is answered, and every other lane is `missing`.
-- Keywords stay text, in the receipt's `keywords` column as in `repos.keywords`, and mint no subjects. They mix categories, products, platforms, and dependencies, and they are lowercase, so as subjects they would fix the identity and the label of terms the summary model writes itself.
-- The receipt's input hash joins two things. The first is the hash of the README object ID the summary describes and the repo's facts at the time of the run, the closest record of the prompt that is left. The second is the summary, keywords, and kind. One README can have been summarized more than once, so a different answer gets its own receipt. Its model is `legacy`, and its recipe is the summary's.
-- The backfill walks live repos with a summary in ID order, 128 to a page, and each page is one transaction. It takes the shared knowledge lock, locks the page's `repos` rows `for no key update` in ID order, inserts the receipts, and points each repo at its receipt. The `receipt_id` trigger then marks the repo stale, and the sweep projects it. The shared lock keeps a mint's invalidation from marking `repo_facets` rows while the page's trigger marks them too.
-- A repo whose legacy receipt already holds its summary, keywords, and recipe is skipped, so a rerun writes nothing. The summary model wrote the kind with them, so it never changes alone. A run that dies loses only its open page, and the next run starts again from the lowest ID. A repo summarized again since the last run gets a new receipt, or the earlier receipt of that same summary when its README went back to an earlier version. Older receipts stay as history. A repo with a model receipt is never touched.
+Summaries saved before receipts existed are kept as `legacy` receipts. A one-off backfill made them with no model call, and it has since been deleted. Each one holds the old summary's kind as its only claim, `is`, and only its `is` lane is answered. The kind `other` gave no claim, so such a repo projects to no kind. Its keywords stay text and mint no subjects. Its model is `legacy`, and its recipe is the old summary's. The next answer for the repo gets its own receipt, and the legacy one stays as history.
 
 ## The sweep and the nightly count
 

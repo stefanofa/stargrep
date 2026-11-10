@@ -11,13 +11,6 @@ export interface PromptFacts {
   readonly language: string | null;
 }
 
-// What a summary from before receipts said: the columns a legacy receipt copies.
-export interface LegacyAnswer {
-  readonly summary: string;
-  readonly keywords: ReadonlyArray<string>;
-  readonly kind: string | null;
-}
-
 // Bump it when the prompt starts reading these facts differently, such as a new README cleaning step, so every
 // repo's hash moves and no answer to the old input counts as an answer to the new one.
 export const inputVersion = 1;
@@ -32,8 +25,3 @@ const digestOf = (value: ReadonlyArray<unknown>): Effect.Effect<InputHash, never
 
 export const inputHash = (facts: PromptFacts): Effect.Effect<InputHash, never, Digest.Digest> =>
   digestOf([inputVersion, facts.readmeOid, facts.fullName, facts.description, facts.topics, facts.language]);
-
-// The hash a legacy receipt is kept under. One README can have been summarized more than once, such as after it went
-// back to an earlier version, so it joins the input hash with the answer, and a different answer gets its own receipt.
-export const legacyHash = (facts: PromptFacts, answer: LegacyAnswer): Effect.Effect<InputHash, never, Digest.Digest> =>
-  Effect.flatMap(inputHash(facts), (input) => digestOf([input, answer.summary, answer.keywords, answer.kind]));
