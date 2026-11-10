@@ -40,6 +40,11 @@ const MetricFamily = Schema.Literals([
 ]);
 export const MetricId = Schema.TemplateLiteral([MetricFamily, Schema.Literals(["", "_30d", "_90d", "_growth_90d"])]);
 
+// A filter compiles to one predicate per atom inside the search statement, so its size is bounded like the groups the
+// query's own words can make.
+export const maxFilterGroups = 8;
+export const maxFilterAtoms = 8;
+
 export const SearchInput = Schema.Struct({
   q: Schema.String.check(Schema.isPattern(/\S/), Schema.isMaxLength(500)).annotate({
     description: "What to look for, in plain language, such as 'rust library for terminal dashboards'.",
@@ -51,9 +56,14 @@ export const SearchInput = Schema.Struct({
     .annotate({ description: "How many repos to return, at most. 20 when left out." })
     .pipe(Schema.withDecodingDefaultKey(Effect.succeed(20))),
   filter: Schema.optionalKey(
-    SelectionKey.annotate({
-      description:
-        "Atoms every result must match, such as 'lang:rust subject:4127 subject:812|subject:9031 -kind:list'. Spaces separate groups that must all match, '|' separates atoms of which one must match, and a leading '-' excludes a group. lookupFacets finds the atom for a name. A subject that does not exist, is private, or was rejected fails the search with BAD_REQUEST.",
+    SelectionKey.check(
+      Schema.makeFilter(
+        (selection) =>
+          selection.all.length <= maxFilterGroups && selection.all.every((group) => group.any.length <= maxFilterAtoms),
+        { expected: `at most ${maxFilterGroups} groups of at most ${maxFilterAtoms} atoms each` },
+      ),
+    ).annotate({
+      description: `Atoms every result must match, such as 'lang:rust subject:4127 subject:812|subject:9031 -kind:list'. Spaces separate groups that must all match, '|' separates atoms of which one must match, and a leading '-' excludes a group. At most ${maxFilterGroups} groups of at most ${maxFilterAtoms} atoms each. lookupFacets finds the atom for a name. A subject that does not exist, is private, or was rejected fails the search with BAD_REQUEST.`,
     }),
   ),
 });
@@ -324,8 +334,7 @@ export const FacetMatches = Schema.Struct({
       atom: AtomText,
       label: Schema.String,
       repos: Schema.Int.annotate({
-        description:
-          "How many repos the atom's filter matches across Stargrep. A subject's count is from the last nightly count.",
+        description: "How many repos the atom's filter matches across Stargrep, from the last nightly count.",
       }),
     }),
   ).annotate({ description: "Most-held first." }),
@@ -439,10 +448,11 @@ export const contract = {
     .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
     .input(StarsInput)
     .output(PublicStars),
+  // The name goes in the body, as search's query does, because it is what someone typed.
   lookupFacets: withServices
     .errors(Struct.pick(errors, ["TOO_MANY_REQUESTS"]))
     .route({
-      method: "GET",
+      method: "POST",
       path: "/facets",
       operationId: "lookupFacets",
       summary: "Find atoms by name",

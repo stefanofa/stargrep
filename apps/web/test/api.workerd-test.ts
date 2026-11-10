@@ -261,8 +261,9 @@ describe("when the database is unreachable", () => {
 });
 
 describe("lookupFacets", () => {
-  it("answers a GET with the name in the query string, and the same as an MCP tool", async () => {
-    const viaRest = await rest("/facets?q=postg&limit=1");
+  it("takes the name in a POST body, never a URL, and answers the same as an MCP tool", async () => {
+    expect((await call("/api/facets?q=postg")).status).toBe(404);
+    const viaRest = await rest("/facets", post({ q: "postg", limit: 1 }));
     expect([viaRest.status, viaRest.body]).toEqual([
       200,
       { facets: [{ atom: "subject:812", label: "PostgreSQL", repos: 1840 }] },

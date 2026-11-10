@@ -15,7 +15,7 @@ export const answerUrl = (origin: string, key: string) => `${origin}/answers/${v
 
 const storedAtHeader = "x-stored-at";
 
-const cacheFailed = (operation: "get" | "set") => (cause: unknown) =>
+const cacheFailed = (operation: "get" | "set" | "delete") => (cause: unknown) =>
   Effect.logWarning("Answer cache failed", { operation, cause: String(cause) });
 
 export const makeAnswerCache =
@@ -46,5 +46,9 @@ export const makeAnswerCache =
             ),
           ),
         ).pipe(Effect.catch((error) => cacheFailed("set")(error.cause))),
+      delete: (key) =>
+        Effect.tryPromise(async () => {
+          await (await cache()).delete(answerUrl(origin, key));
+        }).pipe(Effect.catch((error) => cacheFailed("delete")(error.cause))),
     };
   };

@@ -15,18 +15,21 @@ import * as AnswerCache from "./answer-cache.ts";
 const Answer = Schema.Struct({ value: Schema.Finite, planned: Schema.Boolean });
 type Answer = typeof Answer.Type;
 
+class Refused extends Schema.TaggedError<Refused, { readonly brand: unique symbol }>()("Refused", {}) {}
+class Gone extends Schema.TaggedError<Gone, { readonly brand: unique symbol }>()("Gone", {}) {}
+class Outage extends Schema.TaggedError<Outage, { readonly brand: unique symbol }>()("Outage", {}) {}
+
 const policy: AnswerCache.AnswerPolicy<Answer> = {
   procedure: "search",
   json: Schema.fromJsonString(Answer),
   fresh: Duration.minutes(5),
   stale: Duration.days(1),
   keep: (answer) => answer.planned,
+  refused: Schema.is(Gone),
 };
 
-class Refused extends Schema.TaggedError<Refused, { readonly brand: unique symbol }>()("Refused", {}) {}
-
 // Each refresh is held until the test runs it, so a test can look at what happens while one is in flight.
-const harness = (planned: () => boolean = () => true) => {
+const harness = (planned: () => boolean = () => true, failure: () => Gone | Outage | null = () => null) => {
   const memory = AnswerCache.memory();
   const counts = { computed: 0, builds: 0, admitted: 0 };
   const refreshes: Array<Effect.Effect<void>> = [];
@@ -51,7 +54,11 @@ const harness = (planned: () => boolean = () => true) => {
         return yield* next();
       }),
     )
-    .handler(() => ({ value: ++counts.computed, planned: planned() }));
+    .handler(() => {
+      const failed = failure();
+      if (failed !== null) throw failed;
+      return { value: ++counts.computed, planned: planned() };
+    });
   const answer = (key: string, admission: Effect.Effect<void, Refused> = Effect.void, signal?: AbortSignal) =>
     Effect.gen(function* () {
       const context: CacheContext = {
@@ -66,7 +73,7 @@ const harness = (planned: () => boolean = () => true) => {
       const found = yield* Effect.tryPromise({
         try: () => client.compute(key, { signal }),
         catch: (error) => {
-          if (Schema.is(Refused)(error)) return error;
+          if (Schema.is(Refused)(error) || Schema.is(Gone)(error)) return error;
           throw error;
         },
       });
@@ -165,6 +172,32 @@ describe("answer cache middleware", () => {
       yield* cache.runRefreshes;
       expect(yield* cache.answer("unplanned refresh")).toEqual({ value: 3, cache: "hit" });
     }),
+  );
+
+  it.effect(
+    "deletes a stale answer whose refresh the request no longer has an answer for, and keeps it on an outage",
+    () =>
+      Effect.gen(function* () {
+        let failure: Gone | Outage | null = null;
+        const cache = harness(
+          () => true,
+          () => failure,
+        );
+        yield* cache.answer("outage");
+        yield* cache.answer("gone");
+        yield* TestClock.adjust("6 minutes");
+
+        failure = new Outage();
+        expect(yield* cache.answer("outage")).toEqual({ value: 1, cache: "stale" });
+        yield* cache.runRefreshes.pipe(Effect.ignore);
+        expect([...cache.memory.entries.keys()]).toEqual(["outage", "gone"]);
+
+        failure = new Gone();
+        expect(yield* cache.answer("gone")).toEqual({ value: 2, cache: "stale" });
+        yield* cache.runRefreshes;
+        expect([...cache.memory.entries.keys()]).toEqual(["outage"]);
+        expect((yield* cache.answer("gone").pipe(Effect.flip))._tag).toBe("Gone");
+      }),
   );
 
   it.effect("never stores an answer the policy does not keep", () =>

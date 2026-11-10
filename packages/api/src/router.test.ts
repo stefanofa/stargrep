@@ -12,10 +12,12 @@ import { BudgetShare, GitHubAccountId, Login, RepoId, RepoName, type RepoNodeId 
 import { SubjectId } from "@stargrep/knowledge/ids";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -484,7 +486,8 @@ describe("atoms", () => {
         ],
       },
     ]);
-    for (const filter of ["lang:klingon", "subject:007", "kind:"]) {
+    const nine = Array.from({ length: 9 }, (_, n) => `subject:${n + 1}`);
+    for (const filter of ["lang:klingon", "subject:007", "kind:", nine.join(" "), nine.join("|")]) {
       const error = await failure(api.search({ scope: { kind: "stars", login: "ada" }, q: "dashboards", filter }));
       expect([error.code, error.data]).toEqual([
         "BAD_REQUEST",
@@ -502,6 +505,29 @@ describe("atoms", () => {
       api.search({ scope: { kind: "stars", login: "ada" }, q: "chat", filter: "subject:77" }),
     );
     expect([error.code, error.data]).toEqual(["BAD_REQUEST", traceData]);
+  });
+
+  test("passes the filter sorted and without repeats, so applied never depends on which request filled the cache", async () => {
+    const requests: Array<Search.SearchRequest> = [];
+    const { api } = client({
+      search: (request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return searchOutcome(request);
+        }),
+    });
+    const scope = { kind: "stars", login: "ada" } as const;
+    await api.search({ scope, q: "dashboards", filter: "-kind:list lang:rust|lang:rust" });
+    await api.search({ scope, q: "dashboards", filter: "lang:rust -kind:list" });
+    expect(requests.map((request) => request.filter)).toEqual([
+      {
+        all: [
+          { negate: false, any: [{ role: "any", value: { dim: "language", id: "rust" } }] },
+          { negate: true, any: [{ role: "any", value: { dim: "kind", id: "list" } }] },
+        ],
+      },
+      requests[0]?.filter,
+    ]);
   });
 
   test("returns each result's atoms and every atom the search applied, saying which filter relaxed", async () => {
@@ -812,6 +838,22 @@ describe("the demo answer cache", () => {
     }),
   );
 
+  it.effect("forgets a filtered answer once its subject is rejected, so the next request answers bad request", () =>
+    Effect.gen(function* () {
+      const demo = demoSearch();
+      const query = { scope: { kind: "stars" as const, login: "ada" }, q: "chat apps", filter: "subject:77" };
+      expect((yield* demo.call(query)).cache).toBe("miss");
+      yield* TestClock.adjust("6 minutes");
+      const rejected = Effect.succeed(
+        services({ search: () => Effect.fail(new Search.FacetUnavailable({ subjects: [SubjectId.make(77)] })) }),
+      );
+      expect((yield* demo.call(query, rejected)).cache).toBe("stale");
+      expect(demo.memory.entries.size).toBe(0);
+      const exit = yield* Effect.exit(demo.call(query, rejected));
+      expect(Exit.isFailure(exit) ? Cause.squash(exit.cause) : exit).toMatchObject({ code: "BAD_REQUEST" });
+    }),
+  );
+
   it.effect("never stores an answer the planner could not plan", () =>
     Effect.gen(function* () {
       const demo = demoSearch("fallback");
@@ -989,6 +1031,25 @@ it.layer(TestDatabase.layerMemory({ embeddingModel: "test/model" as EmbeddingMod
         yield* TestClock.adjust("2 seconds");
         const next = yield* stars({ login: "ada", limit: 2 });
         expect([next.cache, ids(next.page)]).toEqual(["miss", [504, 503]]);
+      }),
+    );
+
+    it.effect("lists only the labels of the atoms the repos it answers hold", () =>
+      Effect.gen(function* () {
+        yield* seedStars([601, 602]);
+        const database = yield* TestDatabase.TestDatabase;
+        yield* database.query("update repos set kinds = '{cli}' where id = 602");
+        yield* database.query("update repos set kinds = '{app}' where id = 601");
+        const { stars } = yield* starsApi;
+        const newest = (yield* stars({ login: "ada", limit: 1 })).page;
+        expect(newest).toMatchObject({
+          repos: [{ id: 602, kind: "cli", atoms: ["kind:cli"] }],
+          labels: { "kind:cli": "CLI" },
+        });
+        expect(Object.keys((newest as { labels: object }).labels)).toEqual(["kind:cli"]);
+        expect((yield* stars({ login: "ada", limit: 2 })).page).toMatchObject({
+          labels: { "kind:cli": "CLI", "kind:app": "app" },
+        });
       }),
     );
 

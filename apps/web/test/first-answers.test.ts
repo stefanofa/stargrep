@@ -22,6 +22,7 @@ const storeOf = () => {
         return body === undefined ? Option.none() : Option.some({ storedAt: now(), body });
       }),
     set: (key, body) => Effect.sync(() => void kept.set(key, body)),
+    delete: (key) => Effect.sync(() => void kept.delete(key)),
   };
   const searchedAt = (key: string) => JSON.parse(kept.get(key) ?? "null")?.searchedAt as number | undefined;
   const put = (key: string, query: string, searchedMinutesAgo: number) =>

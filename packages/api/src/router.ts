@@ -116,6 +116,10 @@ type ApiResult<P extends Procedure, A> = Effect.fn.Return<
 >;
 
 const isFailureTag = Schema.is(Schema.Literals(Record.keys(wireCodes)));
+
+// A failure the API answers with a 4xx says the request itself has no answer, so a cached one must not stand in for it.
+const refusesRequest = (error: unknown) =>
+  Predicate.isObject(error) && "_tag" in error && isFailureTag(error._tag) && errorStatus[wireCodes[error._tag]] < 500;
 const wireErrors = middlewareGen<{ readonly traceId: string }>(function* ({ context, next }) {
   // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC types every downstream failure as unknown.
   return yield* next().pipe(
@@ -194,10 +198,13 @@ const libraryRepos = Effect.fnUntraced(function* (entries: ReadonlyArray<Db.Libr
   };
 });
 
+// Sorted and without repeats, so every request for the same atoms gets the answer the cache would give it.
+const filterOf = (input: typeof SearchInput.Type) => normalize(input.filter ?? everything);
+
 const searchAnswer = Effect.fnUntraced(function* (input: typeof SearchInput.Type) {
   const scope: Search.Scope = { _tag: input.scope.kind, login: input.scope.login };
   const outcome = yield* (yield* Search.Search)
-    .search({ scope, query: input.q, limit: input.limit, filter: input.filter ?? everything })
+    .search({ scope, query: input.q, limit: input.limit, filter: filterOf(input) })
     .pipe(
       // The contract only accepts stars, so this failure violates the service's contract.
       Effect.catchTags({ SearchScopeUnavailable: Effect.die }),
@@ -224,19 +231,20 @@ const searchAnswers: AnswerPolicy<typeof SearchOutput.Encoded> = {
   json: Schema.fromJsonString(Schema.toEncoded(SearchOutput)),
   ...searchWindows,
   keep: (answer) => answer.planSource !== "fallback",
+  refused: refusesRequest,
 };
 
 const encodeSelection = Schema.encodeSync(SelectionKey);
 
-// One answer per login, scope, limit, filter, and query as the plan cache keys it. The filter is normalized, so the same
-// atoms in another order share an answer, and a filtered search never receives an unfiltered answer.
+// One answer per login, scope, limit, filter, and query as the plan cache keys it, so a filtered search never receives an
+// unfiltered answer.
 const answerKey = (input: typeof SearchInput.Type) =>
   [
     "search",
     loginKey(input.scope.login),
     input.scope.kind,
     input.limit,
-    encodeSelection(normalize(input.filter ?? everything)),
+    encodeSelection(filterOf(input)),
     QueryPlan.normalize(input.q).toLowerCase(),
   ].join("/");
 
@@ -257,6 +265,7 @@ const starsAnswers: AnswerPolicy<typeof PublicStars.Encoded> = {
   fresh: Duration.seconds(10),
   stale: Duration.zero,
   keep: () => true,
+  refused: refusesRequest,
 };
 
 const encodeCursor = Schema.encodeSync(StarsCursor);
