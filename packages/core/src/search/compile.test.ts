@@ -230,6 +230,20 @@ describe("compileQuery", () => {
     ]);
   });
 
+  test("reaches through a participle after a negation, and reads apostrophe-less typos as negations", () => {
+    expect(groups("code editor not based on electron")).toEqual(["boost any[code editor]", "exclude any[electron]"]);
+    expect(groups("apps not available on windows")).toEqual(["exclude platform:windows"]);
+    expect(groups("apps that are not supported on windows")).toEqual(["boost any[are]", "exclude platform:windows"]);
+    expect(groups("code editor not compatible with vscode")).toEqual([
+      "boost any[code editor]",
+      "exclude any,built_with[vscode]",
+    ]);
+    expect(groups("a cli not written in go", { languages: ["Go"] })).toEqual(["exclude written-in:lang:go"]);
+    for (const query of ["apps that dosent run on windows", "apps that dosnt run on windows"]) {
+      expect([query, groups(query)]).toEqual([query, ["exclude runs-on:platform:windows"]]);
+    }
+  });
+
   test("applies no platform after a negation's target, and keeps a planned language there", () => {
     expect(groups("web framework without orm go", { languages: ["Go"] })).toEqual([
       "filter lang:go",

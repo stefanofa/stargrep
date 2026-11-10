@@ -163,15 +163,20 @@ const cues: ReadonlyMap<string, Cue> = new Map<string, Cue>([
     ...["not", "never", "without", "no", "except", "excluding", "non", "cannot"],
     ...["dont", "doesnt", "didnt", "isnt", "arent", "wasnt", "werent", "wont", "cant", "aint", "shant"],
     ...["shouldnt", "wouldnt", "couldnt", "hasnt", "havent", "hadnt", "mustnt", "neednt"],
+    // Common typos of "doesn't" typed without an apostrophe.
+    ...["dosent", "dosnt", "doesent", "dosen"],
   ].map((word) => [word, { _tag: "Negation" }] as const),
   ...["only", "just", "exclusively"].map((word) => [word, { _tag: "Only" }] as const),
 ]);
 
-// Verbs a negation reaches through to its target, as it reaches through a cue, so "do not support windows" excludes
-// Windows and "don't work with docker" excludes Docker.
-const negatedVerbs = new Set(
-  ["support", "use", "need", "require", "work", "depend", "rely"].flatMap((verb) => [verb, `${verb}s`]),
-);
+// Verbs and participles a negation reaches through to its target, as it reaches through a cue, so "do not support windows"
+// excludes Windows, "don't work with docker" excludes Docker, and "not based on electron" excludes Electron.
+const negatedVerbs = new Set([
+  ...["support", "use", "need", "require", "work", "depend", "rely", "run"].flatMap((verb) => [verb, `${verb}s`]),
+  ...["based", "supported", "available", "compatible", "designed", "meant", "made", "intended", "built", "dependent"],
+  ...["reliant", "relying", "depending", "running", "working", "tied", "locked", "ported", "targeted", "aimed"],
+  "written",
+]);
 // After a clause, these make it a comparison, as in "open source Slack alternative".
 const comparisonMarkers = new Set(["alternative", "alternatives"]);
 const stopPhrases = new Set(["open source", "opensource", "oss"]);
