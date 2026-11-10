@@ -141,24 +141,25 @@ export const repoColumns = {
 const RepoRef = GitHubRepo;
 export type RepoRef = typeof RepoRef.Type;
 
-const RepoFacts = Schema.Struct(
-  Struct.pick(rowFields, [
-    "id",
-    "owner",
-    "name",
-    "description",
-    "topics",
-    "language",
-    "license",
-    "homepage",
-    "createdAt",
-    "pushedAt",
-    "archived",
-    "readmeOid",
-    "ownerType",
-    "ownerAvatarUrl",
-  ]),
-);
+// The facts saveFacts writes. An insert into repos names its columns, because a bare insert(repos) names every column
+// the schema has and fails while a migration that drops one runs ahead of the Workers deploy.
+const factColumns = [
+  "id",
+  "owner",
+  "name",
+  "description",
+  "topics",
+  "language",
+  "license",
+  "homepage",
+  "createdAt",
+  "pushedAt",
+  "archived",
+  "readmeOid",
+  "ownerType",
+  "ownerAvatarUrl",
+] as const;
+const RepoFacts = Schema.Struct(Struct.pick(rowFields, factColumns));
 export type RepoFacts = typeof RepoFacts.Type;
 
 export interface RepoCounts {
@@ -334,7 +335,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
               Effect.flatMap((values) =>
                 run("repos.upsertRefs", (db) =>
                   db
-                    .insert(repos)
+                    .insert(repos, "id", "nodeId", "owner", "name")
                     .values([...values])
                     .onConflictDoUpdate({
                       target: repos.id,
@@ -368,7 +369,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           const { id: _, ...changes } = values;
           return run("repos.saveFacts", (db) =>
             db
-              .insert(repos)
+              .insert(repos, ...factColumns, "inputHash")
               .values(values)
               .onConflictDoUpdate({ target: repos.id, set: changes })
               .returning({ pending: needsEnrichment }),
