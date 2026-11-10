@@ -132,7 +132,11 @@ export const Repo = RepoColumns.pipe(
 );
 export type Repo = typeof Repo.Type;
 
-export const repoColumns = Struct.omit(getColumns(repos), internalColumns);
+// kind is the repo's primary kind atom, which projection keeps first in kinds, not the legacy kind column.
+export const repoColumns = {
+  ...Struct.omit(getColumns(repos), [...internalColumns, "kind"]),
+  kind: sql<string | null>`(${repos.kinds})[1]::text`,
+};
 
 const RepoRef = GitHubRepo;
 export type RepoRef = typeof RepoRef.Type;
