@@ -93,7 +93,7 @@
     },
     {
       "includes": ["**"],
-      "plugins": ["./packages/config/no-repos-kind.grit"]
+      "plugins": ["./packages/config/repos-named-columns.grit"]
     }
   ]
 }
