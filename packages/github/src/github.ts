@@ -31,6 +31,8 @@ import * as TokenBudget from "./token-budget.ts";
 import * as TokenGate from "./token-gate.ts";
 import * as Viewer from "./viewer.ts";
 
+export type { ArchiveRef, Unresolved } from "./repo-facts.ts";
+
 const MAX_RETRY_WAIT = Duration.minutes(1);
 const MAX_RETRIES = 3;
 
@@ -68,6 +70,15 @@ export class GitHub extends Context.Service<
     readonly starPages: (login: Login) => Stream.Stream<ReadonlyArray<Star>, GitHubError>;
     readonly stars: (login: Login) => Stream.Stream<Star, GitHubError>;
     readonly repoFacts: (ids: ReadonlyArray<RepoNodeId>) => Effect.Effect<ReadonlyArray<RepoFacts>, GitHubError>;
+    // Facts for repos an archive names by ID and full name, looked up by name in batches, kept only where GitHub's ID
+    // matches the archive's. The rest are returned as unresolved.
+    readonly resolveRepos: (refs: ReadonlyArray<Facts.ArchiveRef>) => Effect.Effect<
+      {
+        readonly facts: ReadonlyArray<RepoFacts>;
+        readonly unresolved: ReadonlyArray<Facts.Unresolved>;
+      },
+      GitHubError
+    >;
     readonly readme: (input: {
       readonly owner: Login;
       readonly name: RepoName;
@@ -216,6 +227,20 @@ const make = Effect.gen(function* () {
     return batches.flat();
   });
 
+  const resolveBatch = Effect.fn("GitHub.resolveBatch")(function* (refs: ReadonlyArray<Facts.ArchiveRef>) {
+    const query = GraphQL.operation(Facts.resolveQuery(refs.length), Facts.ResolveData);
+    const body = yield* graphql("repo-facts", query, Facts.resolveVariables(refs), Facts.isAliasError);
+    return Facts.settleResolved(refs, body);
+  });
+
+  const resolveRepos = Effect.fn("GitHub.resolveRepos")(function* (refs: ReadonlyArray<Facts.ArchiveRef>) {
+    const batches = yield* Effect.forEach(Arr.chunksOf(refs, Facts.batchSize), resolveBatch);
+    return {
+      facts: batches.flatMap((batch) => batch.facts),
+      unresolved: batches.flatMap((batch) => batch.unresolved),
+    };
+  });
+
   const readme = Effect.fn("GitHub.readme")(function* (input: {
     readonly owner: Login;
     readonly name: RepoName;
@@ -224,7 +249,7 @@ const make = Effect.gen(function* () {
     return yield* exchange("readme", Readme.request(input), (body) => Effect.succeed(body));
   });
 
-  return GitHub.of({ viewer, owner, starPages, stars, repoFacts, readme });
+  return GitHub.of({ viewer, owner, starPages, stars, repoFacts, resolveRepos, readme });
 });
 
 export const layer = Layer.effect(GitHub, make);
