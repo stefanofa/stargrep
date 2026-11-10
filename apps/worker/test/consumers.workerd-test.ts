@@ -419,6 +419,36 @@ describe("enrich-repo consumer", () => {
     expect(result.explicitAcks.toSorted()).toEqual(["m0", "m1"]);
     expect(result.retryMessages).toEqual([]);
   });
+
+  // A repo at the failure cap has no retry time, so each delivery leases it and pays for another summary.
+  it("pays once for a capped repo whose summary never decodes, not once per queue retry", async () => {
+    let calls = 0;
+    const layer = Layer.mock(EnrichRepo.EnrichRepo, {
+      enrichRepos: (ids) =>
+        Effect.sync(() => {
+          calls++;
+          return ids.map((id) =>
+            EnrichRepo.Enrichment.Failed({
+              id,
+              error: new AiOutputInvalid({ operation: "generate", model: "test", detail: "no JSON object" }),
+            }),
+          );
+        }),
+    });
+    const { queues, deadLetters } = recordingQueues();
+    const maxRetries = 5;
+    for (let attempts = 1; attempts <= maxRetries + 1; attempts++) {
+      const batch = batchOf("enrich-repo", [{ repoId: 12 }], attempts);
+      const result = await run(
+        Settle.processBatch(EnrichRepoConsumer.pipeline(layer), queues, batch.messages).pipe(
+          Effect.provide(Layer.merge(answering, UserGate.layerServerOnly)),
+        ),
+        batch,
+      );
+      if (result.retryMessages.length === 0) break;
+    }
+    expect({ calls, deadLetters }).toEqual({ calls: 1, deadLetters: [{ repoId: 12 }] });
+  });
 });
 
 describe("enrich-repo consumer in chunks", () => {
@@ -866,7 +896,10 @@ describe("settlement table", () => {
     EnrichQueueFailed: [[new EnrichQueue.EnrichQueueFailed({ messages: 3, cause: null }), "Retry"]],
     BlobStoreFailed: [[new BlobStore.BlobStoreFailed({ operation: "get", key: "readmes/x", cause: null }), "Retry"]],
     AiModelNotFound: [[new AiModelNotFound({ model: "m" }), "DeadLetter"]],
-    AiOutputInvalid: [[new AiOutputInvalid({ operation: "generate", model: "m", detail: "d" }), "Retry"]],
+    AiOutputInvalid: [
+      [new AiOutputInvalid({ operation: "generate", model: "m", detail: "d" }), "DeadLetter"],
+      [new AiOutputInvalid({ operation: "embed", model: "m", detail: "d" }), "Retry"],
+    ],
     AnswerNotSaved: [
       [new EnrichRepo.AnswerNotSaved({ reason: "query", sqlState: "22P02", refused: true }), "DeadLetter"],
       [new EnrichRepo.AnswerNotSaved({ reason: "timeout", sqlState: null, refused: false }), "DeadLetter"],

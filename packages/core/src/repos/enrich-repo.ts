@@ -66,7 +66,7 @@ export const Enrichment = Data.taggedEnum<Enrichment>();
 
 // Whether an error is the repo's own, so it counts toward the cap. An error every repo would hit, such as a missing
 // key, an outage, or a rate limit, never counts, and the sweep or the queue tries the repo again.
-const ownError = (error: EnrichRepoError): boolean =>
+export const ownError = (error: EnrichRepoError): boolean =>
   Match.valueTags(error, {
     NotFound: () => true,
     GitHubRequestFailed: isPermanent,
@@ -93,18 +93,40 @@ const ownError = (error: EnrichRepoError): boolean =>
 const settlement = (error: EnrichRepoError): "count" | "release" | "keep" =>
   error._tag === "AnswerNotSaved" && !error.refused ? "keep" : ownError(error) ? "count" : "release";
 
-const repoFailed = (outcome: Enrichment): boolean =>
+// What an attempt logs about a failed repo: the failure's tag, whether it counts toward the cap, and the error's own
+// message, which carries short facts such as a status or a model name and never README text, prompts, model output,
+// or keys.
+interface Failure {
+  readonly error: string;
+  readonly counts: boolean;
+  readonly detail?: string;
+}
+
+const failureOf = (outcome: Enrichment): Option.Option<Failure> =>
   Enrichment.$match(outcome, {
-    Gone: () => true,
-    NoNodeId: () => true,
-    Failed: ({ error }) => ownError(error),
-    Unchanged: () => false,
-    NotFound: () => false,
-    Backoff: () => false,
-    Stale: () => false,
-    Summarized: () => false,
-    Embedded: () => false,
+    Gone: () => Option.some({ error: "Gone", counts: true }),
+    NoNodeId: () => Option.some({ error: "NoNodeId", counts: true }),
+    Failed: ({ error }) => Option.some({ error: error._tag, counts: ownError(error), detail: error.message }),
+    Unchanged: () => Option.none(),
+    NotFound: () => Option.none(),
+    Backoff: () => Option.none(),
+    Stale: () => Option.none(),
+    Summarized: () => Option.none(),
+    Embedded: () => Option.none(),
   });
+
+const repoFailed = (outcome: Enrichment): boolean => Option.exists(failureOf(outcome), (failure) => failure.counts);
+
+const logFailures = (outcomes: ReadonlyArray<Enrichment>) =>
+  Effect.forEach(
+    outcomes,
+    (outcome) =>
+      Option.match(failureOf(outcome), {
+        onNone: () => Effect.void,
+        onSome: (failure) => Effect.logWarning("Enrichment failed", { repoId: outcome.id, ...failure }),
+      }),
+    { discard: true },
+  );
 
 export type EnrichRepoAbort = DbQueryFailed | DbRowInvalid | EmbeddingModelMismatch | GitHubError;
 
@@ -408,13 +430,15 @@ const make = Effect.gen(function* () {
     const embedded = (yield* Effect.forEach(Arr.chunksOf(embeddable, embedBatchSize), embedChunk))
       .flat()
       .map(Result.merge);
+    const outcomes = [...skipped, ...settled, ...embedded];
+    yield* logFailures(outcomes);
     // settleFailures recorded the summary phase's failures, so only the other phases' are recorded here.
     yield* db.repos.recordEnrichFailures({
       ids: [...skipped, ...embedded].flatMap((outcome) => (repoFailed(outcome) ? [outcome.id] : [])),
       at: yield* DateTime.now,
       retryDelays: EnrichRetry.retryDelays,
     });
-    return [...skipped, ...settled, ...embedded];
+    return outcomes;
   });
 
   const enrichRepos = Effect.fn("EnrichRepo.enrichRepos")(function* (ids: ReadonlyArray<RepoId>) {

@@ -16,6 +16,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
@@ -526,6 +527,37 @@ import * as EnrichRetry from "./enrich-retry.ts";
             "NotFound",
           ]);
           expect(f.prompts.slice(calls)).toEqual([]);
+        }),
+    );
+
+    it.effect(
+      "logs each failed repo's ID, its failure's tag, and whether it counts, and never the README or answer",
+      () =>
+        Effect.gen(function* () {
+          f.remotes.set(300, { description: "Tool 300", readme: { oid: oid("5"), text: "# Secret README words" } });
+          const invalid = f.textGeneration(() =>
+            Effect.succeed({ output: { summary: "Secret answer words", keywords: "not a list" }, usage: f.usage }),
+          );
+          const logs: Array<unknown> = [];
+          const batch = yield* f.store([300, 301]);
+          yield* Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) => enricher.enrichRepos(batch)).pipe(
+            f.using(invalid),
+            Effect.provide(Logger.layer([Logger.make(({ message }) => logs.push(message))])),
+          );
+          expect(logs.filter((message) => Array.isArray(message) && message[0] === "Enrichment failed")).toEqual([
+            ["Enrichment failed", { repoId: 301, error: "Gone", counts: true }],
+            [
+              "Enrichment failed",
+              {
+                repoId: 300,
+                error: "AiOutputInvalid",
+                counts: true,
+                detail:
+                  "Model 'test/text' returned output that does not match the expected shape in 'generate': structured output does not match the schema",
+              },
+            ],
+          ]);
+          expect(JSON.stringify(logs)).not.toContain("Secret");
         }),
     );
 
