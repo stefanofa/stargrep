@@ -57,7 +57,8 @@ const formsOf = (dim: Dim): ReadonlyArray<Form> => {
 const membershipCases = (test: { readonly effect: it.Tester<Services> }) => {
   // Five random vocabularies of 120 subjects with merges, rejections, links, and split, parent, and expand edges, and
   // 300 repos each. For every subject in every atom form, the repos matching_atoms lists equal the repos the search
-  // predicate returns.
+  // predicate returns. The nightly count gives each surviving subject the repos any of its forms returns, and a merged
+  // subject none.
   const forms = formsOf("subject");
   for (const seed of [11, 22, 33, 44, 55]) {
     test.effect(`matching_atoms and the search predicates agree on every subject atom, vocabulary ${seed}`, () =>
@@ -166,6 +167,7 @@ const membershipCases = (test: { readonly effect: it.Tester<Services> }) => {
           }),
         );
         yield* projectAtoms((repo) => held.get(repo.id) ?? [], repoIds);
+        yield* db.knowledge.count;
         const prefixes = forms.map((form) =>
           formatAtom({ role: form.role, value: { dim: "subject", id: 1 as SubjectId } }).slice(0, -1),
         );
@@ -182,7 +184,8 @@ const membershipCases = (test: { readonly effect: it.Tester<Services> }) => {
         // JIT compiles this one statement for most of a second on pg, longer than it runs, so the check turns it off.
         yield* database.query(
           `create or replace function agreement(form_prefixes text[], form_widen boolean[])
-           returns table (checked int, mismatches int, nonempty int) language sql set jit = off as $check$
+           returns table (checked int, mismatches int, nonempty int, miscounted int, shown int)
+           language sql set jit = off as $check$
            with forms as (
              select ordinality - 1 as form, prefix, widen
              from unnest(form_prefixes, form_widen) with ordinality as f (prefix, widen)
@@ -202,10 +205,19 @@ const membershipCases = (test: { readonly effect: it.Tester<Services> }) => {
                where case t.form ${predicate} end
              ), '{}') as repos
              from targets t
+           ),
+           counted as (
+             select s.id, count(distinct r.repo)::int as repos
+             from searched s cross join unnest(s.repos) as r (repo)
+             where s.id = s.canonical
+             group by s.id
            )
            select count(*)::int as checked,
              count(*) filter (where coalesce(l.repos, '{}') is distinct from s.repos)::int as mismatches,
-             count(*) filter (where cardinality(s.repos) > 0)::int as nonempty
+             count(*) filter (where cardinality(s.repos) > 0)::int as nonempty,
+             (select count(*)::int from subjects x left join counted c on c.id = x.id
+              where x.owner_id is null and x.repo_count <> coalesce(c.repos, 0)) as miscounted,
+             (select count(*)::int from subjects where listed) as shown
            from searched s left join listed l on l.atom = s.prefix || s.canonical
            $check$`,
         );
@@ -213,9 +225,20 @@ const membershipCases = (test: { readonly effect: it.Tester<Services> }) => {
           prefixes,
           forms.map((form) => form.widen),
         ]);
-        const { checked, mismatches, nonempty } = result as { checked: number; mismatches: number; nonempty: number };
-        expect({ checked, mismatches }).toEqual({ checked: 120 * forms.length, mismatches: 0 });
+        const { checked, mismatches, nonempty, miscounted, shown } = result as {
+          checked: number;
+          mismatches: number;
+          nonempty: number;
+          miscounted: number;
+          shown: number;
+        };
+        expect({ checked, mismatches, miscounted }).toEqual({
+          checked: 120 * forms.length,
+          mismatches: 0,
+          miscounted: 0,
+        });
         expect(nonempty).toBeGreaterThan(checked / 2);
+        expect(shown).toBeGreaterThan(60);
       }),
     );
   }
@@ -345,9 +368,11 @@ const namedCases = (test: { readonly effect: it.Tester<Services> }) => {
 
 const closedCases = (test: { readonly effect: it.Tester<Services> }) => {
   // 600 repos with random closed arrays, 30 of them gone. For every atom form of every value tried, the repos
-  // matching_atoms lists equal the repos the generated array predicate on repos returns.
-  test.effect("matching_atoms and the closed array predicates agree on every closed atom over random repos", () =>
+  // matching_atoms lists equal the repos the generated array predicate on repos returns, and the atom count keeps that
+  // many for each bare key.
+  test.effect("matching_atoms, the atom count, and the closed array predicates agree over random repos", () =>
     Effect.gen(function* () {
+      const db = yield* Db.Db;
       const database = yield* TestDatabase.TestDatabase;
       const random = generator(303);
       const repoIds = Array.from({ length: 600 }, (_, index) => repoId(90_001 + index));
@@ -393,9 +418,13 @@ const closedCases = (test: { readonly effect: it.Tester<Services> }) => {
       const byAtom = new Map(
         listed.map((row) => [(row as { atom: string }).atom, (row as { repos: Array<number> }).repos]),
       );
+      yield* db.knowledge.countAtoms;
+      const stats = yield* database.query("select atom, repos from atom_stats");
+      const counted = new Map(stats.map((row) => [(row as { atom: string }).atom, (row as { repos: number }).repos]));
       let checked = 0;
       let withRepos = 0;
       const mismatches: Array<string> = [];
+      const miscounted: Array<string> = [];
       for (const dim of Dim.literals.filter((dim): dim is ClosedDim => dim !== "subject")) {
         for (const form of formsOf(dim)) {
           for (const id of tried[dim]) {
@@ -410,10 +439,22 @@ const closedCases = (test: { readonly effect: it.Tester<Services> }) => {
             checked++;
             if (byPredicate.length > 0) withRepos++;
             if (JSON.stringify(byPredicate) !== JSON.stringify(byAtom.get(atomKey) ?? [])) mismatches.push(atomKey);
+            if (form.role === "any" && (counted.get(atomKey) ?? 0) !== byPredicate.length) miscounted.push(atomKey);
           }
         }
       }
       expect(mismatches).toEqual([]);
+      expect(miscounted).toEqual([]);
+      const bare = new Set(
+        Dim.literals.flatMap((dim) =>
+          dim === "subject"
+            ? []
+            : closed[dim].map((value) =>
+                formatAtom({ role: "any", value: { dim, id: value.id } as Db.StoredAtom["value"] }),
+              ),
+        ),
+      );
+      expect([...counted.keys()].filter((key) => !bare.has(key))).toEqual([]);
       expect(withRepos).toBeGreaterThan(checked * 0.9);
     }),
   );
