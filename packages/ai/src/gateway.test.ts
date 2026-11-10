@@ -99,7 +99,7 @@ const validAnswer = {
 const decoded = (answer: typeof validAnswer): Summarize.RepoSummary => ({
   summary: answer.summary,
   keywords: answer.keywords,
-  facets: decodeFacets(answer.facets, Summarize.promptInput(repo)),
+  facets: decodeFacets(answer.facets, Summarize.promptOf(repo).input),
 });
 const validSummary = decoded(validAnswer);
 
@@ -759,14 +759,14 @@ describe("gateway privacy", () => {
 // Answers the production model wrote for pilot 1, as the plain text a provider returns. Each decodes with every lane
 // complete, and none of these tests sends a request.
 const recorded: ReadonlyArray<{ readonly facts: Summarize.RepoFacts; readonly text: string }> = recordedAnswers;
-const recordedFor = new Map(recorded.map(({ facts, text }) => [Summarize.prompt(facts), text]));
+const recordedFor = new Map(recorded.map(({ facts, text }) => [Summarize.promptOf(facts).text, text]));
 const answerFor = (prompt: string) => recordedFor.get(prompt) ?? "no recorded answer for this prompt";
 const recordedSummaries = recorded.map(({ facts, text }) => {
   const answer = JSON.parse(text);
   return Result.succeed<Summarize.RepoSummary>({
     summary: answer.summary,
     keywords: answer.keywords,
-    facets: decodeFacets(answer.facets, Summarize.promptInput(facts)),
+    facets: decodeFacets(answer.facets, Summarize.promptOf(facts).input),
   });
 });
 const fenced = (text: string) => `\`\`\`json\n${text}\n\`\`\``;

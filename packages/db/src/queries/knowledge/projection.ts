@@ -69,6 +69,13 @@ export interface Projected {
   readonly skipped: number;
 }
 
+// What a projection's compute hands back: the projections to write, and whatever else it worked out, which project
+// returns to its caller as carry.
+export interface Computed<A> {
+  readonly write: ReadonlyArray<Projection>;
+  readonly carry: A;
+}
+
 export interface Queries {
   // Commit B, step 1: a subject, its minted default label, and its own two subject_matches rows for every key no label
   // has yet, then marks stale the repos that looked one of those keys up and found nothing.
@@ -79,10 +86,10 @@ export interface Queries {
   // head revision to compute, and writes each projection's closed arrays, facets row, and verdicts where the repo
   // still points at the receipt projected. A repo compute returns no projection for stays stale. The closed arrays are
   // written only where they changed, so a projection that changes no closed atom leaves the repos row untouched.
-  readonly project: <E, R>(
+  readonly project: <A, E, R>(
     repoIds: ReadonlyArray<RepoId>,
-    compute: (repos: ReadonlyArray<LockedRepo>, revision: Revision) => Effect.Effect<ReadonlyArray<Projection>, E, R>,
-  ) => Effect.Effect<Projected, E | DbQueryFailed | DbRowInvalid, R>;
+    compute: (repos: ReadonlyArray<LockedRepo>, revision: Revision) => Effect.Effect<Computed<A>, E, R>,
+  ) => Effect.Effect<Projected & { readonly carry: A }, E | DbQueryFailed | DbRowInvalid, R>;
   readonly stale: (limit: number) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
 }
 
@@ -225,9 +232,9 @@ export const make = Effect.gen(function* () {
         order by key, subject_id`,
     );
 
-  const project = <E, R>(
+  const project = <A, E, R>(
     repoIds: ReadonlyArray<RepoId>,
-    compute: (repos: ReadonlyArray<LockedRepo>, revision: Revision) => Effect.Effect<ReadonlyArray<Projection>, E, R>,
+    compute: (repos: ReadonlyArray<LockedRepo>, revision: Revision) => Effect.Effect<Computed<A>, E, R>,
   ) =>
     withTransaction(
       Effect.gen(function* () {
@@ -246,9 +253,9 @@ export const make = Effect.gen(function* () {
             for no key update of r`,
         );
         const revision = yield* head;
-        const projections = yield* compute(locked, revision);
-        if (projections.length === 0) return { projected: 0, skipped: repoIds.length };
-        const records = json(projections.map(projectionRecord));
+        const { write, carry } = yield* compute(locked, revision);
+        if (write.length === 0) return { projected: 0, skipped: repoIds.length, carry };
+        const records = json(write.map(projectionRecord));
         const written = yield* query(
           "knowledge.project",
           decodeIds,
@@ -281,7 +288,7 @@ export const make = Effect.gen(function* () {
             )
             select repo_id::float8 as id from facets order by repo_id`,
         );
-        return { projected: written.length, skipped: repoIds.length - written.length };
+        return { projected: written.length, skipped: repoIds.length - written.length, carry };
       }),
     );
 

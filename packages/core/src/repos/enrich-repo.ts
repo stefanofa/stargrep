@@ -87,6 +87,12 @@ const ownError = (error: EnrichRepoError): boolean =>
     AiUnavailable: () => false,
   });
 
+// How a failed paid summary call ends the attempt's lease. A save that failed for a reason any repo could hit keeps its
+// lease, so the repo waits it out and the sweep sends it again, as for a run cut short. Otherwise the failure is counted
+// and backs the repo off, or the lease is given back.
+const settlement = (error: EnrichRepoError): "count" | "release" | "keep" =>
+  error._tag === "AnswerNotSaved" && !error.refused ? "keep" : ownError(error) ? "count" : "release";
+
 const repoFailed = (outcome: Enrichment): boolean =>
   Enrichment.$match(outcome, {
     Gone: () => true,
@@ -312,50 +318,43 @@ const make = Effect.gen(function* () {
   // Each summary is saved as its answer arrives, so work cut short keeps every summary already paid for. A repo is
   // asked about only once this attempt holds its lease, so two attempts never pay for one repo, and a repo another
   // attempt holds or whose summary is no longer due is skipped. Failed calls are settled while the attempt still holds
-  // their leases, then the saved repos are projected together, taking the vocabulary locks once for the chunk.
-  const summarizeAll = Effect.fn("EnrichRepo.summarizeAll")(function* (jobs: ReadonlyArray<Job>) {
-    const stored = jobs.flatMap((job) =>
-      job.work._tag === "Embed" ? [Result.succeed<Embeddable>({ job, summary: job.work.summary })] : [],
-    );
+  // their leases, then the saved repos are projected together, taking the vocabulary locks once for the chunk. It returns
+  // the summaries to embed, and as settled the held repos and every failed answer, which settleFailures has recorded.
+  const summarizeAll = Effect.fn("EnrichRepo.summarizeAll")(function* (
+    jobs: ReadonlyArray<Job>,
+    projector: RepoKnowledge.Projector,
+  ) {
+    const stored = jobs.flatMap((job) => (job.work._tag === "Embed" ? [{ job, summary: job.work.summary }] : []));
     const due = jobs.flatMap((job) => (job.work._tag === "Summarize" ? [{ job, facts: job.work.prompt }] : []));
     const now = yield* DateTime.now;
     const until = DateTime.addDuration(now, EnrichRetry.leaseFor(textGeneration.batchTimeout, due.length));
     const leased = new Set<number>(yield* db.repos.lease({ ids: due.map(({ job }) => job.id), now, until }));
     const asked = due.filter(({ job }) => leased.has(job.id));
     const held = due.filter(({ job }) => !leased.has(job.id));
-    const answered = yield* Summarize.summarizeBatch(asked, ({ facts }) => facts).pipe(
-      Stream.mapEffect(([{ job }, answer]) => keepSummary(job, answer, until), {
-        concurrency: saveConcurrency,
-        unordered: true,
-      }),
-      Stream.runCollect,
-      Effect.provideService(TextGeneration.TextGeneration, textGeneration),
-    );
-    // A save that failed for a reason any repo could hit keeps its lease, so the repo waits it out and the sweep sends it
-    // again, as for a run cut short.
-    const failures = answered.flatMap((step) =>
-      Result.isFailure(step) && step.failure._tag === "Failed"
-        ? step.failure.error._tag === "AnswerNotSaved" && !step.failure.error.refused
-          ? []
-          : [{ id: step.failure.id, counted: ownError(step.failure.error) }]
-        : [],
+    const [answered, ended] = Arr.separate(
+      yield* Summarize.summarizeBatch(asked, ({ facts }) => facts).pipe(
+        Stream.mapEffect(([{ job }, answer]) => keepSummary(job, answer, until), {
+          concurrency: saveConcurrency,
+          unordered: true,
+        }),
+        Stream.runCollect,
+        Effect.provideService(TextGeneration.TextGeneration, textGeneration),
+      ),
     );
     yield* db.repos.settleFailures({
       until,
-      failures,
+      failures: ended.flatMap((outcome) => {
+        if (outcome._tag !== "Failed") return [];
+        const settled = settlement(outcome.error);
+        return settled === "keep" ? [] : [{ id: outcome.id, counted: settled === "count" }];
+      }),
       at: yield* DateTime.now,
       retryDelays: EnrichRetry.retryDelays,
     });
-    yield* RepoKnowledge.projectSaved(
-      answered.flatMap((step) => (Result.isSuccess(step) ? [step.success.job.id] : [])),
-    ).pipe(Effect.provideService(Db.Db, db));
+    yield* projector.projectSaved(answered.map(({ job }) => job.id));
     return {
-      steps: [
-        ...stored,
-        ...held.map(({ job }) => Result.fail<Enrichment>(Enrichment.Backoff({ id: job.id }))),
-        ...answered,
-      ],
-      settled: new Set<number>(failures.map((failure) => failure.id)),
+      embeddable: [...stored, ...answered],
+      settled: [...held.map(({ job }) => Enrichment.Backoff({ id: job.id })), ...ended],
     };
   });
 
@@ -400,26 +399,34 @@ const make = Effect.gen(function* () {
         ),
       );
 
-  const enrichChunk = Effect.fn("EnrichRepo.enrichChunk")(function* (ids: ReadonlyArray<RepoId>) {
+  const enrichChunk = Effect.fn("EnrichRepo.enrichChunk")(function* (
+    ids: ReadonlyArray<RepoId>,
+    projector: RepoKnowledge.Projector,
+  ) {
     const [jobs, skipped] = Arr.separate(yield* plan(ids));
-    const { steps, settled } = yield* summarizeAll(jobs);
-    const [summarized, unsummarized] = Arr.separate(steps);
-    const embedded = yield* Effect.forEach(Arr.chunksOf(summarized, embedBatchSize), embedChunk);
-    const outcomes = [...skipped, ...unsummarized, ...embedded.flat().map(Result.merge)];
+    const { embeddable, settled } = yield* summarizeAll(jobs, projector);
+    const embedded = (yield* Effect.forEach(Arr.chunksOf(embeddable, embedBatchSize), embedChunk))
+      .flat()
+      .map(Result.merge);
+    // settleFailures recorded the summary phase's failures, so only the other phases' are recorded here.
     yield* db.repos.recordEnrichFailures({
-      ids: outcomes.flatMap((outcome) => (repoFailed(outcome) && !settled.has(outcome.id) ? [outcome.id] : [])),
+      ids: [...skipped, ...embedded].flatMap((outcome) => (repoFailed(outcome) ? [outcome.id] : [])),
       at: yield* DateTime.now,
       retryDelays: EnrichRetry.retryDelays,
     });
-    return outcomes;
+    return [...skipped, ...settled, ...embedded];
   });
 
   const enrichRepos = Effect.fn("EnrichRepo.enrichRepos")(function* (ids: ReadonlyArray<RepoId>) {
+    // One projector for the run, so its chunks read the vocabulary rules again only when a decision lands.
+    const projector = yield* RepoKnowledge.projector.pipe(Effect.provideService(Db.Db, db));
     // Sorting keeps each chunk's contents the same from run to run. A rerun after a dead batch run's lease has run out
     // then sends the same batch request, and the Gateway's idempotency key can find the job that run already paid for. A
     // rerun inside the lease skips the repos it holds.
     const chunks = Arr.chunksOf(Arr.sort(Arr.dedupe(ids), Order.Number), batchSize);
-    const outcomes = yield* Effect.forEach(chunks, enrichChunk, { concurrency: batchConcurrency });
+    const outcomes = yield* Effect.forEach(chunks, (chunk) => enrichChunk(chunk, projector), {
+      concurrency: batchConcurrency,
+    });
     const byId = new Map<number, Enrichment>(outcomes.flat().map((outcome) => [outcome.id, outcome]));
     return yield* Effect.forEach(ids, (id) => Effect.orDie(Effect.fromNullishOr(byId.get(id))));
   });

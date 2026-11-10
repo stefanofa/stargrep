@@ -130,17 +130,20 @@ export const projectAtoms = Effect.fn("projectAtoms")(function* (
   unresolved: (repo: Db.LockedRepo) => ReadonlyArray<LabelKey> = () => [],
 ) {
   const db = yield* Db.Db;
-  return yield* db.knowledge.project(ids, (locked) =>
-    Effect.succeed(
-      locked.map((repo) => ({
-        repoId: repo.id,
-        receiptId: repo.receiptId,
-        atoms: atoms(repo),
-        unresolvedKeys: unresolved(repo),
-        verdicts: [],
-      })),
-    ),
-  );
+  return yield* db.knowledge
+    .project(ids, (locked) =>
+      Effect.succeed({
+        write: locked.map((repo) => ({
+          repoId: repo.id,
+          receiptId: repo.receiptId,
+          atoms: atoms(repo),
+          unresolvedKeys: unresolved(repo),
+          verdicts: [],
+        })),
+        carry: undefined,
+      }),
+    )
+    .pipe(Effect.map(({ projected, skipped }): Db.Projected => ({ projected, skipped })));
 });
 
 // The revision the next decision takes.

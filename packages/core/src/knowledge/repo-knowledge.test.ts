@@ -199,6 +199,41 @@ it.layer(TestDatabase.layerMemory({ embeddingModel }), { timeout: 60_000, testTi
       }),
     );
 
+    // A projector caches the rules by the head it read them at under the shared lock. A decision commits under the
+    // exclusive lock and moves the head, so the next projection after it reads the rules again and applies it.
+    it.effect("one projector reads the rules once while the head holds, and again once a decision lands", () =>
+      Effect.gen(function* () {
+        yield* sweepAll;
+        const db = yield* Db.Db;
+        const [first, second, third] = yield* seed([971, 972, 973].map((id) => ({ id, language: "Go" })));
+        const curated = yield* create("mid run");
+        let reads = 0;
+        const counting = Db.Db.of({
+          ...db,
+          knowledge: {
+            ...db.knowledge,
+            rules: Effect.suspend(() => {
+              reads++;
+              return db.knowledge.rules;
+            }),
+          },
+        });
+        const projection = yield* RepoKnowledge.projector.pipe(Effect.provideService(Db.Db, counting));
+        yield* projection.project([first as RepoId]);
+        yield* projection.project([second as RepoId]);
+        expect(reads).toBe(1);
+        const atom: Atom = { role: "about", value: { dim: "subject", id: curated } };
+        yield* record({ _tag: "Correct", repo: third as number, atom, present: true });
+        expect(yield* projection.project([third as RepoId])).toEqual({ projected: 1, minted: 0 });
+        expect(reads).toBe(2);
+        expect(yield* heldBy([first as RepoId, second as RepoId, third as RepoId], "")).toEqual([
+          ["written_in:language:go"],
+          ["written_in:language:go"],
+          ["about:subject:mid run", "written_in:language:go"],
+        ]);
+      }),
+    );
+
     it.effect("a group that loses a deadlock leaves its rows stale for the next group, and the run goes on", () =>
       Effect.gen(function* () {
         yield* sweepAll;

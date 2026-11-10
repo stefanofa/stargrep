@@ -33,7 +33,7 @@ describe("summary recipe", () => {
       const made = JSON.stringify([
         Models.summaryModel,
         Summarize.system,
-        Summarize.prompt({
+        Summarize.promptOf({
           ...repo,
           readme: [
             repo.readme,
@@ -44,9 +44,9 @@ describe("summary recipe", () => {
             "Write `<br>` for a line break.\uFFFD",
             "Ratatui widgets. ".repeat(2_000),
           ].join("\n\n"),
-        }),
-        Summarize.prompt({ ...repo, readme: `${"Mostly text. ".repeat(10)}${"\uFFFD".repeat(5)}` }),
-        Summarize.prompt({
+        }).text,
+        Summarize.promptOf({ ...repo, readme: `${"Mostly text. ".repeat(10)}${"\uFFFD".repeat(5)}` }).text,
+        Summarize.promptOf({
           ...repo,
           readme: [
             htmlTags.map((tag) => `<${tag} class="x">${tag}</${tag}>`).join(" "),
@@ -57,9 +57,9 @@ describe("summary recipe", () => {
             "Line with trailing spaces   \nNext line",
             "<!-- never closed\nStill here",
           ].join("\n\n"),
-        }),
-        Summarize.prompt({ ...repo, readme: "# Tool\n\nUse it.\u0000" }),
-        Summarize.prompt({ ...repo, readme: '<img src="x">\n\n---' }),
+        }).text,
+        Summarize.promptOf({ ...repo, readme: "# Tool\n\nUse it.\u0000" }).text,
+        Summarize.promptOf({ ...repo, readme: '<img src="x">\n\n---' }).text,
         Summarize.providerSchema,
       ]);
       expect({
@@ -172,7 +172,7 @@ describe("summarize: facts", () => {
 });
 
 describe("the stand-in", () => {
-  const prompt = (facts: Partial<Summarize.RepoFacts>) => Summarize.prompt({ ...repo, ...facts });
+  const prompt = (facts: Partial<Summarize.RepoFacts>) => Summarize.promptOf({ ...repo, ...facts }).text;
   const facts = (answer: SummarizeFake.Answer) => answer.facets.map((fact) => [fact.role, fact.term, fact.quote]);
 
   test("states the description's kind and platform words, the language, each topic, an alternative, and a deprecation", () => {
@@ -307,7 +307,23 @@ describe("readmeText", () => {
 
 describe("prompt", () => {
   test("cleans the README and renders none when nothing is left", () => {
-    expect(Summarize.prompt({ ...repo, readme: "![only](image.png)" })).toEndWith("README:\nnone");
-    expect(Summarize.prompt({ ...repo, readme: "<b>Bold</b> words" })).toEndWith("README:\nBold words");
+    expect(Summarize.promptOf({ ...repo, readme: "![only](image.png)" }).text).toEndWith("README:\nnone");
+    expect(Summarize.promptOf({ ...repo, readme: "<b>Bold</b> words" }).text).toEndWith("README:\nBold words");
+  });
+
+  test("carries as evidence the README text the prompt sent, and none when nothing is left", () => {
+    expect(Summarize.promptOf({ ...repo, readme: "<b>Bold</b> words" }).input).toEqual({
+      fullName: repo.fullName,
+      description: "A Rust crate for cooking up terminal user interfaces",
+      topics: repo.topics,
+      readme: "Bold words",
+    });
+    expect(Summarize.promptOf({ ...repo, description: null, readme: "![only](image.png)" }).input).toMatchObject({
+      description: "",
+      readme: "",
+    });
+    const long = Summarize.promptOf({ ...repo, readme: "x".repeat(30_000) });
+    expect(long.text).toEndWith(`README:\n${long.input.readme}`);
+    expect(long.input.readme).toEndWith("\n[README truncated]");
   });
 });

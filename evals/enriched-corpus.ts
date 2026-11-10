@@ -32,7 +32,7 @@ export const summaryFingerprint = (repo: Summarize.RepoFacts): string =>
           readme: repo.readme,
         },
         system: Summarize.system,
-        prompt: Summarize.prompt(repo),
+        prompt: Summarize.promptOf(repo).text,
         schema: Summarize.providerSchema,
       }),
     )

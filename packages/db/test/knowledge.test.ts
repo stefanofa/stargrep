@@ -611,17 +611,18 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
         yield* db.knowledge.capture([answer(id, receiptId(70_901))]);
         const cli = [atom("is", { dim: "kind", id: "cli" })];
         const outdated = yield* db.knowledge.project([id], (locked) =>
-          Effect.succeed(
-            locked.map((repo) => ({
+          Effect.succeed({
+            write: locked.map((repo) => ({
               repoId: repo.id,
               receiptId: receiptId(70_999),
               atoms: cli,
               unresolvedKeys: [],
               verdicts: [],
             })),
-          ),
+            carry: locked.map((repo) => repo.id),
+          }),
         );
-        expect(outdated).toEqual({ projected: 0, skipped: 1 });
+        expect(outdated).toEqual({ projected: 0, skipped: 1, carry: [id] });
         expect(yield* projectAtoms(() => cli, [id])).toEqual({ projected: 1, skipped: 0 });
         const version = "select xmin::text as version, kinds::text[] as kinds from repos where id = $1";
         const [written] = yield* database.query(version, [id]);
@@ -651,7 +652,13 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
         { repoId: id, receiptId: receiptId(71_002), saved: false, summary: `summary of ${id}`, keywords: [] },
       ]);
       expect(yield* facetsOf(id)).toBeUndefined();
-      expect(yield* db.knowledge.project([id], () => Effect.succeed([]))).toEqual({ projected: 0, skipped: 1 });
+      expect(yield* db.knowledge.project([id], () => Effect.succeed({ write: [], carry: "nothing to write" }))).toEqual(
+        {
+          projected: 0,
+          skipped: 1,
+          carry: "nothing to write",
+        },
+      );
       yield* database.query(`update repos set topics = '["late"]' where id = $1`, [id]);
       expect(yield* facetsOf(id)).toBeUndefined();
       expect(
@@ -678,15 +685,18 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
       const sweep = Effect.gen(function* () {
         yield* db.knowledge.mint([{ key: fluxcap, label: "fluxcap", receiptId: receipt }]);
         yield* db.knowledge.project([id], () =>
-          Effect.map(db.knowledge.labels([fluxcap]), (labels) => [
-            {
-              repoId: id,
-              receiptId: receipt,
-              atoms: labels.filter((label) => label.isDefault).map((label) => about(label.subjectId)),
-              unresolvedKeys: [],
-              verdicts: [],
-            },
-          ]),
+          Effect.map(db.knowledge.labels([fluxcap]), (labels) => ({
+            write: [
+              {
+                repoId: id,
+                receiptId: receipt,
+                atoms: labels.filter((label) => label.isDefault).map((label) => about(label.subjectId)),
+                unresolvedKeys: [],
+                verdicts: [],
+              },
+            ],
+            carry: undefined,
+          })),
         );
       });
       yield* sweep;
