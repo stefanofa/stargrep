@@ -20,6 +20,7 @@ const repo = (id: number): LibraryRepo => ({
   kind: null,
   archived: false,
   pushedAt: null,
+  atoms: [],
   keywords: [],
   starredAt: "2026-01-01T00:00:00.000Z",
   stars: null,

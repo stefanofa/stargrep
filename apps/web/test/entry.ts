@@ -111,6 +111,15 @@ const db = makeDb({
     enrichment: (login: Login) =>
       Effect.succeed(login === ada.login ? { total: 1, read: 1, failed: 0 } : { total: 0, read: 0, failed: 0 }),
   },
+  facets: {
+    lookup: ({ limit }) =>
+      Effect.succeed(
+        [
+          { atom: "subject:812", label: "PostgreSQL", repos: 1840 },
+          { atom: "license:PostgreSQL", label: "PostgreSQL", repos: 31 },
+        ].slice(0, limit),
+      ),
+  },
 });
 
 const serve = testServer((request) =>

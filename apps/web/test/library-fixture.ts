@@ -157,6 +157,7 @@ export const libraryRepos: ReadonlyArray<LibraryRepo> = rows.map(
     icon: null,
     ownerType: type,
     ownerAvatarUrl: `https://github.com/${owner}.png`,
+    atoms: [],
     keywords: [],
     starredAt: iso(base - (index < 4 ? index : 4 + index * 6) * day),
     stars,

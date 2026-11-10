@@ -218,7 +218,7 @@ describe("direct sign-in", () => {
       200,
       { login: "ada", name: "Ada Lovelace", avatarUrl: ada.user.avatar_url, starredCount: ada.starredCount },
     ]);
-    expect(await json(await local.send("/api/library"))).toEqual([200, { repos: [] }]);
+    expect(await json(await local.send("/api/library"))).toEqual([200, { repos: [], labels: {} }]);
     expect((await githubSaw()).viewerReads).toBe(0);
   });
 

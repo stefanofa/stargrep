@@ -3,6 +3,7 @@ import "@orpc/openapi/extensions/route";
 import { type AnyContractProcedure, oc } from "@orpc/contract";
 import { mcp } from "@orpc/mcp";
 import { githubLogin, isGitHubLogin } from "@stargrep/github/login";
+import { SelectionKey } from "@stargrep/knowledge/atom";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -49,9 +50,31 @@ export const SearchInput = Schema.Struct({
   limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))
     .annotate({ description: "How many repos to return, at most. 20 when left out." })
     .pipe(Schema.withDecodingDefaultKey(Effect.succeed(20))),
+  filter: Schema.optionalKey(
+    SelectionKey.annotate({
+      description:
+        "Atoms every result must match, such as 'lang:rust subject:4127 subject:812|subject:9031 -kind:list'. Spaces separate groups that must all match, '|' separates atoms of which one must match, and a leading '-' excludes a group. lookupFacets finds the atom for a name. A subject that does not exist, is private, or was rejected fails the search with BAD_REQUEST.",
+    }),
+  ),
 });
 
-export const RepoFields = Schema.Struct({
+const AtomText = Schema.String.annotate({
+  description: "An atom's key, such as 'lang:rust', 'about:subject:4127', or 'alt:subject:77'. It works as a filter.",
+});
+
+export const Facet = Schema.Struct({
+  atom: AtomText,
+  label: Schema.String,
+  listed: Schema.Boolean.annotate({
+    description:
+      "False for a subject fewer than two repos hold. Library atoms and lookupFacets leave such a subject out, and a filter by it still works.",
+  }),
+  repoId: Schema.NullOr(RepoId).annotate({
+    description: "The repo a subject is the project of, as a replaced-by subject names its successor, or null.",
+  }),
+});
+
+const repoFields = {
   id: RepoId,
   owner: Schema.String,
   name: Schema.String,
@@ -61,7 +84,9 @@ export const RepoFields = Schema.Struct({
   language: Schema.NullOr(Schema.String),
   topics: Schema.Array(Schema.String),
   license: Schema.NullOr(Schema.String),
-  kind: Schema.NullOr(Schema.String),
+  kind: Schema.NullOr(Schema.String).annotate({
+    description: "The repo's primary kind, such as library or cli, or null when Stargrep has not placed it.",
+  }),
   archived: Schema.Boolean,
   pushedAt: Schema.NullOr(Timestamp),
   icon: Schema.NullOr(
@@ -84,6 +109,13 @@ export const RepoFields = Schema.Struct({
   ownerAvatarUrl: Schema.NullOr(Schema.String).annotate({
     description: "The owner's GitHub avatar, or null before Stargrep has read it.",
   }),
+};
+
+export const RepoFields = Schema.Struct({
+  ...repoFields,
+  facets: Schema.Array(Facet).annotate({
+    description: "Every atom the repo holds, grouped by role, with its primary kind first.",
+  }),
 });
 
 export const SearchResult = Schema.Struct({
@@ -97,12 +129,36 @@ export const SearchResult = Schema.Struct({
   metrics: Schema.Array(Schema.Struct({ metric: MetricId, value: Schema.NullOr(Schema.Finite) })),
 });
 
+export const AppliedAtom = Schema.Struct({
+  atom: AtomText,
+  label: Schema.String,
+  mode: Schema.Literals(["filter", "exclude", "boost"]).annotate({
+    description:
+      "filter kept only repos that match, exclude dropped repos that match, and boost ranked repos that match higher without dropping any.",
+  }),
+  from: Schema.Literals(["query", "filter"]).annotate({
+    description: "query when the words of q named the atom, filter when the caller's filter did.",
+  }),
+  span: Schema.NullOr(Schema.Tuple([Schema.Int, Schema.Int])).annotate({
+    description:
+      "The start and end of the words that named the atom, as character offsets into q trimmed with its runs of spaces collapsed, or null.",
+  }),
+  relaxed: Schema.Boolean.annotate({
+    description:
+      "True when the words implied a filter that left fewer than 3 repos, so the search ranked the repos it matches first instead of dropping the others. A filter the caller passed never relaxes.",
+  }),
+});
+
 export const SearchOutput = Schema.Struct({
   planSource: PlanSource.annotate({
     description:
       "How the query was read. keyword searched the words as typed, cache and model used a query plan, and fallback searched the words as typed because the planner failed or the network's model allowance ran out.",
   }),
   results: Schema.Array(SearchResult),
+  applied: Schema.Array(AppliedAtom).annotate({
+    description:
+      "The atoms the search applied, from the caller's filter and from the words of q. Words Stargrep could not read as an atom with certainty apply nothing and still match by text and meaning.",
+  }),
 });
 
 export const SyncInput = Schema.Struct({ login: GitHubLogin });
@@ -197,7 +253,11 @@ export const Viewer = Schema.Struct({
 });
 
 export const LibraryRepo = Schema.Struct({
-  ...RepoFields.fields,
+  ...repoFields,
+  atoms: Schema.Array(AtomText).annotate({
+    description:
+      "The keys whose filter matches the repo, such as lang:javascript on a TypeScript repo, so counting them gives the number of repos each filter returns. A subject appears once two repos hold it. labels names each key.",
+  }),
   keywords: Schema.Array(Schema.String),
   starredAt: Timestamp,
   stars: Schema.NullOr(Schema.Int).annotate({ description: "The repo's star count, when Stargrep has read it." }),
@@ -206,7 +266,11 @@ export const LibraryRepo = Schema.Struct({
   }),
 });
 
-export const Library = Schema.Struct({ repos: Schema.Array(LibraryRepo) });
+const Labels = Schema.Record(Schema.String, Schema.String).annotate({
+  description: "The label of every atom key the repos list, such as 'lang:rust': 'Rust'.",
+});
+
+export const Library = Schema.Struct({ repos: Schema.Array(LibraryRepo), labels: Labels });
 
 export const maxStarsPage = 1000;
 
@@ -242,6 +306,29 @@ export const PublicStars = Schema.Struct({
   nextCursor: Schema.NullOr(StarsCursorText).annotate({
     description: "Pass as cursor to read the next page, or null when this page is the last.",
   }),
+  labels: Labels,
+});
+
+export const LookupInput = Schema.Struct({
+  q: Schema.String.check(Schema.isPattern(/\S/), Schema.isMaxLength(100)).annotate({
+    description: "The start of a facet's name, such as 'postg'.",
+  }),
+  limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))
+    .annotate({ description: "How many facets to return, at most. 10 when left out." })
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed(10))),
+});
+
+export const FacetMatches = Schema.Struct({
+  facets: Schema.Array(
+    Schema.Struct({
+      atom: AtomText,
+      label: Schema.String,
+      repos: Schema.Int.annotate({
+        description:
+          "How many repos the atom's filter matches across Stargrep. A subject's count is from the last nightly count.",
+      }),
+    }),
+  ).annotate({ description: "Most-held first." }),
 });
 
 export const PublicConfig = Schema.Struct({
@@ -352,6 +439,19 @@ export const contract = {
     .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
     .input(StarsInput)
     .output(PublicStars),
+  lookupFacets: withServices
+    .errors(Struct.pick(errors, ["TOO_MANY_REQUESTS"]))
+    .route({
+      method: "GET",
+      path: "/facets",
+      operationId: "lookupFacets",
+      summary: "Find atoms by name",
+      description:
+        "Finds the atoms whose name starts with q, to pass as search's filter: kinds, languages, licenses, platforms, statuses, and subjects that at least two repos hold, most-held first.",
+    })
+    .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
+    .input(LookupInput)
+    .output(FacetMatches),
   config: procedure
     .route({
       method: "GET",
