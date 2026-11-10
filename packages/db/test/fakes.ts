@@ -77,6 +77,7 @@ const defaults = {
     stale: unexpected("knowledge.stale"),
     invalidate: unexpected("knowledge.invalidate"),
     count: unexpected("knowledge.count")(),
+    countAtoms: unexpected("knowledge.countAtoms")(),
     allocate: unexpected("knowledge.allocate"),
     revision: unexpected("knowledge.revision")(),
     decisions: unexpected("knowledge.decisions")(),

@@ -1,0 +1,96 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "61b7a3d3-ba0c-4af2-84ee-91fd0cdfde9b",
+  "prevIds": [
+    "47bd4eea-865a-42d7-b60e-41c374cc5c07"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "atom_stats"
+      ],
+      "writes": [
+        "s|tbl|public.atom_stats",
+        "n|tbl|public.atom_stats",
+        "e|tbl|public.atom_stats",
+        "n|rel|public.atom_stats",
+        "n|type|public.atom_stats",
+        "n|rel|public.atom_stats_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "atom_stats",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "atom_stats",
+        "name": "atom",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "atom_stats",
+        "name": "repos",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "atom_stats",
+        "name": "atom_stats_pkey",
+        "columns": [
+          "atom"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "atom_stats",
+        "name": "atom_stats_repos_positive",
+        "value": "\"repos\" > 0",
+        "entityType": "checks"
+      }
+    }
+  ]
+}

@@ -21,6 +21,7 @@ const seed = Effect.fn("seed")(function* (held: ReadonlyMap<RepoId, ReadonlyArra
   }
   yield* projectAtoms((locked) => held.get(locked.id) ?? [], ids);
   yield* db.knowledge.count;
+  yield* db.knowledge.countAtoms;
 });
 
 const subjectNamed = Effect.fn("subjectNamed")(function* (
@@ -178,9 +179,96 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
       yield* decide("merge", { merged: [{ originId: merged, canonicalId: survivor, revision: yield* nextRevision }] });
       yield* db.knowledge.count;
 
-      expect(yield* db.facets.lookup({ q: "zebra", limit: 10 })).toEqual([
-        { atom: `subject:${survivor}`, label: "zebra store", repos: 2 },
+      for (const q of ["zebra", "zebra storag"])
+        expect(yield* db.facets.lookup({ q, limit: 10 })).toEqual([
+          { atom: `subject:${survivor}`, label: "zebra store", repos: 2 },
+        ]);
+    }),
+  );
+
+  test.effect("lookup never lists a private subject, whatever its count", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      yield* database.query(
+        `insert into "user" (id, name, email) values ('okapi-owner', 'Okapi', 'okapi@example.test')`,
+      );
+      const [created] = (yield* database.query(
+        "insert into subjects (owner_id, label, repo_count) values ('okapi-owner', 'okapi notes', 5) returning id::float8 as id",
+      )) as ReadonlyArray<{ readonly id: number }>;
+      yield* database.query(
+        `insert into subject_labels (namespace, key, subject_id, is_default, source)
+         values ('user:okapi-owner', 'okapi notes', $1, true, 'minted')`,
+        [created?.id],
+      );
+      expect(yield* db.facets.lookup({ q: "okapi", limit: 10 })).toEqual([]);
+    }),
+  );
+
+  test.effect("lookup drops a subject rejected after the count listed it", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const quagga = yield* subjectNamed("quagga tools");
+      yield* seed(
+        new Map([
+          [repoId(9_601), [subject("about", quagga)]],
+          [repoId(9_602), [subject("about", quagga)]],
+        ]),
+      );
+      expect((yield* db.facets.lookup({ q: "quagga", limit: 10 })).map((facet) => facet.atom)).toEqual([
+        `subject:${quagga}`,
       ]);
+      yield* decide("status", {
+        presented: [{ id: quagga, label: "quagga tools", definition: null, status: "rejected", repoId: null }],
+      });
+      expect(yield* db.facets.lookup({ q: "quagga", limit: 10 })).toEqual([]);
+    }),
+  );
+
+  test.effect("the atom count keeps each closed value's repos, with its expansions, and drops a value none holds", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const [first, second] = [repoId(9_701), repoId(9_702)];
+      yield* seed(
+        new Map([
+          [
+            first,
+            [atom("written_in", { dim: "language", id: "elixir" }), atom("for", { dim: "language", id: "typescript" })],
+          ],
+          [
+            second,
+            [
+              atom("written_in", { dim: "language", id: "elixir" }),
+              atom("built_with", { dim: "language", id: "erlang" }),
+            ],
+          ],
+        ]),
+      );
+      const stats = () =>
+        database.query(
+          "select atom, repos from atom_stats where atom in ('lang:elixir', 'lang:erlang', 'with:lang:erlang') order by atom",
+        );
+      expect(yield* stats()).toEqual([{ atom: "lang:elixir", repos: 2 }]);
+      const [widened] = (yield* database.query(
+        `select (select repos from atom_stats where atom = 'lang:javascript') as javascript,
+           (select repos from atom_stats where atom = 'lang:typescript') as typescript`,
+      )) as ReadonlyArray<{ readonly javascript: number; readonly typescript: number }>;
+      expect(widened?.javascript).toBeGreaterThanOrEqual(widened?.typescript ?? Number.POSITIVE_INFINITY);
+      expect(
+        (yield* db.facets.lookup({ q: "elixir", limit: 10 })).find((facet) => facet.atom === "lang:elixir"),
+      ).toEqual({
+        atom: "lang:elixir",
+        label: "Elixir",
+        repos: 2,
+      });
+
+      yield* projectAtoms(() => [], [first, second]);
+      expect(yield* db.knowledge.countAtoms).toBeGreaterThanOrEqual(1);
+      expect(yield* stats()).toEqual([]);
+      expect(
+        (yield* db.facets.lookup({ q: "elixir", limit: 10 })).find((facet) => facet.atom === "lang:elixir")?.repos,
+      ).toBe(0);
     }),
   );
 

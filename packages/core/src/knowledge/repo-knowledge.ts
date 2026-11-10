@@ -220,3 +220,9 @@ export const count = Effect.fn("RepoKnowledge.count")(function* () {
   const db = yield* Db.Db;
   return { changed: yield* db.knowledge.count };
 });
+
+// The nightly count of closed values, which lookups read.
+export const countAtoms = Effect.fn("RepoKnowledge.countAtoms")(function* () {
+  const db = yield* Db.Db;
+  return { changed: yield* db.knowledge.countAtoms };
+});

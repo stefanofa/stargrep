@@ -8,7 +8,6 @@ import * as Schema from "effect/Schema";
 import type { DbQueryFailed, DbRowInvalid, Operation } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
 import { resultRows, rowsDecoder } from "../rows.ts";
-import { closedTest } from "./atom-predicates.ts";
 
 // Reads of the atoms repos hold and match, for cards, the repo panel, library chips, and lookups. Every read goes
 // through the views, so a merge, a split, a rejection, or the self rule shows here as it does in search.
@@ -36,7 +35,7 @@ export interface FacetCount {
   // A bare key, such as "subject:812" or "license:PostgreSQL".
   readonly atom: string;
   readonly label: string;
-  // Live repos its filter matches. A subject's count is the nightly one. A closed value's is counted now.
+  // Live repos its filter matches, from the last nightly count.
   readonly repos: number;
 }
 
@@ -70,7 +69,10 @@ const MatchingRow = Schema.Struct({
 });
 
 const SubjectCount = Schema.Struct({ id: Schema.Finite, label: Schema.String, repos: Schema.Int });
-const LookupRow = Schema.Struct({ subjects: Schema.Array(SubjectCount), closed: Schema.Array(Schema.Int) });
+const LookupRow = Schema.Struct({
+  subjects: Schema.Array(SubjectCount),
+  closed: Schema.Record(Schema.String, Schema.Int),
+});
 
 const decodeHeld = rowsDecoder(HeldRow);
 const decodeMatching = rowsDecoder(MatchingRow);
@@ -179,21 +181,15 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  // A closed value is counted over every live repo, with the registry's expansions, as its filter matches. A subject
-  // resolves to its canonical survivor and shows only when listed and not rejected.
+  // Both counts come from the nightly count, so a lookup reads no repos. A subject resolves to its canonical survivor
+  // and shows only when listed and not rejected.
   const lookup = ({ q, limit }: { readonly q: string; readonly limit: number }) => {
     const prefix = labelKey(q);
     if (prefix === null) return Effect.succeed([]);
-    const candidates = closedMatches(prefix);
-    const counts =
-      candidates.length === 0
-        ? sql`'{}'::integer[]`
-        : sql`(select array[${sql.join(
-            candidates.map(
-              (value) => sql`count(*) filter (where ${closedTest({ role: "any", value }, "include")})::integer`,
-            ),
-            sql`, `,
-          )}] from repos r where r.gone_at is null)`;
+    const candidates = closedMatches(prefix).map((value) => ({
+      atom: `${dimPrefix[value.dim]}:${value.id}`,
+      label: value.label,
+    }));
     return query(
       "facets.lookup",
       decodeLookup,
@@ -216,7 +212,11 @@ export const make = Effect.gen(function* () {
               limit ${limit}
             ) as t
           ), '[]') as subjects,
-          ${counts} as closed`,
+          coalesce((
+            select jsonb_object_agg(a.atom, a.repos)
+            from atom_stats a
+            where a.atom = any(${sql.param(candidates.map((value) => value.atom))}::text[])
+          ), '{}') as closed`,
     ).pipe(
       Effect.map(([row]) =>
         [
@@ -225,11 +225,7 @@ export const make = Effect.gen(function* () {
             label: subject.label,
             repos: subject.repos,
           })),
-          ...candidates.map((value, n) => ({
-            atom: `${dimPrefix[value.dim]}:${value.id}`,
-            label: value.label,
-            repos: row?.closed[n] ?? 0,
-          })),
+          ...candidates.map((value) => ({ ...value, repos: row?.closed[value.atom] ?? 0 })),
         ]
           .sort((a, b) => b.repos - a.repos || a.label.localeCompare(b.label))
           .slice(0, limit),

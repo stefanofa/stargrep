@@ -266,6 +266,8 @@ export interface Queries {
   readonly invalidate: (invalidation: Invalidation) => Effect.Effect<number, DbQueryFailed | DbRowInvalid>;
   // The nightly count behind listing. Returns how many subjects changed.
   readonly count: Effect.Effect<number, DbQueryFailed | DbRowInvalid>;
+  // The nightly count of each closed value's bare key, which lookups read. Returns how many rows changed.
+  readonly countAtoms: Effect.Effect<number, DbQueryFailed | DbRowInvalid>;
   // Fresh subject IDs for a decision that creates subjects, so its payload can name them.
   readonly allocate: (count: number) => Effect.Effect<ReadonlyArray<SubjectId>, DbQueryFailed | DbRowInvalid>;
   readonly revision: Effect.Effect<Revision, DbQueryFailed | DbRowInvalid>;
@@ -975,6 +977,10 @@ export const make = Effect.gen(function* () {
         ),
       ),
     count: query("knowledge.count", decodeCount, sql`select knowledge_refresh_counts() as count`).pipe(
+      Effect.flatMap(only),
+      Effect.map((row) => row.count),
+    ),
+    countAtoms: query("knowledge.countAtoms", decodeCount, sql`select knowledge_refresh_atom_stats() as count`).pipe(
       Effect.flatMap(only),
       Effect.map((row) => row.count),
     ),

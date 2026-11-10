@@ -59,6 +59,7 @@ export const Operation = Schema.Literals([
   "knowledge.stale",
   "knowledge.invalidate",
   "knowledge.count",
+  "knowledge.countAtoms",
   "knowledge.allocate",
   "knowledge.revision",
   "knowledge.decide",
