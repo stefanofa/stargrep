@@ -1,0 +1,189 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "17d5c5c7-f715-4bc5-9707-2afb2d8c6f23",
+  "prevIds": [
+    "2f25a989-868d-48d0-bf0f-086f76fbeb73"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "prefill_owner"
+      ],
+      "writes": [
+        "s|tbl|public.prefill_owner",
+        "n|tbl|public.prefill_owner",
+        "e|tbl|public.prefill_owner",
+        "n|rel|public.prefill_owner",
+        "n|type|public.prefill_owner",
+        "n|rel|public.prefill_owner_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "extraction_batches",
+        "retry_of"
+      ],
+      "writes": [
+        "s|col|public.extraction_batches.retry_of",
+        "n|col|public.extraction_batches.retry_of",
+        "e|col|public.extraction_batches.retry_of"
+      ],
+      "reads": [
+        "n|tbl|public.extraction_batches",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "extraction_batches"
+      ],
+      "writes": [
+        "s|fk|public.extraction_batches.extraction_batches_retry_of_extraction_batches_id_fkey",
+        "n|fk|public.extraction_batches.extraction_batches_retry_of_extraction_batches_id_fkey",
+        "e|fk|public.extraction_batches.extraction_batches_retry_of_extraction_batches_id_fkey",
+        "n|con|public.extraction_batches.extraction_batches_retry_of_extraction_batches_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.extraction_batches",
+        "n|sch|public",
+        "n|tbl|public.extraction_batches",
+        "n|sch|public",
+        "n|col|public.extraction_batches.retry_of",
+        "n|col|public.extraction_batches.id",
+        "e|uniqueness|public.extraction_batches.id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "prefill_owner",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "retry_of",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "prefill_owner",
+        "name": "singleton",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "true",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "prefill_owner",
+        "name": "owner",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "prefill_owner",
+        "name": "heartbeat_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "extraction_batches",
+        "name": "extraction_batches_retry_of_extraction_batches_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "retry_of"
+        ],
+        "schemaTo": "public",
+        "tableTo": "extraction_batches",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "SET NULL",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "prefill_owner",
+        "name": "prefill_owner_pkey",
+        "columns": [
+          "singleton"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "prefill_owner",
+        "name": "prefill_owner_one_row",
+        "value": "singleton",
+        "entityType": "checks"
+      }
+    }
+  ]
+}

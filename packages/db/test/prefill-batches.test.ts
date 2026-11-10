@@ -3,6 +3,9 @@ import { BatchId, InputHash } from "@stargrep/knowledge/ids";
 import * as it from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
+import pg from "pg";
 import * as Db from "../src/db.ts";
 import * as TestDatabase from "./database.ts";
 import { facts, model, readme, ref, repoId } from "./fixtures.ts";
@@ -32,6 +35,7 @@ const manifest = (id: string, repos: ReadonlyArray<number>): Db.Manifest => ({
   inputHashes: repos.map(() => hash),
   state: "prepared",
   leaseUntil: lease,
+  retryOf: null,
 });
 
 for (const [adapter, database] of adapters) {
@@ -99,16 +103,126 @@ for (const [adapter, database] of adapters) {
         yield* query("update repos set enrich_retry_at = null where id = 6003");
         expect(yield* db.knowledge.closeBatch(extended)).toBe(true);
         expect(yield* db.knowledge.openBatches).toEqual([]);
+      }),
+    );
 
-        yield* db.repos.saveFactsAndLease({ repos: [prefillFacts(6004)], now, until: lease });
-        const unsent = manifest("00000000-0000-4000-8000-000000006004", [6004]);
+    test.effect("reopens a closed manifest that has the same request key, and refuses one an open manifest holds", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const first = manifest("00000000-0000-4000-8000-000000006101", [6101]);
+        expect(yield* db.knowledge.prepareBatch(first)).toEqual(Option.some(first.id));
+        const again = { ...manifest("00000000-0000-4000-8000-000000006102", [6101]), requestKey: first.requestKey };
+        expect(yield* db.knowledge.prepareBatch(again)).toEqual(Option.none());
+        yield* db.knowledge.submittedBatch({ id: first.id, providerBatchId: "batch_old" });
+        expect(yield* db.knowledge.closeBatch(first)).toBe(true);
+        expect(yield* db.knowledge.prepareBatch({ ...again, leaseUntil: later })).toEqual(Option.some(first.id));
+        expect(
+          yield* query(
+            `select state, provider_batch_id as "providerBatchId",
+               to_char(lease_until at time zone 'utc', 'YYYY-MM-DD HH24:MI') as lease
+             from extraction_batches where request_key = $1`,
+            [first.requestKey],
+          ),
+        ).toEqual([{ state: "prepared", providerBatchId: null, lease: "2026-11-11 20:00" }]);
+      }),
+    );
+
+    test.effect("drops only a manifest that was never sent, and only for the driver that holds the prefill", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        yield* db.repos.saveFactsAndLease({ repos: [6201, 6202].map(prefillFacts), now, until: lease });
+        const unsent = manifest("00000000-0000-4000-8000-000000006201", [6201]);
+        const sent = manifest("00000000-0000-4000-8000-000000006202", [6202]);
         yield* db.knowledge.prepareBatch(unsent);
-        yield* db.knowledge.dropBatch(unsent);
-        expect(yield* retryAt(6004)).toBeNull();
-        expect(yield* query("select count(*)::int as n from extraction_batches where id = $1", [unsent.id])).toEqual([
-          { n: 0 },
-        ]);
+        yield* db.knowledge.prepareBatch(sent);
+        yield* db.knowledge.submittedBatch({ id: sent.id, providerBatchId: "batch_paid" });
+        const owner = "00000000-0000-4000-8000-0000000062aa";
+        expect(yield* db.knowledge.dropBatch({ manifest: unsent, owner })).toBe(false);
+        expect(yield* db.knowledge.claimPrefill({ owner, now, stale: now })).toBe(true);
+        expect(yield* db.knowledge.dropBatch({ manifest: sent, owner })).toBe(false);
+        expect(yield* retryAt(6202)).toBe("2026-11-11 14:00");
+        expect(yield* db.knowledge.dropBatch({ manifest: unsent, owner })).toBe(true);
+        expect(yield* retryAt(6201)).toBeNull();
+        expect(
+          (yield* db.knowledge.openBatches).flatMap((open) =>
+            [unsent.id, sent.id].includes(open.id) ? [open.id] : [],
+          ),
+        ).toEqual([sent.id]);
+        yield* db.knowledge.releasePrefill(owner);
+      }),
+    );
+
+    test.effect("lets one driver hold the prefill until its heartbeat goes stale", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const first = "00000000-0000-4000-8000-0000000063aa";
+        const second = "00000000-0000-4000-8000-0000000063bb";
+        const minute = (n: number) => DateTime.makeUnsafe(`2026-11-10T12:0${n}:00Z`);
+        expect(yield* db.knowledge.claimPrefill({ owner: first, now: minute(0), stale: minute(0) })).toBe(true);
+        expect(yield* db.knowledge.claimPrefill({ owner: second, now: minute(0), stale: minute(0) })).toBe(false);
+        expect(yield* db.knowledge.heartbeatPrefill({ owner: first, now: minute(1) })).toBe(true);
+        expect(yield* db.knowledge.claimPrefill({ owner: second, now: minute(2), stale: minute(1) })).toBe(false);
+        expect(yield* db.knowledge.claimPrefill({ owner: second, now: minute(3), stale: minute(2) })).toBe(true);
+        expect(yield* db.knowledge.heartbeatPrefill({ owner: first, now: minute(3) })).toBe(false);
+        yield* db.knowledge.releasePrefill(first);
+        expect(yield* db.knowledge.heartbeatPrefill({ owner: second, now: minute(4) })).toBe(true);
+        yield* db.knowledge.releasePrefill(second);
+      }),
+    );
+
+    test.effect("hands a lease over only from repos that still hold it", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        yield* db.repos.saveFactsAndLease({ repos: [6301, 6302].map(prefillFacts), now, until: lease });
+        yield* query("update repos set enrich_retry_at = null where id = 6302");
+        const moved = yield* db.knowledge.moveLease({ ids: [repoId(6301), repoId(6302)], from: lease, to: later });
+        expect(moved.map(Number)).toEqual([6301]);
+        expect(yield* retryAt(6301)).toBe("2026-11-11 20:00");
+        expect(yield* retryAt(6302)).toBeNull();
       }),
     );
   });
 }
+
+// PGlite has one connection, so only Postgres can show a prepare waiting on a mint.
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 30_000, testTimeout: 30_000 })(
+  "prefill lock order on Postgres",
+  (test) => {
+    // A mint holds the exclusive knowledge lock and marks repo_facets rows stale in heap order. A prepare that saved
+    // facts first would mark them in ID order and could deadlock with it, so it waits on the shared lock instead.
+    test.effect("a chunk's facts wait for the knowledge lock a mint holds, before they touch a row", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const transactions = yield* Db.Transactions;
+        const database = yield* TestDatabase.TestDatabase;
+        const url = Option.getOrThrow(database.url);
+        const minting = new pg.Client({ connectionString: url });
+        yield* Effect.promise(() => minting.connect());
+        yield* Effect.promise(() => minting.query("begin"));
+        yield* Effect.promise(() =>
+          minting.query("select pg_advisory_xact_lock(hashtextextended('stargrep:knowledge:public', 0))"),
+        );
+        const saving = yield* Effect.forkChild(
+          transactions.withTransaction(db.repos.saveFactsAndLease({ repos: [prefillFacts(6401)], now, until: lease })),
+        );
+        yield* database.query(`
+          do $$ begin
+            for attempt in 1 .. 300 loop
+              exit when exists (
+                select 1 from pg_stat_activity where datname = current_database() and wait_event = 'advisory');
+              perform pg_sleep(0.01);
+            end loop;
+          end $$`);
+        const waiting = yield* database.query(
+          "select wait_event as event from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'",
+        );
+        const touched = yield* database.query("select count(*)::int as n from repos where id = 6401");
+        yield* Effect.promise(() => minting.query("commit"));
+        yield* Effect.promise(() => minting.end());
+        yield* Fiber.join(saving);
+        expect(waiting).toEqual([{ event: "advisory" }]);
+        expect(touched).toEqual([{ n: 0 }]);
+      }),
+    );
+  },
+);

@@ -446,6 +446,9 @@ export const extractionBatches = pgTable(
     inputHashes: text("input_hashes").array().notNull(),
     state: batchState("state").notNull().default("prepared"),
     leaseUntil: time("lease_until").notNull(),
+    // The manifest whose badly answered items this one asks again, as a second batch with its own key. Its own bad
+    // answers are final.
+    retryOf: uuid("retry_of").references((): AnyPgColumn => extractionBatches.id, { onDelete: "set null" }),
     createdAt: time("created_at").notNull().defaultNow(),
     updatedAt: time("updated_at").notNull().defaultNow(),
   },
@@ -462,6 +465,19 @@ export const extractionBatches = pgTable(
       sql`${table.state} = 'prepared' or ${table.adapter} = 'claude-code' or ${table.providerBatchId} is not null`,
     ),
   ],
+);
+
+// The one prefill driver that may run against this database. A driver claims the row, renews heartbeat_at while it
+// runs, and deletes it when it stops. Another may take the row only once its heartbeat is stale, so two drivers never
+// resume, drop, or pay for the same manifests, and a crashed driver blocks the next run for a minute at most.
+export const prefillOwner = pgTable(
+  "prefill_owner",
+  {
+    singleton: boolean("singleton").primaryKey().default(true),
+    owner: uuid("owner").notNull(),
+    heartbeatAt: time("heartbeat_at").notNull(),
+  },
+  () => [check("prefill_owner_one_row", sql`singleton`)],
 );
 
 // What one source said about one repo for one input, kept as it was. A trigger refuses edits except to the projection

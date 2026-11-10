@@ -29,6 +29,7 @@ import {
   retryableEnrichment,
   summaryDue,
 } from "../schema.ts";
+import { sharedLock } from "./knowledge/lock.ts";
 
 const RepoRow = createSelectSchema(repos, {
   id: RepoId,
@@ -277,7 +278,7 @@ export interface Queries {
   readonly saveCounts: (counts: RepoCounts) => Effect.Effect<void, DbQueryFailed>;
   // Saves a chunk's facts and takes the lease of every repo whose summary is due and that no other attempt holds, in
   // one statement, so no sweep or consumer can find one of them due before the batch holds it. Then saves the counts,
-  // which need the rows. The caller runs both in its transaction.
+  // which need the rows. It takes the shared knowledge lock first, so the caller runs it in its own transaction.
   readonly saveFactsAndLease: (
     lease: LeasedFacts,
   ) => Effect.Effect<ReadonlyArray<FactsLease>, DbQueryFailed | DbRowInvalid>;
@@ -430,6 +431,9 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
                 })),
               ),
             );
+            // Shared first, as capture takes it: the facts update marks repo_facets rows stale, and a mint's
+            // invalidation marks them too, in heap order, under the exclusive lock.
+            yield* run("repos.saveFactsAndLease", (db) => db.execute(sharedLock));
             const leases = yield* run("repos.saveFactsAndLease", (db) =>
               db
                 .insert(repos, ...factColumns, "nodeId", "inputHash", "enrichRetryAt")
