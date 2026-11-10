@@ -1,6 +1,8 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
+import * as Batches from "./batches.ts";
 import * as Embeddings from "./embeddings.ts";
 import type { EmbeddingModel } from "./models.ts";
 import * as TextGeneration from "./text-generation.ts";
@@ -45,6 +47,55 @@ export const layerTextGeneration = (respond: (prompt: string) => unknown, model 
         })),
     }),
   );
+
+export interface Submission {
+  readonly key: string;
+  readonly batchId: string;
+  // True when the key matched a batch an earlier submit started, so nothing new was paid for.
+  readonly replayed: boolean;
+}
+
+// A provider batch API that answers every prompt with respond, and like the Gateway replays a submit whose idempotency
+// key it has seen: the same batch ID and the answers stored when that batch was first paid for. submissions records
+// every submit, and paid every prompt answered, so a test can count what a run would have paid.
+export const batches = (respond: (prompt: string) => unknown, model = "fake/text") => {
+  const submissions: Array<Submission> = [];
+  const paid: Array<string> = [];
+  const started = new Map<string, { readonly batchId: string; readonly items: Batches.BatchItems }>();
+  const byId = new Map<string, Batches.BatchItems>();
+  const layer = Layer.succeed(
+    Batches.Batches,
+    Batches.Batches.of({
+      provider: "fake",
+      model,
+      submit: Effect.fn("FakeBatches.submit")(function* (request: Batches.BatchRequest) {
+        const key = yield* Batches.requestKey(request);
+        const known = started.get(key);
+        if (known !== undefined) {
+          submissions.push({ key, batchId: known.batchId, replayed: true });
+          return known.batchId;
+        }
+        const batchId = `fake_batch_${started.size + 1}`;
+        const items = request.prompts.map((prompt) => {
+          paid.push(prompt);
+          return Result.succeed({
+            output: respond(prompt),
+            usage: { inputTokens: tokens(request.system + prompt), outputTokens: 0 },
+          });
+        });
+        started.set(key, { batchId, items });
+        byId.set(batchId, items);
+        submissions.push({ key, batchId, replayed: false });
+        return batchId;
+      }),
+      collect: Effect.fn("FakeBatches.collect")(function* (batchId: string, size: number) {
+        const items = byId.get(batchId) ?? [];
+        return Array.from({ length: size }, (_, index) => items[index]);
+      }),
+    }),
+  );
+  return { layer, submissions, paid };
+};
 
 // Hash embeddings count shared words, so 0.5 keeps a repo whose words overlap the query's by about half or more.
 export const hashEmbeddingModel: EmbeddingModel = {

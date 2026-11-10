@@ -17,6 +17,7 @@ import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import type * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
+import * as Batches from "./batches.ts";
 import * as Embeddings from "./embeddings.ts";
 import * as Gateway from "./gateway.ts";
 import * as Models from "./models.ts";
@@ -390,15 +391,12 @@ const fakeBatch = (options: {
       });
     },
   };
-  const layer = Gateway.layerTextGeneration("test/model").pipe(
-    Layer.provide(
-      Layer.succeed(
-        Gateway.AiProvider,
-        Gateway.AiProvider.of({ languageModel, embeddingModel: unused, experimental_batch: () => api }),
-      ),
-    ),
+  const provider = Layer.succeed(
+    Gateway.AiProvider,
+    Gateway.AiProvider.of({ languageModel, embeddingModel: unused, experimental_batch: () => api }),
   );
-  return { starts, direct, calls, layer, firstStart: firstStart.promise };
+  const layer = Gateway.layerTextGeneration("test/model").pipe(Layer.provide(provider));
+  return { starts, direct, calls, layer, provider, firstStart: firstStart.promise };
 };
 
 const batchRepos = [repo, { ...repo, fullName: "junegunn/fzf" }, { ...repo, fullName: "sharkdp/bat" }];
@@ -491,6 +489,34 @@ describe("gateway batch", () => {
       expect(again).toBe(first);
       expect(changed).not.toBe(first);
     }).pipe(Effect.provide(fake.layer));
+  });
+
+  it.effect("submits a stored request under its own key and collects its items by batch ID, in prompt order", () => {
+    const answered = textResult(JSON.stringify(validAnswer));
+    const reasoned: BatchItem = {
+      type: "text",
+      id: "1",
+      status: "succeeded",
+      result: { ...answered, usage: { ...answered.usage, outputTokens: { total: 20, text: 15, reasoning: 5 } } },
+    };
+    const fake = fakeBatch({ items: [reasoned] });
+    const keyOf = (start: StartOptions | undefined) =>
+      (start?.providerOptions?.gateway as { readonly idempotencyKey?: string } | undefined)?.idempotencyKey;
+    return Effect.gen(function* () {
+      const batches = yield* Batches.Batches;
+      const request = Summarize.batchRequest("test/model", [
+        Summarize.promptOf(repo),
+        Summarize.promptOf({ ...repo, fullName: "junegunn/fzf" }),
+      ]);
+      const batchId = yield* batches.submit(request);
+      expect(keyOf(fake.starts[0])).toBe(yield* Batches.requestKey(request));
+      const items = yield* batches.collect(batchId, 2);
+      expect(items[0]).toBeUndefined();
+      expect(items[1]).toEqual(
+        Result.succeed({ output: validAnswer, usage: { inputTokens: 100, outputTokens: 20, reasoningTokens: 5 } }),
+      );
+      expect(fake.direct.calls).toBe(0);
+    }).pipe(Effect.provide(Gateway.layerBatches("test/model").pipe(Layer.provide(fake.provider))));
   });
 
   it.effect("answers a single prompt directly, without starting a batch job", () => {

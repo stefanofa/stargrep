@@ -11,6 +11,7 @@ import {
   type EmbeddingModel as SdkEmbeddingModel,
   type LanguageModel as SdkLanguageModel,
 } from "ai";
+import * as Arr from "effect/Array";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -20,6 +21,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Batches from "./batches.ts";
 import * as Embeddings from "./embeddings.ts";
 import {
   type AiError,
@@ -81,21 +83,7 @@ const fromSdkError = (operation: Operation, model: string) => (thrown: unknown) 
   return new AiRequestFailed({ operation, model, detail: `${detailOf(cause)}${attempts}` });
 };
 
-const Json = Schema.fromJsonString(Schema.Unknown);
-const decodeJson = Schema.decodeUnknownEffect(Json);
-const encodeJson = Schema.encodeUnknownEffect(Json);
-
-const toHex = (bytes: ArrayBuffer) =>
-  Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
-
-// The Gateway replays a batch start that repeats an idempotency key with the same body, so a run that
-// dies while it waits finds its batch again instead of paying for it twice.
-const idempotencyKey = (model: string, request: TextGeneration.RunBatchRequest) =>
-  encodeJson([model, request.system, request.jsonSchema, request.prompts]).pipe(
-    Effect.orDie,
-    Effect.flatMap((text) => Effect.promise(() => crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))),
-    Effect.map((digest) => `stargrep-batch-${toHex(digest)}`),
-  );
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 const batchItemResult = (model: string, item: BatchItem): Effect.Effect<TextGeneration.RunResult, AiError> => {
   if (item.type !== "text") {
@@ -118,6 +106,7 @@ const batchItemResult = (model: string, item: BatchItem): Effect.Effect<TextGene
       usage: {
         inputTokens: item.result.usage.inputTokens.total,
         outputTokens: item.result.usage.outputTokens.total,
+        reasoningTokens: item.result.usage.outputTokens.reasoning,
       },
     })),
     Effect.catchTags({
@@ -129,18 +118,20 @@ const batchItemResult = (model: string, item: BatchItem): Effect.Effect<TextGene
   );
 };
 
-const runBatch = (provider: AiProvider["Service"], model: string) =>
-  Effect.fn("Gateway.runBatch")(function* (request: TextGeneration.RunBatchRequest) {
-    const api = provider.experimental_batch();
-    const call = <A>(run: (abortSignal: AbortSignal) => PromiseLike<A>) =>
-      Effect.tryPromise({ try: run, catch: fromSdkError("generate", model) }).pipe(Effect.retry(batchCallRetry));
-    const key = yield* idempotencyKey(model, request);
+type BatchStatus = Awaited<ReturnType<BatchApi["doGetBatchStatus"]>>;
+
+const batchApi = (provider: AiProvider["Service"], model: string) => {
+  const call = <A>(run: (abortSignal: AbortSignal) => PromiseLike<A>) =>
+    Effect.tryPromise({ try: run, catch: fromSdkError("generate", model) }).pipe(Effect.retry(batchCallRetry));
+
+  const start = Effect.fn("Gateway.startBatch")(function* (request: Batches.BatchRequest) {
+    const key = yield* Batches.requestKey(request);
     const started = yield* call((abortSignal) =>
-      api.doStartBatch({
+      provider.experimental_batch().doStartBatch({
         requests: request.prompts.map((prompt, index) => ({
           id: String(index),
           type: "text" as const,
-          modelId: model,
+          modelId: request.model,
           options: {
             prompt: [
               { role: "system" as const, content: request.system },
@@ -159,17 +150,20 @@ const runBatch = (provider: AiProvider["Service"], model: string) =>
       requests: request.prompts.length,
       status: started.rawStatus ?? started.status,
     });
-    const finished =
-      started.status !== "pending"
-        ? started
-        : yield* call((abortSignal) => api.doGetBatchStatus({ batchId: started.batchId, abortSignal })).pipe(
-            Effect.repeat({
-              schedule: Schedule.spaced(batchPollInterval),
-              until: (status) => status.status !== "pending",
-            }),
-          );
+    return started;
+  });
+
+  const poll = (batchId: string) =>
+    call((abortSignal) => provider.experimental_batch().doGetBatchStatus({ batchId, abortSignal })).pipe(
+      Effect.repeat({
+        schedule: Schedule.spaced(batchPollInterval),
+        until: (status) => status.status !== "pending",
+      }),
+    );
+
+  const read = Effect.fnUntraced(function* (batchId: string, finished: BatchStatus, size: number) {
     yield* Effect.logInfo("Gateway batch finished", {
-      batchId: started.batchId,
+      batchId,
       status: finished.rawStatus ?? finished.status,
       completed: finished.requestCounts?.completed ?? null,
       failed: finished.requestCounts?.failed ?? null,
@@ -179,17 +173,33 @@ const runBatch = (provider: AiProvider["Service"], model: string) =>
       return yield* new AiRequestFailed({ operation: "generate", model, detail: `batch failed with ${code}` });
     }
     const items = yield* call(async (abortSignal) => {
-      const reader = (await api.doGetBatchResults({ batchId: started.batchId, abortSignal })).getReader();
+      const reader = (await provider.experimental_batch().doGetBatchResults({ batchId, abortSignal })).getReader();
       const read: Array<BatchItem> = [];
       for (let next = await reader.read(); !next.done; next = await reader.read()) read.push(next.value);
       return read;
     });
     const byId = new Map<string, BatchItem>(items.map((item) => [item.id, item]));
-    return yield* Effect.forEach(request.prompts, (_, index) => {
-      const item = byId.get(String(index));
+    return yield* Effect.forEach(Arr.makeBy(size, String), (id) => {
+      const item = byId.get(id);
       return item === undefined ? Effect.undefined : Effect.result(batchItemResult(model, item));
     });
   });
+
+  // A batch the start found already finished, such as a replay of one paid for earlier, is read without polling.
+  const run = Effect.fn("Gateway.runBatch")(function* (request: TextGeneration.RunBatchRequest) {
+    const started = yield* start({ model, ...request });
+    const finished = started.status !== "pending" ? started : yield* poll(started.batchId);
+    return yield* read(started.batchId, finished, request.prompts.length);
+  });
+
+  const submit = (request: Batches.BatchRequest) => Effect.map(start(request), (started) => started.batchId);
+
+  const collect = Effect.fn("Gateway.collectBatch")(function* (batchId: string, size: number) {
+    return yield* read(batchId, yield* poll(batchId), size);
+  });
+
+  return { run, submit, collect };
+};
 
 export interface TextOptions {
   readonly reasoning: "none" | "provider-default";
@@ -248,7 +258,7 @@ export const layerTextGeneration = (model: string, options: Partial<TextOptions>
                 }),
               ),
             ),
-          ...(batch ? { batch: { timeout: batchTimeout, run: runBatch(provider, model) } } : {}),
+          ...(batch ? { batch: { timeout: batchTimeout, run: batchApi(provider, model).run } } : {}),
         }),
       ),
     ),
@@ -279,6 +289,19 @@ export const layerEmbeddings = (model: Models.EmbeddingModel) =>
             }).pipe(Effect.map((result) => ({ vectors: result.embeddings, tokens: result.usage.tokens }))),
         }),
       ),
+    ),
+  );
+
+// The batch API alone, for a caller that keeps its own manifest of what it sent, such as the prefill.
+export const layerBatches = (model: string) =>
+  Layer.effect(
+    Batches.Batches,
+    Effect.andThen(
+      Effect.sync(silenceSdkWarnings),
+      AiProvider.useSync((provider) => {
+        const { submit, collect } = batchApi(provider, model);
+        return Batches.Batches.of({ provider: "gateway", model, submit, collect });
+      }),
     ),
   );
 
