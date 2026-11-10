@@ -1,16 +1,7 @@
 import { RepoId } from "@stargrep/github/schemas";
 import { formatAtom } from "@stargrep/knowledge/atom";
 import { labelKey } from "@stargrep/knowledge/label-key";
-import {
-  type ClosedDim,
-  type ClosedValue,
-  closed,
-  closedKeys,
-  Dim,
-  dimPrefix,
-  roleIds,
-  roles,
-} from "@stargrep/knowledge/registry";
+import { type ClosedDim, closed, closedKeys, Dim, dimPrefix, roleIds, roles } from "@stargrep/knowledge/registry";
 import { type SQL, sql } from "drizzle-orm";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -102,12 +93,12 @@ const qualifiedWires = roleIds.filter((role) => roles[role].matches === "bare").
 
 const likePrefix = (key: string) => `${key.replace(/[\\%_]/g, "\\$&")}%`;
 
-const closedDims = Object.keys(closed) as ReadonlyArray<ClosedDim>;
+const closedDims = Dim.literals.filter((dim): dim is ClosedDim => dim !== "subject");
 
 const closedMatches = (prefix: string) =>
   closedDims.flatMap((dim) =>
     closed[dim]
-      .filter((value: ClosedValue<string>) => closedKeys(value).some((key) => key.startsWith(prefix)))
+      .filter((value) => closedKeys(value).some((key) => key.startsWith(prefix)))
       .map((value) => ({ dim, id: value.id, label: value.label })),
   );
 
