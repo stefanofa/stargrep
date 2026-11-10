@@ -12,6 +12,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { type DbQueryFailed, type DbRowInvalid, KeyMinted, type Operation, StaleRevision } from "../errors.ts";
+import { lockedRepoIds } from "../lock-order.ts";
 import * as Postgres from "../postgres.ts";
 import { resultRows, rowsDecoder } from "../rows.ts";
 import {
@@ -409,11 +410,7 @@ export const make = Effect.gen(function* () {
         // Shared first, as projection takes it, so no mint's invalidation marks repo_facets rows while this commit's
         // receipt_id trigger marks them too.
         yield* execute("knowledge.capture", sharedLock);
-        const ids = answers.map((answer) => answer.repoId).sort((a, b) => a - b);
-        yield* execute(
-          "knowledge.capture",
-          sql`select id from repos where id = any(${sql.param(ids)}::bigint[]) order by id for no key update`,
-        );
+        yield* execute("knowledge.capture", lockedRepoIds(answers.map((answer) => answer.repoId)));
         return yield* query(
           "knowledge.capture",
           decodeCaptured,

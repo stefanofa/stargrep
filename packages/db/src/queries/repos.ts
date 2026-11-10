@@ -2,7 +2,7 @@ import { Repo as GitHubRepo, Login, ObjectId, RepoId, RepoName, RepoNodeId } fro
 import { InputHash } from "@stargrep/knowledge/ids";
 import { inputHash } from "@stargrep/knowledge/input-hash";
 import { KindId } from "@stargrep/knowledge/registry";
-import { and, asc, eq, getColumns, gt, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, getColumns, gt, isNotNull, type SQL, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import * as Arr from "effect/Array";
 import * as Digest from "effect/crypto/Digest";
@@ -15,6 +15,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Struct from "effect/Struct";
 import { type Embedding, EmbeddingModelId, type EmbeddingModelMismatch, requireModel } from "../embedding.ts";
 import { type DbQueryFailed, type DbRowInvalid, RepoNotFound } from "../errors.ts";
+import { inIdOrder, lockedRepoIds } from "../lock-order.ts";
 import * as Postgres from "../postgres.ts";
 import { excluded, NullableTime, requireRow, rowsDecoder, timeParam, writeEncoder } from "../rows.ts";
 import {
@@ -296,6 +297,10 @@ const needsEnrichment = pendingEnrichment(repos);
 const encodeRefs = writeEncoder(Schema.Array(RepoRef));
 const encodeFacts = writeEncoder(RepoFacts);
 
+// The retry time after one more failure. The array index past the last delay reads null, so a capped repo has none.
+const retryAt = (at: DateTime.Utc, delays: ReadonlyArray<Duration.Duration>): SQL =>
+  sql`${timeParam(at)} + (${sql.param(delays.map(Duration.toMillis))}::float8[])[${repos.enrichFailures} + 1] * interval '1 millisecond'`;
+
 const repoFound = (id: RepoId) => requireRow(() => new RepoNotFound({ repoId: id }));
 
 export const make = Effect.fn("Db.repos.make")(function* (configuredModel: EmbeddingModelId) {
@@ -322,15 +327,10 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           );
 
   return {
-    // Every multi-row writer of repos locks its rows in ID order, so two of them, or one and the projection sweep,
-    // never wait on each other in a cycle.
     upsertRefs: (refs) =>
       withTransaction(
         Effect.forEach(
-          Arr.chunksOf(
-            [...refs].sort((a, b) => a.id - b.id),
-            batchSize,
-          ),
+          Arr.chunksOf(inIdOrder(refs), batchSize),
           (chunk) =>
             encodeRefs(chunk).pipe(
               Effect.flatMap((values) =>
@@ -427,7 +427,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           .where(eq(repos.id, id)),
       ),
     saveOwners: (owners) => {
-      const sorted = [...owners].sort((a, b) => a.id - b.id);
+      const sorted = inIdOrder(owners);
       return sorted.length === 0
         ? Effect.void
         : run("repos.saveOwners", (db) =>
@@ -482,9 +482,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           .where(sql`${repos.id} = any(${sql.param([...ids])}::bigint[])`),
       ).pipe(Effect.flatMap(decodeStored("repos.getMany"))),
     // A copy of an attempt already counted, such as a second message for the same repo, finds the retry time in
-    // the future and changes nothing. The array index past the last delay reads null, so a capped repo has none.
-    // The subquery locks the rows in ID order first. Without it Postgres picks a bitmap heap scan and locks them in
-    // heap order, which can deadlock with the projection sweep.
+    // the future and changes nothing.
     recordEnrichFailures: ({ ids, at, retryDelays }) =>
       Arr.isReadonlyArrayEmpty(ids)
         ? Effect.void
@@ -493,10 +491,10 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
               .update(repos)
               .set({
                 enrichFailures: sql`${repos.enrichFailures} + 1`,
-                enrichRetryAt: sql`${timeParam(at)} + (${sql.param(retryDelays.map(Duration.toMillis))}::float8[])[${repos.enrichFailures} + 1] * interval '1 millisecond'`,
+                enrichRetryAt: retryAt(at, retryDelays),
               })
               .where(
-                sql`${repos.id} in (select id from repos where id = any(${sql.param([...ids])}::bigint[]) order by id for no key update) and ${needsEnrichment} and (${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(at)})`,
+                sql`${repos.id} in (${lockedRepoIds(ids)}) and ${needsEnrichment} and (${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(at)})`,
               ),
           ),
     lease: ({ ids, now, until }) =>
@@ -507,7 +505,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
               .update(repos)
               .set({ enrichRetryAt: sql`${timeParam(until)}` })
               .where(
-                sql`${repos.id} in (select id from repos where id = any(${sql.param([...ids])}::bigint[]) order by id for no key update) and ${summaryDue(repos)} and (${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(now)})`,
+                sql`${repos.id} in (${lockedRepoIds(ids)}) and ${summaryDue(repos)} and (${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(now)})`,
               )
               .returning({ id: repos.id }),
           ).pipe(
@@ -518,7 +516,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
             }),
           ),
     settleFailures: ({ until, failures, at, retryDelays }) => {
-      const sorted = [...failures].sort((a, b) => a.id - b.id);
+      const sorted = inIdOrder(failures);
       const counts = sql`settled.counted and ${needsEnrichment}`;
       return sorted.length === 0
         ? Effect.void
@@ -527,13 +525,13 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
               .update(repos)
               .set({
                 enrichFailures: sql`${repos.enrichFailures} + case when ${counts} then 1 else 0 end`,
-                enrichRetryAt: sql`case when ${counts} then ${timeParam(at)} + (${sql.param(retryDelays.map(Duration.toMillis))}::float8[])[${repos.enrichFailures} + 1] * interval '1 millisecond' end`,
+                enrichRetryAt: sql`case when ${counts} then ${retryAt(at, retryDelays)} end`,
               })
               .from(
                 sql`unnest(${sql.param(sorted.map((failure) => failure.id))}::bigint[], ${sql.param(sorted.map((failure) => failure.counted))}::boolean[]) as settled (id, counted)`,
               )
               .where(
-                sql`${repos.id} = settled.id and ${repos.id} in (select id from repos where id = any(${sql.param(sorted.map((failure) => failure.id))}::bigint[]) order by id for no key update) and ${repos.enrichRetryAt} = ${timeParam(until)}`,
+                sql`${repos.id} = settled.id and ${repos.id} in (${lockedRepoIds(sorted.map((failure) => failure.id))}) and ${repos.enrichRetryAt} = ${timeParam(until)}`,
               ),
           );
     },
