@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { everything, formatAtom } from "@stargrep/knowledge/atom";
 import * as Schema from "effect/Schema";
+import * as Compile from "./compile.ts";
 import * as PlannerPrompt from "./planner-prompt.ts";
 import * as QueryPlan from "./query-plan.ts";
 
@@ -166,6 +168,20 @@ describe("PlannerPrompt", () => {
       expect(decode(encode(example.output))).toEqual(example.output);
       expect(PlannerPrompt.system).toContain(`"${example.query}"`);
     }
+  });
+
+  // Search reads from the query's words whether each language is wanted or excluded, so a plan names both.
+  test("shows the model a query that excludes a language, whose plan names it so search excludes it", () => {
+    const excluded = PlannerPrompt.examples.flatMap(({ query, output }) =>
+      Compile.compileQuery({
+        query,
+        planned: QueryPlan.fromPlannerOutput(query, output).filters,
+        explicit: everything,
+      }).stated.flatMap(({ group }) =>
+        group._tag === "Closed" && group.mode === "exclude" ? group.any.map((atom) => formatAtom(atom)) : [],
+      ),
+    );
+    expect(excluded.filter((atom) => /(^|:)lang:/.test(atom))).not.toEqual([]);
   });
 
   test("lists every registry metric for the model", () => {

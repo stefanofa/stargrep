@@ -328,6 +328,29 @@ const fixture = () => {
       }),
     );
 
+    test.effect("finds a query's other words in full text when it excludes a language", () =>
+      Effect.gen(function* () {
+        const cli = (id: number, name: string, summary: string, language: string): Seed => ({
+          id,
+          name,
+          summary,
+          language,
+          starredAt: "2025-01-01T00:00:00Z",
+          kind: "cli",
+        });
+        const scope = yield* seed(924, [
+          cli(9241, "rust-grep", "a cli that searches files, written in rust", "Rust"),
+          cli(9242, "go-grep", "a cli that searches files, written in go", "Go"),
+          cli(9243, "ts-scaffold", "a cli that scaffolds projects", "TypeScript"),
+        ]);
+        respond = () =>
+          ormPlan({ languages: [{ language: "Go", said: "go" }] }, { _tag: "relevance" }, "terminal program");
+        for (const query of ["a cli not written in go", "a non-go cli"]) {
+          expect(names(yield* search({ scope, query, limit: 10 })).sort()).toEqual(["rust-grep", "ts-scaffold"]);
+        }
+      }),
+    );
+
     const onNode = Schema.decodeSync(SelectionKey)("with:platform:node");
     test.effect("relaxes a filter the words imply to a boost when it leaves almost nothing, and says so", () =>
       Effect.gen(function* () {

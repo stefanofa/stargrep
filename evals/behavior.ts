@@ -184,6 +184,20 @@ export const judged: ReadonlyArray<Judged> = [
     drops: ["astral-sh/uv"],
   },
   {
+    query: "cli tools not written in go",
+    near: "BurntSushi/ripgrep",
+    languages: ["Go"],
+    keeps: ["BurntSushi/ripgrep", "sharkdp/bat", "gitui-org/gitui"],
+    drops: ["junegunn/fzf"],
+  },
+  {
+    query: "non-go cli tools",
+    near: "BurntSushi/ripgrep",
+    languages: ["Go"],
+    keeps: ["BurntSushi/ripgrep", "sharkdp/bat", "gitui-org/gitui"],
+    drops: ["junegunn/fzf"],
+  },
+  {
     query: "web framework without orm go",
     near: "gin-gonic/gin",
     languages: ["Go"],

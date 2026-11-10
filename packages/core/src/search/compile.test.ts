@@ -131,6 +131,16 @@ describe("compileQuery", () => {
     expect(groups("alternative to notion ios app")).toEqual(["boost alternative_to[notion]", "boost platform:ios"]);
   });
 
+  test("reads non- or no- before a language, platform, or kind as a negation of it", () => {
+    expect(groups("non-rust terminal emulator", { languages: ["Rust"] })).toEqual([
+      "exclude written-in:lang:rust|with:lang:rust",
+      "boost any[emulator]",
+    ]);
+    expect(groups("non-go cli tools", { languages: ["Go"] })).toEqual(["exclude written-in:lang:go|with:lang:go"]);
+    expect(groups("non-linux apps")).toEqual(["exclude platform:linux"]);
+    expect(groups("non-blocking io libraries")).toEqual(["boost any[non blocking io]"]);
+  });
+
   test("narrows only the target of only, and never promotes the rest of the query", () => {
     expect(groups("terminal emulator for linux only")).toEqual([
       "boost platform:terminal",
