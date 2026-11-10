@@ -183,6 +183,34 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
       ]);
     }),
   );
+
+  test.effect("a subject one repo holds shows on that repo's panel and in no chip or lookup", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const solo = yield* subjectNamed("quokka solo concept");
+      const pair = yield* subjectNamed("quokka pair concept");
+      const holder = repoId(9_501);
+      const peer = repoId(9_502);
+      yield* seed(
+        new Map([
+          [holder, [subject("about", solo), subject("about", pair)]],
+          [peer, [subject("for", pair)]],
+        ]),
+      );
+
+      const panel = (yield* db.facets.held([holder])).get(holder) ?? [];
+      expect(panel.map(({ atom, listed }) => [atom, listed])).toEqual([
+        [`about:subject:${pair}`, true],
+        [`about:subject:${solo}`, false],
+      ]);
+      const chips = yield* db.facets.matching([holder, peer]);
+      expect([...chips.atoms.values()].flat()).toEqual([`subject:${pair}`, `subject:${pair}`]);
+      expect(Object.keys(chips.labels)).toEqual([`subject:${pair}`]);
+      expect((yield* db.facets.lookup({ q: "quokka", limit: 10 })).map((facet) => facet.atom)).toEqual([
+        `subject:${pair}`,
+      ]);
+    }),
+  );
 };
 
 it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 60_000, testTimeout: 60_000 })(
