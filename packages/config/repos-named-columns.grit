@@ -1,0 +1,8 @@
+language js
+
+or {
+  `$_.insert(repos)`,
+  `$_.select().from(repos)`
+} as $match where {
+  register_diagnostic(span=$match, message="A Drizzle insert or select on repos names its columns. The bare form names every column the schema has, so a running Worker fails on it while a migration that drops one runs ahead of the deploy.")
+}

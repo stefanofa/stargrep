@@ -1,4 +1,4 @@
-for (const suite of ["no-raw-tracer", "api-handler-errors", "no-repos-kind"]) {
+for (const suite of ["no-raw-tracer", "api-handler-errors", "repos-named-columns"]) {
   const fixtures = new URL(`../fixtures/${suite}/`, import.meta.url).pathname;
   const expected: Record<string, number> = await Bun.file(`${fixtures}expected.json`).json();
 

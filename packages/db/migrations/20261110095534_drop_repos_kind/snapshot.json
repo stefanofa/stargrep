@@ -1,0 +1,35 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "5a39eba3-c52f-4644-955f-291b8fc2f464",
+  "prevIds": [
+    "61b7a3d3-ba0c-4af2-84ee-91fd0cdfde9b"
+  ],
+  "footprints": [
+    {
+      "statementType": "drop_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "kind"
+      ],
+      "writes": [
+        "s|col|public.repos.kind",
+        "n|col|public.repos.kind",
+        "e|col|public.repos.kind"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "drop",
+      "key": "columns\u0000[\"public\",\"repos\",\"kind\"]"
+    }
+  ]
+}

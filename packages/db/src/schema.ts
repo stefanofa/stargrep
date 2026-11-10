@@ -180,7 +180,6 @@ export const repos = pgTable(
     language: text("language"),
     license: text("license"),
     homepage: text("homepage"),
-    kind: text("kind"),
     createdAt: time("created_at"),
     pushedAt: time("pushed_at"),
     archived: boolean("archived").notNull().default(false),

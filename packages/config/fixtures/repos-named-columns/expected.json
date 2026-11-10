@@ -1,0 +1,6 @@
+{
+  "a-bare-insert.ts": 1,
+  "b-bare-select.ts": 1,
+  "c-named-columns-ok.ts": 0,
+  "stubs.ts": 0
+}
