@@ -10,6 +10,9 @@
     "curate": "bun scripts/curate.ts",
     "enrich": "bun scripts/enrich.ts",
     "github-explore": "bun scripts/github-explore.ts",
+    "pilot": "bun scripts/pilot.ts",
+    "prefill": "bun scripts/prefill.ts",
+    "prefill-check": "bun scripts/prefill-check.ts",
     "search": "bun scripts/search.ts",
     "sync": "bun scripts/sync.ts",
     "typecheck": "effect-tsgo tsc -p ."

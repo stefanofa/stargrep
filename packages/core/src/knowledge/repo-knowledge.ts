@@ -4,7 +4,7 @@ import * as Db from "@stargrep/db";
 import type { DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
 import type { ObjectId, RepoId } from "@stargrep/github/schemas";
 import { rules as replayRules } from "@stargrep/knowledge/decisions";
-import { type InputHash, ReceiptId, type Revision } from "@stargrep/knowledge/ids";
+import { type BatchId, type InputHash, ReceiptId, type Revision } from "@stargrep/knowledge/ids";
 import type { LabelKey } from "@stargrep/knowledge/label-key";
 import { type LabelEntry, lookupKeys, project, type Rules } from "@stargrep/knowledge/projection";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -156,8 +156,9 @@ export const reproject = Effect.fn("RepoKnowledge.reproject")(function* (
 });
 
 // A summary answer for one repo, with the README and the prompt inputs it describes, and the enrichment lease its
-// attempt holds, if any. Capture clears only that lease.
+// attempt holds, if any. Capture clears only that lease. A prefill answer names the manifest of the batch it came from.
 export interface Paid {
+  readonly batchId?: BatchId;
   readonly repoId: RepoId;
   readonly readmeOid: ObjectId | null;
   readonly inputHash: InputHash;
@@ -204,7 +205,7 @@ export const capture = Effect.fn("RepoKnowledge.capture")(function* (answers: Re
           readmeOid: paid.readmeOid,
           recipe: summaryRecipe,
           model: paid.model,
-          batchId: null,
+          batchId: paid.batchId ?? null,
           summary: paid.answer.summary,
           keywords: paid.answer.keywords,
           claims: paid.answer.facets.claims,
