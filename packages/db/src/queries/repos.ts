@@ -67,7 +67,7 @@ export const RepoIcon = Schema.Struct({
 export type RepoIcon = typeof RepoIcon.Type;
 
 // Columns a Repo leaves out: the vector, the full-text column, the retry state, the recipe that made the summary, and
-// the knowledge columns, which only queries/knowledge.ts reads and writes.
+// the knowledge columns, which only queries/knowledge/ reads and writes.
 const internalColumns = [
   "embedding",
   "search",

@@ -2,12 +2,12 @@ import { RepoId } from "@stargrep/github/schemas";
 import { formatAtom } from "@stargrep/knowledge/atom";
 import { labelKey } from "@stargrep/knowledge/label-key";
 import { type ClosedDim, closed, closedKeys, Dim, dimPrefix, roleIds, roles } from "@stargrep/knowledge/registry";
-import { type SQL, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import type { DbQueryFailed, DbRowInvalid, Operation } from "../errors.ts";
+import type { DbQueryFailed, DbRowInvalid } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
-import { resultRows, rowsDecoder } from "../rows.ts";
+import { rowsDecoder, statements } from "../rows.ts";
 
 // Reads of the atoms repos hold and match, for cards, the repo panel, library chips, and lookups. Every read goes
 // through the views, so a merge, a split, a rejection, or the self rule shows here as it does in search.
@@ -105,16 +105,7 @@ const closedMatches = (prefix: string) =>
   );
 
 export const make = Effect.gen(function* () {
-  const { run } = yield* Postgres.Postgres;
-
-  const query = <A>(
-    operation: Operation,
-    decode: (operation: Operation) => (rows: unknown) => Effect.Effect<A, DbRowInvalid>,
-    statement: SQL,
-  ) =>
-    run(operation, (db) => db.execute(statement)).pipe(
-      Effect.flatMap((result) => decode(operation)(resultRows(result))),
-    );
+  const { query } = statements((yield* Postgres.Postgres).run);
 
   // Kinds keep the order projection gave them, so the primary kind comes first. Every other closed array is sorted.
   const held = (ids: ReadonlyArray<RepoId>) =>

@@ -11,7 +11,7 @@ import * as NodePostgres from "./node-postgres.ts";
 import * as Postgres from "./postgres.ts";
 import * as Accounts from "./queries/accounts.ts";
 import * as Facets from "./queries/facets.ts";
-import * as Knowledge from "./queries/knowledge.ts";
+import * as Knowledge from "./queries/knowledge/index.ts";
 import * as RateLines from "./queries/rate-lines.ts";
 import * as Repos from "./queries/repos.ts";
 import * as Search from "./queries/search.ts";
@@ -46,7 +46,7 @@ export type {
   StoredAtom,
   SubjectInfo,
   Variant,
-} from "./queries/knowledge.ts";
+} from "./queries/knowledge/index.ts";
 export type { Reservation, Reserved } from "./queries/rate-lines.ts";
 export { CallerKey, LineKey } from "./queries/rate-lines.ts";
 export type {
