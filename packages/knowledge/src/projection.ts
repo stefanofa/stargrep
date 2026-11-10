@@ -146,8 +146,8 @@ export const kindKeys: ReadonlyMap<LabelKey, KindId> = new Map(
   [...implications.kind, ...spellings.kind].map(([key, value]) => [key, value.id as KindId]),
 );
 
-// The kind projection puts first, before any correction: the first is claim whose key names a kind. Commit A writes it
-// to the legacy repos.kind column until search reads kinds.
+// The kind projection puts first, before any correction: the first is claim whose key names a kind. Commit A still
+// writes it to the legacy repos.kind column, which no reader uses, until the dual write goes.
 export const primaryKind = (claims: ReadonlyArray<Claim>): KindId | null => {
   const named = [...claims]
     .sort((a, b) => a.ordinal - b.ordinal)

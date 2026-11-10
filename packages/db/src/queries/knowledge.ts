@@ -541,8 +541,8 @@ export const make = Effect.gen(function* () {
               from answer a join receipts r
                 on (r.repo_id, r.source, r.input_hash, r.recipe) = (a."repoId", a.source, a."inputHash", a.recipe)
             ),
-            -- The legacy kind column holds the receipt's primary kind, as primaryKind reads it, until search reads
-            -- kinds: the first is claim whose key names a kind, or none.
+            -- The legacy kind column holds the receipt's primary kind, as primaryKind reads it, until the dual write
+            -- goes: the first is claim whose key names a kind, or none. Every reader uses kinds.
             kinded as (
               select w.*, (
                 select k.kind
