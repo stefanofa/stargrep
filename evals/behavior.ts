@@ -216,12 +216,13 @@ export const judged: ReadonlyArray<Judged> = [
   {
     query: "apps built on node",
     near: "n8n-io/n8n",
-    keeps: ["n8n-io/n8n", "vercel/next.js", "expressjs/express"],
+    keeps: ["n8n-io/n8n"],
   },
   {
     query: "tools built with node.js",
     near: "expressjs/express",
-    keeps: ["expressjs/express", "vercel/next.js", "n8n-io/n8n"],
+    keeps: ["expressjs/express", "vercel/next.js"],
+    drops: ["tokio-rs/axum", "actix/actix-web"],
   },
   {
     query: "chatbot powered by openai",
@@ -231,7 +232,15 @@ export const judged: ReadonlyArray<Judged> = [
   {
     query: "note app powered by ai",
     near: "logseq/logseq",
-    keeps: ["logseq/logseq", "anyproto/anytype-ts", "AppFlowy-IO/AppFlowy"],
+    keeps: [
+      "logseq/logseq",
+      "anyproto/anytype-ts",
+      "AppFlowy-IO/AppFlowy",
+      "laurent22/joplin",
+      "siyuan-note/siyuan",
+      "toeverything/AFFiNE",
+      "usememos/memos",
+    ],
   },
   { query: "games made with godot", near: "godotengine/godot", keeps: ["godotengine/godot"] },
   {

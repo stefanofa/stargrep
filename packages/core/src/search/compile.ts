@@ -25,10 +25,16 @@ import * as Vocabulary from "./vocabulary.ts";
 
 export type Span = readonly [start: number, end: number];
 
-// A stated group, with where each of its atoms or keys sits in the query, or null for one only the planner named.
+// A stated group, with where each of its atoms or keys sits in the query, or null for one only the planner named. from
+// says whether the query's words implied the group or the planner's guarded output named it, and relaxed whether a
+// filter the words implied fell back to a boost.
+interface Origin {
+  readonly from: "words" | "planner";
+  readonly relaxed: boolean;
+}
 export type Stated =
-  | { readonly group: Db.ClosedGroup; readonly spans: ReadonlyArray<Span | null> }
-  | { readonly group: Db.SubjectGroup; readonly spans: ReadonlyArray<Span> };
+  | ({ readonly group: Db.ClosedGroup; readonly spans: ReadonlyArray<Span | null> } & Origin)
+  | ({ readonly group: Db.SubjectGroup; readonly spans: ReadonlyArray<Span> } & Origin);
 
 export interface CompiledQuery {
   readonly explicit: Selection;
@@ -83,6 +89,19 @@ export const CurrentPolicy = Context.Reference<Policy>("@stargrep/core/search/co
   defaultValue: () => policy,
 });
 
+// A safety net for words the compiler reads wrong. When the filters a query's words imply leave fewer than below
+// results, and the same search with them as boosts finds at least atLeast, search runs it that way, so those repos
+// still rank first. Filters the caller or the planner named, and every exclusion, stay exact. Null turns it off.
+export interface Relaxation {
+  readonly below: number;
+  readonly atLeast: number;
+}
+export const relaxation: Relaxation = { below: 3, atLeast: 6 };
+export const CurrentRelaxation = Context.Reference<Relaxation | null>(
+  "@stargrep/core/search/compile/CurrentRelaxation",
+  { defaultValue: () => relaxation },
+);
+
 type Roles = readonly [AtomRole, ...Array<AtomRole>];
 
 const member: Roles = ["any"];
@@ -114,8 +133,9 @@ const relation = (subjects: Roles, named: { readonly language?: Roles; readonly 
   named: named.language !== undefined || named.platform !== undefined,
 });
 const feature: Relation = { ...relation(memberOrBuilt), row: "feature" };
-// A language something is built with is most often the one it is written in, so "built with rust" reaches both.
-const builtWith = relation(["built_with"], { language: ["written_in", "built_with"], platform: ["built_with"] });
+// Extraction rarely records what a repo is built with, so a stated dependency reaches member atoms too: "built on node"
+// reaches repos that run on node, and "built with rust" repos written in Rust.
+const builtWith = relation(memberOrBuilt, { language: ["written_in", "built_with"], platform: memberOrBuilt });
 const comparison = { _tag: "Comparison" } as const;
 
 const cues: ReadonlyMap<string, Cue> = new Map<string, Cue>([
@@ -138,14 +158,20 @@ const cues: ReadonlyMap<string, Cue> = new Map<string, Cue>([
   ...["alternative to", "alternatives to", "instead of", "replacement for", "replacements for", "replaces"].map(
     (phrase) => [phrase, comparison] as const,
   ),
-  // The tokenizer keeps a contraction whole without its apostrophe, so "don't" and "don’t" read as "dont".
+  // The tokenizer reads every n't contraction, with either apostrophe, as "not". These are the forms typed without one.
   ...[
-    ...["not", "without", "no", "except", "excluding", "non", "cannot"],
-    ...["dont", "doesnt", "didnt", "isnt", "arent", "wasnt", "werent", "wont", "cant"],
+    ...["not", "never", "without", "no", "except", "excluding", "non", "cannot"],
+    ...["dont", "doesnt", "didnt", "isnt", "arent", "wasnt", "werent", "wont", "cant", "aint", "shant"],
+    ...["shouldnt", "wouldnt", "couldnt", "hasnt", "havent", "hadnt", "mustnt", "neednt"],
   ].map((word) => [word, { _tag: "Negation" }] as const),
   ...["only", "just", "exclusively"].map((word) => [word, { _tag: "Only" }] as const),
 ]);
 
+// Verbs a negation reaches through to its target, as it reaches through a cue, so "do not support windows" excludes
+// Windows and "don't work with docker" excludes Docker.
+const negatedVerbs = new Set(
+  ["support", "use", "need", "require", "work", "depend", "rely"].flatMap((verb) => [verb, `${verb}s`]),
+);
 // After a clause, these make it a comparison, as in "open source Slack alternative".
 const comparisonMarkers = new Set(["alternative", "alternatives"]);
 const stopPhrases = new Set(["open source", "opensource", "oss"]);
@@ -193,11 +219,13 @@ const idOf = (dim: ClosedDim, name: string): string | undefined => {
 
 export const version = Hash.string(
   JSON.stringify({
-    clauses: 3,
+    clauses: 4,
     policy,
+    relaxation,
     cues: [...cues],
     comparisonMarkers: [...comparisonMarkers],
     stopPhrases: [...stopPhrases],
+    negatedVerbs: [...negatedVerbs],
     genericNouns: [...genericNouns],
     closedWords: [...closedWords],
     bounds: [maxPhrase, maxGroups, maxAlternatives, maxWords],
@@ -214,8 +242,9 @@ interface Token {
   readonly slashed: boolean;
 }
 
-// The splitter mentionsFilter uses, with each word's place in the query, except that a contraction such as "don't"
-// or "won’t" stays one word, without its apostrophe.
+// The splitter mentionsFilter uses, with each word's place in the query, except that a contraction stays one word: an
+// n't form such as "don't", "won’t", or "dosen't" reads as "not", and any other drops its apostrophe. A period after a
+// word stays in the gap, so it ends the clause.
 const tokenize = (query: string): ReadonlyArray<Token> => {
   const slashed = [...query.matchAll(/\S+/g)]
     .filter((match) => match[0].includes("/"))
@@ -228,14 +257,14 @@ const tokenize = (query: string): ReadonlyArray<Token> => {
     const end = start + text.length;
     if (text !== "") {
       tokens.push({
-        word: text.replace(/['’]/gu, "").toLowerCase(),
+        word: /n['’]t$/iu.test(text) ? "not" : text.replace(/['’]/gu, "").toLowerCase(),
         start,
         end,
         gap: query.slice(previous, start),
         slashed: slashed.some(([from, to]) => start >= from && end <= to),
       });
     }
-    previous = start + match[0].length;
+    previous = end;
   }
   return tokens;
 };
@@ -296,8 +325,9 @@ interface Clause {
   readonly cue: Relation | typeof comparison | null;
   readonly negated: boolean;
   readonly tail: boolean;
-  // A tail after a negation's target, as "windows" in "do not support windows". A negation never applies a closed
-  // value positively, so its closed values apply nothing.
+  // A tail after a negation's target, as "deno" in "without linux deno". A negation never applies a platform
+  // positively, so a platform there applies nothing. A language there is one the planner read into the query, which
+  // most often describes the results, as "go" in "web framework without orm go", so it keeps its mode.
   readonly afterNegation: boolean;
   exclusive: boolean;
   readonly runs: Array<Run>;
@@ -352,6 +382,10 @@ const parse = (tokens: ReadonlyArray<Token>, matchAt: (index: number) => Match |
     } else if (alternates(token.gap)) joiner = true;
 
     const match = matchAt(i);
+    if (match === null && current().negated && current().runs.length === 0 && negatedVerbs.has(token.word)) {
+      i++;
+      continue;
+    }
     const next = tokens[i + (match?.length ?? 1)];
     // "no-code", "non-blocking", and "no-std" are words, not negations.
     const compound = match?._tag === "Cue" && match.cue._tag === "Negation" && next?.gap === "-";
@@ -461,6 +495,8 @@ export const compileQuery = (input: {
       words.push({
         group: { _tag: "Closed", mode, any: [first[0], ...rest.map(([atom]) => atom)] },
         spans: atoms.map(([, span]) => span),
+        from: "words",
+        relaxed: false,
       });
     }
   };
@@ -504,6 +540,8 @@ export const compileQuery = (input: {
         words.push({
           group: { _tag: "Subject", mode, roles: reaches, keys: [first[0], ...rest.map(([key]) => key)] },
           spans: unique.map(([, alternative]) => [alternative[0]?.start ?? 0, alternative.at(-1)?.end ?? 0] as const),
+          from: "words",
+          relaxed: false,
         });
         return;
       }
@@ -525,7 +563,7 @@ export const compileQuery = (input: {
             : cue?.row === "feature"
               ? "feature"
               : "language";
-        const mode = current.afterNegation ? null : modeOf(row, narrowed);
+        const mode = modeOf(row, narrowed);
         for (const value of run.values) {
           if (!languagesAt.has(value.id)) {
             languagesAt.set(value.id, { atoms: atomsOf(reaches, "language", value.id), mode, span: value.span });
@@ -567,12 +605,18 @@ export const compileQuery = (input: {
   }
 
   const plannedGroups: Array<Stated> = [];
-  const closedGroup = (mode: Db.GroupMode, atoms: ReadonlyArray<readonly [Atom, Span | null]>) => {
+  const closedGroup = (
+    mode: Db.GroupMode,
+    atoms: ReadonlyArray<readonly [Atom, Span | null]>,
+    from: Origin["from"] = "planner",
+  ) => {
     const [first, ...rest] = atoms;
     if (first !== undefined) {
       plannedGroups.push({
         group: { _tag: "Closed", mode, any: [first[0], ...rest.map(([atom]) => atom)] },
         spans: atoms.map(([, span]) => span),
+        from,
+        relaxed: false,
       });
     }
   };
@@ -606,10 +650,26 @@ export const compileQuery = (input: {
       plannedKinds.length > 0
         ? plannedKinds.map((id) => [atomOf("any", "kind", id), lexical.find((value) => value.id === id)?.span ?? null])
         : lexical.map(({ id, span }) => [atomOf("any", "kind", id), span]),
+      plannedKinds.length > 0 ? "planner" : "words",
     );
   }
   return { explicit, stated: [...plannedGroups, ...words].slice(0, maxGroups) };
 };
+
+const relaxable = (stated: Stated) => stated.from === "words" && stated.group.mode === "filter";
+
+// The query with every filter its words implied as a boost, or null when its words imply no filter.
+export const relaxed = (compiled: CompiledQuery): CompiledQuery | null =>
+  compiled.stated.some(relaxable)
+    ? {
+        ...compiled,
+        stated: compiled.stated.map((stated) =>
+          relaxable(stated)
+            ? ({ ...stated, group: { ...stated.group, mode: "boost" }, relaxed: true } as Stated)
+            : stated,
+        ),
+      }
+    : null;
 
 export interface AppliedAtom {
   // The atom's key, such as "lang:rust" or "alt:subject:77".
@@ -618,6 +678,8 @@ export interface AppliedAtom {
   readonly mode: Db.GroupMode;
   readonly from: "query" | "filter";
   readonly span: Span | null;
+  // A filter the query's words implied that left almost nothing, so it boosted instead.
+  readonly relaxed: boolean;
 }
 
 const closedLabel = (atom: Atom) =>
@@ -637,10 +699,11 @@ export const applied = (compiled: CompiledQuery, resolution: Db.Resolution): Rea
         mode: group.negate ? "exclude" : "filter",
         from: "filter",
         span: null,
+        relaxed: false,
       }),
     ),
   );
-  const stated = compiled.stated.flatMap(({ group, spans }, index): ReadonlyArray<AppliedAtom> => {
+  const stated = compiled.stated.flatMap(({ group, spans, relaxed }, index): ReadonlyArray<AppliedAtom> => {
     if (group._tag === "Closed") {
       return group.any.map((atom, n) => ({
         atom: formatAtom(atom),
@@ -648,6 +711,7 @@ export const applied = (compiled: CompiledQuery, resolution: Db.Resolution): Rea
         mode: group.mode,
         from: "query",
         span: spans[n] ?? null,
+        relaxed,
       }));
     }
     const ids = resolution.stated[index];
@@ -658,6 +722,7 @@ export const applied = (compiled: CompiledQuery, resolution: Db.Resolution): Rea
       mode: group.mode,
       from: "query",
       span: spans[n] ?? null,
+      relaxed,
     }));
   });
   return [...explicit, ...stated];

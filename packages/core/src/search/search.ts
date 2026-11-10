@@ -199,27 +199,39 @@ export const make = Effect.gen(function* () {
       explicit: request.filter ?? everything,
       policy: yield* Compile.CurrentPolicy,
     });
-    const { hits, resolution } = yield* db.search.hybrid({
-      scope,
-      text: ran.plan.textQuery,
-      embedding: Option.getOrNull(embedding),
-      maxDistance: embeddings.model.maxMatchDistance,
-      limit: request.limit,
-      name: ran.plan.exactName,
-      metrics: metrics.map((id) => registry[id]),
-      filters: {
-        archived: filters.archived,
-        starredAfter: filters.starredAfter,
-        starredBefore: filters.starredBefore,
-        metrics: filters.metrics,
-      },
-      atoms: { explicit: compiled.explicit, stated: compiled.stated.map(({ group }) => group) },
-      rankBy: ran.plan.ranking._tag === "metric" ? ran.plan.ranking : null,
-    });
+    const hybrid = (query: Compile.CompiledQuery) =>
+      db.search.hybrid({
+        scope,
+        text: ran.plan.textQuery,
+        embedding: Option.getOrNull(embedding),
+        maxDistance: embeddings.model.maxMatchDistance,
+        limit: request.limit,
+        name: ran.plan.exactName,
+        metrics: metrics.map((id) => registry[id]),
+        filters: {
+          archived: filters.archived,
+          starredAfter: filters.starredAfter,
+          starredBefore: filters.starredBefore,
+          metrics: filters.metrics,
+        },
+        atoms: { explicit: query.explicit, stated: query.stated.map(({ group }) => group) },
+        rankBy: ran.plan.ranking._tag === "metric" ? ran.plan.ranking : null,
+      });
+    let applies = compiled;
+    let { hits, resolution } = yield* hybrid(compiled);
+    const relaxation = yield* Compile.CurrentRelaxation;
+    const loosened = relaxation === null ? null : Compile.relaxed(compiled);
+    if (relaxation !== null && loosened !== null && hits.length < Math.min(relaxation.below, request.limit)) {
+      const second = yield* hybrid(loosened);
+      if (second.hits.length >= Math.min(relaxation.atLeast, request.limit)) {
+        applies = loosened;
+        ({ hits, resolution } = second);
+      }
+    }
     if (resolution.unavailable.length > 0) return yield* new FacetUnavailable({ subjects: resolution.unavailable });
     return {
       planned: ran,
-      applied: Compile.applied(compiled, resolution),
+      applied: Compile.applied(applies, resolution),
       results: hits.map(
         (hit): SearchResult => ({
           repo: hit.repo,

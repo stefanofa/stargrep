@@ -317,11 +317,11 @@ describe("applied", () => {
       unavailable: [],
     });
     expect(atoms).toEqual([
-      { atom: "kind:list", label: "list", mode: "exclude", from: "filter", span: null },
-      { atom: "subject:9", label: "Neovim", mode: "filter", from: "filter", span: null },
-      { atom: "lang:rust", label: "Rust", mode: "filter", from: "query", span: [0, 4] },
-      { atom: "subject:812", label: "PostgreSQL", mode: "filter", from: "query", span: [23, 31] },
-      { atom: "subject:9031", label: "SQLite", mode: "filter", from: "query", span: [35, 41] },
+      { atom: "kind:list", label: "list", mode: "exclude", from: "filter", span: null, relaxed: false },
+      { atom: "subject:9", label: "Neovim", mode: "filter", from: "filter", span: null, relaxed: false },
+      { atom: "lang:rust", label: "Rust", mode: "filter", from: "query", span: [0, 4], relaxed: false },
+      { atom: "subject:812", label: "PostgreSQL", mode: "filter", from: "query", span: [23, 31], relaxed: false },
+      { atom: "subject:9031", label: "SQLite", mode: "filter", from: "query", span: [35, 41], relaxed: false },
     ]);
   });
 });

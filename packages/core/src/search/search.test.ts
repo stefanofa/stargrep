@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Compile from "./compile.ts";
 import { registry } from "./metric-registry.ts";
 import * as ModelAllowance from "./model-allowance.ts";
 import * as QueryPlan from "./query-plan.ts";
@@ -261,7 +262,7 @@ const fixture = () => {
         const rust = yield* filtered("lang:rust");
         expect([names(rust), names(yield* filtered("-lang:rust"))]).toEqual([["ratatui"], []]);
         expect(rust.applied).toEqual([
-          { atom: "lang:rust", label: "Rust", mode: "filter", from: "filter", span: null },
+          { atom: "lang:rust", label: "Rust", mode: "filter", from: "filter", span: null, relaxed: false },
         ]);
       }),
     );
@@ -301,12 +302,18 @@ const fixture = () => {
           "node-target",
           "ts-written",
         ];
+        // Exact filters, with no fallback to a boost for a filter that leaves one app of seven.
         const found = (query: string) =>
-          search({ scope, query, limit: 10 }).pipe(Effect.map((outcome) => names(outcome)));
+          search({ scope, query, limit: 10 }).pipe(
+            Effect.provideService(Compile.CurrentRelaxation, null),
+            Effect.map((outcome) => names(outcome)),
+          );
         const without = (...names: ReadonlyArray<string>) => everyApp.filter((name) => !names.includes(name));
 
-        expect((yield* found("apps built with node")).sort()).toEqual(["node-built"]);
-        expect((yield* found("apps not built with node")).sort()).toEqual(without("node-built"));
+        // Extraction rarely records a dependency, so "built with node" reaches every role node holds.
+        const node = ["node-built", "node-runtime", "node-target"];
+        expect((yield* found("apps built with node")).sort()).toEqual(node);
+        expect((yield* found("apps not built with node")).sort()).toEqual(without(...node));
         expect((yield* found("apps that run on node")).sort()).toEqual(["node-runtime"]);
         expect((yield* found("apps not running on node")).sort()).toEqual(without("node-runtime"));
         const boosted = yield* found("apps for node");
@@ -321,6 +328,7 @@ const fixture = () => {
       }),
     );
 
+    const onNode = Schema.decodeSync(SelectionKey)("with:platform:node");
     test.effect("relaxes a filter the words imply to a boost when it leaves almost nothing, and says so", () =>
       Effect.gen(function* () {
         const app = (id: number, name: string, language: string, facts: Seed["facts"] = []): Seed => ({
@@ -354,8 +362,9 @@ const fixture = () => {
 
         // The planner's language, the caller's filter, and an exclusion stay exact.
         expect(names(yield* search({ scope, query: "rust apps", limit: 10 }))).toEqual(["rusty"]);
-        const node = Schema.decodeSync(SelectionKey)("platform:node");
-        expect(names(yield* search({ scope, query: "desktop apps", limit: 10, filter: node }))).toEqual(["node-built"]);
+        expect(names(yield* search({ scope, query: "desktop apps", limit: 10, filter: onNode }))).toEqual([
+          "node-built",
+        ]);
         expect((yield* search({ scope, query: "apps not built on node", limit: 10 })).results).toHaveLength(6);
       }),
     );
