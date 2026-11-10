@@ -1,3 +1,4 @@
+export * as Compile from "./compile.ts";
 export * as MetricRegistry from "./metric-registry.ts";
 export * as ModelAllowance from "./model-allowance.ts";
 export * as PlannerPrompt from "./planner-prompt.ts";

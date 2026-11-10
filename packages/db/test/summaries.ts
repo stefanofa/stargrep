@@ -12,6 +12,8 @@ export interface Summary {
   readonly summary: string;
   readonly keywords: ReadonlyArray<string>;
   readonly kind?: string;
+  // The facts the summary model stated, as it writes them. The kind, when given, is the first.
+  readonly facts?: ReadonlyArray<{ readonly role: string; readonly term: string }>;
 }
 
 const noPrompt = { fullName: "", description: "", topics: [], readme: "" };
@@ -42,7 +44,10 @@ export const summarize = Effect.fn("summarize")(function* (summary: Summary) {
   const receiptId = ReceiptId.make(
     yield* SecureRandom.SecureRandom.use((random) => random.uuidV4()).pipe(Effect.provide(SecureRandom.layerWebCrypto)),
   );
-  const facets = decodeFacets(summary.kind === undefined ? [] : [{ role: "is", term: summary.kind }], noPrompt);
+  const facets = decodeFacets(
+    [...(summary.kind === undefined ? [] : [{ role: "is", term: summary.kind }]), ...(summary.facts ?? [])],
+    noPrompt,
+  );
   const [captured] = yield* db.knowledge.capture([
     {
       receiptId,

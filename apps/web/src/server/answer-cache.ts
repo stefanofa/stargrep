@@ -1,13 +1,14 @@
 import { embeddingModel, plannerModel } from "@stargrep/ai/models";
 import type { AnswerCache } from "@stargrep/api/answer-cache";
-import { PlannerPrompt } from "@stargrep/core/search";
+import { Compile, PlannerPrompt } from "@stargrep/core/search";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-// A stored answer carries what planned and embedded it, so a deploy that changes either misses the old answers.
-const version = encodeURIComponent(`${plannerModel}/${PlannerPrompt.version}/${embeddingModel.id}`);
+// A stored answer carries what planned, compiled, and embedded it, so a deploy that changes any of them misses the old
+// answers.
+const version = encodeURIComponent(`${plannerModel}/${PlannerPrompt.version}/${Compile.version}/${embeddingModel.id}`);
 
 // Results carry icon URLs on the request's origin, so each origin keeps its own answers.
 export const answerUrl = (origin: string, key: string) => `${origin}/answers/${version}/${encodeURIComponent(key)}`;

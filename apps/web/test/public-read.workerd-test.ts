@@ -62,6 +62,7 @@ describe("the demo answer cache on the Cache API", () => {
                         metrics: [{ metric: "stars", value: counts.searches }],
                       },
                     ],
+                    applied: [],
                   } satisfies Search.SearchOutcome;
                 }),
         });

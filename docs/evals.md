@@ -107,7 +107,7 @@ The chosen pair measured 0.988 and 0.990 with vector search alone. Hybrid search
 
 ## Search recall
 
-`evals/recall.ts` runs the query set through real search. It summarizes the corpus with the summary model and embeds each repo's text, as enrichment does. It loads all 736 repos as the stars of one account, `recall-eval`, in a Postgres database named `stargrep_recall`. Then it sends each query through the `Search` service in `packages/core`, which calls the planner, embeds the query, and runs `search.hybrid`. It exits with an error when recall@10 is under the bar.
+`evals/recall.ts` runs the query set through real search. It summarizes the corpus with the summary model and embeds each repo's text, as enrichment does. It saves each answer's facts as a receipt and projects them into atoms, as enrichment does. It loads all 736 repos as the stars of one account, `recall-eval`, in a Postgres database named `stargrep_recall`. Then it sends each query through the `Search` service in `packages/core`, which calls the planner, embeds the query, and runs `search.hybrid`. It exits with an error when recall@10 is under the bar.
 
 Summaries, vectors, plans, and query embeddings are cached in `evals/.cache`, which git ignores. A rerun makes no model call unless the corpus, a model, or the planner prompt changes.
 
@@ -136,6 +136,22 @@ The first run reached 0.933. These changes got it over the bar. Each row except 
 | The model quotes the words that named each language, and code keeps a language only when they appear in the query, with new plans | 0.987 to 0.991 |
 
 Two baselines frame these numbers. The raw query with no planner reaches 0.988 with hybrid search and 0.990 with vector search alone. The planner still earns its place. On product queries the raw query reaches 0.964, because "like Wispr Flow" names a product that no repo describes. Full text on model keywords cost 0.009, and dropping full text for planned queries entirely reached 0.997, one query above typed words. Search keeps full text on the typed words, so every search stays hybrid.
+
+### Atoms
+
+On 2026-11-09, with recipe 2 summaries and the cached plans, search with atom filters and boosts reached 0.992, against 0.990 on the same cache before. Kind, language, and license filters read atoms, and the summary model's language claims now reach a language filter, so `d3/d3` is found for "javascript charting library", which GitHub labels Shell. No subject is accepted until curation accepts one, so stated subject words still compiled to nothing in that run. Two runs on the same cache measured what happens once they resolve. `--accept-floor` runs the usage floor, which accepts every subject that 3 repos from 2 owners hold, 405 of 2,506.
+
+| Run | recall@10 |
+|---|---|
+| Atoms, no subject accepted | 0.992 |
+| Subjects accepted at the floor, with the shipped policy | 0.992 |
+| Subjects accepted at the floor, bare subjects as filters (`--bare-filters`) | 0.946 |
+
+Bare subjects therefore boost. As filters they dropped Alacritty, Ghostty, and kitty for "gpu accelerated terminal emulator", Caddy for "reverse proxy with automatic https", and the repos of 8 other queries. A first version of the compiler let a relation cue reach past a kind or platform word, so "framework for building LLM apps and agents" filtered on "agents" and lost LangChain, and it scored 0.973 with subjects accepted. A relation clause that a closed word cuts short now boosts.
+
+### Judged queries
+
+None of the 129 recall queries has a negation, a contraction, "only", or "with" before a feature, so recall cannot see those paths. `evals/behavior.ts` lists 39 judged queries for negation, contractions, "only", built with, built on, powered by, with, for, kinds, languages, and platforms, among them "no dependency cli tool", "apps that never run on windows", "cli tools built with rust", "apps built on node", "typescript orm, not javascript", "llm apps with privacy", and "only libraries for building apps". `evals/behavior.test.ts` runs each one through `Search` on the 78 recorded repos in `evals/fixtures/behavior-repos.jsonl`, with a guarded plan written into the case and a named repo's recorded vector standing in for the query's, so it makes no model call. It compares the search with atoms to the same search with every policy row off. It checks that the repos the case keeps are in both, that the repos it drops were there before and are gone after, and that a query the search without atoms answers with more than 5 repos never answers with none. It runs four times: with no subject accepted and after the usage floor, each through SQL alone and through the accepted-key cache the web server keeps. A few repos are in the fixture only because they hold privacy, GitHub, or AI, so the floor accepts those subjects there as it does on the whole corpus. Against the round 3 compiler, 24 of its 156 runs fail. `bun run evals/recall.ts --write-behavior` rewrites the fixture from the cache.
 
 ### Meaning floor
 
@@ -185,7 +201,7 @@ The value belongs to the embedding model. After a model change, rerun the sweep 
 CI runs `bun run evals/recall.ts --fixture`. The fixture is three files in `evals/fixtures`, one entry per line, so a rewrite shows as a readable diff.
 
 - `recall.json` names 16 queries and the recall the fixture scored on the 11 from `queries.json` when it was written, 0.970. They are the first query of each category in each set: 11 from `queries.json`, all planned, the first typo, and the first nonsense query of each of the 4 kinds.
-- `recall-repos.jsonl` holds 51 repos: the expected repos and the three highest-ranked wrong results for each query in the last full run. Each repo has its public metadata, summary, keywords, kind, and vector, and no README text.
+- `recall-repos.jsonl` holds 52 repos: the expected repos and the three highest-ranked wrong results for each query in the last full run. Each repo has its public metadata, summary, keywords, the facts the summary model stated with their quotes, and vector, and no README text. So the fixture checks the query compiler and atom filters against real claims.
 - `recall-answers.jsonl` holds every cached plan and query embedding those searches read, under the cache namespace that names the model and the prompt version. A typo or nonsense query typed as a keyword reads two embeddings and one plan.
 
 The fixture run loads PGlite in the test process and fails any model or embedding call, so it needs no key and no Postgres. It fails when recall drops under the recorded recall, when the typo misses its repo, or when a nonsense query gets a result. It also fails when a query is missing from the cache, which happens after a change to the planner prompt or a model. After such a change, run `--write-fixture` with a key and commit the new fixture.
@@ -209,7 +225,7 @@ bun run evals/bakeoff.ts --fake
 
 `--limit N` scores only the first N queries against their own expected repos, without distractors, as a cheap smoke test. `--summary <model>` scores one summary model on the full corpus through one AI Gateway batch job, using the embedding model in `models.ts`. `--fake` runs the whole pipeline on the fake layers from `@stargrep/ai/fake` and needs no key. No run edits code. To adopt a result, update `packages/ai/src/models.ts`. A summary model, prompt, or schema change also requires a new summary recipe and its migration. An embedding model change requires the database migration and re-embedding described in `docs/architecture.md`. Regenerate the recall fixture after planner or model changes.
 
-The recall gate needs Postgres, from `docker compose up --detach --wait` or a `DATABASE_URL` that names an admin connection. It creates and migrates `stargrep_recall` on first use.
+The recall gate needs Postgres, from `docker compose up --detach --wait` or a `DATABASE_URL` on that server. Each run drops `stargrep_recall` from the server's `postgres` database and creates and migrates it again, so no earlier corpus or accepted subject carries over, and `DATABASE_URL` may name `stargrep_recall` itself.
 
 ```sh
 AI_GATEWAY_API_KEY=... bun run evals/recall.ts
@@ -218,7 +234,7 @@ AI_GATEWAY_API_KEY=... bun run evals/recall.ts --max-distances 0.32,0.36,0.40
 bun run evals/recall.ts --fixture
 ```
 
-`--max-distances` scores search at each listed value of `maxMatchDistance` and prints one line per value.
+`--max-distances` scores search at each listed value of `maxMatchDistance` and prints one line per value. `--accept-floor` runs the usage floor before the queries run, which accepts every subject held by 3 repos from 2 owners, and `--bare-filters` adds bare subjects as filters, so a change to the compiler's policy can be measured before it ships.
 
 `--summary-model ID` summarizes with another model. A full run from an empty cache used 4.96 million input and 0.19 million output tokens of `anthropic/claude-haiku-5.5` and 0.11 million tokens of `voyage/voyage-4`, about $0.60 at catalog prices. A rerun with a new planner prompt costs about 0.44 million input tokens, for 126 plans.
 

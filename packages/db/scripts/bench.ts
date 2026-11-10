@@ -210,6 +210,7 @@ const measure = Effect.gen(function* () {
     name: null,
     metrics: [],
     filters: Db.noFilters,
+    atoms: Db.noAtoms,
     rankBy: null,
   };
 
@@ -222,8 +223,12 @@ const measure = Effect.gen(function* () {
       const text = yield* randomText;
       return {
         "pk lookup": yield* timed(db.accounts.get(accountId).pipe(Effect.map((account) => [account]))),
-        "vector only": yield* timed(db.search.hybrid({ ...plain, text: "", embedding })),
-        "hybrid rrf": yield* timed(db.search.hybrid({ ...plain, text, embedding })),
+        "vector only": yield* timed(
+          db.search.hybrid({ ...plain, text: "", embedding }).pipe(Effect.map(({ hits }) => hits)),
+        ),
+        "hybrid rrf": yield* timed(
+          db.search.hybrid({ ...plain, text, embedding }).pipe(Effect.map(({ hits }) => hits)),
+        ),
       };
     }),
   );

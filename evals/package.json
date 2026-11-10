@@ -17,6 +17,7 @@
   "devDependencies": {
     "@effect/tsgo": "catalog:",
     "@stargrep/config": "workspace:*",
+    "@stargrep/testing": "workspace:*",
     "@types/bun": "catalog:",
     "typescript": "catalog:"
   }

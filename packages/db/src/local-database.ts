@@ -42,8 +42,7 @@ export const dropDatabase = (adminUrl: string, name: string) =>
     // Disconnected backends can remain visible after pool.end resolves. DROP waits for them to exit.
     try {
       await client.query(`drop database if exists ${client.escapeIdentifier(name)}`);
-    } catch (cause) {
+    } catch {
       await client.query(`drop database if exists ${client.escapeIdentifier(name)} with (force)`);
-      throw cause;
     }
   });

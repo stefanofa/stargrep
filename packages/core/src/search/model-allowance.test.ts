@@ -5,6 +5,7 @@ import * as Db from "@stargrep/db";
 import { EmbeddingModelId } from "@stargrep/db/embedding";
 import * as TestDatabase from "@stargrep/db/test-database";
 import { Login } from "@stargrep/github/schemas";
+import { everything, type Selection, SelectionKey } from "@stargrep/knowledge/atom";
 import * as it from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -55,9 +56,9 @@ const fixture = () => {
   const takeAll = (caller: string, count: number) =>
     Effect.forEach(Array.from({ length: count }), () => allowed(caller, "plan"));
 
-  const searchAs = (caller: string, query: string) =>
+  const searchAs = (caller: string, query: string, filter: Selection = everything) =>
     Search.Search.use((search) =>
-      search.search({ scope: { _tag: "stars", login: Login.make("user-77") }, query, limit: 10 }),
+      search.search({ scope: { _tag: "stars", login: Login.make("user-77") }, query, limit: 10, filter }),
     ).pipe(
       Effect.provide(
         Search.layer.pipe(
@@ -176,6 +177,35 @@ const fixture = () => {
           expect(outcome.results.map((result): string => result.repo.name)).toContain("diesel");
           expect(outcome.results.every((result) => result.vectorRank === null)).toBe(true);
         }
+        expect(calls).toEqual({ prompts: 0, embedded: 0 });
+      }),
+    );
+
+    test.effect("keeps the caller's filter when the network's calls run out", () =>
+      Effect.gen(function* () {
+        yield* clearLines;
+        yield* seeded;
+        yield* takeAll("network-i", 30);
+        const query = "a rust orm for sql databases";
+        const names = (filter: string) =>
+          searchAs("network-i", query, Schema.decodeSync(SelectionKey)(filter)).pipe(
+            Effect.map((outcome) => ({
+              source: outcome.planSource,
+              names: outcome.results.map((result): string => result.repo.name),
+              applied: outcome.applied.map(({ atom, mode, from }) => `${from} ${mode} ${atom}`),
+            })),
+          );
+        expect(yield* names("kind:cli")).toEqual({
+          source: "fallback",
+          names: [],
+          applied: ["filter filter kind:cli"],
+        });
+        expect(yield* names("-lang:rust")).toEqual({
+          source: "fallback",
+          names: [],
+          applied: ["filter exclude lang:rust"],
+        });
+        expect((yield* names("kind:library")).names).toContain("diesel");
         expect(calls).toEqual({ prompts: 0, embedded: 0 });
       }),
     );

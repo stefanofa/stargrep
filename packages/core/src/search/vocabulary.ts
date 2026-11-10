@@ -1,6 +1,6 @@
-// Search keeps today's kinds, language names, and topics, with node and nodejs on JavaScript, until its filters read
-// atoms. The kinds are part of PlannerPrompt.version, which keys the plan and answer caches. The audited closed values
-// live in @stargrep/knowledge/registry.
+// The planner's schema and guards keep today's kinds and language names, with node and nodejs on JavaScript. The kinds
+// are part of PlannerPrompt.version, which keys the plan and answer caches. Filters read the audited closed values in
+// @stargrep/knowledge/registry, through the query compiler.
 export const plannedKinds = [
   "app",
   "library",
@@ -16,86 +16,80 @@ export const plannedKinds = [
   "other",
 ] as const;
 
-interface Language {
-  readonly aliases: ReadonlyArray<string>;
-  readonly topics: ReadonlyArray<string>;
-}
-
-const plain: Language = { aliases: [], topics: [] };
-
-const languages: Readonly<Record<string, Language>> = {
-  abap: plain,
-  ada: plain,
-  apex: plain,
-  assembly: { aliases: ["asm"], topics: [] },
-  astro: plain,
-  c: plain,
-  "c#": { aliases: ["csharp"], topics: ["csharp"] },
-  "c++": { aliases: ["cpp"], topics: ["cpp", "c-plus-plus"] },
-  clojure: plain,
-  cobol: plain,
-  coffeescript: plain,
-  "common lisp": plain,
-  crystal: plain,
-  css: plain,
-  d: plain,
-  dart: plain,
-  delphi: plain,
-  elixir: plain,
-  elm: plain,
-  "emacs lisp": { aliases: ["elisp"], topics: [] },
-  erlang: plain,
-  "f#": { aliases: ["fsharp"], topics: ["fsharp"] },
-  fortran: plain,
-  gleam: plain,
-  go: { aliases: ["golang"], topics: ["golang"] },
-  groovy: plain,
-  haskell: plain,
-  hcl: plain,
-  html: plain,
-  java: plain,
-  javascript: { aliases: ["js", "node", "nodejs"], topics: ["typescript", "nodejs"] },
-  julia: plain,
-  "jupyter notebook": plain,
-  kotlin: plain,
-  lua: plain,
-  matlab: plain,
-  mdx: plain,
-  nim: plain,
-  nix: plain,
-  "node.js": { aliases: ["node", "nodejs"], topics: ["javascript", "typescript", "nodejs"] },
-  "objective-c": { aliases: ["objc"], topics: ["objc"] },
-  ocaml: plain,
-  pascal: plain,
-  perl: plain,
-  php: plain,
-  powershell: plain,
-  prolog: plain,
-  purescript: plain,
-  python: { aliases: ["py"], topics: [] },
-  r: plain,
-  racket: plain,
-  rescript: plain,
-  ruby: plain,
-  rust: plain,
-  scala: plain,
-  scheme: plain,
-  shell: { aliases: ["bash", "zsh"], topics: ["bash"] },
-  smalltalk: plain,
-  solidity: plain,
-  sql: plain,
-  svelte: plain,
-  swift: plain,
-  tcl: plain,
-  typescript: { aliases: ["ts"], topics: [] },
-  v: plain,
-  vala: plain,
-  verilog: plain,
-  vhdl: plain,
-  "vim script": { aliases: ["vimscript", "viml"], topics: [] },
-  "visual basic": { aliases: ["vb"], topics: [] },
-  vue: plain,
-  zig: plain,
+// Each language name with the other words that name it.
+const languages: Readonly<Record<string, ReadonlyArray<string>>> = {
+  abap: [],
+  ada: [],
+  apex: [],
+  assembly: ["asm"],
+  astro: [],
+  c: [],
+  "c#": ["csharp"],
+  "c++": ["cpp"],
+  clojure: [],
+  cobol: [],
+  coffeescript: [],
+  "common lisp": [],
+  crystal: [],
+  css: [],
+  d: [],
+  dart: [],
+  delphi: [],
+  elixir: [],
+  elm: [],
+  "emacs lisp": ["elisp"],
+  erlang: [],
+  "f#": ["fsharp"],
+  fortran: [],
+  gleam: [],
+  go: ["golang"],
+  groovy: [],
+  haskell: [],
+  hcl: [],
+  html: [],
+  java: [],
+  javascript: ["js", "node", "nodejs"],
+  julia: [],
+  "jupyter notebook": [],
+  kotlin: [],
+  lua: [],
+  matlab: [],
+  mdx: [],
+  nim: [],
+  nix: [],
+  "node.js": ["node", "nodejs"],
+  "objective-c": ["objc"],
+  ocaml: [],
+  pascal: [],
+  perl: [],
+  php: [],
+  powershell: [],
+  prolog: [],
+  purescript: [],
+  python: ["py"],
+  r: [],
+  racket: [],
+  rescript: [],
+  ruby: [],
+  rust: [],
+  scala: [],
+  scheme: [],
+  shell: ["bash", "zsh"],
+  smalltalk: [],
+  solidity: [],
+  sql: [],
+  svelte: [],
+  swift: [],
+  tcl: [],
+  typescript: ["ts"],
+  v: [],
+  vala: [],
+  verilog: [],
+  vhdl: [],
+  "vim script": ["vimscript", "viml"],
+  "visual basic": ["vb"],
+  vue: [],
+  zig: [],
 };
 
 const exclusivityWords = ["only", "just", "not", "except", "excluding", "exclusively"];
@@ -213,7 +207,7 @@ const connectives = [
 const exclusive = new Set(exclusivityWords);
 const filterWords = new Set([...exclusivityWords, ...metricAndDateWords, ...licenseWords, ...kindWords]);
 const connectiveWords = new Set(connectives);
-const spokenNames = Object.entries(languages).flatMap(([name, language]) => [name, ...language.aliases]);
+const spokenNames = Object.entries(languages).flatMap(([name, aliases]) => [name, ...aliases]);
 
 const words = (query: string) =>
   query
@@ -263,7 +257,7 @@ export const namesLanguage = (query: string, stated: { readonly language: string
   const language = fold(stated.language);
   return (
     appearsIn(query, stated.said) &&
-    (said === language || (languages[language]?.aliases ?? []).includes(said) || nonLatinLetter.test(said))
+    (said === language || (languages[language] ?? []).includes(said) || nonLatinLetter.test(said))
   );
 };
 
@@ -273,11 +267,4 @@ export const mentionsFilter = (query: string): boolean =>
 
 export const isConnective = (word: string): boolean => connectiveWords.has(word.toLowerCase());
 
-export const matchNames = (stated: ReadonlyArray<string>): ReadonlyArray<string> => [
-  ...new Set(
-    stated.flatMap((language) => {
-      const name = language.toLowerCase();
-      return [name, name.replaceAll(" ", "-"), ...(languages[name]?.topics ?? [])];
-    }),
-  ),
-];
+export const isFilterWord = (word: string): boolean => filterWords.has(word.toLowerCase());

@@ -5,16 +5,13 @@ import * as Gateway from "@stargrep/ai/gateway";
 import * as Models from "@stargrep/ai/models";
 import { tokensSpent } from "@stargrep/ai/port";
 import * as TextGeneration from "@stargrep/ai/text-generation";
-import { RepoKnowledge } from "@stargrep/core/knowledge";
-import { ModelAllowance, QueryPlanner, Search, SearchCache } from "@stargrep/core/search";
+import { Compile, ModelAllowance, QueryPlanner, Search, SearchCache } from "@stargrep/core/search";
 import * as Db from "@stargrep/db";
-import { anyDistance, Embedding, EmbeddingModelId } from "@stargrep/db/embedding";
-import { createMigratedDatabase } from "@stargrep/db/local-database";
+import { anyDistance } from "@stargrep/db/embedding";
+import { createMigratedDatabase, databaseUrl, dropDatabase } from "@stargrep/db/local-database";
 import * as Memory from "@stargrep/db/memory";
-import { GitHubAccountId, Login, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
-import { decodeFacets } from "@stargrep/knowledge/claims";
+import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
-import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -22,14 +19,13 @@ import * as Option from "effect/Option";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import { acceptFloor, embeddingModelId, loadAccount, scope } from "./account.ts";
+import { judgedRepos } from "./behavior.ts";
 import * as Corpus from "./corpus.ts";
 import { EnrichedRepo, enrich } from "./enriched-corpus.ts";
 
 const bar = 0.97;
 const topK = 10;
-const accountId = GitHubAccountId.make(1);
-const login = Login.make("recall-eval");
-const scope = { _tag: "stars", login } as const;
 const negativesPerQuery = 3;
 
 const FixtureMeta = Schema.Struct({ recall: Schema.Finite, queries: Schema.Array(Schema.String) });
@@ -58,100 +54,6 @@ const writeLines = <A, I>(name: string, schema: Schema.Codec<A, I>, values: Read
     Effect.flatMap((lines) => Effect.promise(() => Bun.write(fixtureFile(name), `${lines.join("\n")}\n`))),
   );
 };
-
-const decodeEmbedding = Schema.decodeUnknownEffect(Embedding);
-const embeddingModelId = Schema.decodeSync(EmbeddingModelId)(Models.embeddingModel.id);
-
-// The fixture keeps each repo's kind, not its README, so the kind is its only fact.
-const promptInput = (repo: EnrichedRepo) => ({
-  fullName: repo.fullName,
-  description: repo.description ?? "",
-  topics: repo.topics,
-  readme: "",
-});
-
-const starredAt = (index: number) =>
-  DateTime.add(DateTime.makeUnsafe("2024-01-01T00:00:00Z"), { days: (index * 37) % 1030 });
-
-const loadAccount = Effect.fn("Recall.loadAccount")(function* (repos: ReadonlyArray<EnrichedRepo>) {
-  const db = yield* Db.Db;
-  const rows = [...repos]
-    .sort((left, right) => left.fullName.localeCompare(right.fullName))
-    .map((repo, index) => {
-      const [owner = "", name = ""] = repo.fullName.split("/");
-      const id = RepoId.make(index + 1);
-      return {
-        repo,
-        ref: { id, nodeId: RepoNodeId.make(`R_recall_${id}`), owner: Login.make(owner), name: RepoName.make(name) },
-      };
-    });
-  yield* db.accounts.upsert({
-    id: accountId,
-    type: "user",
-    login,
-    name: null,
-    avatarUrl: null,
-    followers: null,
-    publicRepos: null,
-  });
-  yield* db.repos.upsertRefs(rows.map((row) => row.ref));
-  yield* Effect.forEach(
-    rows,
-    ({ repo, ref }) =>
-      Effect.gen(function* () {
-        const { inputHash } = yield* db.repos.saveFacts({
-          ...ref,
-          description: repo.description,
-          topics: repo.topics,
-          language: repo.language,
-          license: null,
-          homepage: null,
-          createdAt: null,
-          pushedAt: null,
-          archived: false,
-          readmeOid: null,
-          ownerType: null,
-          ownerAvatarUrl: null,
-        });
-        yield* RepoKnowledge.accept([
-          {
-            repoId: ref.id,
-            readmeOid: null,
-            inputHash,
-            source: "model",
-            model: Models.summaryModel,
-            answer: {
-              summary: repo.summary,
-              keywords: repo.keywords,
-              facets: decodeFacets(repo.kind === null ? [] : [{ role: "is", term: repo.kind }], promptInput(repo)),
-            },
-            lease: null,
-          },
-        ]);
-        const embedding = yield* decodeEmbedding({ model: embeddingModelId, vector: repo.vector }).pipe(Effect.orDie);
-        yield* db.repos.saveEmbedding({
-          id: ref.id,
-          owner: ref.owner,
-          name: ref.name,
-          embedding,
-          summary: repo.summary,
-          keywords: repo.keywords,
-          description: repo.description,
-          readmeOid: null,
-        });
-      }),
-    { concurrency: 8, discard: true },
-  );
-  yield* db.stars.upsert({
-    accountId,
-    stars: rows.map(({ ref }, index) => ({
-      repoId: ref.id,
-      starredAt: starredAt(index),
-      observedAt: starredAt(index),
-      source: "api",
-    })),
-  });
-});
 
 interface Scored {
   readonly query: Corpus.Query;
@@ -447,24 +349,46 @@ const sweep = Effect.fn("Recall.sweep")(function* (
   }
 });
 
+// Bare stated subjects as filters, a policy change this eval gates.
+const bareFilters: Compile.Policy = { ...Compile.policy, bare: ["filter", "filter"] };
+
 const real = Effect.fn("Recall.real")(function* (options: {
   readonly summaryModel: string;
   readonly writeFixture: boolean;
+  readonly writeBehavior: boolean;
   readonly maxDistances: ReadonlyArray<number>;
+  readonly acceptFloor: boolean;
+  readonly bareFilters: boolean;
 }) {
   const repos = yield* enrich(options.summaryModel).pipe(
     Effect.provide(Gateway.layerTextGeneration(options.summaryModel).pipe(Layer.provide(Gateway.layerProviderConfig))),
   );
+  if (options.writeBehavior) {
+    const kept = repos.filter((repo) => judgedRepos.includes(repo.fullName));
+    yield* writeLines("behavior-repos.jsonl", EnrichedRepo, kept);
+    return yield* Console.log(
+      `Wrote evals/fixtures/behavior-repos.jsonl: ${kept.length} of ${judgedRepos.length} repos`,
+    );
+  }
   const adminUrl = process.env.DATABASE_URL ?? "postgres://stargrep:stargrep@127.0.0.1:54317/stargrep";
-  const url = yield* createMigratedDatabase(adminUrl, "stargrep_recall");
+  // A fresh database each run, so neither an earlier corpus nor the subjects an --accept-floor run accepted leak in. The
+  // drop runs from the server's maintenance database, since DATABASE_URL may name stargrep_recall itself.
+  const maintenance = databaseUrl(adminUrl, "postgres");
+  yield* dropDatabase(maintenance, "stargrep_recall");
+  const url = yield* createMigratedDatabase(maintenance, "stargrep_recall");
   yield* Console.log(`Loaded ${repos.length} repos as the stars of recall-eval in ${new URL(url).pathname.slice(1)}`);
   const db = Db.layerNodePostgres({ embeddingModel: embeddingModelId, connectionString: Redacted.make(url) });
   return yield* Effect.gen(function* () {
     yield* loadAccount(repos);
+    if (options.acceptFloor) {
+      const { accepted } = yield* acceptFloor();
+      yield* Console.log(`Accepted ${accepted} subjects at the usage floor`);
+    }
     const sets = yield* loadSets;
     if (options.maxDistances.length > 0) return yield* sweep(sets, options.maxDistances);
     const results = yield* runSets(sets).pipe(
       Effect.provide(layerSearch(Gateway.layerPlannerTextGeneration, fileCache), { local: true }),
+      Effect.provideService(Compile.CurrentPolicy, options.bareFilters ? bareFilters : Compile.policy),
     );
     const recall = yield* report(results, repos.length);
     yield* Console.log(`tokens: ${(yield* tokenCounts).join("; ")}`);
@@ -508,13 +432,21 @@ const main = args.includes("--fixture")
       real({
         summaryModel: summaryIndex === -1 ? Models.summaryModel : (args[summaryIndex + 1] ?? Models.summaryModel),
         writeFixture: args.includes("--write-fixture"),
+        writeBehavior: args.includes("--write-behavior"),
         maxDistances: distances,
+        acceptFloor: args.includes("--accept-floor"),
+        bareFilters: args.includes("--bare-filters"),
       }),
     ).pipe(
       Effect.provide(Gateway.layerEmbeddings(Models.embeddingModel).pipe(Layer.provide(Gateway.layerProviderConfig))),
     );
 
 if (import.meta.main) {
-  const exit = await Effect.runPromiseExit(main.pipe(Effect.tapError((error) => Console.error(error.message))));
+  const exit = await Effect.runPromiseExit(
+    main.pipe(
+      Effect.tapError((error) => Console.error(error.message)),
+      Effect.tapDefect((defect) => Console.error(Cause.pretty(Cause.die(defect)))),
+    ),
+  );
   if (exit._tag === "Failure") process.exit(1);
 }

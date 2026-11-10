@@ -36,6 +36,7 @@ import {
   ref,
   repoId,
   repoName,
+  searchHits,
   starred,
   stars,
 } from "./fixtures.ts";
@@ -1043,20 +1044,17 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       });
 
       const query = { scope: stars(owner), text: "", embedding: embedding({ 0: 1 }) };
-      const hits = yield* db.search.hybrid(hybrid({ ...query, limit: 10 }));
+      const hits = yield* searchHits(hybrid({ ...query, limit: 10 }));
       expect(hits.map((hit) => [hit.repo.id, hit.textRank, hit.vectorRank])).toEqual([
         [same, null, 1],
         [close, null, 2],
         [far, null, 3],
       ]);
-      expect((yield* db.search.hybrid(hybrid({ ...query, limit: 2 }))).map((hit) => hit.repo.id)).toEqual([
-        same,
-        close,
-      ]);
+      expect((yield* searchHits(hybrid({ ...query, limit: 2 }))).map((hit) => hit.repo.id)).toEqual([same, close]);
 
-      const refused = yield* db.search
-        .hybrid(hybrid({ ...query, embedding: embedding({ 0: 1 }, otherModel), limit: 10 }))
-        .pipe(Effect.flip);
+      const refused = yield* searchHits(
+        hybrid({ ...query, embedding: embedding({ 0: 1 }, otherModel), limit: 10 }),
+      ).pipe(Effect.flip);
       expect(refused._tag).toBe("EmbeddingModelMismatch");
     }),
   );
@@ -1082,7 +1080,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         stars: [textOnly, both, vectorOnly, neither].map((repo) => starred(repo, "2026-01-01T00:00:00Z")),
       });
 
-      const hits = yield* db.search.hybrid(
+      const hits = yield* searchHits(
         hybrid({
           scope: stars(id),
           text: "terminal dashboard",
@@ -1187,9 +1185,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       });
       yield* database.query(`update repos set embedding_model = 'old/model' where id = $1`, [stale]);
 
-      const hits = yield* db.search.hybrid(
-        hybrid({ scope: stars(id), text: "", embedding: embedding({ 0: 1 }), limit: 10 }),
-      );
+      const hits = yield* searchHits(hybrid({ scope: stars(id), text: "", embedding: embedding({ 0: 1 }), limit: 10 }));
       expect(hits.map((hit) => hit.repo.id)).toEqual([current]);
     }),
   );
@@ -1370,7 +1366,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.repos.upsertRefs([ref(repo, "terminal")]);
       yield* db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-01-01T00:00:00Z")] });
 
-      const hits = yield* db.search.hybrid(
+      const hits = yield* searchHits(
         hybrid({
           scope: stars(id),
           text: "terminal OR dashboard",

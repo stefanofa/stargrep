@@ -5,6 +5,7 @@ import * as Db from "@stargrep/db";
 import { Embedding, EmbeddingModelId } from "@stargrep/db/embedding";
 import * as TestDatabase from "@stargrep/db/test-database";
 import { GitHubAccountId, Login } from "@stargrep/github/schemas";
+import { SelectionKey } from "@stargrep/knowledge/atom";
 import * as it from "@stargrep/testing";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
@@ -13,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Compile from "./compile.ts";
 import { registry } from "./metric-registry.ts";
 import * as ModelAllowance from "./model-allowance.ts";
 import * as QueryPlan from "./query-plan.ts";
@@ -250,6 +252,123 @@ const fixture = () => {
       }),
     );
 
+    test.effect("fails a filter that names a subject no one can use, and applies a known one", () =>
+      Effect.gen(function* () {
+        const scope = yield* seed(921, orms(9070));
+        const filtered = (key: string) =>
+          search({ scope, query: "ratatui", limit: 10, filter: Schema.decodeSync(SelectionKey)(key) });
+        const error = yield* filtered("subject:999999999").pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "FacetUnavailable", subjects: [999_999_999] });
+        const rust = yield* filtered("lang:rust");
+        expect([names(rust), names(yield* filtered("-lang:rust"))]).toEqual([["ratatui"], []]);
+        expect(rust.applied).toEqual([
+          { atom: "lang:rust", label: "Rust", mode: "filter", from: "filter", span: null, relaxed: false },
+        ]);
+      }),
+    );
+
+    test.effect("tests the role each cue names, for languages and platforms, and excludes only that role", () =>
+      Effect.gen(function* () {
+        const app = (id: number, name: string, language: string, facts: Seed["facts"] = []): Seed => ({
+          id,
+          name,
+          summary: "a desktop app",
+          language,
+          starredAt: "2025-01-01T00:00:00Z",
+          kind: "app",
+          facts,
+        });
+        const scope = yield* seed(922, [
+          app(9221, "node-built", "Go", [{ role: "built_with", term: "Node.js" }]),
+          app(9222, "node-target", "Go", [{ role: "for", term: "Node.js" }]),
+          app(9223, "node-runtime", "Go", [{ role: "runs_on", term: "Node.js" }]),
+          app(9224, "js-built", "Rust", [{ role: "built_with", term: "JavaScript" }]),
+          app(9225, "js-written", "JavaScript"),
+          app(9226, "ts-written", "TypeScript"),
+          app(9227, "js-target", "Go", [{ role: "for", term: "JavaScript" }]),
+        ]);
+        respond = (prompt) =>
+          ormPlan(
+            /javascript/i.test(prompt) ? { languages: [{ language: "JavaScript", said: "javascript" }] } : {},
+            { _tag: "relevance" },
+            "a desktop app",
+          );
+        const everyApp = [
+          "js-built",
+          "js-target",
+          "js-written",
+          "node-built",
+          "node-runtime",
+          "node-target",
+          "ts-written",
+        ];
+        // Exact filters, with no fallback to a boost for a filter that leaves one app of seven.
+        const found = (query: string) =>
+          search({ scope, query, limit: 10 }).pipe(
+            Effect.provideService(Compile.CurrentRelaxation, null),
+            Effect.map((outcome) => names(outcome)),
+          );
+        const without = (...names: ReadonlyArray<string>) => everyApp.filter((name) => !names.includes(name));
+
+        // Extraction rarely records a dependency, so "built with node" reaches every role node holds.
+        const node = ["node-built", "node-runtime", "node-target"];
+        expect((yield* found("apps built with node")).sort()).toEqual(node);
+        expect((yield* found("apps not built with node")).sort()).toEqual(without(...node));
+        expect((yield* found("apps that run on node")).sort()).toEqual(["node-runtime"]);
+        expect((yield* found("apps not running on node")).sort()).toEqual(without("node-runtime"));
+        const boosted = yield* found("apps for node");
+        expect([boosted.slice(0, 2).sort(), boosted.sort()]).toEqual([["node-runtime", "node-target"], everyApp]);
+        expect((yield* found("apps written in javascript")).sort()).toEqual(["js-written", "ts-written"]);
+        // An exclusion removes exactly the language it names, so a TypeScript repo stays.
+        expect((yield* found("apps not written in javascript")).sort()).toEqual(without("js-written"));
+        // A language something is built with is most often the one it is written in.
+        expect((yield* found("apps built with javascript")).sort()).toEqual(["js-built", "js-written", "ts-written"]);
+        expect((yield* found("apps not built with javascript")).sort()).toEqual(without("js-built", "js-written"));
+        expect((yield* found("javascript apps")).sort()).toEqual(["js-target", "js-written", "ts-written"]);
+      }),
+    );
+
+    const onNode = Schema.decodeSync(SelectionKey)("with:platform:node");
+    test.effect("relaxes a filter the words imply to a boost when it leaves almost nothing, and says so", () =>
+      Effect.gen(function* () {
+        const app = (id: number, name: string, language: string, facts: Seed["facts"] = []): Seed => ({
+          id,
+          name,
+          summary: "a desktop app",
+          language,
+          starredAt: "2025-01-01T00:00:00Z",
+          kind: "app",
+          facts,
+        });
+        const scope = yield* seed(923, [
+          app(9231, "node-built", "Go", [{ role: "built_with", term: "Node.js" }]),
+          app(9232, "rusty", "Rust"),
+          ...[3, 4, 5, 6, 7].map((n) => app(9230 + n, `plain-${n}`, "Go")),
+        ]);
+        respond = (prompt) =>
+          ormPlan(
+            /rust/i.test(prompt) ? { languages: [{ language: "Rust", said: "rust" }] } : {},
+            { _tag: "relevance" },
+            "a desktop app",
+          );
+        const everyApp = ["node-built", "plain-3", "plain-4", "plain-5", "plain-6", "plain-7", "rusty"];
+
+        const relaxed = yield* search({ scope, query: "apps built on node", limit: 10 });
+        expect([names(relaxed)[0], [...names(relaxed)].sort()]).toEqual(["node-built", everyApp]);
+        expect(relaxed.applied.map(({ atom, mode, relaxed }) => [atom, mode, relaxed])).toEqual([
+          ["platform:node", "boost", true],
+          ["with:platform:node", "boost", true],
+        ]);
+
+        // The planner's language, the caller's filter, and an exclusion stay exact.
+        expect(names(yield* search({ scope, query: "rust apps", limit: 10 }))).toEqual(["rusty"]);
+        expect(names(yield* search({ scope, query: "desktop apps", limit: 10, filter: onNode }))).toEqual([
+          "node-built",
+        ]);
+        expect((yield* search({ scope, query: "apps not built on node", limit: 10 })).results).toHaveLength(6);
+      }),
+    );
+
     test.effect("refuses network and global scopes until they exist", () =>
       Effect.gen(function* () {
         for (const scope of [{ _tag: "network", login: Login.make("user-906") }, { _tag: "global" }] as const) {
@@ -466,17 +585,20 @@ const fixture = () => {
         const [query] = yield* embeddings.embed(["typescript orm"]);
         const embedding = yield* decodeEmbedding({ model, vector: query?.vector });
         for (const metric of Object.values(registry)) {
-          const hits = yield* db.search.hybrid({
-            scope: { kind: "stars", accountId: GitHubAccountId.make(907) },
-            text: "orm",
-            embedding,
-            maxDistance: embeddings.model.maxMatchDistance,
-            limit: 10,
-            name: null,
-            metrics: [metric],
-            filters: { ...Db.noFilters, metrics: [{ metric: metric.id, op: "gt", value: -1e12 }] },
-            rankBy: { metric: metric.id, direction: "highest" },
-          });
+          const hits = yield* db.search
+            .hybrid({
+              scope: { kind: "stars", accountId: GitHubAccountId.make(907) },
+              text: "orm",
+              embedding,
+              maxDistance: embeddings.model.maxMatchDistance,
+              limit: 10,
+              name: null,
+              metrics: [metric],
+              filters: { ...Db.noFilters, metrics: [{ metric: metric.id, op: "gt", value: -1e12 }] },
+              atoms: Db.noAtoms,
+              rankBy: { metric: metric.id, direction: "highest" },
+            })
+            .pipe(Effect.map(({ hits }) => hits));
           expect([metric.id, hits.length, hits.every((hit) => hit.metrics[0] !== null)]).toEqual([metric.id, 3, true]);
         }
       }),

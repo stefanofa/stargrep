@@ -9,6 +9,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import { projectRepos } from "../knowledge/repo-knowledge.ts";
 import type * as Search from "./search.ts";
 
 const decodeEmbedding = Schema.decodeUnknownEffect(Embedding);
@@ -21,6 +22,7 @@ export interface Seed {
   readonly stars?: number;
   readonly kind?: string;
   readonly license?: string;
+  readonly facts?: ReadonlyArray<{ readonly role: string; readonly term: string }>;
 }
 
 export const seedLibrary = Effect.fn("test.seedLibrary")(function* (account: number, repos: ReadonlyArray<Seed>) {
@@ -67,6 +69,7 @@ export const seedLibrary = Effect.fn("test.seedLibrary")(function* (account: num
       summary: repo.summary,
       keywords: [],
       kind: repo.kind ?? "library",
+      ...(repo.facts === undefined ? {} : { facts: repo.facts }),
     });
     const [vector] = yield* embeddings.embed([repo.summary]);
     const input = {
@@ -87,6 +90,7 @@ export const seedLibrary = Effect.fn("test.seedLibrary")(function* (account: num
       );
     }
   }
+  yield* projectRepos(repos.map((repo) => RepoId.make(repo.id)));
   yield* db.stars.upsert({
     accountId,
     stars: repos.map((repo) => ({
