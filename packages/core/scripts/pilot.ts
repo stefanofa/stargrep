@@ -4,7 +4,6 @@ import * as Summarize from "@stargrep/ai/summarize";
 import { withClient } from "@stargrep/db/local-database";
 import * as GitHub from "@stargrep/github/github";
 import type { RepoFacts } from "@stargrep/github/schemas";
-import { Claim, Lanes } from "@stargrep/knowledge/claims";
 import { labelKey } from "@stargrep/knowledge/label-key";
 import { roles } from "@stargrep/knowledge/registry";
 import * as Config from "effect/Config";
@@ -17,6 +16,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as BlobStore from "../src/repos/blob-store.ts";
+import * as Gates from "./pilot-gates.ts";
 import { parseRefs, RunReportJson, readRefs } from "./prefill-files.ts";
 import * as Runtime from "./runtime.ts";
 
@@ -210,25 +210,6 @@ const sample = Command.make(
   }, Effect.provide(Runtime.layerPrefill)),
 ).pipe(Command.withDescription("Pick pilot 2's 300 repos: 100 enriched prod repos and 200 stratified prefill repos"));
 
-const Receipt = Schema.Struct({
-  id: Schema.Number,
-  owner: Schema.String,
-  name: Schema.String,
-  hasReadme: Schema.Boolean,
-  hasKind: Schema.Boolean,
-  hasAbout: Schema.Boolean,
-  lanes: Schema.NullOr(Lanes),
-  claims: Schema.NullOr(Schema.Array(Claim)),
-  carried: Schema.NullOr(Schema.Boolean),
-  capturedAt: Schema.NullOr(Schema.String),
-  // Receipts from prefill manifests for one input of this repo beyond the first, across sources and recipes.
-  duplicates: Schema.Number,
-  // Whether a fallback batch asked this repo again, because its first batch answer was missing or did not decode.
-  retried: Schema.Boolean,
-  altKeys: Schema.Array(Schema.String),
-});
-const decodeReceipts = Schema.decodeUnknownEffect(Schema.Array(Receipt));
-
 const share = (part: number, whole: number) => (whole === 0 ? 0 : part / whole);
 const percent = (value: number) => `${(value * 100).toFixed(1)}%`;
 
@@ -269,8 +250,10 @@ const gates = Command.make(
   },
   Effect.fn("pilot.gates")(function* (flags) {
     const fs = yield* FileSystem.FileSystem;
-    const { refs } = parseRefs(yield* fs.readFileString(flags.sampleFile));
+    const sampleText = yield* fs.readFileString(flags.sampleFile);
+    const { refs } = parseRefs(sampleText);
     const ids = refs.map((ref) => ref.id);
+    const strata = Gates.strataOf(sampleText);
     const paths = flags.runs
       .split(",")
       .map((path) => path.trim())
@@ -279,26 +262,24 @@ const gates = Command.make(
     const reports = yield* Effect.forEach(present, (path) =>
       Effect.flatMap(fs.readFileString(path), Schema.decodeEffect(RunReportJson)),
     );
-    const unreported = paths.length - present.length + reports.filter((report) => !report.finished).length;
-    const rows = yield* decodeReceipts(
-      yield* sql(
-        `select r.id::float8 as id, r.owner, r.name, r.readme_oid is not null as "hasReadme",
-           cardinality(r.kinds) > 0 as "hasKind", coalesce(cardinality(f.about), 0) > 0 as "hasAbout",
-           c.lanes, c.claims, c.carried_from is not null as carried, c.captured_at::text as "capturedAt",
-           (select coalesce(sum(n - 1), 0) from (select count(*) as n from receipts d
-              where d.repo_id = r.id and d.batch_id is not null group by d.input_hash) per_input)::float8 as duplicates,
-           exists (select 1 from extraction_batches b where b.retry_of is not null and r.id = any(b.repo_ids)) as retried,
-           array(select l.key from subject_labels l where l.subject_id = any(f.alternative_to)) as "altKeys"
-         from repos r left join receipts c on c.id = r.receipt_id and c.source in ('model', 'stand-in')
-           left join repo_facets f on f.repo_id = r.id
-         where r.id = any($1::bigint[])`,
-        [ids],
-      ),
-    );
+    const missingReports = paths.length - present.length;
+    const stoppedEarly = reports.filter((report) => !report.finished).length;
+    const rows = yield* Gates.decodeSampleRows(yield* sql(Gates.sampleRows, [ids, Gates.recipe]));
+    const repeated =
+      (yield* Gates.decodeRepeated(yield* sql(Gates.repeatedAsks, [ids, Gates.recipe])))[0]?.repeated ?? 0;
+    const decode = Gates.decodeGate(rows);
+    const prod = Gates.againstRecipeOne(rows, new Set(ids.filter((id) => strata.get(id) === "prod")));
     const answered = rows.filter((row) => row.claims !== null && row.lanes !== null);
     const sampled = new Set<number>(ids);
-    const retried = answered.filter((row) => row.retried).length;
-    const usage = reports.flatMap((report) => report.usage).filter((entry) => sampled.has(entry.repoId));
+    // A resume collects the same batch answers again, so each manifest and repo counts once.
+    const usage = [
+      ...new Map(
+        reports
+          .flatMap((report) => report.usage)
+          .filter((entry) => sampled.has(entry.repoId))
+          .map((entry) => [`${entry.manifest}:${entry.repoId}`, entry] as const),
+      ).values(),
+    ];
     const mean = (values: ReadonlyArray<number>) =>
       share(
         values.reduce((sum, value) => sum + value, 0),
@@ -347,8 +328,18 @@ const gates = Command.make(
       ["Answers", `${answered.length} of ${ids.length} sampled repos have a current receipt`, "-"],
       [
         "Whole answers that fail to decode",
-        `${retried} of ${answered.length} asked again in a fallback batch (${percent(share(retried, answered.length))})`,
+        `${decode.retried} of ${decode.asked} asked repos needed a fallback batch (${percent(share(decode.retried, decode.asked))})`,
         "at most 2%",
+      ],
+      [
+        "Answers that never decoded",
+        `${decode.failed.length} of ${decode.asked} asked repos failed in their batch and its fallback${decode.failed.length > 0 ? `: ${decode.failed.join(", ")}` : ""}`,
+        "reported, and counted in the gate above",
+      ],
+      [
+        "Against recipe 1 on the prod repos",
+        `recipe 2 on the batch path: ${prod.failed.length} never decoded and ${prod.retried} needed a fallback, of ${prod.asked} asked of ${prod.prod}. Recipe 1: ${prod.recipeOneFailed} of ${prod.prod} have no legacy answer. Legacy receipts keep final answers only, so recipe 1 has no first-try count`,
+        `no more answers that never decode than recipe 1 (${prod.pass ? "pass" : "fail"})`,
       ],
       [
         "Answers with no facets list",
@@ -388,7 +379,7 @@ const gates = Command.make(
       ],
       [
         "Resume",
-        `${repaid} repaid items${unreported > 0 ? ` (${unreported} runs stopped before writing a whole report)` : ""}, ${rows.reduce((sum, row) => sum + row.duplicates, 0)} duplicate receipts`,
+        `${repaid} repaid items${missingReports > 0 ? `, ${missingReports} runs wrote no report` : ""}${stoppedEarly > 0 ? `, ${stoppedEarly} reports from runs stopped early` : ""}. ${repeated} repos asked twice for one input. Receipts are unique per input, so a second payment shows here, not as a second receipt`,
         "zero and zero",
       ],
       ["Writes", `slowest capture of a batch ${slowest.toFixed(1)} s, at the run's chunk concurrency`, "keeps up"],

@@ -44,13 +44,21 @@ const Report = Schema.Struct({
     created: Schema.Int,
     closed: Schema.Int,
     fallbacks: Schema.Int,
-    stuck: Schema.Array(Schema.String),
+    stuck: Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        requestObject: Schema.String,
+        providerBatchId: Schema.NullOr(Schema.String),
+        reason: Schema.Literals(["missing", "unreadable", "changed", "unknown-batch"]),
+      }),
+    ),
   }),
   retriedRepos: Schema.Array(Schema.Int),
   repaid: Schema.Int,
   captures: Schema.Array(Schema.Struct({ items: Schema.Int, seconds: Schema.Finite })),
   usage: Schema.Array(
     Schema.Struct({
+      manifest: Schema.String,
       repoId: Schema.Int,
       inputTokens: Schema.optional(Schema.Int),
       outputTokens: Schema.optional(Schema.Int),
