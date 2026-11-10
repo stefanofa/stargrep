@@ -4,10 +4,8 @@ import * as Summarize from "@stargrep/ai/summarize";
 import { withClient } from "@stargrep/db/local-database";
 import * as GitHub from "@stargrep/github/github";
 import type { RepoFacts } from "@stargrep/github/schemas";
-import { Claim, decodeFacets, Lanes } from "@stargrep/knowledge/claims";
-import { rules } from "@stargrep/knowledge/decisions";
+import { Claim, Lanes } from "@stargrep/knowledge/claims";
 import { labelKey } from "@stargrep/knowledge/label-key";
-import { project } from "@stargrep/knowledge/projection";
 import { roles } from "@stargrep/knowledge/registry";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
@@ -212,24 +210,6 @@ const sample = Command.make(
   }, Effect.provide(Runtime.layerPrefill)),
 ).pipe(Command.withDescription("Pick pilot 2's 300 repos: 100 enriched prod repos and 200 stratified prefill repos"));
 
-// Thirty private-looking repos. Their answers go through decodeFacets and project with no model call and no write, so
-// the gates show what a private repo's answer would ask the public vocabulary for.
-const privateCases = Array.from({ length: 30 }, (_, index) => {
-  const name = `internal-service-${index + 1}`;
-  const readme = `# ${name}\n\nAcme's private ledger reconciler for the Nightjar ${index + 1} rollout. Written in Go.`;
-  return {
-    repo: { id: 900_000_000 + index, owner: "acme-private", name },
-    input: { fullName: `acme-private/${name}`, description: "", topics: [], readme },
-    raw: [
-      { role: "is", term: "service" },
-      { role: "written_in", term: "Go" },
-      { role: "about", term: `Nightjar ${index + 1} rollout`, quote: `Nightjar ${index + 1} rollout` },
-      { role: "about", term: "ledger reconciliation" },
-      { role: "trait", term: "acme internal" },
-    ],
-  };
-});
-
 const Receipt = Schema.Struct({
   id: Schema.Number,
   owner: Schema.String,
@@ -241,7 +221,10 @@ const Receipt = Schema.Struct({
   claims: Schema.NullOr(Schema.Array(Claim)),
   carried: Schema.NullOr(Schema.Boolean),
   capturedAt: Schema.NullOr(Schema.String),
-  copies: Schema.Number,
+  // Receipts from prefill manifests for one input of this repo beyond the first, across sources and recipes.
+  duplicates: Schema.Number,
+  // Whether a fallback batch asked this repo again, because its first batch answer was missing or did not decode.
+  retried: Schema.Boolean,
   altKeys: Schema.Array(Schema.String),
 });
 const decodeReceipts = Schema.decodeUnknownEffect(Schema.Array(Receipt));
@@ -271,7 +254,12 @@ const gates = Command.make(
   "gates",
   {
     sampleFile: Flag.String("sample").pipe(Flag.withDescription("The sample file pilot sample wrote")),
-    runs: Flag.String("runs").pipe(Flag.withDescription("Comma-separated prefill --out reports for the sample's runs")),
+    runs: Flag.String("runs").pipe(
+      Flag.withDescription(
+        "Comma-separated prefill --out reports for the sample's runs, for tokens, repaid items, and capture times. A run killed with SIGKILL writes none, and its gates read the database alone",
+      ),
+      Flag.withDefault(""),
+    ),
     overshoot: Flag.Finite("overshoot").pipe(
       Flag.withDescription("Prod's keyword overshoot correction for the growth projection, as pilot 1 derived it"),
       Flag.withDefault(1),
@@ -283,16 +271,23 @@ const gates = Command.make(
     const fs = yield* FileSystem.FileSystem;
     const { refs } = parseRefs(yield* fs.readFileString(flags.sampleFile));
     const ids = refs.map((ref) => ref.id);
-    const reports = yield* Effect.forEach(flags.runs.split(","), (path) =>
-      Effect.flatMap(fs.readFileString(path.trim()), Schema.decodeEffect(RunReportJson)),
+    const paths = flags.runs
+      .split(",")
+      .map((path) => path.trim())
+      .filter((path) => path !== "");
+    const present = yield* Effect.filter(paths, (path) => fs.exists(path));
+    const reports = yield* Effect.forEach(present, (path) =>
+      Effect.flatMap(fs.readFileString(path), Schema.decodeEffect(RunReportJson)),
     );
+    const unreported = paths.length - present.length + reports.filter((report) => !report.finished).length;
     const rows = yield* decodeReceipts(
       yield* sql(
         `select r.id::float8 as id, r.owner, r.name, r.readme_oid is not null as "hasReadme",
            cardinality(r.kinds) > 0 as "hasKind", coalesce(cardinality(f.about), 0) > 0 as "hasAbout",
            c.lanes, c.claims, c.carried_from is not null as carried, c.captured_at::text as "capturedAt",
-           (select count(*) from receipts d where d.repo_id = r.id and d.recipe = c.recipe
-              and d.input_hash = c.input_hash and d.source = c.source)::float8 as copies,
+           (select coalesce(sum(n - 1), 0) from (select count(*) as n from receipts d
+              where d.repo_id = r.id and d.batch_id is not null group by d.input_hash) per_input)::float8 as duplicates,
+           exists (select 1 from extraction_batches b where b.retry_of is not null and r.id = any(b.repo_ids)) as retried,
            array(select l.key from subject_labels l where l.subject_id = any(f.alternative_to)) as "altKeys"
          from repos r left join receipts c on c.id = r.receipt_id and c.source in ('model', 'stand-in')
            left join repo_facets f on f.repo_id = r.id
@@ -302,7 +297,7 @@ const gates = Command.make(
     );
     const answered = rows.filter((row) => row.claims !== null && row.lanes !== null);
     const sampled = new Set<number>(ids);
-    const direct = new Set(reports.flatMap((report) => report.directRepos).filter((id) => sampled.has(id)));
+    const retried = answered.filter((row) => row.retried).length;
     const usage = reports.flatMap((report) => report.usage).filter((entry) => sampled.has(entry.repoId));
     const mean = (values: ReadonlyArray<number>) =>
       share(
@@ -312,6 +307,13 @@ const gates = Command.make(
     const meanInput = mean(usage.flatMap((entry) => (entry.inputTokens === undefined ? [] : [entry.inputTokens])));
     const meanOutput = mean(usage.flatMap((entry) => (entry.outputTokens === undefined ? [] : [entry.outputTokens])));
     const reasoning = usage.reduce((sum, entry) => sum + (entry.reasoningTokens ?? 0), 0);
+    const unreportedThinking = usage.filter((entry) => entry.reasoningTokens === undefined).length;
+    const thinking =
+      usage.length === 0
+        ? "unknown, no batch answer reported"
+        : unreportedThinking > 0
+          ? `unknown for ${unreportedThinking} of ${usage.length} answers, ${reasoning} where reported`
+          : `${reasoning}`;
 
     const minting = answered
       .toSorted((a, b) => (a.capturedAt ?? "").localeCompare(b.capturedAt ?? ""))
@@ -341,22 +343,11 @@ const gates = Command.make(
     const repaid = reports.reduce((sum, report) => sum + report.repaid, 0);
     const slowest = Math.max(0, ...reports.flatMap((report) => report.captures.map((capture) => capture.seconds)));
 
-    const privateRuns = privateCases.map((entry) => {
-      const facets = decodeFacets(entry.raw, entry.input);
-      return project({
-        repo: entry.repo,
-        facts: { language: null, license: null, topics: [] },
-        claims: facets.claims,
-        labels: new Map(),
-        rules: rules([]),
-      });
-    });
-
     const table: ReadonlyArray<readonly [string, string, string]> = [
       ["Answers", `${answered.length} of ${ids.length} sampled repos have a current receipt`, "-"],
       [
         "Whole answers that fail to decode",
-        `${direct.size} of ${answered.length} asked directly after the batch (${percent(share(direct.size, answered.length))})`,
+        `${retried} of ${answered.length} asked again in a fallback batch (${percent(share(retried, answered.length))})`,
         "at most 2%",
       ],
       [
@@ -392,18 +383,18 @@ const gates = Command.make(
       ],
       [
         "Tokens",
-        `mean input ${Math.round(meanInput)}${Option.match(flags.baseInput, { onNone: () => "", onSome: (base) => ` (+${Math.round(meanInput - base)})` })}, output ${Math.round(meanOutput)}${Option.match(flags.baseOutput, { onNone: () => "", onSome: (base) => ` (+${Math.round(meanOutput - base)})` })}, thinking ${reasoning}, over ${usage.length} batch answers`,
+        `mean input ${Math.round(meanInput)}${Option.match(flags.baseInput, { onNone: () => "", onSome: (base) => ` (+${Math.round(meanInput - base)})` })}, output ${Math.round(meanOutput)}${Option.match(flags.baseOutput, { onNone: () => "", onSome: (base) => ` (+${Math.round(meanOutput - base)})` })}, thinking ${thinking}, over ${usage.length} batch answers`,
         "+880 and +284 within 30%, thinking 0",
       ],
       [
         "Resume",
-        `${repaid} repaid items, ${answered.filter((row) => row.copies > 1).length} duplicate receipts`,
+        `${repaid} repaid items${unreported > 0 ? ` (${unreported} runs stopped before writing a whole report)` : ""}, ${rows.reduce((sum, row) => sum + row.duplicates, 0)} duplicate receipts`,
         "zero and zero",
       ],
       ["Writes", `slowest capture of a batch ${slowest.toFixed(1)} s, at the run's chunk concurrency`, "keeps up"],
       [
         "Private cases",
-        `${privateRuns.length} decoded and projected with no model call and no write, asking to mint ${privateRuns.reduce((sum, run) => sum + run.mints.length, 0)} keys`,
+        "deferred: no private capture path exists yet, so the gate moves to the PR that adds it",
         "nothing reaches a public table",
       ],
     ];
