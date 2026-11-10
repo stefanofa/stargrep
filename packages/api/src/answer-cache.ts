@@ -11,16 +11,18 @@ export interface StoredAnswer {
   readonly body: string;
 }
 
-// Where answers are kept. A read that fails is a miss, and a write that fails is dropped, so the cache can only make an
-// answer faster, never fail it.
+// Where answers are kept. A read that fails is a miss, and a write or delete that fails is dropped, so the cache can
+// only make an answer faster, never fail it.
 export interface AnswerCache {
   readonly get: (key: string) => Effect.Effect<Option.Option<StoredAnswer>>;
   readonly set: (key: string, body: string, keepFor: Duration.Duration) => Effect.Effect<void>;
+  readonly delete: (key: string) => Effect.Effect<void>;
 }
 
 export const disabled: AnswerCache = {
   get: () => Effect.succeedNone,
   set: () => Effect.void,
+  delete: () => Effect.void,
 };
 
 export const memory = () => {
@@ -33,6 +35,10 @@ export const memory = () => {
     set: (key, body, keepFor) =>
       Effect.map(Clock.currentTimeMillis, (now) => {
         entries.set(key, { storedAt: now, body, expiresAt: now + Duration.toMillis(keepFor) });
+      }),
+    delete: (key) =>
+      Effect.sync(() => {
+        entries.delete(key);
       }),
   };
   return { cache, entries };
@@ -59,6 +65,9 @@ export interface AnswerPolicy<A> {
   // How long after that it is still served while a refresh runs.
   readonly stale: Duration.Duration;
   readonly keep: (answer: A) => boolean;
+  // A refresh that fails this way means the request has no answer any more, such as a filter by a subject curation has
+  // since rejected, so the stale answer is deleted instead of served for the rest of its stale window.
+  readonly refused: (error: unknown) => boolean;
 }
 
 const answersServed = Metric.counter("stargrep_answer_cache", {
@@ -155,10 +164,15 @@ export const answerCache = <I, A, C extends AnswerContext>(
                   : Effect.void,
               ),
               Effect.catch((error) =>
-                Effect.logWarning("Answer refresh failed", {
-                  procedure: policy.procedure,
-                  error: error instanceof Error ? error.name : typeof error,
-                }),
+                policy.refused(error)
+                  ? Effect.andThen(
+                      context.answerCache.delete(key),
+                      Effect.sync(() => refreshStarts.delete(key)),
+                    )
+                  : Effect.logWarning("Answer refresh failed", {
+                      procedure: policy.procedure,
+                      error: error instanceof Error ? error.name : typeof error,
+                    }),
               ),
             ),
           );

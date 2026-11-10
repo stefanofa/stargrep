@@ -12,7 +12,7 @@ mock.module("../src/lib/rpc.ts", () => ({
     ({
       search: async ({ q }: { q: string }) => {
         searched.push(q);
-        return { planSource: "model", results: [] };
+        return { planSource: "model", results: [], applied: [] };
       },
     }) satisfies Pick<Client, "search">,
 }));

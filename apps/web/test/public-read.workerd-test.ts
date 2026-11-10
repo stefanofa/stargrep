@@ -103,7 +103,7 @@ describe("the demo answer cache on the Cache API", () => {
   };
 
   const demo = { scope: { kind: "stars", login: "ada" }, q: "terminal dashboards" };
-  const url = answerUrl("http://web", "search/ada/stars/20/terminal dashboards");
+  const url = answerUrl("http://web", "search/ada/stars/20//terminal dashboards");
 
   it("stores a demo answer and serves it without building services", async () => {
     const { counts, ask, cache } = fixture();

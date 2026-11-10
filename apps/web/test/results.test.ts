@@ -18,6 +18,7 @@ const entry = (id: number, name: string, stars: number, summary: string): Librar
     kind: null,
     archived: false,
     pushedAt: "2026-11-01T00:00:00.000Z",
+    atoms: [],
     keywords: [],
     starredAt: "2026-01-01T00:00:00.000Z",
     stars,
@@ -31,6 +32,7 @@ const entry = (id: number, name: string, stars: number, summary: string): Librar
 
 const hit = (repo: LibraryEntry, rankedBy: ReadonlyArray<string> = []): SearchResult => ({
   ...repo,
+  facets: [],
   reason: "meaning match #1",
   rankedBy: [...rankedBy],
   metrics: [],

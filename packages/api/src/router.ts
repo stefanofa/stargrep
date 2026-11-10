@@ -7,6 +7,7 @@ import * as Db from "@stargrep/db";
 import type { DbQueryFailed, DbRowInvalid, RepoNotFound } from "@stargrep/db/errors";
 import { loginKey } from "@stargrep/github/login";
 import type { Login } from "@stargrep/github/schemas";
+import { everything, normalize, SelectionKey } from "@stargrep/knowledge/atom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -18,7 +19,9 @@ import * as Schema from "effect/Schema";
 import { type AnswerContext, type AnswerPolicy, answerCache, searchWindows } from "./answer-cache.ts";
 import { Caller } from "./caller.ts";
 import {
+  type AppliedAtom,
   contract,
+  type FacetMatches,
   type IconPlate,
   type Library,
   type MetricId,
@@ -60,6 +63,7 @@ true satisfies Equals<typeof IconPlate.Type, Db.IconPlate>;
 true satisfies Equals<typeof maxIconSize, typeof Db.maxIconSize>;
 true satisfies Equals<typeof OwnerType.Type, Db.OwnerType>;
 true satisfies Equals<(typeof SyncStatus.Type)["state"], SyncRequests.SyncStatus["state"]>;
+true satisfies Equals<typeof AppliedAtom.Type, Search.SearchOutcome["applied"][number]>;
 
 type ApiFailure =
   | Search.SearchError
@@ -112,6 +116,10 @@ type ApiResult<P extends Procedure, A> = Effect.fn.Return<
 >;
 
 const isFailureTag = Schema.is(Schema.Literals(Record.keys(wireCodes)));
+
+// A failure the API answers with a 4xx says the request itself has no answer, so a cached one must not stand in for it.
+const refusesRequest = (error: unknown) =>
+  Predicate.isObject(error) && "_tag" in error && isFailureTag(error._tag) && errorStatus[wireCodes[error._tag]] < 500;
 const wireErrors = middlewareGen<{ readonly traceId: string }>(function* ({ context, next }) {
   // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC types every downstream failure as unknown.
   return yield* next().pipe(
@@ -144,7 +152,7 @@ const session = middlewareGen<WithEffectContext<ApiServices>, { readonly viewer:
 
 const iso = (time: DateTime.Utc | null) => (time === null ? null : DateTime.formatIso(time));
 
-const repoFields = (repo: Db.Repo, icons: IconHost["Service"]) => ({
+const repoBase = (repo: Db.Repo, icons: IconHost["Service"]) => ({
   id: repo.id,
   owner: repo.owner,
   name: repo.name,
@@ -162,31 +170,58 @@ const repoFields = (repo: Db.Repo, icons: IconHost["Service"]) => ({
   ownerAvatarUrl: repo.ownerAvatarUrl,
 });
 
-const libraryRepo = (entry: Db.LibraryEntry, icons: IconHost["Service"]) => ({
-  ...repoFields(entry.repo, icons),
-  keywords: entry.repo.keywords,
-  starredAt: DateTime.formatIso(entry.starredAt),
-  stars: entry.stars,
-  read: entry.read,
+const heldFacets = (ids: ReadonlyArray<Db.Repo["id"]>) => Db.Db.use((db) => db.facets.held(ids));
+
+const repoFields = (
+  repo: Db.Repo,
+  icons: IconHost["Service"],
+  held: ReadonlyMap<Db.Repo["id"], ReadonlyArray<Db.HeldAtom>>,
+) => ({
+  ...repoBase(repo, icons),
+  facets: held.get(repo.id) ?? [],
 });
+
+// A library lists the keys its chips count and names each key once, in labels.
+const libraryRepos = Effect.fnUntraced(function* (entries: ReadonlyArray<Db.LibraryEntry>) {
+  const { atoms, labels } = yield* (yield* Db.Db).facets.matching(entries.map((entry) => entry.repo.id));
+  const icons = yield* IconHost;
+  return {
+    repos: entries.map((entry) => ({
+      ...repoBase(entry.repo, icons),
+      atoms: atoms.get(entry.repo.id) ?? [],
+      keywords: entry.repo.keywords,
+      starredAt: DateTime.formatIso(entry.starredAt),
+      stars: entry.stars,
+      read: entry.read,
+    })),
+    labels,
+  };
+});
+
+// Sorted and without repeats, so every request for the same atoms gets the answer the cache would give it.
+const filterOf = (input: typeof SearchInput.Type) => normalize(input.filter ?? everything);
 
 const searchAnswer = Effect.fnUntraced(function* (input: typeof SearchInput.Type) {
   const scope: Search.Scope = { _tag: input.scope.kind, login: input.scope.login };
-  const outcome = yield* (yield* Search.Search).search({ scope, query: input.q, limit: input.limit }).pipe(
-    // The contract only accepts stars and passes no filter, so either failure violates the service's contract.
-    Effect.catchTags({ SearchScopeUnavailable: Effect.die, FacetUnavailable: Effect.die }),
-  );
+  const outcome = yield* (yield* Search.Search)
+    .search({ scope, query: input.q, limit: input.limit, filter: filterOf(input) })
+    .pipe(
+      // The contract only accepts stars, so this failure violates the service's contract.
+      Effect.catchTags({ SearchScopeUnavailable: Effect.die }),
+    );
+  const held = yield* heldFacets(outcome.results.map((result) => result.repo.id));
   const icons = yield* IconHost;
   return {
     planSource: outcome.planSource,
     results: outcome.results.map((result) => ({
-      ...repoFields(result.repo, icons),
+      ...repoFields(result.repo, icons, held),
       reason: Search.reasonLine(result),
       rankedBy: result.metrics.flatMap(({ metric, value }) =>
         value === null ? [] : [MetricRegistry.registry[metric].format(value)],
       ),
       metrics: result.metrics,
     })),
+    applied: outcome.applied,
   };
 });
 
@@ -196,15 +231,26 @@ const searchAnswers: AnswerPolicy<typeof SearchOutput.Encoded> = {
   json: Schema.fromJsonString(Schema.toEncoded(SearchOutput)),
   ...searchWindows,
   keep: (answer) => answer.planSource !== "fallback",
+  refused: refusesRequest,
 };
 
+const encodeSelection = Schema.encodeSync(SelectionKey);
+
+// One answer per login, scope, limit, filter, and query as the plan cache keys it, so a filtered search never receives an
+// unfiltered answer.
+const answerKey = (input: typeof SearchInput.Type) =>
+  [
+    "search",
+    loginKey(input.scope.login),
+    input.scope.kind,
+    input.limit,
+    encodeSelection(filterOf(input)),
+    QueryPlan.normalize(input.q).toLowerCase(),
+  ].join("/");
+
 // Only the demo account's own stars are cached, so the landing page answers without building any service.
-const demoSearchKey = (input: typeof SearchInput.Type, config: PublicConfig) => {
-  const login = loginKey(input.scope.login);
-  return login === loginKey(config.demoLogin)
-    ? Option.some(`search/${login}/${input.scope.kind}/${input.limit}/${QueryPlan.normalize(input.q).toLowerCase()}`)
-    : Option.none();
-};
+const demoSearchKey = (input: typeof SearchInput.Type, config: PublicConfig) =>
+  loginKey(input.scope.login) === loginKey(config.demoLogin) ? Option.some(answerKey(input)) : Option.none();
 
 const admission = (kind: RateLimitKind) =>
   middlewareGen<WithEffectContext<ApiServices> & Pick<AnswerContext, "execution">>(function* ({ context, next }) {
@@ -219,6 +265,7 @@ const starsAnswers: AnswerPolicy<typeof PublicStars.Encoded> = {
   fresh: Duration.seconds(10),
   stale: Duration.zero,
   keep: () => true,
+  refused: refusesRequest,
 };
 
 const encodeCursor = Schema.encodeSync(StarsCursor);
@@ -231,21 +278,23 @@ const starsPage = Effect.fnUntraced(function* (login: Login, size: number, after
   const account = yield* db.accounts.byLogin(login);
   if (Option.isNone(account)) return yield* new Search.AccountNotSynced({ login });
   const page = yield* db.stars.page(account.value.id, { limit: size, after });
-  const icons = yield* IconHost;
   return {
     login: account.value.login,
-    repos: page.entries.map((entry) => libraryRepo(entry, icons)),
+    ...(yield* libraryRepos(page.entries)),
     nextCursor: Option.getOrNull(Option.map(page.next, encodeCursor)),
   };
 });
 
-// Answers the first limit repos of a page, and continues after the last one answered.
+// Answers the first limit repos of a page, with the labels they use, and continues after the last one answered.
 const firstOf = (page: typeof PublicStars.Encoded, limit: number): typeof PublicStars.Encoded => {
   const last = page.repos[limit - 1];
   if (page.repos.length <= limit || last === undefined) return page;
+  const repos = page.repos.slice(0, limit);
+  const kept = new Set(repos.flatMap((repo) => repo.atoms));
   return {
     ...page,
-    repos: page.repos.slice(0, limit),
+    repos,
+    labels: Object.fromEntries(Object.entries(page.labels).filter(([atom]) => kept.has(atom))),
     nextCursor: encodeCursor({ starredAt: DateTime.makeUnsafe(last.starredAt), repoId: RepoId.make(last.id) }),
   };
 };
@@ -362,9 +411,7 @@ export const router = implementer.router({
 
   library: withServices.library.effect(function* ({ context }): ApiResult<"library", typeof Library.Type> {
     const { account } = yield* context.viewer;
-    const entries = yield* (yield* Db.Db).stars.library(account.id);
-    const icons = yield* IconHost;
-    return { repos: entries.map((entry) => libraryRepo(entry, icons)) };
+    return yield* libraryRepos(yield* (yield* Db.Db).stars.library(account.id));
   }),
 
   stars: os.stars
@@ -376,15 +423,21 @@ export const router = implementer.router({
       return yield* starsPage(input.login, pageSizeFor(input.limit), Option.fromUndefinedOr(input.cursor));
     }),
 
+  lookupFacets: withServices.lookupFacets.use(admission("search")).effect(function* ({
+    input,
+  }): ApiResult<"lookupFacets", typeof FacetMatches.Type> {
+    return { facets: yield* (yield* Db.Db).facets.lookup({ q: input.q, limit: input.limit }) };
+  }),
+
   config: os.config.handler(({ context }) => {
     context.resHeaders?.set("cache-control", "public, max-age=300");
     return context.publicConfig;
   }),
 
   getRepo: withServices.getRepo.effect(function* ({ input }): ApiResult<"getRepo", typeof RepoDetail.Type> {
-    return yield* Effect.all([Db.Db.use((db) => db.repos.require(input.id)), IconHost]).pipe(
-      Effect.map(([repo, icons]) => ({
-        ...repoFields(repo, icons),
+    return yield* Effect.all([Db.Db.use((db) => db.repos.require(input.id)), heldFacets([input.id]), IconHost]).pipe(
+      Effect.map(([repo, held, icons]) => ({
+        ...repoFields(repo, icons, held),
         keywords: repo.keywords,
         homepage: repo.homepage,
         createdAt: iso(repo.createdAt),

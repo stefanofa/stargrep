@@ -165,7 +165,7 @@ describe("when the services cannot start", () => {
     const down = await send("/api/search", post({ scope: { kind: "stars", login: "ada" }, q: "dashboards" }));
     expect([down.status, down.body.code]).toEqual([503, "SERVICE_UNAVAILABLE"]);
     expect(down.body.data.traceId).toEqual(traceId);
-    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(6);
+    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(7);
   });
 });
 
@@ -255,8 +255,21 @@ describe("when the database is unreachable", () => {
       data: { traceId },
     });
 
-    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(6);
+    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(7);
     expect(JSON.stringify([viaRest, viaRpc, viaMcp])).not.toContain("postgres://");
+  });
+});
+
+describe("lookupFacets", () => {
+  it("takes the name in a POST body, never a URL, and answers the same as an MCP tool", async () => {
+    expect((await call("/api/facets?q=postg")).status).toBe(404);
+    const viaRest = await rest("/facets", post({ q: "postg", limit: 1 }));
+    expect([viaRest.status, viaRest.body]).toEqual([
+      200,
+      { facets: [{ atom: "subject:812", label: "PostgreSQL", repos: 1840 }] },
+    ]);
+    const viaMcp = await tool("lookupFacets", { q: "postg" });
+    expect(viaMcp.structuredContent.facets).toHaveLength(2);
   });
 });
 
@@ -266,6 +279,7 @@ describe("mcp", () => {
     expect(tools.map((each: { name: string }) => each.name).sort()).toEqual([
       "config",
       "getRepo",
+      "lookupFacets",
       "search",
       "stars",
       "syncStatus",
@@ -274,6 +288,21 @@ describe("mcp", () => {
     const searchTool = tools.find((each: { name: string }) => each.name === "search");
     expect(searchTool.inputSchema.required).toEqual(["q", "scope"]);
     expect(searchTool.annotations).toMatchObject({ readOnlyHint: true });
+    const lookupTool = tools.find((each: { name: string }) => each.name === "lookupFacets");
+    expect([lookupTool.inputSchema.required, lookupTool.annotations]).toEqual([["q"], { readOnlyHint: true }]);
+  });
+
+  it("passes atoms as one string, with no enum of subjects anywhere in the tool list", async () => {
+    const { tools } = await mcp("tools/list", {});
+    const filter = tools.find((each: { name: string }) => each.name === "search").inputSchema.properties.filter;
+    expect(filter).toMatchObject({ type: "string", maxLength: 2000 });
+    expect(filter).not.toHaveProperty("enum");
+    const enums: Array<ReadonlyArray<unknown>> = [];
+    JSON.stringify(tools, (key, value) => {
+      if (key === "enum") enums.push(value);
+      return value;
+    });
+    expect(enums.flat().filter((value) => String(value).includes("subject"))).toEqual([]);
   });
 });
 
@@ -383,6 +412,7 @@ describe("getRepo and the spec", () => {
     const text = await response.text();
     expect(Object.keys(JSON.parse(text).paths).sort()).toEqual([
       "/config",
+      "/facets",
       "/repos/{id}",
       "/search",
       "/stars/{login}",

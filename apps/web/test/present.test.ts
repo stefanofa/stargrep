@@ -19,6 +19,7 @@ const entry = (description: string | null, summary: string | null): LibraryEntry
     kind: null,
     archived: false,
     pushedAt: "2026-11-01T00:00:00.000Z",
+    atoms: [],
     keywords: [],
     starredAt: "2026-01-01T00:00:00.000Z",
     stars: 16_400,

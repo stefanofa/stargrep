@@ -778,31 +778,42 @@ describe("knowledge crons", () => {
     ]);
   });
 
-  it("logs the nightly count and the usage floor after it, and skips the floor when the count fails", async () => {
+  it("logs the nightly count and the usage floor after it, skips the floor when the count fails, and counts atoms either way", async () => {
     const { logs, layer } = capture();
     const floorDown = new DbQueryFailed({ operation: "knowledge.floor", reason: "transport", sqlState: null });
+    const atomsDown = new DbQueryFailed({ operation: "knowledge.countAtoms", reason: "timeout", sqlState: null });
     await Effect.runPromise(
-      KnowledgeCount.run(knowledgeRuntime({ count: Effect.succeed(3), floor: Effect.succeed([]) })).pipe(
-        Effect.provide(layer),
-      ),
+      KnowledgeCount.run(
+        knowledgeRuntime({ count: Effect.succeed(3), floor: Effect.succeed([]), countAtoms: Effect.succeed(22) }),
+      ).pipe(Effect.provide(layer)),
     );
     await Effect.runPromise(
-      KnowledgeCount.run(knowledgeRuntime({ count: Effect.succeed(0), floor: Effect.fail(floorDown) })).pipe(
-        Effect.provide(layer),
-      ),
+      KnowledgeCount.run(
+        knowledgeRuntime({
+          count: Effect.succeed(0),
+          floor: Effect.fail(floorDown),
+          countAtoms: Effect.fail(atomsDown),
+        }),
+      ).pipe(Effect.provide(layer)),
     );
     await Effect.runPromise(
-      KnowledgeCount.run(knowledgeRuntime({ count: Effect.fail(down) })).pipe(Effect.provide(layer)),
+      KnowledgeCount.run(knowledgeRuntime({ count: Effect.fail(down), countAtoms: Effect.succeed(0) })).pipe(
+        Effect.provide(layer),
+      ),
     );
     expect(logs.map((log) => [log.level, log.message[0]])).toEqual([
       ["Info", "Knowledge count ran"],
       ["Info", "Usage floor ran"],
+      ["Info", "Atom count ran"],
       ["Info", "Knowledge count ran"],
       ["Error", "Usage floor failed"],
+      ["Error", "Atom count failed"],
       ["Error", "Knowledge count failed"],
+      ["Info", "Atom count ran"],
     ]);
     expect(logs[0]?.message[1]).toEqual({ changed: 3 });
     expect(logs[1]?.message[1]).toEqual({ accepted: 0 });
+    expect(logs[2]?.message[1]).toEqual({ changed: 22 });
   });
 });
 

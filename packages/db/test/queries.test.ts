@@ -1208,7 +1208,6 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         readmeOid: readme("b"),
         summaryReadmeOid: readme("b"),
         keywords: ["new"],
-        kind: "app",
         embeddingModel: model,
       });
       expect(yield* db.repos.pendingEnrichment([id])).toEqual([]);

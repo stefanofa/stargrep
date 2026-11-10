@@ -9,12 +9,15 @@ import { DbQueryFailed, RepoNotFound } from "@stargrep/db/errors";
 import * as TestDatabase from "@stargrep/db/test-database";
 import { accountRow, makeDb, repo as repoRow } from "@stargrep/db/testing";
 import { BudgetShare, GitHubAccountId, Login, RepoId, RepoName, type RepoNodeId } from "@stargrep/github/schemas";
+import { SubjectId } from "@stargrep/knowledge/ids";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -63,6 +66,7 @@ const unchecked: Db.Repo = {
 
 interface Fakes {
   readonly search?: (request: Search.SearchRequest) => Effect.Effect<Search.SearchOutcome, Search.SearchError>;
+  readonly facets?: Partial<Db.Db["Service"]["facets"]>;
   readonly limiter?: (kind: RateLimitKind) => Effect.Effect<void, RateLimited | RateLimiterUnavailable>;
   readonly requests?: SyncRequests.SyncRequests["Service"];
   readonly sent?: Array<readonly [Login, SyncRequests.Requester]>;
@@ -114,6 +118,7 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
       library: (accountId: GitHubAccountId) =>
         Effect.succeed(accountId === ada.account.id ? [{ repo, starredAt, stars: 16_400, read: false }] : []),
     },
+    ...(fakes.facets === undefined ? {} : { facets: fakes.facets }),
   });
   const requests =
     fakes.requests ??
@@ -219,11 +224,13 @@ describe("search", () => {
           icon: { url: "https://stargrep.test/icons/v1/git/abc.webp", plate: "dark", size: 96 },
           ownerType: "org",
           ownerAvatarUrl: "https://avatars.githubusercontent.com/u/1",
+          facets: [],
           reason: "keyword match #2, meaning match #1, 18K stars",
           rankedBy: ["18K stars"],
           metrics: [{ metric: "stars", value: 18_000 }],
         },
       ],
+      applied: [],
     });
     const recorded = Ref.getUnsafe(context.procedureTime);
     expect(Option.map(recorded, Duration.isDuration)).toEqual(Option.some(true));
@@ -240,7 +247,7 @@ describe("search", () => {
     });
     await api.search({ scope: { kind: "stars", login: "ada" }, q: "terminal dashboards" });
     expect(requests).toEqual([
-      { scope: { _tag: "stars", login: "ada" as Login }, query: "terminal dashboards", limit: 20 },
+      { scope: { _tag: "stars", login: "ada" as Login }, query: "terminal dashboards", limit: 20, filter: { all: [] } },
     ]);
   });
 
@@ -452,6 +459,137 @@ describe("getRepo", () => {
   });
 });
 
+describe("atoms", () => {
+  const facets: ReadonlyArray<Db.HeldAtom> = [
+    { atom: "kind:library", label: "library", listed: true, repoId: null },
+    { atom: "about:subject:4127", label: "TUI", listed: true, repoId: null },
+    { atom: "trait:subject:9001", label: "one repo's concept", listed: false, repoId: null },
+    { atom: "replaced-by:subject:9310", label: "ratatui", repoId: 552_661_142 as RepoId, listed: true },
+  ];
+  const held = { held: () => Effect.succeed(new Map([[repo.id, facets]])) };
+
+  test("passes the caller's filter to search and refuses one that names no atom before any work", async () => {
+    const requests: Array<Search.SearchRequest> = [];
+    const { api } = client({
+      search: (request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return searchOutcome(request);
+        }),
+    });
+    await api.search({ scope: { kind: "stars", login: "ada" }, q: "dashboards", filter: "lang:rust -kind:list" });
+    expect(requests.map((request) => request.filter)).toEqual([
+      {
+        all: [
+          { negate: false, any: [{ role: "any", value: { dim: "language", id: "rust" } }] },
+          { negate: true, any: [{ role: "any", value: { dim: "kind", id: "list" } }] },
+        ],
+      },
+    ]);
+    const nine = Array.from({ length: 9 }, (_, n) => `subject:${n + 1}`);
+    for (const filter of ["lang:klingon", "subject:007", "kind:", nine.join(" "), nine.join("|")]) {
+      const error = await failure(api.search({ scope: { kind: "stars", login: "ada" }, q: "dashboards", filter }));
+      expect([error.code, error.data]).toEqual([
+        "BAD_REQUEST",
+        { issues: [expect.objectContaining({ path: expect.arrayContaining(["filter"]) })], ...traceData },
+      ]);
+    }
+    expect(requests).toHaveLength(1);
+  });
+
+  test("answers bad request when the filter names a subject that is missing, private, or rejected", async () => {
+    const { api } = client({
+      search: () => Effect.fail(new Search.FacetUnavailable({ subjects: [SubjectId.make(77)] })),
+    });
+    const error = await failure(
+      api.search({ scope: { kind: "stars", login: "ada" }, q: "chat", filter: "subject:77" }),
+    );
+    expect([error.code, error.data]).toEqual(["BAD_REQUEST", traceData]);
+  });
+
+  test("passes the filter sorted and without repeats, so applied never depends on which request filled the cache", async () => {
+    const requests: Array<Search.SearchRequest> = [];
+    const { api } = client({
+      search: (request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return searchOutcome(request);
+        }),
+    });
+    const scope = { kind: "stars", login: "ada" } as const;
+    await api.search({ scope, q: "dashboards", filter: "-kind:list lang:rust|lang:rust" });
+    await api.search({ scope, q: "dashboards", filter: "lang:rust -kind:list" });
+    expect(requests.map((request) => request.filter)).toEqual([
+      {
+        all: [
+          { negate: false, any: [{ role: "any", value: { dim: "language", id: "rust" } }] },
+          { negate: true, any: [{ role: "any", value: { dim: "kind", id: "list" } }] },
+        ],
+      },
+      requests[0]?.filter,
+    ]);
+  });
+
+  test("returns each result's atoms and every atom the search applied, saying which filter relaxed", async () => {
+    const applied: Search.SearchOutcome["applied"] = [
+      { atom: "lang:rust", label: "Rust", mode: "filter", from: "filter", span: null, relaxed: false },
+      { atom: "for:subject:812", label: "PostgreSQL", mode: "boost", from: "query", span: [23, 31], relaxed: true },
+    ];
+    const { api } = client({
+      facets: held,
+      search: (request) => Effect.succeed({ ...searchOutcome(request), applied }),
+    });
+    const answer = await api.search({ scope: { kind: "stars", login: "ada" }, q: "rust TUI libraries for postgres" });
+    expect(answer.results.map((result) => result.facets)).toEqual([facets]);
+    expect(answer.applied).toEqual(applied);
+  });
+
+  test("shows the panel every atom the repo holds, a subject only it holds included", async () => {
+    const { api } = client({ facets: held });
+    expect((await api.getRepo({ id: 42 as RepoId })).facets).toEqual(facets);
+    expect((await api.getRepo({ id: 44 as RepoId })).facets).toEqual([]);
+  });
+
+  test("lists the library's matching atoms per repo with one label for each", async () => {
+    const { api } = client({
+      viewer: Effect.succeed(ada),
+      facets: {
+        matching: () =>
+          Effect.succeed({
+            atoms: new Map([[repo.id, ["kind:library", "lang:rust", "subject:4127"]]]),
+            labels: { "kind:library": "library", "lang:rust": "Rust", "subject:4127": "TUI" },
+          }),
+      },
+    });
+    const library = await api.library();
+    expect([library.repos.map((each) => each.atoms), library.labels]).toEqual([
+      [["kind:library", "lang:rust", "subject:4127"]],
+      { "kind:library": "library", "lang:rust": "Rust", "subject:4127": "TUI" },
+    ]);
+  });
+
+  test("looks facets up by name with a default limit, and refuses a blank name before any work", async () => {
+    const asked: Array<{ readonly q: string; readonly limit: number }> = [];
+    const found = [{ atom: "subject:812", label: "PostgreSQL", repos: 1840 }];
+    const { api } = client({
+      facets: {
+        lookup: (input) =>
+          Effect.sync(() => {
+            asked.push(input);
+            return found;
+          }),
+      },
+    });
+    expect(await api.lookupFacets({ q: "postg" })).toEqual({ facets: found });
+    expect(await api.lookupFacets({ q: "postg", limit: 3 })).toEqual({ facets: found });
+    expect((await failure(api.lookupFacets({ q: "  " }))).code).toBe("BAD_REQUEST");
+    expect(asked).toEqual([
+      { q: "postg", limit: 10 },
+      { q: "postg", limit: 3 },
+    ]);
+  });
+});
+
 describe("signed-in procedures", () => {
   test("enforces session metadata even when the procedure has another path", async () => {
     const { context } = client();
@@ -490,8 +628,10 @@ describe("signed-in procedures", () => {
           read: false,
           icon: { url: "https://stargrep.test/icons/v1/git/abc.webp", plate: "dark", size: 96 },
           ownerType: "org",
+          atoms: [],
         }),
       ],
+      labels: {},
     });
   });
 
@@ -640,7 +780,11 @@ const demoSearch = (planSource: Search.SearchOutcome["planSource"] = "model") =>
   });
   const memory = AnswerCache.memory();
   const call = (
-    input: { readonly scope: { readonly kind: "stars"; readonly login: string }; readonly q: string },
+    input: {
+      readonly scope: { readonly kind: "stars"; readonly login: string };
+      readonly q: string;
+      readonly filter?: string;
+    },
     servicesEffect: Effect.Effect<Context.Context<ApiServices>, ApiServicesUnavailable> = built,
   ) =>
     Effect.gen(function* () {
@@ -674,7 +818,57 @@ describe("the demo answer cache", () => {
         stars: 1,
       });
       expect([demo.searched.length, demo.builds()]).toEqual([1, 1]);
-      expect([...demo.memory.entries.keys()]).toEqual(["search/ada/stars/20/terminal dashboards"]);
+      expect([...demo.memory.entries.keys()]).toEqual(["search/ada/stars/20//terminal dashboards"]);
+    }),
+  );
+
+  it.effect("never serves a filtered search the unfiltered answer, and shares one answer per normalized filter", () =>
+    Effect.gen(function* () {
+      const demo = demoSearch();
+      const query = { scope: { kind: "stars" as const, login: "ada" }, q: "terminal dashboards" };
+      expect((yield* demo.call(query)).cache).toBe("miss");
+      expect((yield* demo.call({ ...query, filter: "lang:rust -kind:list" })).cache).toBe("miss");
+      expect((yield* demo.call({ ...query, filter: "-kind:list lang:rust" }, noServices)).cache).toBe("hit");
+      expect((yield* demo.call({ ...query, filter: "" }, noServices)).cache).toBe("hit");
+      expect(demo.searched.map((request) => request.filter?.all.length)).toEqual([0, 2]);
+      expect([...demo.memory.entries.keys()]).toEqual([
+        "search/ada/stars/20//terminal dashboards",
+        "search/ada/stars/20/lang:rust -kind:list/terminal dashboards",
+      ]);
+    }),
+  );
+
+  it.effect("forgets a filtered answer once its subject is rejected, so the next request answers bad request", () =>
+    Effect.gen(function* () {
+      const demo = demoSearch();
+      const query = { scope: { kind: "stars" as const, login: "ada" }, q: "chat apps", filter: "subject:77" };
+      expect((yield* demo.call(query)).cache).toBe("miss");
+      yield* TestClock.adjust("6 minutes");
+      const rejected = Effect.succeed(
+        services({ search: () => Effect.fail(new Search.FacetUnavailable({ subjects: [SubjectId.make(77)] })) }),
+      );
+      expect((yield* demo.call(query, rejected)).cache).toBe("stale");
+      expect(demo.memory.entries.size).toBe(0);
+      const exit = yield* Effect.exit(demo.call(query, rejected));
+      expect(Exit.isFailure(exit) ? Cause.squash(exit.cause) : exit).toMatchObject({ code: "BAD_REQUEST" });
+    }),
+  );
+
+  it.effect("keeps serving a stale answer when its refresh fails with an outage", () =>
+    Effect.gen(function* () {
+      const demo = demoSearch();
+      const query = { scope: { kind: "stars" as const, login: "ada" }, q: "chat apps", filter: "lang:rust" };
+      expect((yield* demo.call(query)).cache).toBe("miss");
+      yield* TestClock.adjust("6 minutes");
+      const down = Effect.succeed(
+        services({
+          search: () =>
+            Effect.fail(new DbQueryFailed({ operation: "search.hybrid", reason: "transport", sqlState: null })),
+        }),
+      );
+      expect((yield* demo.call(query, down)).cache).toBe("stale");
+      expect(demo.memory.entries.size).toBe(1);
+      expect((yield* demo.call(query, down)).cache).toBe("stale");
     }),
   );
 
@@ -731,6 +925,7 @@ describe("rate limits", () => {
       api.search({ scope: { kind: "stars", login: "grace" }, q: "x" }),
       api.triggerSync({ login: "octocat" }),
       api.stars({ login: "grace" }),
+      api.lookupFacets({ q: "rust" }),
     ];
     const refused = client({ limiter: () => Effect.fail(new RateLimited({ limit: "all" })) });
     const down = client({ limiter: () => Effect.fail(new RateLimiterUnavailable({ cause: "down" })) });
@@ -854,6 +1049,25 @@ it.layer(TestDatabase.layerMemory({ embeddingModel: "test/model" as EmbeddingMod
         yield* TestClock.adjust("2 seconds");
         const next = yield* stars({ login: "ada", limit: 2 });
         expect([next.cache, ids(next.page)]).toEqual(["miss", [504, 503]]);
+      }),
+    );
+
+    it.effect("lists only the labels of the atoms the repos it answers hold", () =>
+      Effect.gen(function* () {
+        yield* seedStars([601, 602]);
+        const database = yield* TestDatabase.TestDatabase;
+        yield* database.query("update repos set kinds = '{cli}' where id = 602");
+        yield* database.query("update repos set kinds = '{app}' where id = 601");
+        const { stars } = yield* starsApi;
+        const newest = (yield* stars({ login: "ada", limit: 1 })).page;
+        expect(newest).toMatchObject({
+          repos: [{ id: 602, kind: "cli", atoms: ["kind:cli"] }],
+          labels: { "kind:cli": "CLI" },
+        });
+        expect(Object.keys((newest as { labels: object }).labels)).toEqual(["kind:cli"]);
+        expect((yield* stars({ login: "ada", limit: 2 })).page).toMatchObject({
+          labels: { "kind:cli": "CLI", "kind:app": "app" },
+        });
       }),
     );
 

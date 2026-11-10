@@ -10,6 +10,7 @@ import type { DbQueryFailed } from "./errors.ts";
 import * as NodePostgres from "./node-postgres.ts";
 import * as Postgres from "./postgres.ts";
 import * as Accounts from "./queries/accounts.ts";
+import * as Facets from "./queries/facets.ts";
 import * as Knowledge from "./queries/knowledge.ts";
 import * as RateLines from "./queries/rate-lines.ts";
 import * as Repos from "./queries/repos.ts";
@@ -27,6 +28,7 @@ export type {
   StarredCount,
   StarSync,
 } from "./queries/accounts.ts";
+export type { FacetCount, HeldAtom, MatchingAtoms } from "./queries/facets.ts";
 export type {
   Answer,
   Captured,
@@ -116,6 +118,7 @@ export class Db extends Context.Service<
     readonly rateLines: RateLines.Queries;
     readonly usage: Usage.Queries;
     readonly knowledge: Knowledge.Queries;
+    readonly facets: Facets.Queries;
   }
 >()("@stargrep/db/db") {}
 
@@ -163,6 +166,7 @@ export const layer = (options: Options) =>
           rateLines: yield* RateLines.make,
           usage: yield* Usage.make,
           knowledge: yield* Knowledge.make,
+          facets: yield* Facets.make,
         });
       }),
     ).pipe(Layer.provide(Digest.layerWebCrypto)),

@@ -730,6 +730,18 @@ export const subjectMatches = pgTable(
   ],
 );
 
+// Counts from the last nightly run, by the key a filter uses. For now one row per closed value's bare key, such as
+// "lang:javascript", which counts TypeScript repos too. Subjects keep theirs in subjects.repo_count, which decides
+// listing. A closed value no live repo matches has no row.
+export const atomStats = pgTable(
+  "atom_stats",
+  {
+    atom: text("atom").primaryKey(),
+    repos: integer("repos").notNull(),
+  },
+  (table) => [check("atom_stats_repos_positive", sql`${table.repos} > 0`)],
+);
+
 // The subject half of the serving projection, one row per live repo. Subject arrays hold origin IDs, so a merge
 // rewrites no row. Triggers mark the row stale when an input changes, and only projection clears it.
 export const repoFacets = pgTable(

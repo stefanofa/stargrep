@@ -54,13 +54,16 @@ const api = (): Client => ({
   getRepo: async () => {
     throw new Error("Unexpected getRepo call");
   },
+  lookupFacets: async () => {
+    throw new Error("Unexpected lookupFacets call");
+  },
   viewer: async () => {
     if (!server.signedIn) throw new Error("signed out");
     return server.viewer;
   },
   library: async () => {
     server.calls.library += 1;
-    return { repos: server.repos };
+    return { repos: server.repos, labels: {} };
   },
   syncStatus: async () => {
     server.calls.syncStatus += 1;
@@ -71,7 +74,7 @@ const api = (): Client => ({
     if (refusal !== undefined) throw answered(refusal);
     return server.status;
   },
-  stars: async ({ login }: { login: string }) => ({ login, repos: server.repos, nextCursor: null }),
+  stars: async ({ login }: { login: string }) => ({ login, repos: server.repos, nextCursor: null, labels: {} }),
   config: async () => ({
     demoLogin: Login.make("stefanofa"),
     demoQuery: "terminal dashboard",
@@ -80,7 +83,7 @@ const api = (): Client => ({
   }),
   search: async ({ q }: { q: string }) => {
     server.searches.push(q);
-    return { planSource: "model", results: await server.search(q) };
+    return { planSource: "model", results: await server.search(q), applied: [] };
   },
 });
 
@@ -107,6 +110,7 @@ const repo = (id: number, owner: string, name: string, description: string, extr
   kind: null,
   archived: false,
   pushedAt: "2026-11-01T00:00:00.000Z",
+  atoms: [],
   keywords: [],
   starredAt: `2026-10-${String(10 + id).padStart(2, "0")}T00:00:00.000Z`,
   stars: 1000 * id,
@@ -152,7 +156,7 @@ const inLine = () =>
     starredTotal: 412,
     enrichment: arriving,
   });
-const hit = (repo: Repo): SearchResult => ({ ...repo, reason: "meaning match", rankedBy: [], metrics: [] });
+const hit = (repo: Repo): SearchResult => ({ ...repo, facets: [], reason: "meaning match", rankedBy: [], metrics: [] });
 
 beforeEach(() => {
   server = {
