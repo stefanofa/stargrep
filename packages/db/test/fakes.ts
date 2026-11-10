@@ -90,6 +90,12 @@ const defaults = {
     variants: unexpected("knowledge.variants")(),
     keepLegacy: unexpected("knowledge.keepLegacy"),
   },
+  // Every procedure that answers repos reads their atoms, so a fake repo holds none unless a test says otherwise.
+  facets: {
+    held: () => Effect.succeed(new Map()),
+    matching: () => Effect.succeed({ atoms: new Map(), labels: {} }),
+    lookup: unexpected("facets.lookup"),
+  },
 } satisfies Db.Db["Service"];
 
 export const makeDb = (overrides: Overrides = {}): Db.Db["Service"] =>
@@ -102,4 +108,5 @@ export const makeDb = (overrides: Overrides = {}): Db.Db["Service"] =>
     rateLines: { ...defaults.rateLines, ...overrides.rateLines },
     usage: { ...defaults.usage, ...overrides.usage },
     knowledge: { ...defaults.knowledge, ...overrides.knowledge },
+    facets: { ...defaults.facets, ...overrides.facets },
   });

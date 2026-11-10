@@ -71,6 +71,9 @@ export const Operation = Schema.Literals([
   "knowledge.floor",
   "knowledge.variants",
   "knowledge.keepLegacy",
+  "facets.held",
+  "facets.matching",
+  "facets.lookup",
 ]);
 export type Operation = typeof Operation.Type;
 

@@ -33,7 +33,7 @@ export const isClosed = (atom: Atom): atom is Atom & { readonly value: { readonl
 // lang:javascript matches a TypeScript repo. An exclusion and a comparison match the value alone, so excluding JavaScript
 // keeps TypeScript.
 export const closedTest = (
-  atom: Atom & { readonly value: { readonly dim: ClosedDim } },
+  atom: { readonly role: AtomRole; readonly value: { readonly dim: ClosedDim; readonly id: string } },
   use: "include" | "exclude",
 ): SQL => {
   const { dim, id } = atom.value;
