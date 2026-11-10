@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { formatAtom } from "./atom.ts";
-import { type Claim, legacyFacets } from "./claims.ts";
+import type { Claim } from "./claims.ts";
 import { empty, type KnowledgeState, type SplitEntry } from "./decisions.ts";
 import { Revision, SubjectId } from "./ids.ts";
 import { type LabelKey, labelKey } from "./label-key.ts";
@@ -8,7 +8,6 @@ import {
   type LabelIndex,
   lookupKeys,
   type ProjectionInput,
-  primaryKind,
   project,
   type RepoFacts,
   type RepoIdentity,
@@ -589,40 +588,23 @@ describe("project: subjects and the curated rules", () => {
   });
 });
 
-describe("primaryKind", () => {
+describe("project: the primary kind", () => {
   const firstKind = (claims: ReadonlyArray<Claim>) =>
     run({ claims }).atoms.find((atom) => atom.role === "is")?.value.id ?? null;
 
-  test("is the kind projection puts first, for every spelling and impliedBy name of every kind", () => {
+  test("is the first is claim that names a kind, for every spelling and impliedBy name of every kind", () => {
     for (const entry of closed.kind) {
       for (const term of [entry.id, entry.label, ...entry.aliases, ...entry.impliedBy]) {
         const claims = [claim("about", "dashboards"), claim("is", "toolkit"), claim("is", term), claim("is", "cli")];
-        expect<unknown>([term, primaryKind(claims)]).toEqual([term, firstKind(claims)]);
-        expect<unknown>([term, primaryKind(claims)]).toEqual([term, entry.id]);
+        expect<unknown>([term, firstKind(claims)]).toEqual([term, entry.id]);
       }
     }
   });
 
   test("follows the model's order, not the list's, and is null when no is claim names a kind", () => {
     const [cli, library] = [claim("is", "cli"), claim("is", "library")];
-    expect(primaryKind([library, cli])).toBe("cli");
-    expect(primaryKind([claim("is", "toolkit"), claim("about", "library")])).toBeNull();
-    expect(primaryKind([])).toBeNull();
-  });
-});
-
-describe("project: legacy summaries", () => {
-  const legacyAtoms = (kind: string | null, facts: RepoFacts = noFacts) =>
-    run({ claims: legacyFacets({ kind }).claims, facts }).atoms.map((atom) => formatAtom(atom));
-
-  test("each kind of the summary model projects as the primary kind", () => {
-    for (const kind of closed.kind.map((entry) => entry.id)) expect(legacyAtoms(kind)).toEqual([`kind:${kind}`]);
-  });
-
-  test("other projects to no kind, and the GitHub facts still project", () => {
-    expect(legacyAtoms("other", { language: "Rust", license: "MIT", topics: [] })).toEqual([
-      "written-in:lang:rust",
-      "license:MIT",
-    ]);
+    expect(firstKind([library, cli])).toBe("cli");
+    expect(firstKind([claim("is", "toolkit"), claim("about", "library")])).toBeNull();
+    expect(firstKind([])).toBeNull();
   });
 });

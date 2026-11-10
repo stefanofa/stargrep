@@ -1,16 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import * as Schema from "effect/Schema";
-import {
-  Claim,
-  type DecodedFacets,
-  decodeFacets,
-  legacyFacets,
-  maxItems,
-  modelRoles,
-  type PromptInput,
-} from "./claims.ts";
+import { Claim, type DecodedFacets, decodeFacets, maxItems, modelRoles, type PromptInput } from "./claims.ts";
 import fixture from "./evidence-text.fixture.json";
-import type { LabelKey } from "./label-key.ts";
 import { roleIds, roles } from "./registry.ts";
 
 const input: PromptInput = {
@@ -191,27 +182,5 @@ describe("decodeFacets", () => {
     expect(surrogate?.quote).toBe("q".repeat(239));
     expect([nul?.term, nul?.key, nul?.quote]).toEqual(["dashboards", "dashboards", "widget"]);
     expect(JSON.stringify([surrogate, nul])).not.toMatch(/\\u0000|\\ud800/i);
-  });
-});
-
-describe("legacyFacets", () => {
-  test("the kind is the only claim, the only answered lane, and is not found in any prompt", () => {
-    const decoded = legacyFacets({ kind: "cli" });
-    expect(decoded.claims).toEqual([
-      { ordinal: 0, role: "is", term: "cli", key: "cli" as LabelKey, quote: null, found: "neither" },
-    ]);
-    expect(decoded.dropped).toEqual([]);
-    expect<Record<string, string>>(decoded.lanes).toEqual({
-      ...Object.fromEntries(modelRoles.map((role) => [role, "missing"])),
-      is: "complete",
-    });
-  });
-
-  test("other and a missing kind give no claim, and the is lane stays answered", () => {
-    for (const kind of ["other", null]) {
-      const decoded = legacyFacets({ kind });
-      expect(decoded.claims).toEqual([]);
-      expect(decoded.lanes.is).toBe("complete");
-    }
   });
 });

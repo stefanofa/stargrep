@@ -1,0 +1,14 @@
+{
+  "a-drizzle-column.ts": 1,
+  "b-sql-interpolation.ts": 1,
+  "c-bare-insert.ts": 1,
+  "d-bare-select.ts": 1,
+  "e-qualified-string.ts": 2,
+  "f-insert-column-list.ts": 1,
+  "g-update-set.ts": 2,
+  "h-kinds-ok.ts": 0,
+  "i-other-kind-ok.ts": 0,
+  "j-named-columns-ok.ts": 0,
+  "k-bare-select-list.ts": 2,
+  "stubs.ts": 0
+}

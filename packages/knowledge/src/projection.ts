@@ -10,7 +10,6 @@ import {
   closed,
   closedKeys,
   type Dim,
-  type KindId,
   licenses,
   type RoleId,
   reservedKeys,
@@ -138,21 +137,6 @@ const resolveClosed = (
     if (implied !== undefined) return { value: implied, reason: "implied" };
   }
   return null;
-};
-
-// Every label key that names a kind in the is role, which accepts only kinds: the spellings and the impliedBy names.
-// No impliedBy name is a spelling of a kind, so one map holds both.
-export const kindKeys: ReadonlyMap<LabelKey, KindId> = new Map(
-  [...implications.kind, ...spellings.kind].map(([key, value]) => [key, value.id as KindId]),
-);
-
-// The kind projection puts first, before any correction: the first is claim whose key names a kind. Commit A still
-// writes it to the legacy repos.kind column, which no reader uses, until the dual write goes.
-export const primaryKind = (claims: ReadonlyArray<Claim>): KindId | null => {
-  const named = [...claims]
-    .sort((a, b) => a.ordinal - b.ordinal)
-    .find((claim) => claim.role === "is" && kindKeys.has(claim.key));
-  return named === undefined ? null : (kindKeys.get(named.key) ?? null);
 };
 
 // A role a bare atom does not reach relates the repo to another project: built with it, an alternative to it, or

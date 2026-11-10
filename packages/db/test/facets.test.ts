@@ -43,7 +43,6 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
   test.effect("a repo's panel shows every atom it holds, its primary kind first, and its kind comes from atoms", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
-      const database = yield* TestDatabase.TestDatabase;
       const shared = yield* subjectNamed("terminal ui");
       const lonely = yield* subjectNamed("one repo concept");
       const panel = repoId(9_101);
@@ -64,7 +63,6 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
           [other, [subject("about", shared)]],
         ]),
       );
-      yield* database.query("update repos set kind = 'app' where id = $1", [panel]);
 
       const held = yield* db.facets.held([panel, other]);
       expect(held.get(panel)).toEqual([

@@ -65,7 +65,7 @@ packages/
     src/search/     query parsing, hybrid search, ranking
     src/icons/      icon discovery and normalization
     src/limits/     rate lines and admission costs
-    src/knowledge/  the projection sweep, the nightly subject count, and the legacy receipt backfill
+    src/knowledge/  the projection sweep, the nightly subject count, and curation
   api/              oRPC contracts and router
   db/               Drizzle schema, migrations, query functions
   github/           GitHub client, reply classification, token budget

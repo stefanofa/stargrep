@@ -1,11 +1,11 @@
-import { ObjectId, RepoId } from "@stargrep/github/schemas";
+import { type ObjectId, RepoId } from "@stargrep/github/schemas";
 import type { FacetRef } from "@stargrep/knowledge/atom";
 import { Claim, type DroppedItem, type Lanes } from "@stargrep/knowledge/claims";
 import type { Change } from "@stargrep/knowledge/curation";
 import * as Decisions from "@stargrep/knowledge/decisions";
 import { type BatchId, type InputHash, ReceiptId, Revision, SubjectId } from "@stargrep/knowledge/ids";
 import { LabelKey } from "@stargrep/knowledge/label-key";
-import { type ClaimVerdict, kindKeys } from "@stargrep/knowledge/projection";
+import type { ClaimVerdict } from "@stargrep/knowledge/projection";
 import type { Dim, RoleId } from "@stargrep/knowledge/registry";
 import { type SQL, sql } from "drizzle-orm";
 import * as DateTime from "effect/DateTime";
@@ -195,53 +195,13 @@ export interface Variant {
   readonly b: { readonly key: LabelKey; readonly subjectId: SubjectId };
 }
 
-// What a legacy receipt copies from the repo's summary columns.
-export interface LegacyContent {
-  readonly recipe: number;
-  readonly summary: string;
-  readonly keywords: ReadonlyArray<string>;
-}
-
-// A repo with a summary from before receipts, as the legacy backfill reads it, locked until the page commits: the facts
-// its input hash names, the legacy columns, and the legacy receipt it points at, if any.
-export interface LegacyRepo {
-  readonly id: RepoId;
-  readonly owner: string;
-  readonly name: string;
-  readonly description: string | null;
-  readonly topics: ReadonlyArray<string>;
-  readonly language: string | null;
-  readonly summaryReadmeOid: ObjectId | null;
-  readonly summaryRecipe: number;
-  readonly summary: string;
-  readonly keywords: ReadonlyArray<string>;
-  readonly kind: string | null;
-  readonly current: LegacyContent | null;
-}
-
-export interface LegacyAnswer extends LegacyContent {
-  readonly repoId: RepoId;
-  readonly inputHash: InputHash;
-  readonly claims: ReadonlyArray<Claim>;
-  readonly lanes: Lanes;
-  readonly dropped: ReadonlyArray<DroppedItem>;
-}
-
-export interface KeptLegacy {
-  // How many repos the page read, and the last of them, which the next page starts after.
-  readonly read: number;
-  readonly last: RepoId | null;
-  readonly inserted: number;
-  readonly pointed: number;
-}
-
 // The only writer of the knowledge tables. Capture saves answers, mint and decide change the vocabulary, and project
 // writes the atoms, each under the lock protocol above.
 export interface Queries {
-  // Commit A: receipts, then the summary of every repo whose README and inputs still match and that is not gone, with
-  // the legacy kind column set from the receipt's primary kind. An answer with no facets list keeps the claims of the
-  // receipt the repo points at. The lease each answer names is cleared, saved or not. The trigger on receipt_id marks
-  // the repo stale. The answers must name distinct repos, and an answer for a repo with no row is left out.
+  // Commit A: receipts, then the summary of every repo whose README and inputs still match and that is not gone. An
+  // answer with no facets list keeps the claims of the receipt the repo points at. The lease each answer names is
+  // cleared, saved or not. The trigger on receipt_id marks the repo stale. The answers must name distinct repos, and an
+  // answer for a repo with no row is left out.
   readonly capture: (
     answers: ReadonlyArray<Answer>,
   ) => Effect.Effect<ReadonlyArray<Captured>, DbQueryFailed | DbRowInvalid>;
@@ -303,13 +263,6 @@ export interface Queries {
   // Label pairs whose keys differ by a separator, a plural s, or a js suffix, resolved to two different live subjects,
   // keys of three characters or fewer left out.
   readonly variants: Effect.Effect<ReadonlyArray<Variant>, DbQueryFailed | DbRowInvalid>;
-  // One page of the legacy backfill: under the shared lock, locks the next live repos with a summary after the given ID
-  // whose receipt is legacy or missing, in ID order, hands them to build, and keeps each answer it returns as a legacy
-  // receipt the repo points at. A second answer with the same input hash and recipe keeps the first receipt.
-  readonly keepLegacy: <E, R>(
-    page: { readonly after: number; readonly limit: number },
-    build: (repos: ReadonlyArray<LegacyRepo>) => Effect.Effect<ReadonlyArray<LegacyAnswer>, E, R>,
-  ) => Effect.Effect<KeptLegacy, E | DbQueryFailed | DbRowInvalid, R>;
 }
 
 const json = (value: unknown): SQL => sql`${JSON.stringify(value)}::jsonb`;
@@ -422,28 +375,6 @@ const Side = Schema.Struct({ key: LabelKey, subjectId: SubjectId });
 const decodeVariants = rowsDecoder(
   Schema.Struct({ channel: Schema.Literals(["separator", "plural", "js"]), a: Side, b: Side }),
 );
-const LegacyContentRow = Schema.Struct({
-  recipe: Schema.Int,
-  summary: Schema.String,
-  keywords: Schema.Array(Schema.String),
-});
-const decodeLegacy = rowsDecoder(
-  Schema.Struct({
-    id: RepoId,
-    owner: Schema.String,
-    name: Schema.String,
-    description: Schema.NullOr(Schema.String),
-    topics: Schema.Array(Schema.String),
-    language: Schema.NullOr(Schema.String),
-    summaryReadmeOid: Schema.NullOr(ObjectId),
-    summaryRecipe: Schema.Int,
-    summary: Schema.String,
-    keywords: Schema.Array(Schema.String),
-    kind: Schema.NullOr(Schema.String),
-    current: Schema.NullOr(LegacyContentRow),
-  }),
-);
-const decodeKept = rowsDecoder(Schema.Struct({ inserted: Schema.Int, pointed: Schema.Int }));
 const decodeIds = rowsDecoder(Schema.Struct({ id: RepoId }));
 const decodeSubjectIds = rowsDecoder(Schema.Struct({ id: SubjectId }));
 const decodeCount = rowsDecoder(Schema.Struct({ count: Schema.Int }));
@@ -543,26 +474,12 @@ export const make = Effect.gen(function* () {
               from answer a join receipts r
                 on (r.repo_id, r.source, r.input_hash, r.recipe) = (a."repoId", a.source, a."inputHash", a.recipe)
             ),
-            -- The legacy kind column holds the receipt's primary kind, as primaryKind reads it, until the dual write
-            -- goes: the first is claim whose key names a kind, or none. Every reader uses kinds.
-            kinded as (
-              select w.*, (
-                select k.kind
-                from jsonb_array_elements(w.claims) c join jsonb_each_text(${json(Object.fromEntries(kindKeys))}) as k (key, kind)
-                  on k.key = c ->> 'key'
-                where c ->> 'role' = 'is'
-                order by (c ->> 'ordinal')::integer
-                limit 1
-              ) as kind
-              from winner w
-            ),
             -- A new summary of the README a read repo's summary describes keeps the old embedding, marked stale, so the
             -- repo stays read and searchable until the new embedding replaces it.
             saved as (
               update repos set
                 summary = w.summary,
                 keywords = w.keywords,
-                kind = w.kind,
                 summary_readme_oid = w."readmeOid",
                 summary_recipe = w.recipe,
                 summary_input_hash = w."inputHash",
@@ -571,7 +488,7 @@ export const make = Effect.gen(function* () {
                 embedding = case when ${keepsEmbedding} then repos.embedding end,
                 embedding_model = case when ${keepsEmbedding} then repos.embedding_model end,
                 embedding_stale = ${keepsEmbedding}
-              from kinded w
+              from winner w
               where repos.id = w."repoId"
                 and repos.readme_oid is not distinct from w."readmeOid"
                 and repos.input_hash = w."inputHash"
@@ -880,71 +797,6 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const keepLegacy = <E, R>(
-    page: { readonly after: number; readonly limit: number },
-    build: (repos: ReadonlyArray<LegacyRepo>) => Effect.Effect<ReadonlyArray<LegacyAnswer>, E, R>,
-  ) =>
-    withTransaction(
-      Effect.gen(function* () {
-        // Shared, so no mint's invalidation marks repo_facets rows while this page's receipt trigger marks them too.
-        yield* execute("knowledge.keepLegacy", sharedLock);
-        const read = yield* query(
-          "knowledge.keepLegacy",
-          decodeLegacy,
-          sql`
-            select r.id::float8 as id, r.owner, r.name, r.description, r.topics, r.language,
-              r.summary_readme_oid as "summaryReadmeOid", r.summary_recipe as "summaryRecipe", r.summary, r.keywords,
-              r.kind,
-              case when c.id is not null then
-                jsonb_build_object('recipe', c.recipe, 'summary', c.summary, 'keywords', c.keywords)
-              end as current
-            from repos r left join receipts c on c.id = r.receipt_id
-            where r.id > ${page.after} and r.summary is not null and r.gone_at is null
-              and (r.receipt_id is null or c.source = 'legacy')
-            order by r.id
-            limit ${page.limit}
-            for no key update of r`,
-        );
-        const last = read.at(-1)?.id ?? null;
-        const answers = yield* build(read);
-        if (answers.length === 0) return { read: read.length, last, inserted: 0, pointed: 0 };
-        const [kept] = yield* query(
-          "knowledge.keepLegacy",
-          decodeKept,
-          sql`
-            with answer as (
-              select * from jsonb_to_recordset(${json(answers)}) as a (
-                "repoId" bigint, "inputHash" text, recipe integer, summary text, keywords jsonb, claims jsonb,
-                lanes jsonb, dropped jsonb
-              )
-            ),
-            inserted as (
-              insert into receipts (id, repo_id, source, input_hash, recipe, model, summary, keywords, claims, lanes,
-                dropped)
-              select gen_random_uuid(), "repoId", 'legacy', "inputHash", recipe, 'legacy', summary, keywords, claims,
-                lanes, dropped
-              from answer
-              on conflict (repo_id, source, input_hash, recipe) do nothing
-              returning id, repo_id
-            ),
-            kept as (
-              select repo_id, id from inserted
-              union all
-              select r.repo_id, r.id from answer a join receipts r
-                on (r.repo_id, r.source, r.input_hash, r.recipe) = (a."repoId", 'legacy', a."inputHash", a.recipe)
-            ),
-            pointed as (
-              update repos set receipt_id = k.id from kept k
-              where repos.id = k.repo_id and repos.receipt_id is distinct from k.id
-              returning repos.id
-            )
-            select (select count(*) from inserted)::integer as inserted,
-              (select count(*) from pointed)::integer as pointed`,
-        );
-        return { read: read.length, last, inserted: kept?.inserted ?? 0, pointed: kept?.pointed ?? 0 };
-      }),
-    );
-
   const log = (operation: Operation, filter: SQL) =>
     query(
       operation,
@@ -1102,6 +954,5 @@ export const make = Effect.gen(function* () {
         from pairs where subject_id <> b_subject
         order by 1, 2, 3`,
     ),
-    keepLegacy,
   } satisfies Queries;
 });

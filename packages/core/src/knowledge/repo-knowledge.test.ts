@@ -349,14 +349,14 @@ it.layer(TestDatabase.layerMemory({ embeddingModel }), { timeout: 60_000, testTi
     const row = (id: number) =>
       Effect.flatMap(TestDatabase.TestDatabase, (database) =>
         database.query(
-          `select r.summary, r.kind, r.kinds::text[] as kinds, f.stale, cardinality(f.about) as about,
+          `select r.summary, r.kinds::text[] as kinds, f.stale, cardinality(f.about) as about,
              (select count(*)::int from receipts c where c.repo_id = r.id) as receipts
            from repos r left join repo_facets f on f.repo_id = r.id where r.id = $1`,
           [id],
         ),
       );
 
-    it.effect("saves the summary, the primary kind, and the receipt, then projects the repo's atoms at once", () =>
+    it.effect("saves the summary and the receipt, then projects the repo's atoms at once", () =>
       Effect.gen(function* () {
         yield* seed([{ id: 81_001 }]);
         const accepted = yield* RepoKnowledge.accept([
@@ -377,7 +377,7 @@ it.layer(TestDatabase.layerMemory({ embeddingModel }), { timeout: 60_000, testTi
           projected: true,
         });
         expect(yield* row(81_001)).toEqual([
-          { summary: "summary of 81001", kind: "cli", kinds: ["cli"], stale: false, about: 1, receipts: 1 },
+          { summary: "summary of 81001", kinds: ["cli"], stale: false, about: 1, receipts: 1 },
         ]);
       }),
     );
@@ -396,10 +396,8 @@ it.layer(TestDatabase.layerMemory({ embeddingModel }), { timeout: 60_000, testTi
           RepoKnowledge.Captured.Stale({ repoId: repoId(81_002) }),
           RepoKnowledge.Captured.Stale({ repoId: repoId(81_003) }),
         ]);
-        expect(yield* row(81_002)).toEqual([
-          { summary: null, kind: null, kinds: [], stale: true, about: 0, receipts: 1 },
-        ]);
-        expect(yield* row(81_003)).toMatchObject([{ summary: null, kind: null, kinds: [], receipts: 1 }]);
+        expect(yield* row(81_002)).toEqual([{ summary: null, kinds: [], stale: true, about: 0, receipts: 1 }]);
+        expect(yield* row(81_003)).toMatchObject([{ summary: null, kinds: [], receipts: 1 }]);
         expect(yield* RepoKnowledge.capture([paid(81_009, [])])).toEqual([
           RepoKnowledge.Captured.NotFound({ repoId: repoId(81_009) }),
         ]);
@@ -423,13 +421,13 @@ it.layer(TestDatabase.layerMemory({ embeddingModel }), { timeout: 60_000, testTi
         );
         expect(accepted).toMatchObject({ captured: [{ _tag: "Saved" }], projected: false });
         expect(yield* row(81_004)).toEqual([
-          { summary: "summary of 81004", kind: "library", kinds: [], stale: true, about: 0, receipts: 1 },
+          { summary: "summary of 81004", kinds: [], stale: true, about: 0, receipts: 1 },
         ]);
 
         // The sweep reads the receipt, with no model in its context.
         expect(yield* RepoKnowledge.reproject()).toMatchObject({ conflicts: 0 });
         expect(yield* row(81_004)).toEqual([
-          { summary: "summary of 81004", kind: "library", kinds: ["library"], stale: false, about: 0, receipts: 1 },
+          { summary: "summary of 81004", kinds: ["library"], stale: false, about: 0, receipts: 1 },
         ]);
       }),
     );

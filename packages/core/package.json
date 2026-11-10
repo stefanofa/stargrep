@@ -10,7 +10,6 @@
     "curate": "bun scripts/curate.ts",
     "enrich": "bun scripts/enrich.ts",
     "github-explore": "bun scripts/github-explore.ts",
-    "legacy-receipts": "bun scripts/legacy-receipts.ts",
     "search": "bun scripts/search.ts",
     "sync": "bun scripts/sync.ts",
     "typecheck": "effect-tsgo tsc -p ."

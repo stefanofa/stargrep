@@ -1,9 +1,8 @@
 import { expect } from "bun:test";
 import type { RepoId } from "@stargrep/github/schemas";
 import { type Atom, type FacetRef, formatAtom } from "@stargrep/knowledge/atom";
-import { type Claim, decodeFacets, legacyFacets } from "@stargrep/knowledge/claims";
+import { decodeFacets } from "@stargrep/knowledge/claims";
 import type { ReceiptId, SubjectId } from "@stargrep/knowledge/ids";
-import { primaryKind } from "@stargrep/knowledge/projection";
 import { closed, type Dim, roleIds, roles } from "@stargrep/knowledge/registry";
 import { renderRegistrySql } from "@stargrep/knowledge/registry-sql";
 import * as it from "@stargrep/testing";
@@ -11,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Db from "../src/db.ts";
 import { atomColumns } from "../src/schema.ts";
 import * as TestDatabase from "./database.ts";
-import { at, iso, model, readme, repoId } from "./fixtures.ts";
+import { at, iso, model } from "./fixtures.ts";
 import {
   about,
   allComplete,
@@ -77,155 +76,7 @@ const shownAnswer = Effect.fn("shownAnswer")(function* (id: number) {
   return row;
 });
 
-interface LegacySeed {
-  readonly id: number;
-  readonly summary?: string | null;
-  readonly kind?: string;
-  readonly gone?: boolean;
-}
-
-// Repos as enrichment left them before receipts: a summary, keywords, and a kind, and no receipt.
-const seedLegacy = Effect.fn("seedLegacy")(function* (seeds: ReadonlyArray<LegacySeed>) {
-  const database = yield* TestDatabase.TestDatabase;
-  yield* database.query(
-    `insert into repos (id, owner, name, readme_oid, summary_readme_oid, summary, keywords, kind, summary_recipe, gone_at)
-     select id, 'probe', 'repo-' || id, $2, $2, summary, '["legacy keyword"]', kind, 1,
-       case when gone then now() end
-     from jsonb_to_recordset($1::jsonb) as r (id bigint, summary text, kind text, gone boolean)`,
-    [
-      JSON.stringify(
-        seeds.map((seed) => ({
-          id: seed.id,
-          summary: seed.summary === undefined ? `legacy summary of ${seed.id}` : seed.summary,
-          kind: seed.kind ?? "library",
-          gone: seed.gone ?? false,
-        })),
-      ),
-      readme("1"),
-    ],
-  );
-});
-
-// Every repo the page read, as one answer whose input hash is its ID's last digit.
-const keepAll = (page: { readonly after: number; readonly limit: number }) =>
-  Effect.gen(function* () {
-    const db = yield* Db.Db;
-    let seen: ReadonlyArray<Db.LegacyRepo> = [];
-    const kept = yield* db.knowledge.keepLegacy(page, (repos) => {
-      seen = repos;
-      return Effect.succeed(
-        repos.map((repo) => ({
-          repoId: repo.id,
-          inputHash: hash(String(repo.id % 10)),
-          recipe: repo.summaryRecipe,
-          summary: repo.summary,
-          keywords: repo.keywords,
-          claims: [claim("is", repo.kind ?? "library")],
-          lanes: allComplete,
-          dropped: [],
-        })),
-      );
-    });
-    return { kept, seen };
-  });
-
-const legacyRows = Effect.fn("legacyRows")(function* (ids: ReadonlyArray<number>) {
-  const database = yield* TestDatabase.TestDatabase;
-  return yield* database.query(
-    `select r.id::float8 as id, c.source, c.model, c.recipe, c.summary, c.input_hash as "inputHash",
-       (select count(*)::int from receipts where repo_id = r.id) as receipts, f.stale
-     from repos r left join receipts c on c.id = r.receipt_id left join repo_facets f on f.repo_id = r.id
-     where r.id = any($1::bigint[]) order by r.id`,
-    [ids],
-  );
-});
-
 const cases = (test: { readonly effect: it.Tester<Services> }) => {
-  test.effect(
-    "keepLegacy keeps one legacy receipt per live summarized repo, points the repo at it, and marks it stale",
-    () =>
-      Effect.gen(function* () {
-        const database = yield* TestDatabase.TestDatabase;
-        yield* seedLegacy([
-          { id: 77_001 },
-          { id: 77_002, kind: "other" },
-          { id: 77_003, summary: null },
-          { id: 77_004, gone: true },
-        ]);
-        yield* database.query("update repo_facets set stale = false where repo_id between 77001 and 77004");
-
-        const { kept, seen } = yield* keepAll({ after: 77_000, limit: 3 });
-        expect<unknown>(seen.map((repo) => [repo.id, repo.kind, repo.current])).toEqual([
-          [77_001, "library", null],
-          [77_002, "other", null],
-        ]);
-        expect(seen[0]).toMatchObject({
-          owner: "probe",
-          name: "repo-77001",
-          summaryReadmeOid: readme("1"),
-          summaryRecipe: 1,
-          summary: "legacy summary of 77001",
-          keywords: ["legacy keyword"],
-        });
-        expect(kept).toEqual({ read: 2, last: repoId(77_002), inserted: 2, pointed: 2 });
-        expect(yield* legacyRows([77_001, 77_002, 77_003])).toEqual([
-          {
-            id: 77_001,
-            source: "legacy",
-            model: "legacy",
-            recipe: 1,
-            summary: "legacy summary of 77001",
-            inputHash: hash("1"),
-            receipts: 1,
-            stale: true,
-          },
-          {
-            id: 77_002,
-            source: "legacy",
-            model: "legacy",
-            recipe: 1,
-            summary: "legacy summary of 77002",
-            inputHash: hash("2"),
-            receipts: 1,
-            stale: true,
-          },
-          {
-            id: 77_003,
-            source: null,
-            model: null,
-            recipe: null,
-            summary: null,
-            inputHash: null,
-            receipts: 0,
-            stale: false,
-          },
-        ]);
-      }),
-  );
-
-  test.effect("keepLegacy hands back a repo's legacy receipt, skips a model receipt, and keeps a repeat once", () =>
-    Effect.gen(function* () {
-      const db = yield* Db.Db;
-      const database = yield* TestDatabase.TestDatabase;
-      yield* seedLegacy([{ id: 77_101 }, { id: 77_102 }]);
-      yield* database.query("update repos set input_hash = $1 where id = 77102", [hash("a")]);
-      yield* db.knowledge.capture([answer(repoId(77_102), receiptId(77_102))]);
-
-      const first = yield* keepAll({ after: 77_100, limit: 10 });
-      expect<unknown>(first.seen.map((repo) => repo.id)).toEqual([77_101]);
-      expect(first.kept).toMatchObject({ inserted: 1, pointed: 1 });
-
-      const again = yield* keepAll({ after: 77_100, limit: 10 });
-      expect<unknown>(again.seen.map((repo) => [repo.id, repo.current])).toEqual([
-        [77_101, { recipe: 1, summary: "legacy summary of 77101", keywords: ["legacy keyword"] }],
-      ]);
-      expect(again.kept).toEqual({ read: 1, last: repoId(77_101), inserted: 0, pointed: 0 });
-      expect((yield* legacyRows([77_101, 77_102])).map((row) => (row as { receipts: number }).receipts)).toEqual([
-        1, 1,
-      ]);
-    }),
-  );
-
   test.effect("the database holds the registry's enums and functions exactly as registry.sql generates them", () =>
     Effect.gen(function* () {
       const database = yield* TestDatabase.TestDatabase;
@@ -651,50 +502,6 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
     }),
   );
 
-  test.effect("capture writes the primary kind to the legacy kind column, from the receipt the repo shows", () =>
-    Effect.gen(function* () {
-      const db = yield* Db.Db;
-      const database = yield* TestDatabase.TestDatabase;
-      const named = yield* seedRepo({ id: 70_621 });
-      const implied = yield* seedRepo({ id: 70_622 });
-      const unplaced = yield* seedRepo({ id: 70_623 });
-      yield* database.query("update repos set kind = 'other' where id = $1", [unplaced]);
-      const claims: Readonly<Record<number, ReadonlyArray<Claim>>> = {
-        [named]: [
-          claim("about", "terminal UI"),
-          claim("is", "toolkit", { ordinal: 1 }),
-          claim("is", "CLI", { ordinal: 2 }),
-          claim("is", "library", { ordinal: 3 }),
-        ],
-        [implied]: [claim("is", "SDK")],
-        [unplaced]: [claim("about", "dashboards")],
-      };
-      yield* db.knowledge.capture(
-        [named, implied, unplaced].map((id, index) =>
-          answer(id, receiptId(70_621 + index), { claims: claims[id] ?? [] }),
-        ),
-      );
-      const kinds = database
-        .query("select id::float8 as id, kind from repos where id in (70621, 70622, 70623) order by id")
-        .pipe(Effect.map((rows) => rows as ReadonlyArray<{ readonly id: number; readonly kind: string | null }>));
-      expect(yield* kinds).toEqual([
-        { id: named, kind: "cli" },
-        { id: implied, kind: "library" },
-        { id: unplaced, kind: null },
-      ]);
-      for (const id of [named, implied, unplaced]) {
-        const written = (yield* kinds).find((row) => row.id === id)?.kind;
-        expect<unknown>([id, primaryKind(claims[id] ?? [])]).toEqual([id, written]);
-      }
-
-      const retried = yield* db.knowledge.capture([
-        answer(named, receiptId(70_624), { claims: [claim("is", "app")], summary: "A retried answer" }),
-      ]);
-      expect(retried).toMatchObject([{ receiptId: receiptId(70_621), saved: true, summary: `summary of ${named}` }]);
-      expect((yield* kinds)[0]).toEqual({ id: named, kind: "cli" });
-    }),
-  );
-
   test.effect("an answer with no facets list keeps the claims of the receipt the repo points at, and names it", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
@@ -705,11 +512,7 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
       ) as Db.Answer["lanes"];
       const kept = [claim("is", "library"), claim("about", "terminal UI", { ordinal: 1 })];
       const receiptOf = (answered: ReceiptId) =>
-        database.query(
-          `select c.claims, c.carried_from as "carriedFrom", r.kind from receipts c join repos r on r.id = c.repo_id
-           where c.id = $1`,
-          [answered],
-        );
+        database.query(`select c.claims, c.carried_from as "carriedFrom" from receipts c where c.id = $1`, [answered]);
       const answerTo = (input: string, receipt: ReceiptId, overrides: Partial<Db.Answer>) =>
         database
           .query("update repos set input_hash = $2 where id = $1", [id, hash(input)])
@@ -717,12 +520,10 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
 
       yield* db.knowledge.capture([answer(id, receiptId(70_631), { claims: kept })]);
       yield* answerTo("b", receiptId(70_632), { claims: [], lanes: missing });
-      expect(yield* receiptOf(receiptId(70_632))).toEqual([
-        { claims: kept, carriedFrom: receiptId(70_631), kind: "library" },
-      ]);
+      expect(yield* receiptOf(receiptId(70_632))).toEqual([{ claims: kept, carriedFrom: receiptId(70_631) }]);
 
       yield* answerTo("c", receiptId(70_633), { claims: [] });
-      expect(yield* receiptOf(receiptId(70_633))).toEqual([{ claims: [], carriedFrom: null, kind: null }]);
+      expect(yield* receiptOf(receiptId(70_633))).toEqual([{ claims: [], carriedFrom: null }]);
 
       // A fact with an unreadable role turns every lane invalid, and the answer keeps every fact it could read.
       yield* answerTo("9", receiptId(70_636), { claims: kept });
@@ -735,17 +536,17 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
       );
       expect(new Set(Object.values(readable.lanes))).toEqual(new Set(["invalid"]));
       yield* answerTo("f", receiptId(70_637), readable);
-      expect(yield* receiptOf(receiptId(70_637))).toEqual([
-        { claims: readable.claims, carriedFrom: null, kind: "cli" },
-      ]);
+      expect(yield* receiptOf(receiptId(70_637))).toEqual([{ claims: readable.claims, carriedFrom: null }]);
 
       // A legacy receipt holds only the kind, so that is all an answer with no list can keep from it.
-      const legacy = legacyFacets({ kind: "cli" });
-      yield* answerTo("d", receiptId(70_634), { source: "legacy", ...legacy });
+      const legacy = [claim("is", "cli")];
+      yield* answerTo("d", receiptId(70_634), {
+        source: "legacy",
+        claims: legacy,
+        lanes: { ...missing, is: "complete" },
+      });
       yield* answerTo("e", receiptId(70_635), { claims: [], lanes: missing });
-      expect(yield* receiptOf(receiptId(70_635))).toEqual([
-        { claims: legacy.claims, carriedFrom: receiptId(70_634), kind: "cli" },
-      ]);
+      expect(yield* receiptOf(receiptId(70_635))).toEqual([{ claims: legacy, carriedFrom: receiptId(70_634) }]);
     }),
   );
 

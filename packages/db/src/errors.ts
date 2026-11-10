@@ -71,7 +71,6 @@ export const Operation = Schema.Literals([
   "knowledge.examples",
   "knowledge.floor",
   "knowledge.variants",
-  "knowledge.keepLegacy",
   "facets.held",
   "facets.matching",
   "facets.lookup",

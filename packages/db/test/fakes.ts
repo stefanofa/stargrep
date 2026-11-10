@@ -89,7 +89,6 @@ const defaults = {
     examples: unexpected("knowledge.examples"),
     floor: unexpected("knowledge.floor")(),
     variants: unexpected("knowledge.variants")(),
-    keepLegacy: unexpected("knowledge.keepLegacy"),
   },
   // Every procedure that answers repos reads their atoms, so a fake repo holds none unless a test says otherwise.
   facets: {
