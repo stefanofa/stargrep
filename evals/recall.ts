@@ -8,8 +8,9 @@ import * as TextGeneration from "@stargrep/ai/text-generation";
 import { Compile, ModelAllowance, QueryPlanner, Search, SearchCache } from "@stargrep/core/search";
 import * as Db from "@stargrep/db";
 import { anyDistance } from "@stargrep/db/embedding";
-import { createMigratedDatabase, dropDatabase } from "@stargrep/db/local-database";
+import { createMigratedDatabase, databaseUrl, dropDatabase } from "@stargrep/db/local-database";
 import * as Memory from "@stargrep/db/memory";
+import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -370,9 +371,11 @@ const real = Effect.fn("Recall.real")(function* (options: {
     );
   }
   const adminUrl = process.env.DATABASE_URL ?? "postgres://stargrep:stargrep@127.0.0.1:54317/stargrep";
-  // A fresh database each run, so neither an earlier corpus nor the subjects an --accept-floor run accepted leak in.
-  yield* dropDatabase(adminUrl, "stargrep_recall");
-  const url = yield* createMigratedDatabase(adminUrl, "stargrep_recall");
+  // A fresh database each run, so neither an earlier corpus nor the subjects an --accept-floor run accepted leak in. The
+  // drop runs from the server's maintenance database, since DATABASE_URL may name stargrep_recall itself.
+  const maintenance = databaseUrl(adminUrl, "postgres");
+  yield* dropDatabase(maintenance, "stargrep_recall");
+  const url = yield* createMigratedDatabase(maintenance, "stargrep_recall");
   yield* Console.log(`Loaded ${repos.length} repos as the stars of recall-eval in ${new URL(url).pathname.slice(1)}`);
   const db = Db.layerNodePostgres({ embeddingModel: embeddingModelId, connectionString: Redacted.make(url) });
   return yield* Effect.gen(function* () {
@@ -439,6 +442,11 @@ const main = args.includes("--fixture")
     );
 
 if (import.meta.main) {
-  const exit = await Effect.runPromiseExit(main.pipe(Effect.tapError((error) => Console.error(error.message))));
+  const exit = await Effect.runPromiseExit(
+    main.pipe(
+      Effect.tapError((error) => Console.error(error.message)),
+      Effect.tapDefect((defect) => Console.error(Cause.pretty(Cause.die(defect)))),
+    ),
+  );
   if (exit._tag === "Failure") process.exit(1);
 }
