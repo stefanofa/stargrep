@@ -39,6 +39,8 @@ export type Stated =
 export interface CompiledQuery {
   readonly explicit: Selection;
   readonly stated: ReadonlyArray<Stated>;
+  // The words full text searches: the query without what a negation excludes.
+  readonly text: string;
 }
 
 export type Planned = Pick<QueryPlan.Filters, "languages" | "kinds" | "licenses">;
@@ -224,7 +226,7 @@ const idOf = (dim: ClosedDim, name: string): string | undefined => {
 
 export const version = Hash.string(
   JSON.stringify({
-    clauses: 4,
+    clauses: 5,
     policy,
     relaxation,
     cues: [...cues],
@@ -328,7 +330,8 @@ type Run = WordRun | ClosedRun | NounRun;
 // with no cue describes the results, and "only" narrows every run in it.
 interface Clause {
   readonly cue: Relation | typeof comparison | null;
-  readonly negated: boolean;
+  // Where the word that negates the clause starts, or null when nothing negates it.
+  readonly negation: number | null;
   readonly tail: boolean;
   // A tail after a negation's target, as "deno" in "without linux deno". A negation never applies a platform
   // positively, so a platform there applies nothing. A language there is one the planner read into the query, which
@@ -341,21 +344,21 @@ interface Clause {
 const clauseOf = (
   cue: Clause["cue"],
   options: {
-    readonly negated?: boolean;
+    readonly negation?: number | null;
     readonly exclusive?: boolean;
     readonly tail?: boolean;
     readonly afterNegation?: boolean;
   } = {},
 ): Clause => ({
   cue,
-  negated: options.negated ?? false,
+  negation: options.negation ?? null,
   tail: options.tail ?? false,
   afterNegation: options.afterNegation ?? false,
   exclusive: options.exclusive ?? false,
   runs: [],
 });
 
-const targets = (current: Clause) => current.cue !== null || current.negated;
+const targets = (current: Clause) => current.cue !== null || current.negation !== null;
 
 const parse = (tokens: ReadonlyArray<Token>, matchAt: (index: number) => Match | null): ReadonlyArray<Clause> => {
   const clauses: Array<Clause> = [clauseOf(null)];
@@ -367,7 +370,7 @@ const parse = (tokens: ReadonlyArray<Token>, matchAt: (index: number) => Match |
     const open = current();
     if (last !== undefined && targets(open)) {
       if (last._tag === "Words") last.cut = true;
-      clauses.push(clauseOf(null, { tail: true, afterNegation: open.negated || open.afterNegation }));
+      clauses.push(clauseOf(null, { tail: true, afterNegation: open.negation !== null || open.afterNegation }));
     }
     const run = make();
     current().runs.push(run);
@@ -387,13 +390,17 @@ const parse = (tokens: ReadonlyArray<Token>, matchAt: (index: number) => Match |
     } else if (alternates(token.gap)) joiner = true;
 
     const match = matchAt(i);
-    if (match === null && current().negated && current().runs.length === 0 && negatedVerbs.has(token.word)) {
+    if (match === null && current().negation !== null && current().runs.length === 0 && negatedVerbs.has(token.word)) {
       i++;
       continue;
     }
-    const next = tokens[i + (match?.length ?? 1)];
-    // "no-code", "non-blocking", and "no-std" are words, not negations.
-    const compound = match?._tag === "Cue" && match.cue._tag === "Negation" && next?.gap === "-";
+    const after = i + (match?.length ?? 1);
+    // "no-code", "non-blocking", and "no-std" are words, not negations, but "non-rust" and "non-linux" negate.
+    const compound =
+      match?._tag === "Cue" &&
+      match.cue._tag === "Negation" &&
+      tokens[after]?.gap === "-" &&
+      matchAt(after)?._tag !== "Closed";
     if (match?._tag === "Closed") {
       const { dim } = match;
       const run = runFor(
@@ -414,10 +421,12 @@ const parse = (tokens: ReadonlyArray<Token>, matchAt: (index: number) => Match |
           clauses.push(clauseOf(null));
         }
       } else if (match.cue._tag === "Negation") {
-        clauses.push(clauseOf(null, { negated: true, exclusive: fresh && open.exclusive }));
+        clauses.push(clauseOf(null, { negation: token.start, exclusive: fresh && open.exclusive }));
       } else {
         // A negation reaches through a cue that follows it at once, as in "not built with".
-        clauses.push(clauseOf(match.cue, { negated: fresh && open.negated, exclusive: fresh && open.exclusive }));
+        clauses.push(
+          clauseOf(match.cue, { negation: fresh ? open.negation : null, exclusive: fresh && open.exclusive }),
+        );
       }
       joiner = false;
     } else if (match?._tag !== "Stop") {
@@ -451,6 +460,13 @@ const parse = (tokens: ReadonlyArray<Token>, matchAt: (index: number) => Match |
   return clauses;
 };
 
+const endOf = (run: Run): number | undefined =>
+  run._tag === "Words"
+    ? run.alternatives.flat().at(-1)?.end
+    : run._tag === "Closed"
+      ? run.values.at(-1)?.span[1]
+      : undefined;
+
 // A role that does not accept the dimension, such as runs_on for a language, falls back to every default role.
 const atomOf = (role: AtomRole, dim: ClosedDim, id: string): Atom =>
   ({ role: role === "any" || roles[role].accepts.includes(dim) ? role : "any", value: { dim, id } }) as Atom;
@@ -467,7 +483,7 @@ export const compileQuery = (input: {
   readonly policy?: Policy;
 }): CompiledQuery => {
   const { query, planned, explicit } = input;
-  if (QueryPlan.queryKind(query) === "name") return { explicit, stated: [] };
+  if (QueryPlan.queryKind(query) === "name") return { explicit, stated: [], text: query };
   const rules = input.policy ?? policy;
   const modeOf = (row: Row, narrowed: boolean) => rules[row][narrowed ? 1 : 0];
 
@@ -511,7 +527,7 @@ export const compileQuery = (input: {
       if (run._tag === "Noun") return;
       const isTarget = index === 0 && targets(current);
       const cue = isTarget ? current.cue : null;
-      const negated = current.negated && isTarget;
+      const negated = current.negation !== null && isTarget;
       const narrowed = current.exclusive;
       if (run._tag === "Words") {
         const filled = run.alternatives.filter((alternative) => alternative.length > 0);
@@ -658,7 +674,20 @@ export const compileQuery = (input: {
       plannedKinds.length > 0 ? "planner" : "words",
     );
   }
-  return { explicit, stated: [...plannedGroups, ...words].slice(0, maxGroups) };
+  // Full text leaves out each negation, from its word through its target, or every repo it finds for those words is one
+  // the exclusion drops.
+  const excluded = clauses.flatMap((clause): ReadonlyArray<Span> => {
+    const [target] = clause.runs;
+    const end = target === undefined ? undefined : endOf(target);
+    return clause.negation === null || end === undefined || modeOf("negated", clause.exclusive) === null
+      ? []
+      : [[clause.negation, end]];
+  });
+  const text = excluded
+    .reduceRight((rest, [start, end]) => `${rest.slice(0, start)} ${rest.slice(end)}`, query)
+    .replace(/\s+/g, " ")
+    .trim();
+  return { explicit, stated: [...plannedGroups, ...words].slice(0, maxGroups), text };
 };
 
 const relaxable = (stated: Stated) => stated.from === "words" && stated.group.mode === "filter";

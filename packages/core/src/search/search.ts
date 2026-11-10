@@ -202,7 +202,7 @@ export const make = Effect.gen(function* () {
     const hybrid = (query: Compile.CompiledQuery) =>
       db.search.hybrid({
         scope,
-        text: ran.plan.textQuery,
+        text: query.text,
         embedding: Option.getOrNull(embedding),
         maxDistance: embeddings.model.maxMatchDistance,
         limit: request.limit,
