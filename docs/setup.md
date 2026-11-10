@@ -170,13 +170,53 @@ The first command prints the summary, kind, and embedding size, and prints `unch
 
 `bun run --cwd packages/core prefill --ids <file>` summarizes every repo in a list through resumable provider batches, as "The prefill" in `docs/knowledge.md` explains. The list holds one `<numeric id> <owner>/<name>` per line. Stop it at any point and run it again, and it resumes the batches the first run sent without paying for them twice. A rerun right after a crash waits up to a minute for the crashed run's claim to go stale. `--out report.json` writes the run's outcomes, tokens, and statement counts, also when you stop the run with Ctrl-C. A SIGKILL writes none.
 
-A Gateway batch run keeps its paid requests in the stage's R2 bucket and refuses to start without `PREFILL_R2_BUCKET`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY`.
+A Gateway batch run keeps its paid requests in the stage's R2 bucket and refuses to start without `PREFILL_R2_BUCKET`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY`. A refused start prints why and exits non-zero.
+
+Two flags are off by default. `--ask-current` also asks repos whose summary is already current under the recipe, once each, and is for pilot 2 on a branch of prod only. `--resend-unknown` sends a recorded batch's request again when the Gateway says it does not know the batch, which pays for it again. Without it the driver keeps that manifest and its leases. The run prints one line for each manifest it keeps open, with what to do: restore a missing or unreadable request object from where the run stored it, or check the batch on the Gateway and rerun with `--resend-unknown` only if the batch is gone.
 
 ```sh
 bun run --cwd packages/core prefill --ids prefill.txt --adapter batch --chunk 250
 ```
 
 With `AI_TEXT_PROVIDER=fake` and `AI_EMBEDDINGS_PROVIDER=fake` it pays for nothing: the stand-in answers, and its batches are files under `.cache/stand-in-batches`, so a killed run resumes as it would on the Gateway. `prefill-check` runs a kill, a resume, and a rerun beside the real sweep and consumer on a throwaway database. Never point either at a stage's branch with the stand-in models.
+
+### Run pilot 2
+
+Pilot 2 (`rollout.md` in the design) asks its 300 repos through the real Gateway batch path, so it pays for about 300 summaries. It runs on a temporary Neon branch of prod, never on prod itself. Nothing runs against a branch, so no sweep or queue consumer competes with the driver.
+
+1. Branch prod after a deploy that includes the `prefill_owner` migration, so the branch has the manifest tables. Keep the branch's URL in a private file outside the repo, and delete the branch and the file when the pilot ends.
+2. Set every variable the commands read, in the shell that runs them:
+
+   ```sh
+   export DATABASE_URL=...          # the pilot branch, never prod
+   export GITHUB_TOKEN=...          # reads facts and READMEs
+   export AI_GATEWAY_API_KEY=...    # the batch summaries and their embeddings
+   export PREFILL_R2_BUCKET=...     # keeps the request objects that resume a paid batch
+   export R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=...  # an R2 API token that can write that bucket
+   ```
+
+   Leave `AI_TEXT_PROVIDER` and `AI_EMBEDDINGS_PROVIDER` unset, so both use the Gateway. Prod's bucket works: the pilot adds READMEs under the keys enrichment uses, and request objects under `prefill/requests/`, which nothing in prod reads.
+3. Check which recipe the prod repos are on: `select summary_recipe, count(*) from repos where summary is not null group by 1`. Repos already on the current recipe count as done, so the pilot asks them only with `--ask-current`.
+4. Pick the sample from the prefill list. It makes no model call.
+
+   ```sh
+   bun run --cwd packages/core pilot sample --seed <seed> --list prefill.txt --out pilot2.txt
+   ```
+
+5. Run the prefill, stop it once with Ctrl-C after it sends its batches, and run it again. The second run resumes the batches the first sent. Both runs need `--ask-current`, or the 100 prod repos are skipped as done.
+
+   ```sh
+   bun run --cwd packages/core prefill --ids pilot2.txt --adapter batch --ask-current --out run-1.json
+   bun run --cwd packages/core prefill --ids pilot2.txt --adapter batch --ask-current --out run-2.json
+   ```
+
+6. Print the gates. They read the branch, plus the reports for tokens, repaid items, and capture times.
+
+   ```sh
+   bun run --cwd packages/core pilot gates --sample pilot2.txt --runs run-1.json,run-2.json
+   ```
+
+Relative paths resolve from `packages/core`. "The prefill" in `docs/knowledge.md` says what each gate counts.
 
 ## Search
 
