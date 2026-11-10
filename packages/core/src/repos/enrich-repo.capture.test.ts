@@ -23,14 +23,14 @@ const sweepable = Effect.flatMap(Db.Db, (db) =>
 it.layer(f.enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30_000 })(
   "enrichment saves answers through capture",
   (it) => {
-    it.effect("keeps the answer as a receipt, writes the primary kind, and projects the repo's atoms", () =>
+    it.effect("keeps the answer as a receipt and projects the repo's atoms", () =>
       Effect.gen(function* () {
         f.remotes.set(600, { description: "A fast CLI for macOS", readme: { oid: oid("6"), text: "# Tool" } });
         expect(yield* f.enrich(600)).toMatchObject({ _tag: "Summarized" });
         expect(
           yield* query(
             `select c.source, c.model, c.recipe, c.input_hash = r.input_hash as "answersInputs",
-               r.summary_input_hash = r.input_hash as "current", r.kind, r.kinds::text[] as kinds,
+               r.summary_input_hash = r.input_hash as "current", r.kinds::text[] as kinds,
                r.runs_on::text[] as "runsOn", r.written_in::text[] as "writtenIn", f.stale
              from repos r join receipts c on c.id = r.receipt_id join repo_facets f on f.repo_id = r.id
              where r.id = 600`,
@@ -42,7 +42,6 @@ it.layer(f.enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 
             recipe: 2,
             answersInputs: true,
             current: true,
-            kind: "cli",
             kinds: ["cli"],
             runsOn: ["macos"],
             writtenIn: ["rust"],

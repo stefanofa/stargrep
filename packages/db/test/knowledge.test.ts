@@ -1,9 +1,8 @@
 import { expect } from "bun:test";
 import type { RepoId } from "@stargrep/github/schemas";
 import { type Atom, type FacetRef, formatAtom } from "@stargrep/knowledge/atom";
-import { type Claim, decodeFacets } from "@stargrep/knowledge/claims";
+import { decodeFacets } from "@stargrep/knowledge/claims";
 import type { ReceiptId, SubjectId } from "@stargrep/knowledge/ids";
-import { primaryKind } from "@stargrep/knowledge/projection";
 import { closed, type Dim, roleIds, roles } from "@stargrep/knowledge/registry";
 import { renderRegistrySql } from "@stargrep/knowledge/registry-sql";
 import * as it from "@stargrep/testing";
@@ -503,50 +502,6 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
     }),
   );
 
-  test.effect("capture writes the primary kind to the legacy kind column, from the receipt the repo shows", () =>
-    Effect.gen(function* () {
-      const db = yield* Db.Db;
-      const database = yield* TestDatabase.TestDatabase;
-      const named = yield* seedRepo({ id: 70_621 });
-      const implied = yield* seedRepo({ id: 70_622 });
-      const unplaced = yield* seedRepo({ id: 70_623 });
-      yield* database.query("update repos set kind = 'other' where id = $1", [unplaced]);
-      const claims: Readonly<Record<number, ReadonlyArray<Claim>>> = {
-        [named]: [
-          claim("about", "terminal UI"),
-          claim("is", "toolkit", { ordinal: 1 }),
-          claim("is", "CLI", { ordinal: 2 }),
-          claim("is", "library", { ordinal: 3 }),
-        ],
-        [implied]: [claim("is", "SDK")],
-        [unplaced]: [claim("about", "dashboards")],
-      };
-      yield* db.knowledge.capture(
-        [named, implied, unplaced].map((id, index) =>
-          answer(id, receiptId(70_621 + index), { claims: claims[id] ?? [] }),
-        ),
-      );
-      const kinds = database
-        .query("select id::float8 as id, kind from repos where id in (70621, 70622, 70623) order by id")
-        .pipe(Effect.map((rows) => rows as ReadonlyArray<{ readonly id: number; readonly kind: string | null }>));
-      expect(yield* kinds).toEqual([
-        { id: named, kind: "cli" },
-        { id: implied, kind: "library" },
-        { id: unplaced, kind: null },
-      ]);
-      for (const id of [named, implied, unplaced]) {
-        const written = (yield* kinds).find((row) => row.id === id)?.kind;
-        expect<unknown>([id, primaryKind(claims[id] ?? [])]).toEqual([id, written]);
-      }
-
-      const retried = yield* db.knowledge.capture([
-        answer(named, receiptId(70_624), { claims: [claim("is", "app")], summary: "A retried answer" }),
-      ]);
-      expect(retried).toMatchObject([{ receiptId: receiptId(70_621), saved: true, summary: `summary of ${named}` }]);
-      expect((yield* kinds)[0]).toEqual({ id: named, kind: "cli" });
-    }),
-  );
-
   test.effect("an answer with no facets list keeps the claims of the receipt the repo points at, and names it", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
@@ -557,11 +512,7 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
       ) as Db.Answer["lanes"];
       const kept = [claim("is", "library"), claim("about", "terminal UI", { ordinal: 1 })];
       const receiptOf = (answered: ReceiptId) =>
-        database.query(
-          `select c.claims, c.carried_from as "carriedFrom", r.kind from receipts c join repos r on r.id = c.repo_id
-           where c.id = $1`,
-          [answered],
-        );
+        database.query(`select c.claims, c.carried_from as "carriedFrom" from receipts c where c.id = $1`, [answered]);
       const answerTo = (input: string, receipt: ReceiptId, overrides: Partial<Db.Answer>) =>
         database
           .query("update repos set input_hash = $2 where id = $1", [id, hash(input)])
@@ -569,12 +520,10 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
 
       yield* db.knowledge.capture([answer(id, receiptId(70_631), { claims: kept })]);
       yield* answerTo("b", receiptId(70_632), { claims: [], lanes: missing });
-      expect(yield* receiptOf(receiptId(70_632))).toEqual([
-        { claims: kept, carriedFrom: receiptId(70_631), kind: "library" },
-      ]);
+      expect(yield* receiptOf(receiptId(70_632))).toEqual([{ claims: kept, carriedFrom: receiptId(70_631) }]);
 
       yield* answerTo("c", receiptId(70_633), { claims: [] });
-      expect(yield* receiptOf(receiptId(70_633))).toEqual([{ claims: [], carriedFrom: null, kind: null }]);
+      expect(yield* receiptOf(receiptId(70_633))).toEqual([{ claims: [], carriedFrom: null }]);
 
       // A fact with an unreadable role turns every lane invalid, and the answer keeps every fact it could read.
       yield* answerTo("9", receiptId(70_636), { claims: kept });
@@ -587,9 +536,7 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
       );
       expect(new Set(Object.values(readable.lanes))).toEqual(new Set(["invalid"]));
       yield* answerTo("f", receiptId(70_637), readable);
-      expect(yield* receiptOf(receiptId(70_637))).toEqual([
-        { claims: readable.claims, carriedFrom: null, kind: "cli" },
-      ]);
+      expect(yield* receiptOf(receiptId(70_637))).toEqual([{ claims: readable.claims, carriedFrom: null }]);
 
       // A legacy receipt holds only the kind, so that is all an answer with no list can keep from it.
       const legacy = [claim("is", "cli")];
@@ -599,9 +546,7 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
         lanes: { ...missing, is: "complete" },
       });
       yield* answerTo("e", receiptId(70_635), { claims: [], lanes: missing });
-      expect(yield* receiptOf(receiptId(70_635))).toEqual([
-        { claims: legacy, carriedFrom: receiptId(70_634), kind: "cli" },
-      ]);
+      expect(yield* receiptOf(receiptId(70_635))).toEqual([{ claims: legacy, carriedFrom: receiptId(70_634) }]);
     }),
   );
 

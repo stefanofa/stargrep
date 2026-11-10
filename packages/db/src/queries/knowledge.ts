@@ -5,7 +5,7 @@ import type { Change } from "@stargrep/knowledge/curation";
 import * as Decisions from "@stargrep/knowledge/decisions";
 import { type BatchId, type InputHash, ReceiptId, Revision, SubjectId } from "@stargrep/knowledge/ids";
 import { LabelKey } from "@stargrep/knowledge/label-key";
-import { type ClaimVerdict, kindKeys } from "@stargrep/knowledge/projection";
+import type { ClaimVerdict } from "@stargrep/knowledge/projection";
 import type { Dim, RoleId } from "@stargrep/knowledge/registry";
 import { type SQL, sql } from "drizzle-orm";
 import * as DateTime from "effect/DateTime";
@@ -198,10 +198,10 @@ export interface Variant {
 // The only writer of the knowledge tables. Capture saves answers, mint and decide change the vocabulary, and project
 // writes the atoms, each under the lock protocol above.
 export interface Queries {
-  // Commit A: receipts, then the summary of every repo whose README and inputs still match and that is not gone, with
-  // the legacy kind column set from the receipt's primary kind. An answer with no facets list keeps the claims of the
-  // receipt the repo points at. The lease each answer names is cleared, saved or not. The trigger on receipt_id marks
-  // the repo stale. The answers must name distinct repos, and an answer for a repo with no row is left out.
+  // Commit A: receipts, then the summary of every repo whose README and inputs still match and that is not gone. An
+  // answer with no facets list keeps the claims of the receipt the repo points at. The lease each answer names is
+  // cleared, saved or not. The trigger on receipt_id marks the repo stale. The answers must name distinct repos, and an
+  // answer for a repo with no row is left out.
   readonly capture: (
     answers: ReadonlyArray<Answer>,
   ) => Effect.Effect<ReadonlyArray<Captured>, DbQueryFailed | DbRowInvalid>;
@@ -474,26 +474,12 @@ export const make = Effect.gen(function* () {
               from answer a join receipts r
                 on (r.repo_id, r.source, r.input_hash, r.recipe) = (a."repoId", a.source, a."inputHash", a.recipe)
             ),
-            -- The legacy kind column holds the receipt's primary kind, as primaryKind reads it, until the dual write
-            -- goes: the first is claim whose key names a kind, or none. Every reader uses kinds.
-            kinded as (
-              select w.*, (
-                select k.kind
-                from jsonb_array_elements(w.claims) c join jsonb_each_text(${json(Object.fromEntries(kindKeys))}) as k (key, kind)
-                  on k.key = c ->> 'key'
-                where c ->> 'role' = 'is'
-                order by (c ->> 'ordinal')::integer
-                limit 1
-              ) as kind
-              from winner w
-            ),
             -- A new summary of the README a read repo's summary describes keeps the old embedding, marked stale, so the
             -- repo stays read and searchable until the new embedding replaces it.
             saved as (
               update repos set
                 summary = w.summary,
                 keywords = w.keywords,
-                kind = w.kind,
                 summary_readme_oid = w."readmeOid",
                 summary_recipe = w.recipe,
                 summary_input_hash = w."inputHash",
@@ -502,7 +488,7 @@ export const make = Effect.gen(function* () {
                 embedding = case when ${keepsEmbedding} then repos.embedding end,
                 embedding_model = case when ${keepsEmbedding} then repos.embedding_model end,
                 embedding_stale = ${keepsEmbedding}
-              from kinded w
+              from winner w
               where repos.id = w."repoId"
                 and repos.readme_oid is not distinct from w."readmeOid"
                 and repos.input_hash = w."inputHash"
