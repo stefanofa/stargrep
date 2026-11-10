@@ -66,7 +66,7 @@ export const Enrichment = Data.taggedEnum<Enrichment>();
 
 // Whether an error is the repo's own, so it counts toward the cap. An error every repo would hit, such as a missing
 // key, an outage, or a rate limit, never counts, and the sweep or the queue tries the repo again.
-const ownError = (error: EnrichRepoError): boolean =>
+export const ownError = (error: EnrichRepoError): boolean =>
   Match.valueTags(error, {
     NotFound: () => true,
     GitHubRequestFailed: isPermanent,

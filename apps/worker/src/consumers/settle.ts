@@ -1,6 +1,6 @@
 import type * as Cloudflare from "@alchemy.run/cloudflare";
 import type { FetchIcon } from "@stargrep/core/icons";
-import type { EnrichRepo } from "@stargrep/core/repos";
+import { EnrichRepo } from "@stargrep/core/repos";
 import type { StarSync } from "@stargrep/core/stars";
 import { isPermanent } from "@stargrep/github/errors";
 import * as TokenGate from "@stargrep/github/token-gate";
@@ -61,8 +61,10 @@ export const afterFailure = (error: Failure, now: number): Settlement =>
     EnrichQueueFailed: retry,
     BlobStoreFailed: retry,
     AiModelNotFound: deadLetter,
-    // Model output varies from call to call, so a second answer can decode.
-    AiOutputInvalid: retry,
+    // EnrichRepo counts a summary answer that does not decode and backs its repo off, so the sweep, not the queue, sends
+    // the repo again. A queue retry of a repo that just reached the cap would pay again. An embedding answer counts
+    // against no repo, and a second one can decode.
+    AiOutputInvalid: (failure) => (EnrichRepo.ownError(failure) ? deadLetter(failure) : retry(failure)),
     // EnrichRepo has counted a refused answer, or left a lost save holding its lease, so the sweep, not the queue, sends
     // the repo again. A queue retry of a repo that just reached the cap would pay again.
     AnswerNotSaved: deadLetter,
