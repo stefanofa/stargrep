@@ -1,5 +1,5 @@
 import { GitHubAccountId, Login, ObjectId, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
-import { AtomKey, SelectionKey } from "@stargrep/knowledge/atom";
+import { AtomKey, type ClosedAtom, isClosed, SelectionKey } from "@stargrep/knowledge/atom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -80,10 +80,16 @@ export const hybrid = (
 const decodeAtom = Schema.decodeSync(AtomKey);
 
 // Closed atoms the query stated, ORed, as the compiler gives them.
+const closedAtom = (key: string): ClosedAtom => {
+  const atom = decodeAtom(key);
+  if (!isClosed(atom)) throw new Error(`${key} is not a closed atom`);
+  return atom;
+};
+
 export const closedGroup = (mode: Db.GroupMode, ...keys: readonly [string, ...Array<string>]): Db.ClosedGroup => ({
   _tag: "Closed",
   mode,
-  any: [decodeAtom(keys[0]), ...keys.slice(1).map((key) => decodeAtom(key))],
+  any: [closedAtom(keys[0]), ...keys.slice(1).map(closedAtom)],
 });
 
 // The caller's selection, from its key, such as "lang:rust -kind:list".

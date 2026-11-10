@@ -3,14 +3,11 @@ import * as Embeddings from "@stargrep/ai/embeddings";
 import * as Fake from "@stargrep/ai/fake";
 import * as Models from "@stargrep/ai/models";
 import { Compile, ModelAllowance, QueryPlan, QueryPlanner, Search, SearchCache } from "@stargrep/core/search";
-import type * as Db from "@stargrep/db";
 import * as TestDatabase from "@stargrep/db/test-database";
 import * as it from "@stargrep/testing";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { acceptFloor, embeddingModelId, loadAccount, scope } from "./account.ts";
 import { type Judged, judged } from "./behavior.ts";
@@ -61,13 +58,10 @@ const noAtoms = Object.fromEntries(Object.keys(Compile.policy).map((row) => [row
 
 const names = (outcome: Search.SearchOutcome) => outcome.results.map(({ repo }) => `${repo.owner}/${repo.name}`);
 
-// Nothing accepted, as in prod today, or what the usage floor accepts, each through SQL alone and through the
-// accepted-key cache the web server keeps.
+// Nothing accepted, as in prod today, or what the usage floor accepts.
 const modes = [
-  { name: "no subject accepted", floor: false, cache: false },
-  { name: "no subject accepted, with the key cache", floor: false, cache: true },
-  { name: "the usage floor's subjects accepted", floor: true, cache: false },
-  { name: "the usage floor's subjects accepted, with the key cache", floor: true, cache: true },
+  { name: "no subject accepted", floor: false },
+  { name: "the usage floor's subjects accepted", floor: true },
 ] as const;
 
 const layer = (mode: (typeof modes)[number]) =>
@@ -82,12 +76,7 @@ const layer = (mode: (typeof modes)[number]) =>
     Layer.provideMerge(SearchCache.layerMemory),
     Layer.provideMerge(ModelAllowance.layerUnmetered),
     Layer.provideMerge(embeddings),
-    Layer.provideMerge(
-      TestDatabase.layerMemory({
-        embeddingModel: embeddingModelId,
-        ...(mode.cache ? { acceptedKeys: Ref.makeUnsafe(Option.none<Db.AcceptedKeys>()) } : {}),
-      }),
-    ),
+    Layer.provideMerge(TestDatabase.layerMemory({ embeddingModel: embeddingModelId })),
   );
 
 for (const mode of modes) {

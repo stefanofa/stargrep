@@ -1,7 +1,16 @@
 import { RepoId } from "@stargrep/github/schemas";
 import { formatAtom } from "@stargrep/knowledge/atom";
 import { labelKey } from "@stargrep/knowledge/label-key";
-import { type ClosedDim, closed, closedKeys, Dim, dimPrefix, roleIds, roles } from "@stargrep/knowledge/registry";
+import {
+  type ClosedDim,
+  closed,
+  closedKeys,
+  closedLabel,
+  Dim,
+  dimPrefix,
+  roleIds,
+  roles,
+} from "@stargrep/knowledge/registry";
 import { sql } from "drizzle-orm";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -77,8 +86,6 @@ const LookupRow = Schema.Struct({
 const decodeHeld = rowsDecoder(HeldRow);
 const decodeMatching = rowsDecoder(MatchingRow);
 const decodeLookup = rowsDecoder(LookupRow);
-
-const closedLabel = (dim: ClosedDim, id: string) => closed[dim].find((value) => value.id === id)?.label ?? id;
 
 const prefixDims = new Map(Dim.literals.map((dim) => [dimPrefix[dim], dim]));
 

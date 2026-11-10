@@ -1,6 +1,7 @@
-import type { Atom, AtomRole } from "@stargrep/knowledge/atom";
-import { type ClosedDim, closed, type Dim, defaultRoles, type RoleId, roles } from "@stargrep/knowledge/registry";
+import type { AtomRole, ClosedAtom } from "@stargrep/knowledge/atom";
+import { type ClosedDim, closedValue, type Dim, defaultRoles, type RoleId, roles } from "@stargrep/knowledge/registry";
 import { type SQL, sql } from "drizzle-orm";
+import * as Arr from "effect/Array";
 import { atomColumns } from "../schema.ts";
 
 // Every predicate reads the repos row as r and the repo_facets row as fc. A closed column is on repos, a subject column
@@ -22,24 +23,25 @@ const columnOf = (role: RoleId, dim: Dim): SQL => {
 
 const isComparison = (role: RoleId) => roles[role].matches === "comparison";
 
-const reached = (role: AtomRole, dim: Dim): ReadonlyArray<RoleId> => (role === "any" ? defaultRoles(dim) : [role]);
+const reached = (role: AtomRole, dim: Dim): Arr.NonEmptyReadonlyArray<RoleId> => {
+  if (role !== "any") return [role];
+  const [first, ...rest] = defaultRoles(dim);
+  if (first === undefined) throw new Error(`no role matches a bare '${dim}' atom`);
+  return [first, ...rest];
+};
 
-const anyOf = (tests: ReadonlyArray<SQL>): SQL => sql`(${sql.join([...tests], sql` or `)})`;
-
-export const isClosed = (atom: Atom): atom is Atom & { readonly value: { readonly dim: ClosedDim } } =>
-  atom.value.dim !== "subject";
+// An empty list is a bug in the caller, so neither takes one.
+export const anyOf = (tests: Arr.NonEmptyReadonlyArray<SQL>): SQL => sql`(${sql.join([...tests], sql` or `)})`;
+export const allOf = (tests: Arr.NonEmptyReadonlyArray<SQL>): SQL => sql`(${sql.join([...tests], sql` and `)})`;
 
 // Every role the atom reaches, ORed. A membership role that includes also matches the registry's expansions, so
 // lang:javascript matches a TypeScript repo. An exclusion and a comparison match the value alone, so excluding JavaScript
 // keeps TypeScript.
-export const closedTest = (
-  atom: Atom & { readonly value: { readonly dim: ClosedDim } },
-  use: "include" | "exclude",
-): SQL => {
+export const closedTest = (atom: ClosedAtom, use: "include" | "exclude"): SQL => {
   const { dim, id } = atom.value;
-  const expands = use === "include" ? (closed[dim].find((value) => value.id === id)?.expands ?? []) : [];
+  const expands = use === "include" ? (closedValue(dim, id)?.expands ?? []) : [];
   return anyOf(
-    reached(atom.role, dim).map((role) => {
+    Arr.map(reached(atom.role, dim), (role) => {
       const ids = isComparison(role) ? [id] : [id, ...expands];
       return sql`r.${columnOf(role, dim)} && ${sql.param(ids)}::${sql.raw(enumTypes[dim])}[]`;
     }),
@@ -69,5 +71,3 @@ export const subjectIndexTest = (role: AtomRole, origins: SQL): SQL =>
   role === "any" || roles[role].matches === "bare"
     ? sql`fc.members && ${origins}`
     : sql`fc.${columnOf(role, "subject")} && ${origins}`;
-
-export const any = anyOf;

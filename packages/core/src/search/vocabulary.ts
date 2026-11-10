@@ -205,8 +205,13 @@ const connectives = [
 ];
 
 const exclusive = new Set(exclusivityWords);
-const filterWords = new Set([...exclusivityWords, ...metricAndDateWords, ...licenseWords, ...kindWords]);
-const connectiveWords = new Set(connectives);
+export const filterWords: ReadonlySet<string> = new Set([
+  ...exclusivityWords,
+  ...metricAndDateWords,
+  ...licenseWords,
+  ...kindWords,
+]);
+export const connectiveWords: ReadonlySet<string> = new Set(connectives);
 const spokenNames = Object.entries(languages).flatMap(([name, aliases]) => [name, ...aliases]);
 
 const words = (query: string) =>
@@ -266,5 +271,3 @@ export const mentionsFilter = (query: string): boolean =>
   spokenNames.some((name) => says(query, name));
 
 export const isConnective = (word: string): boolean => connectiveWords.has(word.toLowerCase());
-
-export const isFilterWord = (word: string): boolean => filterWords.has(word.toLowerCase());

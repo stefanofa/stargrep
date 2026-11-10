@@ -1,18 +1,14 @@
 import type * as Db from "@stargrep/db";
-import { type Atom, type AtomRole, formatAtom, type Selection } from "@stargrep/knowledge/atom";
+import { type AtomRole, type ClosedAtom, formatAtom, type Selection } from "@stargrep/knowledge/atom";
 import type { SubjectId } from "@stargrep/knowledge/ids";
 import { type LabelKey, labelKey } from "@stargrep/knowledge/label-key";
 import {
   type ClosedDim,
-  type ClosedValue,
-  closed,
-  closedKeys,
-  kinds,
-  languages,
-  platforms,
+  closedDims,
+  closedIndex,
+  closedLabel,
   reservedKeys,
   roles,
-  statuses,
 } from "@stargrep/knowledge/registry";
 import * as Context from "effect/Context";
 import * as Hash from "effect/Hash";
@@ -206,38 +202,61 @@ const maxGroups = 8;
 const maxAlternatives = 4;
 const maxWords = 4;
 
-const closedEntries = (dim: ClosedDim, values: ReadonlyArray<ClosedValue<string>>) =>
-  values.flatMap((value) => closedKeys(value).map((key) => [key, { dim, id: value.id }] as const));
+// The registry and vocabulary tables the compiler reads, built once. The compiler reads them only from here, and
+// version hashes them whole, so an edit to either changes the version.
+export interface Tables {
+  // Each closed dimension's label keys and lowercased ids, to the value's id.
+  readonly closed: Readonly<Record<ClosedDim, ReadonlyMap<string, string>>>;
+  // Label keys no word group may compile to, since a closed value owns them.
+  readonly reserved: ReadonlySet<LabelKey>;
+  // Words that never join a word group.
+  readonly stopWords: ReadonlySet<string>;
+}
+
+export const tables: Tables = {
+  closed: {
+    kind: closedIndex("kind"),
+    language: closedIndex("language"),
+    license: closedIndex("license"),
+    platform: closedIndex("platform"),
+    status: closedIndex("status"),
+  },
+  reserved: reservedKeys,
+  stopWords: new Set([...Vocabulary.connectiveWords, ...Vocabulary.filterWords]),
+};
 
 // The closed words a query may state. Languages and licenses enter only from the planner's guarded output, so a
 // language word the planner did not report stays an ordinary word.
-const closedWords: ReadonlyMap<LabelKey, { readonly dim: ClosedDim; readonly id: string }> = new Map([
-  ...closedEntries("kind", kinds),
-  ...closedEntries("platform", platforms),
-  ...closedEntries("status", statuses),
-]);
+const closedWords: ReadonlyMap<string, { readonly dim: ClosedDim; readonly id: string }> = new Map(
+  (["kind", "platform", "status"] as const).flatMap((dim) =>
+    [...tables.closed[dim]].map(([key, id]) => [key, { dim, id }] as const),
+  ),
+);
 
 const idOf = (dim: ClosedDim, name: string): string | undefined => {
   const key = labelKey(name);
-  return closed[dim].find(
-    (value) => value.id.toLowerCase() === name.toLowerCase() || closedKeys(value).some((k) => k === key),
-  )?.id;
+  return tables.closed[dim].get(name.toLowerCase()) ?? (key === null ? undefined : tables.closed[dim].get(key));
 };
 
-export const version = Hash.string(
-  JSON.stringify({
-    clauses: 5,
-    policy,
-    relaxation,
-    cues: [...cues],
-    comparisonMarkers: [...comparisonMarkers],
-    stopPhrases: [...stopPhrases],
-    negatedVerbs: [...negatedVerbs],
-    genericNouns: [...genericNouns],
-    closedWords: [...closedWords],
-    bounds: [maxPhrase, maxGroups, maxAlternatives, maxWords],
-  }),
-);
+export const versionOf = (read: Tables) =>
+  Hash.string(
+    JSON.stringify({
+      clauses: 5,
+      policy,
+      relaxation,
+      cues: [...cues],
+      comparisonMarkers: [...comparisonMarkers],
+      stopPhrases: [...stopPhrases],
+      negatedVerbs: [...negatedVerbs],
+      genericNouns: [...genericNouns],
+      closed: closedDims.map((dim) => [dim, [...read.closed[dim]]]),
+      reserved: [...read.reserved],
+      stopWords: [...read.stopWords],
+      bounds: [maxPhrase, maxGroups, maxAlternatives, maxWords],
+    }),
+  );
+
+export const version = versionOf(tables);
 
 interface Token {
   readonly word: string;
@@ -279,7 +298,7 @@ const tokenize = (query: string): ReadonlyArray<Token> => {
 const joined = (gap: string) => /^[\s-]*$/.test(gap);
 const breaks = (gap: string) => /[.;:!?()[\]{}"]/.test(gap);
 const alternates = (gap: string) => /[,/]/.test(gap);
-const isStop = (word: string) => Vocabulary.isConnective(word) || Vocabulary.isFilterWord(word) || /^[0-9]/.test(word);
+const isStop = (word: string) => tables.stopWords.has(word) || /^[0-9]/.test(word);
 
 type Match =
   | {
@@ -294,7 +313,7 @@ type Match =
 
 // The longest closed value, cue, or stop phrase that starts at a token.
 const matcher =
-  (tokens: ReadonlyArray<Token>, languageWords: ReadonlyMap<LabelKey, string>) =>
+  (tokens: ReadonlyArray<Token>, languageWords: ReadonlyMap<string, string>) =>
   (index: number): Match | null => {
     for (let length = Math.min(maxPhrase, tokens.length - index); length > 0; length--) {
       const run = tokens.slice(index, index + length);
@@ -468,11 +487,11 @@ const endOf = (run: Run): number | undefined =>
       : undefined;
 
 // A role that does not accept the dimension, such as runs_on for a language, falls back to every default role.
-const atomOf = (role: AtomRole, dim: ClosedDim, id: string): Atom =>
-  ({ role: role === "any" || roles[role].accepts.includes(dim) ? role : "any", value: { dim, id } }) as Atom;
+const atomOf = (role: AtomRole, dim: ClosedDim, id: string): ClosedAtom =>
+  ({ role: role === "any" || roles[role].accepts.includes(dim) ? role : "any", value: { dim, id } }) as ClosedAtom;
 
 // The atoms a closed value reaches through each of the cue's roles, once each.
-const atomsOf = (reaches: Roles, dim: ClosedDim, id: string): ReadonlyArray<Atom> => [
+const atomsOf = (reaches: Roles, dim: ClosedDim, id: string): ReadonlyArray<ClosedAtom> => [
   ...new Map(reaches.map((role) => atomOf(role, dim, id)).map((atom) => [formatAtom(atom), atom])).values(),
 ];
 
@@ -488,18 +507,14 @@ export const compileQuery = (input: {
   const modeOf = (row: Row, narrowed: boolean) => rules[row][narrowed ? 1 : 0];
 
   const plannedLanguages = [...new Set(planned.languages.flatMap((name) => idOf("language", name) ?? []))];
-  const languageWords = new Map(
-    languages
-      .filter((value) => plannedLanguages.includes(value.id))
-      .flatMap((value) => closedKeys(value).map((key) => [key, value.id] as const)),
-  );
+  const languageWords = new Map([...tables.closed.language].filter(([, id]) => plannedLanguages.includes(id)));
   const tokens = tokenize(query);
   const clauses = parse(tokens, matcher(tokens, languageWords));
 
   // Each planned language takes the role and the negation of the first clause that names it.
   const languagesAt = new Map<
     string,
-    { readonly atoms: ReadonlyArray<Atom>; readonly mode: Db.GroupMode | null; readonly span: Span | null }
+    { readonly atoms: ReadonlyArray<ClosedAtom>; readonly mode: Db.GroupMode | null; readonly span: Span | null }
   >();
   // The kinds the results may have: the planner's guarded kinds, or else the last kind run that "only" narrows in the
   // clause describing the results, its head noun, so "only cli apps" asks for apps and "only apps or libraries" for
@@ -534,7 +549,7 @@ export const compileQuery = (input: {
         if (filled.length === 0 || filled.length > maxAlternatives) return;
         if (filled.some((alternative) => alternative.length > maxWords)) return;
         const keys = filled.map((alternative) => labelKey(alternative.map((token) => token.word).join(" ")));
-        if (keys.some((key) => key === null || reservedKeys.has(key))) return;
+        if (keys.some((key) => key === null || tables.reserved.has(key))) return;
         const row: Row =
           cue === null
             ? "bare"
@@ -628,7 +643,7 @@ export const compileQuery = (input: {
   const plannedGroups: Array<Stated> = [];
   const closedGroup = (
     mode: Db.GroupMode,
-    atoms: ReadonlyArray<readonly [Atom, Span | null]>,
+    atoms: ReadonlyArray<readonly [ClosedAtom, Span | null]>,
     from: Origin["from"] = "planner",
   ) => {
     const [first, ...rest] = atoms;
@@ -716,11 +731,6 @@ export interface AppliedAtom {
   readonly relaxed: boolean;
 }
 
-const closedLabel = (atom: Atom) =>
-  atom.value.dim === "subject"
-    ? null
-    : (closed[atom.value.dim].find((value) => value.id === atom.value.id)?.label ?? null);
-
 // The atoms the search applied, as SQL resolved them: every explicit atom, every closed group, and every subject group
 // whose keys all named a subject. A group that did not resolve applied nothing, so it is left out.
 export const applied = (compiled: CompiledQuery, resolution: Db.Resolution): ReadonlyArray<AppliedAtom> => {
@@ -729,7 +739,7 @@ export const applied = (compiled: CompiledQuery, resolution: Db.Resolution): Rea
     group.any.map(
       (atom): AppliedAtom => ({
         atom: formatAtom(atom),
-        label: closedLabel(atom) ?? (atom.value.dim === "subject" ? labelOf(atom.value.id) : ""),
+        label: atom.value.dim === "subject" ? labelOf(atom.value.id) : closedLabel(atom.value.dim, atom.value.id),
         mode: group.negate ? "exclude" : "filter",
         from: "filter",
         span: null,
@@ -741,7 +751,7 @@ export const applied = (compiled: CompiledQuery, resolution: Db.Resolution): Rea
     if (group._tag === "Closed") {
       return group.any.map((atom, n) => ({
         atom: formatAtom(atom),
-        label: closedLabel(atom) ?? "",
+        label: closedLabel(atom.value.dim, atom.value.id),
         mode: group.mode,
         from: "query",
         span: spans[n] ?? null,
