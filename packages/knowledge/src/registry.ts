@@ -292,7 +292,8 @@ export const roles: Readonly<Record<RoleId, RoleSpec>> = {
     wire: "is",
     accepts: ["kind"],
     matches: "bare",
-    prompt: "what the repo is, one or two of: {kinds}. Put the main one first. Always include at least one.",
+    prompt:
+      "what the repo is, one or two of: {kinds}. Put the main one first. Always include at least one. system-software is an operating system, kernel, driver, firmware, compiler, or runtime. A server, daemon, or service you run is an app.",
     quoteRequired: false,
     mints: false,
     max: 2,
@@ -334,7 +335,7 @@ export const roles: Readonly<Record<RoleId, RoleSpec>> = {
     accepts: ["language", "platform", "subject"],
     matches: "bare",
     prompt:
-      "a technology this repo is meant to be used with, such as a plugin for Figma, a client for PostgreSQL, or bindings for Python. Not a framework or library it is merely built with.",
+      "a technology this repo is meant to be used with, such as a plugin for Figma, a client for PostgreSQL, or bindings for Python. Not a framework or library it is merely built with. Never an audience, or what a list or course covers, which is about.",
     quoteRequired: false,
     mints: true,
     max: 8,
@@ -365,7 +366,8 @@ export const roles: Readonly<Record<RoleId, RoleSpec>> = {
     wire: "trait",
     accepts: ["subject"],
     matches: "bare",
-    prompt: "a quality someone would filter on, such as self-hosted, local-first, offline, or zero-dependency.",
+    prompt:
+      "a checkable property someone would filter on, such as self-hosted, local-first, offline, or zero-dependency, only when the input says so. Never praise such as secure, simple, or fast, and never a license. A feature is about.",
     quoteRequired: false,
     mints: true,
     max: 6,
@@ -396,7 +398,7 @@ export const roles: Readonly<Record<RoleId, RoleSpec>> = {
     accepts: ["language", "platform", "subject"],
     matches: "comparison",
     prompt:
-      "a named product or project it resembles, competes with, or replaces. Never the repo itself, a former name of it, code it contains, or a product of a different kind, such as a whole app for a UI component.",
+      'a named product a user could pick instead of this one, such as a competitor or a product it replaces. Never a category or technique, something it uses, wraps, or works with, an analogy such as Jira in "Jira for technicians", the repo itself, code it contains, a project it was forked or renamed from, or its successor, which is replaced_by.',
     quoteRequired: false,
     mints: true,
     max: 6,
@@ -406,7 +408,7 @@ export const roles: Readonly<Record<RoleId, RoleSpec>> = {
     wire: "replaced-by",
     accepts: ["language", "platform", "subject"],
     matches: "comparison",
-    prompt: "the project the README says to use instead of this one. Quote it.",
+    prompt: "another project the README tells this repo's users to switch to, never one this repo replaces. Quote it.",
     quoteRequired: true,
     mints: true,
     max: 2,

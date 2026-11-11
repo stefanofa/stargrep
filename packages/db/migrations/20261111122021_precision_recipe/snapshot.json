@@ -1,0 +1,68 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "de83cee9-c69a-4d99-8018-6323c352d812",
+  "prevIds": [
+    "a0675789-bd39-4a56-8987-843f964c0a0f"
+  ],
+  "footprints": [
+    {
+      "statementType": "alter_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "summary_recipe"
+      ],
+      "writes": [
+        "s|colprop|public.repos.summary_recipe.default"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.repos.summary_recipe"
+      ],
+      "sqlHash": "0b0728838f247f26"
+    },
+    {
+      "statementType": "recreate_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repos",
+        "repos_retryable_enrichment_idx"
+      ],
+      "writes": [
+        "s|idx|public.repos_retryable_enrichment_idx",
+        "n|idx|public.repos_retryable_enrichment_idx",
+        "e|idx|public.repos_retryable_enrichment_idx",
+        "n|rel|public.repos_retryable_enrichment_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.repos.enrich_retry_at",
+        "n|col|public.repos.id"
+      ],
+      "sharedWrites": [],
+      "sqlHash": "4a02dbe1bc6b32ef"
+    }
+  ],
+  "deltas": [
+    {
+      "op": "alter",
+      "key": "columns\u0000[\"public\",\"repos\",\"summary_recipe\"]",
+      "set": {
+        "default": "4"
+      }
+    },
+    {
+      "op": "alter",
+      "key": "indexes\u0000[\"public\",\"repos_retryable_enrichment_idx\"]",
+      "set": {
+        "where": "((\"summary\" is null or \"summary_readme_oid\" is distinct from \"readme_oid\" or \"embedding_model\" is null) or \"embedding_stale\" or \"summary_recipe\" is distinct from 4 or \"summary_input_hash\" is distinct from \"input_hash\") and \"gone_at\" is null and \"enrich_failures\" < 3"
+      }
+    }
+  ]
+}
