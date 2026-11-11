@@ -65,7 +65,14 @@ const Report = Schema.Struct({
       reasoningTokens: Schema.optional(Schema.Int),
     }),
   ),
-  directTokens: Schema.Struct({ input: Schema.Finite, output: Schema.Finite }),
+  // Tokens of every direct call, such as the CLI's. input counts cached input too, and cacheRead and cacheWrite are the
+  // shares of it the provider read from or wrote to its prompt cache. Reports before those shares lack them.
+  directTokens: Schema.Struct({
+    input: Schema.Finite,
+    output: Schema.Finite,
+    cacheRead: Schema.optional(Schema.Finite),
+    cacheWrite: Schema.optional(Schema.Finite),
+  }),
   statements: Schema.Array(Schema.Tuple([Schema.String, Schema.Int])),
 });
 export type RunReport = typeof Report.Type;

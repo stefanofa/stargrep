@@ -7,7 +7,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { type AiError, AiOutputInvalid, AiTimeout } from "./errors.ts";
-import { annotateTokens, countTokens } from "./port.ts";
+import { annotateTokens, countCachedTokens, countTokens } from "./port.ts";
 import type { AiSchema } from "./schema-bridge.ts";
 
 // Whether the model may think before it answers. A provider's default can be adaptive thinking, which bills every
@@ -43,11 +43,15 @@ export interface RunBatchRequest extends Omit<RunRequest, "prompt"> {
 
 export interface RunResult {
   readonly output: unknown;
-  // reasoningTokens is the share of outputTokens the model spent thinking, when the provider reports it.
+  // inputTokens counts every input token, cached or not. cacheReadTokens and cacheWriteTokens are the shares of it the
+  // provider read from or wrote to its prompt cache, and reasoningTokens the share of outputTokens the model spent
+  // thinking, when the provider reports them.
   readonly usage: {
     readonly inputTokens: number | undefined;
     readonly outputTokens: number | undefined;
     readonly reasoningTokens?: number | undefined;
+    readonly cacheReadTokens?: number | undefined;
+    readonly cacheWriteTokens?: number | undefined;
   };
 }
 
@@ -93,6 +97,8 @@ export const make = (options: {
       Effect.all([
         countTokens(model, "input", usage.inputTokens),
         countTokens(model, "output", usage.outputTokens),
+        countCachedTokens(model, "read", usage.cacheReadTokens),
+        countCachedTokens(model, "write", usage.cacheWriteTokens),
       ]).pipe(Effect.andThen(schema.decode(output)), Effect.catchTags({ SchemaError: () => Effect.fail(invalid) }));
 
   const generateOne = <A>(request: GenerateRequest<A>) =>

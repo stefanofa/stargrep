@@ -5,8 +5,16 @@ export const tokensUsed = Metric.counter("stargrep_ai_tokens", {
   description: "Model tokens used, by model and direction.",
 });
 
+export const cachedTokens = Metric.counter("stargrep_ai_cached_tokens", {
+  description:
+    "Input tokens the provider read from or wrote to its prompt cache, by model. A share of the input count.",
+});
+
 export const countTokens = (model: string, direction: "input" | "output", tokens: number | undefined) =>
   Metric.update(Metric.withAttributes(tokensUsed, { model, direction }), tokens ?? 0);
+
+export const countCachedTokens = (model: string, cache: "read" | "write", tokens: number | undefined) =>
+  Metric.update(Metric.withAttributes(cachedTokens, { model, cache }), tokens ?? 0);
 
 export const annotateTokens = (usage: { readonly input?: number | undefined; readonly output?: number | undefined }) =>
   Effect.annotateCurrentSpan({
@@ -18,4 +26,13 @@ export const tokensSpent = (model: string) =>
   Effect.all({
     input: Metric.value(Metric.withAttributes(tokensUsed, { model, direction: "input" })),
     output: Metric.value(Metric.withAttributes(tokensUsed, { model, direction: "output" })),
-  }).pipe(Effect.map(({ input, output }) => ({ input: input.count, output: output.count })));
+    cacheRead: Metric.value(Metric.withAttributes(cachedTokens, { model, cache: "read" })),
+    cacheWrite: Metric.value(Metric.withAttributes(cachedTokens, { model, cache: "write" })),
+  }).pipe(
+    Effect.map(({ input, output, cacheRead, cacheWrite }) => ({
+      input: input.count,
+      output: output.count,
+      cacheRead: cacheRead.count,
+      cacheWrite: cacheWrite.count,
+    })),
+  );
