@@ -109,7 +109,7 @@ The chosen pair measured 0.988 and 0.990 with vector search alone. Hybrid search
 
 `evals/recall.ts` runs the query set through real search. It summarizes the corpus with the summary model and embeds each repo's text, as enrichment does. It saves each answer's facts as a receipt and projects them into atoms, as enrichment does. It loads all 736 repos as the stars of one account, `recall-eval`, in a Postgres database named `stargrep_recall`. Then it sends each query through the `Search` service in `packages/core`, which calls the planner, embeds the query, and runs `search.hybrid`. It exits with an error when recall@10 is under the bar.
 
-Summaries, vectors, plans, and query embeddings are cached in `evals/.cache`, which git ignores. A rerun makes no model call unless the corpus, a model, or the planner prompt changes.
+Summaries, vectors, plans, and query embeddings are cached in `evals/.cache`, which git ignores. A rerun makes no model call unless the corpus, a model, the summary prompt or its thinking level, or the planner prompt changes.
 
 ### Results
 

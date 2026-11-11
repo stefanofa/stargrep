@@ -25,8 +25,8 @@ const settlementOf = EnrichRepo.Enrichment.$match({
 });
 
 // Ten repos of one user need at most three rounds of four model calls, and a chunk's users run one after another, so
-// ten users can need ten rounds. Cloudflare ends a queue invocation at 15 minutes, so the deadline leaves time to
-// settle the messages it stopped.
+// ten users can need ten rounds. The consumer's batch size in queues.ts keeps those rounds inside the deadline.
+// Cloudflare ends a queue invocation at 15 minutes, so the deadline leaves time to settle the messages it stopped.
 export const chunks: Settle.Chunks<EnrichQueue.EnrichRepo> = {
   size: 10,
   deadline: Duration.minutes(10),

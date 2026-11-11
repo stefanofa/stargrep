@@ -116,7 +116,7 @@ describe("gateway text generation", () => {
     ),
   );
 
-  it.effect("sends the request's reasoning setting, so a summary asks for no thinking", () => {
+  it.effect("sends the request's reasoning setting, so a summary asks for high thinking", () => {
     const seen: Array<CallOptions["reasoning"]> = [];
     const answer = async (options: CallOptions) => {
       seen.push(options.reasoning);
@@ -126,7 +126,7 @@ describe("gateway text generation", () => {
       yield* Summarize.summarize(repo);
       const generation = yield* TextGeneration.TextGeneration;
       yield* generation.generate({ schema: Answer, system: "s", prompt: "p", reasoning: "provider-default" });
-      expect(seen).toEqual(["none", "provider-default"]);
+      expect(seen).toEqual(["high", "provider-default"]);
     }).pipe(Effect.provide(textLayer(answer)));
   });
 
@@ -160,7 +160,7 @@ describe("gateway text generation", () => {
     ),
   );
 
-  it.effect("fails with AiTimeout and aborts the request once the clock passes 60 seconds", () => {
+  it.effect("fails with AiTimeout and aborts the request once the clock passes 2 minutes", () => {
     let aborted = false;
     const layer = textLayer(
       (options) =>
@@ -173,7 +173,7 @@ describe("gateway text generation", () => {
     );
     return Effect.gen(function* () {
       const fiber = yield* Effect.forkChild(Effect.flip(Summarize.summarize(repo)));
-      yield* TestClock.adjust("59 seconds");
+      yield* TestClock.adjust("119 seconds");
       expect(fiber.pollUnsafe()).toBeUndefined();
       yield* TestClock.adjust("1 second");
       expect((yield* Fiber.join(fiber))._tag).toBe("AiTimeout");
@@ -319,13 +319,16 @@ describe("gateway text generation", () => {
     ),
   );
 
-  it.effect("counts the gateway's reported tokens per model", () =>
-    Effect.gen(function* () {
+  it.effect("counts the gateway's reported tokens per model, thinking as a share of output", () => {
+    const answered = textResult(JSON.stringify(validAnswer));
+    const reasoned = { ...answered, usage: { ...answered.usage, outputTokens: { total: 20, text: 15, reasoning: 5 } } };
+    return Effect.gen(function* () {
       const before = yield* Port.tokensSpent("metered/model");
       yield* Summarize.summarize(repo);
-      expect((yield* Port.tokensSpent("metered/model")).output - before.output).toBe(20);
-    }).pipe(Effect.provide(textLayer(async () => textResult(JSON.stringify(validAnswer)), "metered/model"))),
-  );
+      const after = yield* Port.tokensSpent("metered/model");
+      expect([after.output - before.output, after.reasoning - before.reasoning]).toEqual([20, 5]);
+    }).pipe(Effect.provide(textLayer(async () => reasoned, "metered/model")));
+  });
 });
 
 type BatchApi = ReturnType<Gateway.AiProvider["Service"]["experimental_batch"]>;
@@ -435,9 +438,9 @@ describe("gateway batch", () => {
       expect(request?.modelId).toBe("test/model");
       expect(request?.type === "text" && request.options.responseFormat?.type).toBe("json");
       expect(fake.starts[0]?.requests.map((item) => item.type === "text" && item.options.reasoning)).toEqual([
-        "none",
-        "none",
-        "none",
+        "high",
+        "high",
+        "high",
       ]);
       expect(request?.id).toBe("0");
       expect(results).toEqual([
@@ -524,8 +527,8 @@ describe("gateway batch", () => {
       const batchId = yield* batches.submit(request);
       expect(keyOf(fake.starts[0])).toBe(yield* Batches.requestKey(request));
       expect(fake.starts[0]?.requests.map((item) => item.type === "text" && item.options.reasoning)).toEqual([
-        "none",
-        "none",
+        "high",
+        "high",
       ]);
       const collected = yield* batches.collect(batchId, 2);
       expect(collected).toEqual(
@@ -554,7 +557,7 @@ describe("gateway batch", () => {
         fake.starts.map((start) => start.requests.map((item) => item.type === "text" && item.options.reasoning)),
       ).toEqual([
         ["low", "low"],
-        ["none", "none"],
+        ["high", "high"],
       ]);
       expect(keyOf(fake.starts[0])).toBe(yield* Batches.requestKey(low));
       expect(keyOf(fake.starts[0])).not.toBe(keyOf(fake.starts[1]));

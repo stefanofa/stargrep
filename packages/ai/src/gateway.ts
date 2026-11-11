@@ -48,7 +48,9 @@ export class AiProvider extends Context.Service<
   }
 >()("@stargrep/ai/gateway/AiProvider") {}
 
-const textTimeout = Duration.seconds(60);
+// A summary thinks before it answers. Single calls at high took 8 to 15 s for up to 3,400 output tokens, and the batch's
+// longest answer ran 5,041, so this leaves the SDK's three retries room after a slow first try.
+const textTimeout = Duration.minutes(2);
 const embedTimeout = Duration.seconds(30);
 const batchTimeout = Duration.hours(24);
 const batchPollInterval = Duration.seconds(10);
@@ -316,7 +318,11 @@ export const layerTextGeneration = (model: string, options: Partial<TextOptions>
                 Effect.try({
                   try: () => ({
                     output: result.output,
-                    usage: { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens },
+                    usage: {
+                      inputTokens: result.usage.inputTokens,
+                      outputTokens: result.usage.outputTokens,
+                      reasoningTokens: result.usage.outputTokenDetails.reasoningTokens,
+                    },
                   }),
                   catch: (cause) =>
                     NoOutputGeneratedError.isInstance(cause)

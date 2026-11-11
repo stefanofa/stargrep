@@ -78,7 +78,8 @@ export const answerModels = (rows: ReadonlyArray<SampleRow>) => {
 };
 
 // The thinking the runs' reports allow, and so what the tokens gate holds them to. A report from before trials asked for
-// none. Runs that asked for none are held to zero thinking, and a trial that asked for a level is not.
+// none. Runs that asked for none are held to zero thinking, and runs that asked for a level, such as the recipe's high,
+// are not.
 export const thinkingPass = (levels: ReadonlyArray<Reasoning | undefined>) => {
   const asked = [...new Set(levels.map((level) => level ?? "none"))].filter((level) => level !== "none").sort();
   return asked.length === 0 ? "thinking 0" : `thinking reported, not gated, as the runs asked for ${asked.join(", ")}`;
