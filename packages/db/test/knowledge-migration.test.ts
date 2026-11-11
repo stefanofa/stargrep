@@ -70,3 +70,53 @@ it.layer(Layer.empty, { testTimeout: 60_000 })("migration locks", (test) =>
     }),
   ),
 );
+
+// Applies one migration in one transaction, statement by statement, as a deploy does.
+const apply = async (client: pg.Client, statements: ReadonlyArray<string>) => {
+  await client.query("begin");
+  for (const statement of statements) await client.query(statement);
+  await client.query("commit");
+};
+
+it.layer(Layer.empty, { testTimeout: 60_000 })("kinds migration", (test) =>
+  test.effect("drops the subject labels the new kinds now own and has every repo project again", () =>
+    Effect.gen(function* () {
+      const name = `stargrep_kinds_${yield* Random.nextIntBetween(0, 2 ** 31)}`;
+      yield* Effect.acquireRelease(
+        withClient(adminUrl, (client) => client.query(`create database ${client.escapeIdentifier(name)}`)),
+        () => dropDatabase(adminUrl, name),
+      );
+      const all = yield* migrations;
+      const kinds = all.findIndex((migration) => migration.file.endsWith("_kinds_database_system/migration.sql"));
+      expect(kinds).toBeGreaterThan(0);
+      const after = yield* withClient(databaseUrl(adminUrl, name), async (client: pg.Client) => {
+        for (const migration of all.slice(0, kinds)) await apply(client, migration.statements);
+        await client.query(
+          `insert into decisions (revision, kind, payload, actor, reason) values (1, 'create', '{"_tag":"Create"}', 'seed', 'seed')`,
+        );
+        const { rows } = await client.query(
+          "insert into subjects (label, status, origin_revision) values ('database', 'accepted', 1) returning id",
+        );
+        await client.query(
+          `insert into subject_labels (namespace, key, subject_id, is_default, source, revision)
+           select 'public', key, $1, key = 'database', 'decision', 1 from unnest(array['database', 'db', 'data store']) key`,
+          [rows[0].id],
+        );
+        await client.query("insert into repos (id, owner, name) values (1, 'owner', 'one'), (2, 'owner', 'two')");
+        await client.query("update repo_facets set stale = false");
+        for (const migration of all.slice(kinds)) await apply(client, migration.statements);
+        const read = async (text: string) => (await client.query(text)).rows;
+        return {
+          labels: await read("select key from subject_labels order by key"),
+          stale: await read(
+            "select count(*) filter (where stale)::int as stale, count(*)::int as repos from repo_facets",
+          ),
+          kinds: await read("select unnest(enum_range(null::knowledge_kind))::text as kind"),
+        };
+      });
+      expect(after.labels).toEqual([{ key: "data store" }]);
+      expect(after.stale).toEqual([{ stale: 2, repos: 2 }]);
+      expect(after.kinds.slice(-2)).toEqual([{ kind: "database" }, { kind: "system-software" }]);
+    }),
+  ),
+);

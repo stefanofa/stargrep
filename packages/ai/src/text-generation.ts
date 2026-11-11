@@ -4,15 +4,22 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { type AiError, AiOutputInvalid, AiTimeout } from "./errors.ts";
 import { annotateTokens, countTokens } from "./port.ts";
 import type { AiSchema } from "./schema-bridge.ts";
 
+// Whether the model may think before it answers. A provider's default can be adaptive thinking, which bills every
+// answer for tokens nobody reads, so each prompt states it.
+export const Reasoning = Schema.Literals(["none", "provider-default"]);
+export type Reasoning = typeof Reasoning.Type;
+
 export interface GenerateRequest<A> {
   readonly schema: AiSchema<A>;
   readonly system: string;
   readonly prompt: string;
+  readonly reasoning: Reasoning;
 }
 
 export interface GenerateBatchRequest<A, I> extends Omit<GenerateRequest<A>, "prompt"> {
@@ -27,6 +34,7 @@ export interface RunRequest {
   readonly jsonSchema: JSONSchema7;
   readonly system: string;
   readonly prompt: string;
+  readonly reasoning: Reasoning;
 }
 
 export interface RunBatchRequest extends Omit<RunRequest, "prompt"> {
@@ -88,7 +96,12 @@ export const make = (options: {
       ]).pipe(Effect.andThen(schema.decode(output)), Effect.catchTags({ SchemaError: () => Effect.fail(invalid) }));
 
   const generateOne = <A>(request: GenerateRequest<A>) =>
-    run({ jsonSchema: request.schema.jsonSchema, system: request.system, prompt: request.prompt }).pipe(
+    run({
+      jsonSchema: request.schema.jsonSchema,
+      system: request.system,
+      prompt: request.prompt,
+      reasoning: request.reasoning,
+    }).pipe(
       Effect.timeoutOrElse({ duration: timeout, orElse: () => Effect.fail(timedOut(timeout)) }),
       Effect.tap(({ usage }) => annotateTokens({ input: usage.inputTokens, output: usage.outputTokens })),
       Effect.flatMap(accept(request.schema)),
@@ -102,7 +115,7 @@ export const make = (options: {
     prompt: string,
     item: Result.Result<RunResult, AiError> | undefined,
   ) => {
-    const direct = generate({ schema: request.schema, system: request.system, prompt });
+    const direct = generate({ schema: request.schema, system: request.system, prompt, reasoning: request.reasoning });
     const answered =
       item === undefined || Result.isFailure(item)
         ? direct
@@ -126,7 +139,10 @@ export const make = (options: {
   const generateBatch = <A, I>(request: GenerateBatchRequest<A, I>): Stream.Stream<BatchAnswer<A, I>> => {
     const asked = request.items.map((item) => ({ item, prompt: request.prompt(item) }));
     const prompts = asked.map(({ prompt }) => prompt);
-    return Stream.fromEffect(runBatch({ jsonSchema: request.schema.jsonSchema, system: request.system, prompts })).pipe(
+    const { jsonSchema } = request.schema;
+    return Stream.fromEffect(
+      runBatch({ jsonSchema, system: request.system, prompts, reasoning: request.reasoning }),
+    ).pipe(
       Stream.flatMap((results) =>
         Stream.fromIterable(asked.map((entry, index) => ({ ...entry, result: results[index] }))),
       ),

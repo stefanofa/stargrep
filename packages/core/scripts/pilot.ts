@@ -142,7 +142,7 @@ const sample = Command.make(
     const github = yield* GitHub.GitHub;
     const blobs = yield* BlobStore.BlobStore;
     const fs = yield* FileSystem.FileSystem;
-    // 100 enriched prod repos with a legacy receipt, so recipe 2 answers can be compared with recipe 1 summaries.
+    // 100 enriched prod repos with a legacy receipt, so the current recipe's answers can be compared with recipe 1 summaries.
     const prod = yield* sql<{ id: number; fullName: string }>(
       `select r.id::float8 as id, r.owner || '/' || r.name as "fullName" from repos r
          where r.summary is not null and r.gone_at is null
@@ -322,7 +322,11 @@ const gates = Command.make(
     ).length;
     const withReadme = answered.filter((row) => row.hasReadme);
     const repaid = reports.reduce((sum, report) => sum + report.repaid, 0);
-    const slowest = Math.max(0, ...reports.flatMap((report) => report.captures.map((capture) => capture.seconds)));
+    const captureTimes = reports.flatMap((report) => report.captures);
+    const slowest = captureTimes.reduce(
+      (worst, capture) => (capture.seconds > worst.seconds ? capture : worst),
+      captureTimes[0] ?? { items: 0, seconds: 0 },
+    );
 
     const table: ReadonlyArray<readonly [string, string, string]> = [
       ["Answers", `${answered.length} of ${ids.length} sampled repos have a current receipt`, "-"],
@@ -338,7 +342,7 @@ const gates = Command.make(
       ],
       [
         "Against recipe 1 on the prod repos",
-        `recipe 2 on the batch path: ${prod.failed.length} never decoded and ${prod.retried} needed a fallback, of ${prod.asked} asked of ${prod.prod}. Recipe 1: ${prod.recipeOneFailed} of ${prod.prod} have no legacy answer. Legacy receipts keep final answers only, so recipe 1 has no first-try count`,
+        `recipe ${Gates.recipe} on the batch path: ${prod.failed.length} never decoded and ${prod.retried} needed a fallback, of ${prod.asked} asked of ${prod.prod}. Recipe 1: ${prod.recipeOneFailed} of ${prod.prod} have no legacy answer. Legacy receipts keep final answers only, so recipe 1 has no first-try count`,
         `no more answers that never decode than recipe 1 (${prod.pass ? "pass" : "fail"})`,
       ],
       [
@@ -382,7 +386,13 @@ const gates = Command.make(
         `${repaid} repaid items${missingReports > 0 ? `, ${missingReports} runs wrote no report` : ""}${stoppedEarly > 0 ? `, ${stoppedEarly} reports from runs stopped early` : ""}. ${repeated} repos asked twice for one input. Receipts are unique per input, so a second payment shows here, not as a second receipt`,
         "zero and zero",
       ],
-      ["Writes", `slowest capture of a batch ${slowest.toFixed(1)} s, at the run's chunk concurrency`, "keeps up"],
+      [
+        "Writes",
+        captureTimes.length === 0
+          ? "no batch answers captured"
+          : `slowest capture of a batch's answers ${slowest.seconds.toFixed(1)} s for ${slowest.items} answers, over ${captureTimes.length} batches, at the run's chunk concurrency. It leaves out the wait for the batch`,
+        "keeps up",
+      ],
       [
         "Private cases",
         "deferred: no private capture path exists yet, so the gate moves to the PR that adds it",

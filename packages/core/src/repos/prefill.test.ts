@@ -3,7 +3,9 @@ import * as Db from "@stargrep/db";
 import { Login, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import * as BlobStore from "./blob-store.ts";
@@ -56,6 +58,25 @@ for (const [adapter, database] of adapters) {
           ),
         ).toEqual([{ receipts: 3, batched: 3, read: 3, projected: 3 }]);
         expect(askedFor(f.asked, range(1001, 3))).toEqual([]);
+      }),
+    );
+
+    it.effect("times a batch's capture from its answers in hand, leaving out the wait for the batch", () =>
+      Effect.gen(function* () {
+        const ids = range(1051, 2);
+        f.seed(ids);
+        const waiting = yield* Deferred.make<void>();
+        const answered = yield* Deferred.make<void>();
+        f.batches.control.collecting = (_, stored) =>
+          Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Deferred.await(answered)), Effect.as(stored));
+        const driver = yield* Effect.forkChild(run(ids.map(ref)));
+        yield* Deferred.await(waiting);
+        yield* TestClock.adjust("10 seconds");
+        yield* Deferred.succeed(answered, undefined);
+        const report = yield* Fiber.join(driver);
+        f.batches.control.collecting = undefined;
+        expect(tally(report)).toEqual({ saved: 2 });
+        expect(report.captures).toEqual([{ items: 2, seconds: 0 }]);
       }),
     );
 

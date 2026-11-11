@@ -100,6 +100,10 @@ export const system = [
   JSON.stringify(example, null, 2),
 ].join("\n");
 
+// A summary is made without thinking. The prefill's cost assumes none, and pilot 2's answers spent about 528 thinking
+// tokens each.
+export const reasoning: TextGeneration.Reasoning = "none";
+
 export const trimReadme = (readme: string): string =>
   readme.length <= readmeLimit ? readme : `${readme.slice(0, readmeLimit)}\n[README truncated]`;
 
@@ -207,7 +211,7 @@ const answer = (input: PromptInput, envelope: Envelope): RepoSummary => ({
 // One direct call for a prompt already built, such as one a provider batch did not answer.
 export const summarizePrompted = Effect.fnUntraced(function* ({ text, input }: Prompted) {
   const textGeneration = yield* TextGeneration.TextGeneration;
-  const envelope = yield* textGeneration.generate({ schema: answerSchema, system, prompt: text });
+  const envelope = yield* textGeneration.generate({ schema: answerSchema, system, prompt: text, reasoning });
   return answer(input, envelope);
 });
 
@@ -219,6 +223,7 @@ export const batchRequest = (model: string, prompts: ReadonlyArray<Prompted>): B
   system,
   jsonSchema: providerSchema,
   prompts: prompts.map((prompt) => prompt.text),
+  reasoning,
 });
 
 // A raw batch answer decoded against the prompt it answers. A SchemaError means the answer is invalid as a whole.
@@ -230,7 +235,13 @@ export const summarizeBatch = <I>(items: ReadonlyArray<I>, facts: (item: I) => R
     Effect.map(TextGeneration.TextGeneration, (textGeneration) => {
       const prompted = items.map((item) => ({ item, prompt: promptOf(facts(item)) }));
       return textGeneration
-        .generateBatch({ schema: answerSchema, system, items: prompted, prompt: ({ prompt }) => prompt.text })
+        .generateBatch({
+          schema: answerSchema,
+          system,
+          reasoning,
+          items: prompted,
+          prompt: ({ prompt }) => prompt.text,
+        })
         .pipe(
           Stream.map(
             ([{ item, prompt }, result]): TextGeneration.BatchAnswer<RepoSummary, I> => [

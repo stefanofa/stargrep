@@ -80,6 +80,12 @@ describe("closed values", () => {
     expect(owner("Jupyter Notebook")).toEqual(["language:jupyter-notebook"]);
     expect(owner("Visual Basic .NET")).toEqual(["language:visual-basic"]);
     expect(owner("Visual Basic 6.0")).toEqual(["language:visual-basic"]);
+    expect(owner("db")).toEqual(["kind:database"]);
+    expect(owner("system software")).toEqual(["kind:system-software"]);
+    expect(owner("system")).toEqual([]);
+    for (const implied of ["vector database", "compiler", "kernel", "operating system", "script", "tool", "package"]) {
+      expect([implied, owner(implied)]).toEqual([implied, []]);
+    }
   });
 });
 
@@ -89,15 +95,15 @@ describe("reservedKeys", () => {
     return [term, key !== null && Registry.reservedKeys.has(key)];
   };
 
-  test("holds the 174 keys of kinds, languages, platforms, and statuses", () => {
-    expect(Registry.reservedKeys.size).toBe(174);
-    for (const term of ["cli", "rust", "macos", "node", "shell", "library", "c++", "c#", ".NET", "deprecated"]) {
+  test("holds the 178 keys of kinds, languages, platforms, and statuses", () => {
+    expect(Registry.reservedKeys.size).toBe(178);
+    for (const term of ["cli", "rust", "macos", "node", "shell", "library", "database", "system software", "c#"]) {
       expect(reserved(term)).toEqual([term, true]);
     }
   });
 
   test("leaves subjects, licenses, and impliedBy names free", () => {
-    for (const term of ["tui", "postgresql", "zlib", "chrome", "ubuntu", "sdk", "asm", "MIT", "apache", "workers"]) {
+    for (const term of ["tui", "postgresql", "zlib", "chrome", "ubuntu", "sdk", "asm", "MIT", "apache", "compiler"]) {
       expect(reserved(term)).toEqual([term, false]);
     }
   });

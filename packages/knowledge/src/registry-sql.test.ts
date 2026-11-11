@@ -8,8 +8,8 @@ describe("registry.sql", () => {
     expect(renderRegistrySql()).toBe(await Bun.file(new URL("./registry.sql", import.meta.url)).text());
   });
 
-  test("reserves exactly the registry's 174 keys", () => {
+  test("reserves exactly the registry's 178 keys", () => {
     const list = /knowledge_reserved_key[\s\S]*?array\[([\s\S]*?)\]\)/.exec(renderRegistrySql())?.[1] ?? "";
-    expect([...list.matchAll(/'((?:[^']|'')*)'/g)]).toHaveLength(174);
+    expect([...list.matchAll(/'((?:[^']|'')*)'/g)]).toHaveLength(178);
   });
 });

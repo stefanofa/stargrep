@@ -24,14 +24,15 @@ const htmlTags = (
 ).split(" ");
 
 describe("summary recipe", () => {
-  // A summary made by another model, prompt, or output schema is stale, and only a recipe bump makes it due again. Bump
-  // summaryRecipe in models.ts with the migration it needs, then record the new digest. A change that leaves summaries
-  // as good as before may keep the recipe and only record the digest.
-  it.effect("pins the recipe to the model, prompt, and output schema that make a summary", () =>
+  // A summary made by another model, prompt, output schema, or reasoning setting is stale, and only a recipe bump makes
+  // it due again. Bump summaryRecipe in models.ts with the migration it needs, then record the new digest. A change that
+  // leaves summaries as good as before may keep the recipe and only record the digest.
+  it.effect("pins the recipe to the model, prompt, output schema, and reasoning setting that make a summary", () =>
     Effect.gen(function* () {
       const digest = yield* Digest.Digest;
       const made = JSON.stringify([
         Models.summaryModel,
+        Summarize.reasoning,
         Summarize.system,
         Summarize.promptOf({
           ...repo,
@@ -65,7 +66,7 @@ describe("summary recipe", () => {
       expect({
         recipe: Models.summaryRecipe,
         digest: yield* digest.digestHex(Digest.sha256, new TextEncoder().encode(made)),
-      }).toEqual({ recipe: 2, digest: "d752262f1787c0ebde84ffbe35c66e81a6340adf781a36dcdf4b8ffc2340ec66" });
+      }).toEqual({ recipe: 3, digest: "1b0a8354bd915e4ab8a7df3fd91d840fbf38e0e8e709b63a3c3457edf8dba93f" });
     }).pipe(Effect.provide(Digest.layerWebCrypto)),
   );
 });

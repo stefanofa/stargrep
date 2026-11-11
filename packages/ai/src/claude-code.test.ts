@@ -94,6 +94,10 @@ describe("claude code text generation", () => {
         "--model",
         "haiku",
       ]);
+      expect(JSON.parse(seen.args[seen.args.indexOf("--settings") + 1] ?? "")).toEqual({
+        disableAllHooks: true,
+        alwaysThinkingEnabled: false,
+      });
       expect(seen.args.join(" ")).not.toContain("PRIVATE README TEXT");
       expect(seen.stdin).toContain("PRIVATE README TEXT");
     }).pipe(Effect.provide(layer));

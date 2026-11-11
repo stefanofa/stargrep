@@ -1,4 +1,5 @@
 import { expect } from "bun:test";
+import { summaryRecipe } from "@stargrep/ai/models";
 import { BatchId, InputHash } from "@stargrep/knowledge/ids";
 import * as it from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
@@ -28,7 +29,7 @@ const manifest = (id: string, repos: ReadonlyArray<number>): Db.Manifest => ({
   id: BatchId.make(id),
   adapter: "gateway-batch",
   model: "test/model",
-  recipe: 2,
+  recipe: summaryRecipe,
   requestKey: `key-${id}`,
   requestObject: `prefill/requests/key-${id}.json`,
   providerBatchId: null,

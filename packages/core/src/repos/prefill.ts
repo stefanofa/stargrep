@@ -110,7 +110,8 @@ export interface ItemUsage {
   readonly reasoningTokens?: number | undefined;
 }
 
-// How long one manifest took from its answers in hand to closed, for the pilot's writes gate.
+// How long one provider batch's answers took to capture, project, and embed once they were in hand, for the pilot's
+// writes gate. It leaves out the wait for the batch and any fallback batch.
 export interface CaptureTime {
   readonly items: number;
   readonly seconds: number;
@@ -655,11 +656,7 @@ const make = Effect.gen(function* () {
       resumed: boolean,
     ) => Effect.Effect<void, PrefillAbort> = Effect.fn("Prefill.settle")(function* (manifest, stored, open, resumed) {
       const pending = itemsOf(stored, open);
-      const answeredFrom = yield* Clock.currentTimeMillis;
       const close = Effect.fn("Prefill.close")(function* (closing: Db.Manifest) {
-        if (pending.length > 0) {
-          captures.push({ items: pending.length, seconds: ((yield* Clock.currentTimeMillis) - answeredFrom) / 1000 });
-        }
         if (yield* db.knowledge.closeBatch(closing)) counts.closed++;
       });
       // A manifest never sent that owes nothing, such as one whose repos another attempt took, is deleted: it paid for
@@ -698,6 +695,7 @@ const make = Effect.gen(function* () {
       }
       const answerModel = stored.request.model;
       const batch = collected.value;
+      const answeredFrom = yield* Clock.currentTimeMillis;
       const results = yield* Effect.forEach(pending, ({ item, index }) =>
         (batch._tag === "Answered"
           ? decode(manifest.id, item, batch.items[index], answerModel)
@@ -714,6 +712,9 @@ const make = Effect.gen(function* () {
           Result.isSuccess(answer) || final ? [{ item: item.stored, answer, direct: false }] : [],
       );
       yield* flushAll(current, answerModel, Stream.fromIterable(settled));
+      if (settled.length > 0) {
+        captures.push({ items: settled.length, seconds: ((yield* Clock.currentTimeMillis) - answeredFrom) / 1000 });
+      }
       const again = final ? [] : results.flatMap(({ item, answer }) => (Result.isFailure(answer) ? [item] : []));
       if (again.length > 0) yield* fallback(current, stored, again);
       return yield* close(current);

@@ -1,0 +1,103 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "113a703e-50b2-4bd6-a201-39fab5de9ecc",
+  "prevIds": [
+    "bb407374-aa6b-44ef-9759-f3177381b7b6"
+  ],
+  "footprints": [
+    {
+      "statementType": "alter_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "knowledge_kind"
+      ],
+      "writes": [
+        "s|enum|public.knowledge_kind"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "alter_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "summary_recipe"
+      ],
+      "writes": [
+        "s|colprop|public.repos.summary_recipe.default"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.repos.summary_recipe"
+      ],
+      "sqlHash": "7a3bff83af54b835"
+    },
+    {
+      "statementType": "recreate_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repos",
+        "repos_retryable_enrichment_idx"
+      ],
+      "writes": [
+        "s|idx|public.repos_retryable_enrichment_idx",
+        "n|idx|public.repos_retryable_enrichment_idx",
+        "e|idx|public.repos_retryable_enrichment_idx",
+        "n|rel|public.repos_retryable_enrichment_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.repos.enrich_retry_at",
+        "n|col|public.repos.id"
+      ],
+      "sharedWrites": [],
+      "sqlHash": "b140ffe743d29a2c"
+    }
+  ],
+  "deltas": [
+    {
+      "op": "alter",
+      "key": "enums\u0000[\"public\",\"knowledge_kind\"]",
+      "set": {
+        "values": [
+          "app",
+          "library",
+          "framework",
+          "cli",
+          "plugin",
+          "template",
+          "list",
+          "learning",
+          "dataset",
+          "model",
+          "config",
+          "database",
+          "system-software"
+        ]
+      }
+    },
+    {
+      "op": "alter",
+      "key": "columns\u0000[\"public\",\"repos\",\"summary_recipe\"]",
+      "set": {
+        "default": "3"
+      }
+    },
+    {
+      "op": "alter",
+      "key": "indexes\u0000[\"public\",\"repos_retryable_enrichment_idx\"]",
+      "set": {
+        "where": "((\"summary\" is null or \"summary_readme_oid\" is distinct from \"readme_oid\" or \"embedding_model\" is null) or \"embedding_stale\" or \"summary_recipe\" is distinct from 3 or \"summary_input_hash\" is distinct from \"input_hash\") and \"gone_at\" is null and \"enrich_failures\" < 3"
+      }
+    }
+  ]
+}

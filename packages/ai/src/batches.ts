@@ -5,11 +5,12 @@ import * as Effect from "effect/Effect";
 import type * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type { AiError } from "./errors.ts";
-import type { RunResult } from "./text-generation.ts";
+import { Reasoning, type RunResult } from "./text-generation.ts";
 
-// One provider batch request, exactly as it is sent: the model, the system prompt, the provider schema, and the
-// prompts in order. A caller that stores it can send the same bytes again after a crash. attempt is set on a second
-// batch for prompts the first answered badly, so it gets its own idempotency key even when it asks every prompt again.
+// One provider batch request, exactly as it is sent: the model, the system prompt, the provider schema, the prompts in
+// order, and the reasoning setting. A caller that stores it can send the same bytes again after a crash. attempt is set
+// on a second batch for prompts the first answered badly, so it gets its own idempotency key even when it asks every
+// prompt again. A request stored before batches carried reasoning has none, and is sent again without it.
 export const BatchRequest = Schema.Struct({
   model: Schema.String,
   system: Schema.String,
@@ -17,6 +18,7 @@ export const BatchRequest = Schema.Struct({
   jsonSchema: Schema.declare((input): input is JSONSchema7 => typeof input === "object" && input !== null),
   prompts: Schema.Array(Schema.String),
   attempt: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(1))),
+  reasoning: Schema.optionalKey(Reasoning),
 });
 export type BatchRequest = typeof BatchRequest.Type;
 
@@ -26,9 +28,10 @@ const encodeJson = Schema.encodeUnknownEffect(Json);
 const toHex = (bytes: ArrayBuffer) =>
   Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
 
-// The idempotency key of a request: a hash of the model, system, schema, and prompts in order, and the attempt when it
-// has one. The Gateway replays a batch start that repeats a key with the same body, so a run that dies while it waits
-// finds its batch again instead of paying for it twice.
+// The idempotency key of a request: a hash of the model, system, schema, and prompts in order, then the attempt and the
+// reasoning setting when it has them. The Gateway replays a batch start that repeats a key with the same body, so a run
+// that dies while it waits finds its batch again instead of paying for it twice. A request without the newer fields
+// keeps the key it was stored under.
 export const requestKey = (request: BatchRequest) =>
   encodeJson([
     request.model,
@@ -36,6 +39,7 @@ export const requestKey = (request: BatchRequest) =>
     request.jsonSchema,
     request.prompts,
     ...(request.attempt === undefined ? [] : [request.attempt]),
+    ...(request.reasoning === undefined ? [] : [request.reasoning]),
   ]).pipe(
     Effect.orDie,
     Effect.flatMap((text) => Effect.promise(() => crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))),

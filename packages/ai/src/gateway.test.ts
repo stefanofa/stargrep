@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
@@ -24,6 +25,7 @@ import * as Models from "./models.ts";
 import * as Port from "./port.ts";
 import recordedAnswers from "./prompts/summarize.recorded.json";
 import * as Summarize from "./prompts/summarize.ts";
+import { toAiSchema } from "./schema-bridge.ts";
 import * as TextGeneration from "./text-generation.ts";
 
 type GenerateResult = Awaited<ReturnType<MockLanguageModelV4["doGenerate"]>>;
@@ -97,6 +99,8 @@ const validAnswer = {
   facets: [{ role: "is", term: "library" }],
 };
 
+const Answer = toAiSchema(Schema.Struct({ summary: Schema.String }));
+
 const decoded = (answer: typeof validAnswer): Summarize.RepoSummary => ({
   summary: answer.summary,
   keywords: answer.keywords,
@@ -112,17 +116,18 @@ describe("gateway text generation", () => {
     ),
   );
 
-  it.effect("asks for no reasoning only when the layer is built with reasoning none", () => {
+  it.effect("sends the request's reasoning setting, so a summary asks for no thinking", () => {
     const seen: Array<CallOptions["reasoning"]> = [];
     const answer = async (options: CallOptions) => {
       seen.push(options.reasoning);
       return textResult(JSON.stringify(validAnswer));
     };
     return Effect.gen(function* () {
-      yield* Summarize.summarize(repo).pipe(Effect.provide(textLayer(answer)));
-      yield* Summarize.summarize(repo).pipe(Effect.provide(textLayer(answer, "test/model", { reasoning: "none" })));
-      expect(seen).toEqual(["provider-default", "none"]);
-    });
+      yield* Summarize.summarize(repo);
+      const generation = yield* TextGeneration.TextGeneration;
+      yield* generation.generate({ schema: Answer, system: "s", prompt: "p", reasoning: "provider-default" });
+      expect(seen).toEqual(["none", "provider-default"]);
+    }).pipe(Effect.provide(textLayer(answer)));
   });
 
   it.effect("fails with AiOutputInvalid when the model returns text that is not JSON", () =>
@@ -429,6 +434,11 @@ describe("gateway batch", () => {
       const request = fake.starts[0]?.requests[0];
       expect(request?.modelId).toBe("test/model");
       expect(request?.type === "text" && request.options.responseFormat?.type).toBe("json");
+      expect(fake.starts[0]?.requests.map((item) => item.type === "text" && item.options.reasoning)).toEqual([
+        "none",
+        "none",
+        "none",
+      ]);
       expect(request?.id).toBe("0");
       expect(results).toEqual([
         Result.succeed(validSummary),
@@ -513,6 +523,10 @@ describe("gateway batch", () => {
       ]);
       const batchId = yield* batches.submit(request);
       expect(keyOf(fake.starts[0])).toBe(yield* Batches.requestKey(request));
+      expect(fake.starts[0]?.requests.map((item) => item.type === "text" && item.options.reasoning)).toEqual([
+        "none",
+        "none",
+      ]);
       const collected = yield* batches.collect(batchId, 2);
       expect(collected).toEqual(
         Batches.Collected.Answered({
@@ -525,6 +539,32 @@ describe("gateway batch", () => {
       expect(fake.direct.calls).toBe(0);
     }).pipe(Effect.provide(Gateway.layerBatches("test/model").pipe(Layer.provide(fake.provider))));
   });
+
+  it.effect(
+    "sends a request stored before batches carried reasoning as it was, under the key it was stored with",
+    () => {
+      const fake = fakeBatch({ items: [] });
+      const keyOf = (start: StartOptions | undefined) =>
+        (start?.providerOptions?.gateway as { readonly idempotencyKey?: string } | undefined)?.idempotencyKey;
+      return Effect.gen(function* () {
+        const batches = yield* Batches.Batches;
+        const { reasoning: _, ...stored } = Summarize.batchRequest("test/model", [Summarize.promptOf(repo)]);
+        const digest = yield* Effect.promise(() =>
+          crypto.subtle.digest(
+            "SHA-256",
+            new TextEncoder().encode(JSON.stringify([stored.model, stored.system, stored.jsonSchema, stored.prompts])),
+          ),
+        );
+        const storedKey = `stargrep-batch-${Buffer.from(digest).toString("hex")}`;
+        yield* batches.submit(stored);
+        expect(keyOf(fake.starts[0])).toBe(storedKey);
+        expect(fake.starts[0]?.requests.map((item) => item.type === "text" && "reasoning" in item.options)).toEqual([
+          false,
+        ]);
+        expect(yield* Batches.requestKey({ ...stored, reasoning: "none" })).not.toBe(storedKey);
+      }).pipe(Effect.provide(Gateway.layerBatches("test/model").pipe(Layer.provide(fake.provider))));
+    },
+  );
 
   const viaBatches = <A, E>(fake: ReturnType<typeof fakeBatch>, check: Effect.Effect<A, E, Batches.Batches>) =>
     check.pipe(Effect.provide(Gateway.layerBatches("test/model").pipe(Layer.provide(fake.provider))));

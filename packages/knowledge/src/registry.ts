@@ -23,19 +23,33 @@ const value = <const Id extends string>(
   expands: ReadonlyArray<string> = [],
 ): ClosedValue<Id> => ({ id, label, aliases, impliedBy, expands });
 
-// A repo the model cannot place gets no kind, so there is no "other".
+// A repo the model cannot place gets no kind, so there is no "other". A kind the model names in other words, such as
+// compiler or tool, is an impliedBy name rather than an alias, so the word stays free to be a subject. The id
+// system-software reserves no bare "system", which would split a query such as "content management system".
 export const kinds = [
   value("app", "app", ["apps", "application", "applications"], ["platform", "shell"]),
-  value("library", "library", ["libraries", "lib", "libs"], ["sdk", "design system"]),
+  value("library", "library", ["libraries", "lib", "libs"], ["sdk", "design system", "package"]),
   value("framework", "framework", ["frameworks"]),
-  value("cli", "CLI", ["clis", "command line tool", "command-line tool"]),
-  value("plugin", "plugin", ["plugins", "extension", "extensions"]),
+  value("cli", "CLI", ["clis", "command line tool", "command-line tool"], ["script", "tool"]),
+  value("plugin", "plugin", ["plugins", "extension", "extensions"], ["skill"]),
   value("template", "template", ["templates", "starter", "boilerplate"]),
   value("list", "list", ["lists", "awesome list"]),
-  value("learning", "learning resource", ["tutorial", "course", "examples"], ["book", "books"]),
-  value("dataset", "dataset", ["datasets"]),
+  value(
+    "learning",
+    "learning resource",
+    ["tutorial", "course", "examples"],
+    ["book", "books", "sample", "learning path"],
+  ),
+  value("dataset", "dataset", ["datasets"], ["benchmark"]),
   value("model", "model", ["models", "model weights"]),
   value("config", "config", ["dotfiles", "configuration"]),
+  value("database", "database", ["databases", "db"], ["vector database"]),
+  value(
+    "system-software",
+    "system software",
+    [],
+    ["operating system", "os", "kernel", "microkernel", "firmware", "compiler", "runtime"],
+  ),
 ] as const;
 
 // Labels are GitHub's display names, so a repo's language field resolves through its label or an alias. GitHub

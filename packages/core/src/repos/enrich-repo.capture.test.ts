@@ -1,4 +1,5 @@
 import { expect } from "bun:test";
+import { summaryRecipe } from "@stargrep/ai/models";
 import * as SummarizeFake from "@stargrep/ai/summarize.fake";
 import * as Db from "@stargrep/db";
 import * as TestDatabase from "@stargrep/db/test-database";
@@ -39,7 +40,7 @@ it.layer(f.enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 
           {
             source: "stand-in",
             model: "fake/text",
-            recipe: 2,
+            recipe: summaryRecipe,
             answersInputs: true,
             current: true,
             kinds: ["cli"],

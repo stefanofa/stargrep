@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { extractionLines } from "./extraction.ts";
 
 describe("extractionLines", () => {
-  // The facets block of the recipe 2 summary prompt. Changing it changes what every paid summary says, so a change here
+  // The facets block of the recipe 3 summary prompt. Changing it changes what every paid summary says, so a change here
   // ships with a recipe bump.
   test("renders the facets block from the role registry", () => {
     expect(extractionLines()).toEqual([
@@ -10,7 +10,7 @@ describe("extractionLines", () => {
       `  - term: one thing, named the way developers write it, as a short noun phrase of at most three words, such as "PostgreSQL", "terminal UI", or "self-hosted". Never join two things in one term, with "and" or otherwise: "rust cli" is two facts, a written_in and an is.`,
       `  - quote: the exact words from the description, topics, or README that support the fact. Quote the text itself, never a line label such as "Topics:".`,
       "  Roles:",
-      "  - is: what the repo is, one or two of: app, library, framework, cli, plugin, template, list, learning, dataset, model, config. Put the main one first. Always include at least one.",
+      "  - is: what the repo is, one or two of: app, library, framework, cli, plugin, template, list, learning, dataset, model, config, database, system-software. Put the main one first. Always include at least one.",
       "  - status: deprecated or unmaintained, only when the README says so. Quote it.",
       "  - written_in: a programming language its own code is written in.",
       "  - runs_on: an operating system, browser, terminal, or runtime it runs on, such as macOS, iOS, Node.js, or Cloudflare Workers. Docker, Kubernetes, and cloud hosts are for.",
