@@ -74,7 +74,8 @@ export const providerSchema: JSONSchema7 = {
 const answerSchema: AiSchema<Envelope> = { jsonSchema: providerSchema, decode: Schema.decodeUnknownEffect(Envelope) };
 
 // The worked example costs about 330 input tokens and saves more in output: without it the pilot's model quoted
-// nearly every fact. Its comparison quote is exact text from ratatui's cleaned README.
+// nearly every fact. Its comparison quote is the first entry of the Alternatives section of ratatui's README, as it
+// renders. tui-rs, the crate ratatui was forked from, stays a keyword, because lineage is no alternative.
 const example = {
   summary: "Ratatui is a Rust library for building rich terminal user interfaces and dashboards.",
   keywords: ["tui", "terminal ui", "tui-rs fork", "terminal dashboard", "widgets"],
@@ -84,7 +85,7 @@ const example = {
     { role: "runs_on", term: "terminal" },
     { role: "about", term: "terminal user interfaces" },
     { role: "about", term: "dashboards" },
-    { role: "alternative_to", term: "tui-rs", quote: "forked from the [tui-rs] crate in 2023" },
+    { role: "alternative_to", term: "Cursive", quote: "Cursive - a ncurses-based TUI library" },
   ],
 };
 

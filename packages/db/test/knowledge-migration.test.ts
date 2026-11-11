@@ -144,18 +144,23 @@ it.layer(Layer.empty, { testTimeout: 60_000 })("kinds migration", (test) =>
   ),
 );
 
-// Projection reads the closed registry, and the sweep projects only stale repos. So a registry edit that moves no SQL,
-// such as a new impliedBy name, reaches the receipts already captured only through a migration that marks every repo
-// stale. Write that migration, name it here, and record the registry's new digest.
+// Projection reads the closed registry and its own rules, and the sweep projects only stale repos. So an edit to either
+// that moves no SQL, such as a new impliedBy name or a new projection rule, reaches the receipts already captured only
+// through a migration that marks every repo stale. Write that migration, name it here, and record the new digest. An
+// edit to projection.ts that projects every repo as before, such as a comment, may keep the migration and only record
+// the digest.
 const reprojection = {
-  migration: "kinds_implied_names",
-  digest: "dfd7be593963f3ea269b5c6efba92da1c197e706f74da882901beb4cd570d141",
+  migration: "precision_recipe",
+  digest: "5de964be4c915c905855a7591975b0cf0f85a38c0b56d997f8c3fa73cd3ecaab",
 };
 
 it.layer(Layer.empty, { testTimeout: 60_000 })("registry reprojection", (test) =>
-  test.effect("names the migration that has every repo project again under the current closed registry", () =>
+  test.effect("names the migration that has every repo project again under the current registry and rules", () =>
     Effect.gen(function* () {
-      const digest = new Bun.CryptoHasher("sha256").update(JSON.stringify(closed)).digest("hex");
+      const rules = yield* Effect.promise(() =>
+        Bun.file(Bun.resolveSync("@stargrep/knowledge/projection", import.meta.dir)).text(),
+      );
+      const digest = new Bun.CryptoHasher("sha256").update(JSON.stringify(closed)).update(rules).digest("hex");
       const stale = yield* across(reprojection.migration, twoProjectedRepos, staleRepos);
       expect({ ...reprojection, digest, stale }).toEqual({ ...reprojection, stale: [{ stale: 2, repos: 2 }] });
     }),

@@ -252,6 +252,9 @@ describe("planSeeds", () => {
       { _tag: "Alias", subject: s(30), label: "oss", add: true },
       { _tag: "Status", subject: s(30), status: "rejected" },
       expect.objectContaining({ _tag: "Create", label: "awesome", status: "rejected" }),
+      ...["secure", "simple", "fast", "enterprise", "modular", "online"].map((label) =>
+        expect.objectContaining({ _tag: "Create", label, status: "rejected" }),
+      ),
     ]);
   });
 

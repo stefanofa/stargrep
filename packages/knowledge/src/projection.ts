@@ -10,6 +10,7 @@ import {
   closed,
   closedKeys,
   type Dim,
+  type KindId,
   licenses,
   type RoleId,
   reservedKeys,
@@ -146,6 +147,10 @@ export const namesAnotherProject = (role: RoleId) => roles[role].matches !== "ba
 const ownKeys = (repo: RepoIdentity) =>
   new Set([labelKey(repo.name), labelKey(`${repo.owner}/${repo.name}`)].flatMap((key) => key ?? []));
 
+// A list or a course covers what it names rather than working with it, so on a repo whose primary kind is one of
+// these, a for claim projects as about.
+const coveringKinds: ReadonlySet<string> = new Set(["list", "learning"] satisfies ReadonlyArray<KindId>);
+
 // Every key project() looks up in the label index, so the caller can load exactly those.
 export const lookupKeys = (claims: ReadonlyArray<Claim>, facts: RepoFacts): ReadonlyArray<LabelKey> => [
   ...new Set([...claims.map((claim) => claim.key), ...facts.topics.flatMap((topic) => labelKey(topic) ?? [])]),
@@ -189,10 +194,7 @@ const order = (a: string | number, b: string | number) =>
 const compareAtoms = (a: ProjectedAtom, b: ProjectedAtom) =>
   order(a.value.dim, b.value.dim) || order(a.value.id, b.value.id);
 
-// One repo's atoms from its receipt's claims, its GitHub facts, the label index, and the curated rules. It reads no
-// clock, database, or model, so the same inputs always give the same atoms. Claims come first, in the model's order,
-// then the facts, and each role keeps at most its max distinct atoms. Corrections apply last and win.
-export const project = (input: ProjectionInput): Projection => {
+const projectWith = (input: ProjectionInput, forClaimsAs: "for" | "about"): Projection => {
   const own = ownKeys(input.repo);
   const verdicts: Array<ClaimVerdict> = [];
   const unresolved = new Set<LabelKey>();
@@ -236,19 +238,20 @@ export const project = (input: ProjectionInput): Projection => {
 
   for (const claim of [...input.claims].sort((a, b) => a.ordinal - b.ordinal)) {
     const source = { from: "receipt", ordinal: claim.ordinal } as const;
-    const spec = roles[claim.role];
+    const role = claim.role === "for" ? forClaimsAs : claim.role;
+    const spec = roles[role];
     if (spec.quoteRequired && claim.found !== "quote") {
       record(source, "dropped", "quote-required", null);
       continue;
     }
-    if (namesAnotherProject(claim.role) && own.has(claim.key)) {
+    if (namesAnotherProject(role) && own.has(claim.key)) {
       record(source, "dropped", "self-comparison", null);
       continue;
     }
-    const resolved = resolveClosed(claim.role, claim.key);
-    if (resolved !== null) keep(source, claim.role, resolved.value, resolved.reason);
+    const resolved = resolveClosed(role, claim.key);
+    if (resolved !== null) keep(source, role, resolved.value, resolved.reason);
     else if (!spec.accepts.includes("subject")) record(source, "dropped", "unresolved-closed", null);
-    else resolveSubject(source, claim.role, claim);
+    else resolveSubject(source, role, claim);
   }
 
   const { language, license, topics } = input.facts;
@@ -319,4 +322,15 @@ export const project = (input: ProjectionInput): Projection => {
     ),
     mints: [...mints].map(([key, label]) => ({ key, label })),
   };
+};
+
+// One repo's atoms from its receipt's claims, its GitHub facts, the label index, and the curated rules. It reads no
+// clock, database, or model, so the same inputs always give the same atoms. Claims come first, in the model's order,
+// then the facts, and each role keeps at most its max distinct atoms. Corrections apply last and win. A repo whose
+// primary kind turns out to cover what it names projects again with its for claims as about. Kinds never depend on
+// for claims, so the second pass keeps the same primary kind.
+export const project = (input: ProjectionInput): Projection => {
+  const projection = projectWith(input, "for");
+  const primary = projection.atoms[0]?.value;
+  return primary?.dim === "kind" && coveringKinds.has(primary.id) ? projectWith(input, "about") : projection;
 };
