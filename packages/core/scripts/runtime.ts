@@ -29,6 +29,7 @@ import type * as PlatformError from "effect/PlatformError";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as IconQueue from "../src/icons/icon-queue.ts";
@@ -79,7 +80,9 @@ const layerCountedFetch = Layer.effect(
         Effect.gen(function* () {
           const [duration, result] = yield* Effect.timed(response);
           const kind = requestKind(new URL(result.request.url));
-          requests.millis.set(kind, [...(requests.millis.get(kind) ?? []), Math.round(Duration.toMillis(duration))]);
+          const timings = requests.millis.get(kind) ?? [];
+          timings.push(Math.round(Duration.toMillis(duration)));
+          requests.millis.set(kind, timings);
           return result;
         }),
       ),
@@ -212,6 +215,34 @@ export interface ObjectBucket {
   readonly write: (key: string, value: string) => Promise<number>;
 }
 
+// Bun's S3 client gives its own configuration errors an ERR_S3_ code, and an S3Error carries the service's code. These
+// fail the same way every time. Anything else, such as R2's "an unexpected error has occurred" or a reset connection,
+// can pass.
+const permanentS3Codes = new Set([
+  "AccessDenied",
+  "InvalidAccessKeyId",
+  "SignatureDoesNotMatch",
+  "NoSuchBucket",
+  "InvalidBucketName",
+  "InvalidArgument",
+  "InvalidRequest",
+  "EntityTooLarge",
+]);
+
+const passingS3 = (error: BlobStore.BlobStoreFailed) => {
+  const code =
+    typeof error.cause === "object" && error.cause !== null && "code" in error.cause ? error.cause.code : undefined;
+  return typeof code !== "string" || !(code.startsWith("ERR_S3_") || permanentS3Codes.has(code));
+};
+
+// A prefill stores its request object inside the transaction that holds the knowledge lock, so a blob call is tried
+// again for seconds only. A longer outage fails the chunk, which the driver tries again outside any transaction.
+const s3Retry = {
+  schedule: Schedule.exponential("500 millis").pipe(Schedule.jittered),
+  times: 4,
+  while: passingS3,
+};
+
 export const layerS3 = (client: ObjectBucket) =>
   BlobStore.BlobStore.of({
     get: Effect.fn("BlobStore.get")(function* (key: string) {
@@ -221,13 +252,13 @@ export const layerS3 = (client: ObjectBucket) =>
           return (await file.exists()) ? Option.some(await file.text()) : Option.none<string>();
         },
         catch: (cause) => new BlobStore.BlobStoreFailed({ operation: "get", key, cause }),
-      });
+      }).pipe(Effect.retry(s3Retry));
     }),
     put: Effect.fn("BlobStore.put")(function* (key: string, value: string) {
       yield* Effect.tryPromise({
         try: () => client.write(key, value),
         catch: (cause) => new BlobStore.BlobStoreFailed({ operation: "put", key, cause }),
-      });
+      }).pipe(Effect.retry(s3Retry));
     }),
   });
 
