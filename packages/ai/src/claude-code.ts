@@ -40,31 +40,42 @@ const usageOf = (usage: typeof Usage.Type | undefined): TextGeneration.RunResult
   };
 };
 
-const args = (model: string, request: TextGeneration.RunRequest): ReadonlyArray<string> => [
-  "-p",
-  "--output-format",
-  "json",
-  "--json-schema",
-  JSON.stringify(request.jsonSchema),
-  "--model",
-  model,
-  "--system-prompt",
-  request.system,
-  "--tools",
-  "",
-  "--disable-slash-commands",
-  "--no-session-persistence",
-  "--strict-mcp-config",
-  "--setting-sources",
-  "",
-  "--settings",
-  JSON.stringify({
-    disableAllHooks: true,
-    ...(request.reasoning === "none" ? { alwaysThinkingEnabled: false } : {}),
-  }),
-  "--permission-mode",
-  "dontAsk",
-];
+// The CLI turns thinking on or off in its settings and takes an effort of low to max, so minimal asks for low.
+const thinking = (reasoning: TextGeneration.Reasoning) => {
+  if (reasoning === "none") return { settings: { alwaysThinkingEnabled: false }, effort: [] };
+  if (reasoning === "provider-default") return { settings: {}, effort: [] };
+  return {
+    settings: { alwaysThinkingEnabled: true },
+    effort: ["--effort", reasoning === "minimal" ? "low" : reasoning],
+  };
+};
+
+const args = (model: string, request: TextGeneration.RunRequest): ReadonlyArray<string> => {
+  const { settings, effort } = thinking(request.reasoning);
+  return [
+    "-p",
+    "--output-format",
+    "json",
+    "--json-schema",
+    JSON.stringify(request.jsonSchema),
+    "--model",
+    model,
+    ...effort,
+    "--system-prompt",
+    request.system,
+    "--tools",
+    "",
+    "--disable-slash-commands",
+    "--no-session-persistence",
+    "--strict-mcp-config",
+    "--setting-sources",
+    "",
+    "--settings",
+    JSON.stringify({ disableAllHooks: true, ...settings }),
+    "--permission-mode",
+    "dontAsk",
+  ];
+};
 
 export const maxStdoutBytes = 1024 * 1024;
 

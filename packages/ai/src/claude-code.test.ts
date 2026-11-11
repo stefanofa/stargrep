@@ -100,10 +100,35 @@ describe("claude code text generation", () => {
         disableAllHooks: true,
         alwaysThinkingEnabled: false,
       });
+      expect(seen.args).not.toContain("--effort");
       expect(seen.args.join(" ")).not.toContain("PRIVATE README TEXT");
       expect(seen.stdin).toContain("PRIVATE README TEXT");
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("turns thinking on at the asked effort when a summary asks for a level", () =>
+    Effect.forEach(
+      [
+        ["low", "low"],
+        ["minimal", "low"],
+        ["max", "max"],
+      ] as const,
+      ([level, effort]) => {
+        const { seen, layer } = fakeClaude({ stdout: result({ structured_output: summary }) });
+        return Effect.gen(function* () {
+          yield* Summarize.summarizePrompted(Summarize.promptOf(repo), level);
+          expect(seen.args.slice(seen.args.indexOf("--effort"), seen.args.indexOf("--effort") + 2)).toEqual([
+            "--effort",
+            effort,
+          ]);
+          expect(JSON.parse(seen.args[seen.args.indexOf("--settings") + 1] ?? "")).toEqual({
+            disableAllHooks: true,
+            alwaysThinkingEnabled: true,
+          });
+        }).pipe(Effect.provide(layer));
+      },
+    ),
+  );
 
   // Answers the production model wrote for pilot 1, as the CLI printed them. No test here runs the binary.
   it.effect("decodes recorded answers with every fact", () =>

@@ -176,6 +176,8 @@ Two flags are off by default. `--ask-current` also asks repos whose summary is a
 
 `--summary-model <id>` writes every summary with another Gateway model on the same prompt, such as `anthropic/claude-sonnet-5.5`, and needs `--adapter batch`. Each manifest and receipt records the model, and `pilot gates` prints which model wrote the answers. Run such a trial on a branch of its own. A repo already summarized under the current recipe counts as done, so on a branch that holds another model's answers the trial asks nothing.
 
+`--summary-reasoning <level>` lets the summary model think, at one of the AI SDK's levels: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `provider-default`. It defaults to `none`, and with `none` every request, key, and the recipe digest stay as they were. The Gateway batch sends the level on each request. The Claude Code CLI turns thinking on and takes `--effort` at that level, with `minimal` sent as `low`. Each stored request and the run's report record the level. Receipts do not, so run each level on a branch of its own, as with `--summary-model`. `pilot gates` prints the mean thinking tokens per answer, and holds a run to zero thinking only when its reports asked for none.
+
 ```sh
 bun run --cwd packages/core prefill --ids prefill.txt --adapter batch --chunk 250
 ```

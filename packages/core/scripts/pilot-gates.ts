@@ -1,4 +1,5 @@
 import { summaryRecipe } from "@stargrep/ai/models";
+import type { Reasoning } from "@stargrep/ai/text-generation";
 import { Claim, Lanes } from "@stargrep/knowledge/claims";
 import * as Schema from "effect/Schema";
 
@@ -74,6 +75,13 @@ export const answerModels = (rows: ReadonlyArray<SampleRow>) => {
   const counts = new Map<string, number>();
   for (const row of rows) if (row.model !== null) counts.set(row.model, (counts.get(row.model) ?? 0) + 1);
   return [...counts].sort(([a, x], [b, y]) => y - x || a.localeCompare(b));
+};
+
+// The thinking the runs' reports allow, and so what the tokens gate holds them to. A report from before trials asked for
+// none. Runs that asked for none are held to zero thinking, and a trial that asked for a level is not.
+export const thinkingPass = (levels: ReadonlyArray<Reasoning | undefined>) => {
+  const asked = [...new Set(levels.map((level) => level ?? "none"))].filter((level) => level !== "none").sort();
+  return asked.length === 0 ? "thinking 0" : `thinking reported, not gated, as the runs asked for ${asked.join(", ")}`;
 };
 
 // The prod repos against their own recipe 1 answers. Recipe 1's legacy receipts hold its final answers only, so the

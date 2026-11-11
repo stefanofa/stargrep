@@ -2,6 +2,7 @@ import * as BunRuntime from "@effect/platform-bun/BunRuntime";
 import * as BunServices from "@effect/platform-bun/BunServices";
 import * as Models from "@stargrep/ai/models";
 import * as Port from "@stargrep/ai/port";
+import * as Summarize from "@stargrep/ai/summarize";
 import * as TextGeneration from "@stargrep/ai/text-generation";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
@@ -54,6 +55,13 @@ const summaryModel = Flag.String("summary-model").pipe(
   Flag.optional,
 );
 
+const summaryReasoning = Flag.Literals("summary-reasoning", TextGeneration.Reasoning.literals).pipe(
+  Flag.withDescription(
+    `How much the summary model may think, to try thinking on the same prompt. Each stored request and the report record it. Defaults to ${Summarize.reasoning}`,
+  ),
+  Flag.withDefault(Summarize.reasoning),
+);
+
 const resendUnknown = Flag.Boolean("resend-unknown").pipe(
   Flag.withDescription(
     "Send a recorded batch's request again when the provider says it does not know the batch. This pays for it again",
@@ -88,7 +96,7 @@ const waitForOwner = {
 
 const run = Command.make(
   "prefill",
-  { ids, adapter, chunk, concurrency, out, askCurrent, resendUnknown, summaryModel },
+  { ids, adapter, chunk, concurrency, out, askCurrent, resendUnknown, summaryModel, summaryReasoning },
   Effect.fn("prefill.run")(function* (flags) {
     if (Option.isSome(flags.summaryModel) && flags.adapter !== "batch") {
       return yield* new PrefillRefused({ reason: "--summary-model names a batch model, and --adapter cli has none" });
@@ -112,6 +120,7 @@ const runPrefill = Effect.fn("prefill.runPrefill")(function* (
     readonly out: Option.Option<string>;
     readonly askCurrent: boolean;
     readonly resendUnknown: boolean;
+    readonly summaryReasoning: TextGeneration.Reasoning;
   },
   store: "r2" | "local",
 ) {
@@ -120,7 +129,7 @@ const runPrefill = Effect.fn("prefill.runPrefill")(function* (
   const fs = yield* FileSystem.FileSystem;
   const model = (yield* TextGeneration.TextGeneration).model;
   yield* Console.log(
-    `prefill: ${refs.length} repos in chunks of ${flags.chunk}, ${flags.concurrency} at once, adapter ${flags.adapter}, requests in ${store}${flags.askCurrent ? ", asking current repos too" : ""}`,
+    `prefill: ${refs.length} repos in chunks of ${flags.chunk}, ${flags.concurrency} at once, adapter ${flags.adapter}, requests in ${store}, reasoning ${flags.summaryReasoning}${flags.askCurrent ? ", asking current repos too" : ""}`,
   );
   const started = yield* Clock.currentTimeMillis;
   const progress = Prefill.progress();
@@ -154,6 +163,7 @@ const runPrefill = Effect.fn("prefill.runPrefill")(function* (
     const json = yield* Schema.encodeEffect(RunReportJson)({
       elapsedMillis,
       finished,
+      summaryReasoning: flags.summaryReasoning,
       outcomes: [...report.outcomes],
       unresolved: report.unresolved,
       manifests: report.manifests,
@@ -175,6 +185,7 @@ const runPrefill = Effect.fn("prefill.runPrefill")(function* (
       progress,
       askCurrent: flags.askCurrent,
       resendUnknown: flags.resendUnknown,
+      summaryReasoning: flags.summaryReasoning,
     })
     .pipe(
       Effect.tapError((error) =>

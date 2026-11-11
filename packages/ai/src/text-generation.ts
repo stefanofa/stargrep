@@ -10,9 +10,18 @@ import { type AiError, AiOutputInvalid, AiTimeout } from "./errors.ts";
 import { annotateTokens, countCachedTokens, countTokens } from "./port.ts";
 import type { AiSchema } from "./schema-bridge.ts";
 
-// Whether the model may think before it answers. A provider's default can be adaptive thinking, which bills every
-// answer for tokens nobody reads, so each prompt states it.
-export const Reasoning = Schema.Literals(["none", "provider-default"]);
+// Whether the model may think before it answers, and how much: the AI SDK's levels. A provider's default can be adaptive
+// thinking, which bills every answer for tokens nobody reads, so each prompt states it.
+export const Reasoning = Schema.Literals([
+  "none",
+  "provider-default",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
 export type Reasoning = typeof Reasoning.Type;
 
 export interface GenerateRequest<A> {
