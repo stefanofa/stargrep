@@ -59,16 +59,18 @@ export interface Submission {
 // A provider batch API that answers every prompt with respond, and like the Gateway replays a submit whose idempotency
 // key it has seen: the same batch ID and the answers stored when that batch was first paid for. submissions records
 // every submit, and paid every prompt answered, so a test can count what a run would have paid. collecting, when set,
-// may answer a collect in place of the stored batch, so a test can make the provider fail, forget, or stall; returning
-// undefined collects the stored batch. forgetKeys makes the provider forget every idempotency key while it keeps every
-// batch by ID.
+// may answer a collect in place of the stored batch, so a test can make the provider fail, forget, or stall. It gets
+// what the stored batch would answer, so a stall can still answer it, and returning undefined collects it. forgetKeys
+// makes the provider forget every idempotency key while it keeps every batch by ID.
 export const batches = (respond: (prompt: string) => unknown, model = "fake/text") => {
   const submissions: Array<Submission> = [];
   const paid: Array<string> = [];
   const started = new Map<string, string>();
   const byId = new Map<string, Batches.BatchItems>();
   const control: {
-    collecting: ((batchId: string) => Effect.Effect<Batches.Collected, AiError> | undefined) | undefined;
+    collecting:
+      | ((batchId: string, stored: Batches.Collected) => Effect.Effect<Batches.Collected, AiError> | undefined)
+      | undefined;
   } = { collecting: undefined };
   const layer = Layer.succeed(
     Batches.Batches,
@@ -96,11 +98,12 @@ export const batches = (respond: (prompt: string) => unknown, model = "fake/text
         return batchId;
       }),
       collect: Effect.fn("FakeBatches.collect")(function* (batchId: string, size: number) {
-        const instead = control.collecting?.(batchId);
-        if (instead !== undefined) return yield* instead;
         const items = byId.get(batchId);
-        if (items === undefined) return Batches.Collected.Unknown({ batchId });
-        return Batches.Collected.Answered({ items: Array.from({ length: size }, (_, index) => items[index]) });
+        const stored =
+          items === undefined
+            ? Batches.Collected.Unknown({ batchId })
+            : Batches.Collected.Answered({ items: Array.from({ length: size }, (_, index) => items[index]) });
+        return yield* control.collecting?.(batchId, stored) ?? Effect.succeed(stored);
       }),
     }),
   );
