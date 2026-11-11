@@ -21,16 +21,18 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as RepoKnowledge from "../knowledge/repo-knowledge.ts";
 import * as BlobStore from "./blob-store.ts";
-import { AnswerNotSaved, settlement } from "./enrich-repo.ts";
+import { AnswerNotSaved, ownError, settlement } from "./enrich-repo.ts";
 import * as EnrichRetry from "./enrich-retry.ts";
 
 // The lease a prefill batch holds, longer than the Gateway's 24-hour batch window, so no sweep or consumer finds one of
@@ -47,10 +49,20 @@ export const ownerStale = Duration.minutes(1);
 export const groupRows = 64;
 export const groupBytes = 1_000_000;
 export const groupDeadline = Duration.seconds(2);
-// CLI prompts asked at once, READMEs read at once per chunk, and embedding saves sent at once per group.
+// CLI prompts asked at once per chunk, READMEs read at once per chunk, and embedding saves sent at once per group.
 const directConcurrency = 4;
 const readmeConcurrency = 4;
 const embedSaveConcurrency = 4;
+// Model calls in a row that may fail for reasons no repo caused, such as a spent subscription, a lapsed login, or an
+// outage, before the run stops rather than settle every repo left as failed.
+const modelFailureLimit = 50;
+// A chunk that failed for a reason that can pass, such as a lost connection, a GitHub 502, or a laptop waking from
+// sleep, is tried again for about a quarter of an hour. An outage longer than that stops the run, and a rerun resumes.
+const chunkRetry = Schedule.exponential("5 seconds").pipe(
+  Schedule.jittered,
+  Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, Duration.minutes(5)))),
+);
+const chunkRetries = 8;
 
 // What the request object holds: the exact request, and for each item what capture and embedding need. Resume reads
 // it back instead of rebuilding prompts from facts that may have moved since.
@@ -217,6 +229,17 @@ export class PrefillOwnershipLost extends Schema.TaggedError<PrefillOwnershipLos
   }
 }
 
+// The model failed modelFailureLimit calls in a row for reasons no repo caused. The repos those calls asked keep their
+// leases, so a later run asks them again.
+export class ModelUnavailable extends Schema.TaggedError<ModelUnavailable, { readonly brand: unique symbol }>()(
+  "ModelUnavailable",
+  { failures: Schema.Int, error: Schema.String },
+) {
+  override get message(): string {
+    return `The model failed ${this.failures} calls in a row, the last with ${this.error}, so the prefill stops`;
+  }
+}
+
 export type PrefillAbort =
   | DbQueryFailed
   | DbRowInvalid
@@ -224,7 +247,27 @@ export type PrefillAbort =
   | BlobStore.BlobStoreFailed
   | EmbeddingModelMismatch
   | PrefillBusy
-  | PrefillOwnershipLost;
+  | PrefillOwnershipLost
+  | ModelUnavailable;
+
+// Whether a failure that stopped a chunk can pass on a second try, as the queue consumers judge it.
+const passing = (error: PrefillAbort): boolean =>
+  Match.valueTags(error, {
+    DbQueryFailed: (failure) => failure.reason !== "query",
+    DbRowInvalid: () => false,
+    NotFound: () => false,
+    Unauthorized: () => false,
+    GitHubTokenMissing: () => false,
+    RateLimited: () => true,
+    TokenBudgetExhausted: () => true,
+    GitHubRequestFailed: (failure) => !isPermanent(failure),
+    GitHubResponseInvalid: (failure) => !isPermanent(failure),
+    BlobStoreFailed: () => true,
+    EmbeddingModelMismatch: () => false,
+    PrefillBusy: () => false,
+    PrefillOwnershipLost: () => false,
+    ModelUnavailable: () => false,
+  });
 
 export class Prefill extends Context.Service<
   Prefill,
@@ -267,7 +310,7 @@ const budgetRetry = {
 
 // A README GitHub will not serve for reasons of this repo alone skips the repo. Anything every repo would hit stops
 // the run, so a rerun can resume.
-const unreadable = (error: GitHubError | BlobStore.BlobStoreFailed) =>
+const unreadable = (error: GitHubError) =>
   error._tag === "NotFound" ||
   ((error._tag === "GitHubRequestFailed" || error._tag === "GitHubResponseInvalid") && isPermanent(error));
 
@@ -337,30 +380,59 @@ const make = Effect.gen(function* () {
     const model = options.adapter === "gateway-batch" ? batches.model : textGeneration.model;
     const source = (answered: Answered): Db.ReceiptSource =>
       (answered.direct ? textGeneration.provider : batches.provider) === "fake" ? "stand-in" : "model";
+    // Every CLI call of the run shares these, so a resume that settles many manifests at once spawns no more processes
+    // than the chunks would.
+    const directPermits = yield* Semaphore.make(options.concurrency * directConcurrency);
+    const failedInARow = yield* Ref.make(0);
 
-    const readme = (facts: RepoFacts): Effect.Effect<string | null, GitHubError | BlobStore.BlobStoreFailed> => {
+    // The blob store only caches READMEs by object ID, so a read or a write it fails costs a GitHub request, never the
+    // repo or the run.
+    const readme = (facts: RepoFacts): Effect.Effect<string | null, GitHubError> => {
       const oid = facts.readme?.oid;
       if (oid === undefined) return Effect.succeed(null);
       const key = BlobStore.readmeKey(oid);
-      return Effect.flatMap(blobs.get(key), (stored) =>
+      const uncached = (error: BlobStore.BlobStoreFailed) =>
+        Effect.logWarning("Prefill README cache failed, reading GitHub instead", {
+          repoId: facts.id,
+          operation: error.operation,
+        });
+      const cached = blobs
+        .get(key)
+        .pipe(Effect.catchTags({ BlobStoreFailed: (error) => uncached(error).pipe(Effect.as(Option.none<string>())) }));
+      return Effect.flatMap(cached, (stored) =>
         Option.match(stored, {
           onSome: Effect.succeed,
           onNone: () =>
             github.readme({ owner: facts.owner, name: facts.name, oid }).pipe(
               Effect.retry(budgetRetry),
-              Effect.tap((text) => blobs.put(key, text)),
+              Effect.tap((text) => blobs.put(key, text).pipe(Effect.catchTags({ BlobStoreFailed: uncached }))),
             ),
         }),
       );
     };
 
-    // One CLI call for an item. The CLI has no provider batch, so this is the whole answer on that adapter.
+    // One CLI call for an item. The CLI has no provider batch, so this is the whole answer on that adapter. A call that
+    // fails for a reason no repo caused adds to a streak that a call the model answered ends.
     const askDirectly = ({ stored: item, text }: Item) =>
       Effect.result(
         Summarize.summarizePrompted({ text, input: item.input }).pipe(
           Effect.provideService(TextGeneration.TextGeneration, textGeneration),
         ),
-      ).pipe(Effect.map((answer): Answered => ({ item, answer, direct: true })));
+      ).pipe(
+        directPermits.withPermit,
+        Effect.tap((answer) =>
+          Result.isFailure(answer) && !ownError(answer.failure)
+            ? Effect.flatMap(
+                Ref.updateAndGet(failedInARow, (count) => count + 1),
+                (count) =>
+                  count >= modelFailureLimit
+                    ? Effect.fail(new ModelUnavailable({ failures: count, error: answer.failure._tag }))
+                    : Effect.void,
+              )
+            : Ref.set(failedInARow, 0),
+        ),
+        Effect.map((answer): Answered => ({ item, answer, direct: true })),
+      );
 
     // A batch answer decoded against its prompt, with the tokens the provider reported for it.
     const decode = (
@@ -479,6 +551,9 @@ const make = Effect.gen(function* () {
         }),
       );
       const results = Arr.zip(answered, captured);
+      for (const [{ entry }, outcome] of results) {
+        if (Result.isSuccess(outcome)) mark([entry.item.repoId], outcome.success._tag === "Saved" ? "saved" : "stale");
+      }
       const failures = [
         ...failedCalls.map(({ entry, error }) => ({ id: entry.item.repoId, error })),
         ...results.flatMap(([{ entry }, outcome]) =>
@@ -498,6 +573,7 @@ const make = Effect.gen(function* () {
         id: manifest.id,
         repoIds: failures.flatMap(({ id, settled }) => (settled === "keep" ? [] : [id])),
       });
+      for (const { id, settled } of failures) mark([id], settled === "keep" ? "waiting" : "failed");
       yield* Effect.forEach(
         failures,
         ({ id, error, settled }) =>
@@ -511,10 +587,6 @@ const make = Effect.gen(function* () {
       );
       yield* projector.projectSaved(saved.map(({ item }) => item.repoId));
       yield* embed(saved);
-      for (const [{ entry }, outcome] of results) {
-        if (Result.isSuccess(outcome)) mark([entry.item.repoId], outcome.success._tag === "Saved" ? "saved" : "stale");
-      }
-      for (const { id, settled } of failures) mark([id], settled === "keep" ? "waiting" : "failed");
     });
 
     const flushAll = <E>(manifest: Db.Manifest, answerModel: string, answers: Stream.Stream<Answered, E>) =>
@@ -666,16 +738,38 @@ const make = Effect.gen(function* () {
         return;
       }
       if (pending.length === 0) return yield* close(manifest);
+      // The CLI answers each item with its own call. An item whose first call fails is asked again in a fallback
+      // manifest, as a batch item would be, and a fallback's own failures are final.
       if (manifest.adapter === "claude-code") {
         if (resumed) done.repaid += pending.length;
         yield* db.knowledge.submittedBatch({ id: manifest.id, providerBatchId: null });
+        const final = stored.request.attempt !== undefined;
+        const again: Array<Item> = [];
         yield* flushAll(
           manifest,
           textGeneration.model,
           Stream.fromIterable(pending).pipe(
-            Stream.mapEffect(({ item }) => askDirectly(item), { concurrency: directConcurrency, unordered: true }),
+            Stream.mapEffect(({ item }) => Effect.map(askDirectly(item), (answered) => ({ item, answered })), {
+              concurrency: directConcurrency,
+              unordered: true,
+            }),
+            Stream.filterMap(({ item, answered }) => {
+              if (final || Result.isSuccess(answered.answer)) return Result.succeed(answered);
+              again.push(item);
+              return Result.failVoid;
+            }),
           ),
         );
+        if (again.length > 0) {
+          yield* fallback(
+            manifest,
+            stored,
+            Arr.sort(
+              again,
+              Order.mapInput(Order.Number, (item: Item) => item.stored.repoId),
+            ),
+          );
+        }
         return yield* close(manifest);
       }
       const lease = yield* Ref.make(manifest.leaseUntil);
@@ -762,8 +856,8 @@ const make = Effect.gen(function* () {
 
     // Every open manifest's lease moves before any of them waits on its batch, and they all wait at once, each
     // renewing its own lease, so none waits its turn behind slow batches until its lease runs out.
-    const resumeAll = Effect.gen(function* () {
-      const readied = yield* Effect.forEach(yield* db.knowledge.openBatches, ready, {
+    const resume = Effect.fn("Prefill.resume")(function* (which: (manifest: Db.Manifest) => boolean) {
+      const readied = yield* Effect.forEach((yield* db.knowledge.openBatches).filter(which), ready, {
         concurrency: options.concurrency,
       });
       yield* Effect.forEach(
@@ -786,7 +880,7 @@ const make = Effect.gen(function* () {
       const byName = yield* github
         .resolveRepos(refs.filter((ref) => !found.has(ref.id)))
         .pipe(Effect.retry(budgetRetry));
-      unresolved.push(...byName.unresolved);
+      unresolved.push(...byName.unresolved.filter((entry) => !seen.has(entry.id)));
       mark(
         byName.unresolved.map((entry) => entry.id),
         "unresolved",
@@ -897,7 +991,9 @@ const make = Effect.gen(function* () {
       return prepared.written;
     });
 
-    const chunk = Effect.fn("Prefill.chunk")(function* (refs: ReadonlyArray<GitHub.ArchiveRef>) {
+    // Reads a chunk from GitHub and writes its manifest. Nothing it does before the manifest commits needs undoing, so
+    // a failure that can pass runs it again from the start.
+    const gather = Effect.fn("Prefill.gather")(function* (refs: ReadonlyArray<GitHub.ArchiveRef>) {
       const done = new Set<number>(
         yield* db.repos.summarized(
           refs.map((ref) => ref.id),
@@ -909,7 +1005,7 @@ const make = Effect.gen(function* () {
         "done",
       );
       const todo = refs.filter((ref) => !done.has(ref.id));
-      if (todo.length === 0) return;
+      if (todo.length === 0) return Option.none();
       const facts = yield* resolve(todo);
       const read = yield* Effect.forEach(
         facts,
@@ -925,15 +1021,45 @@ const make = Effect.gen(function* () {
           ),
         { concurrency: readmeConcurrency },
       );
-      const prepared = yield* prepare(read.flatMap((entry) => Option.toArray(entry)));
+      return yield* prepare(read.flatMap((entry) => Option.toArray(entry)));
+    });
+
+    const tryAgain = <A, R>(step: string, attempt: Effect.Effect<A, PrefillAbort, R>) =>
+      attempt.pipe(
+        Effect.tapError((error) =>
+          passing(error)
+            ? Effect.logWarning("Prefill chunk failed for a reason that can pass, trying it again", {
+                step,
+                error: error._tag,
+                detail: error.message,
+              })
+            : Effect.void,
+        ),
+        Effect.retry({ schedule: chunkRetry, times: chunkRetries, while: passing }),
+      );
+
+    // A chunk whose manifest fails to settle for a reason that can pass is resumed the way a later run would resume
+    // it, with the fallback it may have opened, so its repos are not left waiting for that run.
+    const chunk = Effect.fn("Prefill.chunk")(function* (refs: ReadonlyArray<GitHub.ArchiveRef>) {
+      const prepared = yield* tryAgain("gather", gather(refs));
       if (Option.isNone(prepared)) return;
       const { manifest, stored } = prepared.value;
       counts.created++;
-      yield* settle(manifest, stored, new Set(manifest.repoIds), false);
+      yield* settle(manifest, stored, new Set(manifest.repoIds), false).pipe(
+        Effect.catchIf(passing, (error) =>
+          tryAgain(
+            "settle",
+            Effect.logWarning("Prefill manifest failed to settle, resuming it", {
+              manifest: manifest.id,
+              error: error._tag,
+            }).pipe(Effect.andThen(resume((open) => open.id === manifest.id || open.retryOf === manifest.id))),
+          ),
+        ),
+      );
     });
 
     const work = Effect.gen(function* () {
-      yield* resumeAll;
+      yield* resume(() => true);
       const sorted = Arr.sort(
         Arr.dedupeWith(options.refs, (a, b) => a.id === b.id),
         Order.mapInput(Order.Number, (ref: GitHub.ArchiveRef) => ref.id),

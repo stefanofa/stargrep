@@ -23,6 +23,8 @@ import {
   runWith,
   sweepAndConsume,
   tally,
+  unjittered,
+  watchLogs,
 } from "./prefill.fixture.ts";
 import * as Prefill from "./prefill.ts";
 
@@ -311,25 +313,30 @@ for (const [adapter, database] of adapters) {
       }),
     );
 
-    it.effect("leaves no manifest and no lease when a request cannot be stored, and prefills its repos again", () =>
+    it.effect("leaves no manifest and no lease when a request cannot be stored, and prefills the chunk again", () =>
       Effect.gen(function* () {
         const blobs = yield* BlobStore.BlobStore;
         f.seed([4001, 4002]);
         const submitted = f.batches.submissions.length;
+        let failures = 1;
         const lost = Layer.succeed(
           BlobStore.BlobStore,
           BlobStore.BlobStore.of({
             get: blobs.get,
             put: (key, value) =>
-              key.startsWith("prefill/")
+              key.startsWith("prefill/") && failures-- > 0
                 ? Effect.fail(new BlobStore.BlobStoreFailed({ operation: "put", key, cause: null }))
                 : blobs.put(key, value),
           }),
         );
-        const failed = yield* Effect.flip(
-          run([ref(4001), ref(4002)]).pipe(Effect.provide(Layer.fresh(Prefill.layer).pipe(Layer.provide(lost)))),
+        const logs = yield* watchLogs;
+        const running = yield* Effect.forkChild(
+          run([ref(4001), ref(4002)]).pipe(
+            Effect.provide(Layer.merge(Layer.fresh(Prefill.layer).pipe(Layer.provide(lost)), logs.layer)),
+            unjittered,
+          ),
         );
-        expect(failed._tag).toBe("BlobStoreFailed");
+        yield* logs.retrying;
         expect(
           yield* query("select count(*)::int as manifests from extraction_batches where repo_ids && '{4001,4002}'"),
         ).toEqual([{ manifests: 0 }]);
@@ -338,7 +345,8 @@ for (const [adapter, database] of adapters) {
             "select count(*)::int as leased from repos where id in (4001, 4002) and enrich_retry_at is not null",
           ),
         ).toEqual([{ leased: 0 }]);
-        const report = yield* run([ref(4001), ref(4002)]);
+        yield* TestClock.adjust("5 seconds");
+        const report = yield* Fiber.join(running);
         expect(report.manifests).toEqual({ ...quiet, created: 1, closed: 1 });
         expect(tally(report)).toEqual({ saved: 2 });
         expect(f.batches.submissions.length - submitted).toBe(1);

@@ -1,5 +1,7 @@
+import { AiRequestFailed } from "@stargrep/ai/errors";
 import * as Fake from "@stargrep/ai/fake";
 import * as SummarizeFake from "@stargrep/ai/summarize.fake";
+import * as TextGeneration from "@stargrep/ai/text-generation";
 import * as Db from "@stargrep/db";
 import { EmbeddingModelId } from "@stargrep/db/embedding";
 import * as TestDatabase from "@stargrep/db/test-database";
@@ -7,9 +9,13 @@ import type * as GitHub from "@stargrep/github/github";
 import * as GitHubFake from "@stargrep/github/github.fixture";
 import { Login, ObjectId, RepoId, RepoName } from "@stargrep/github/schemas";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as Queue from "effect/Queue";
+import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as IconQueue from "../icons/icon-queue.ts";
 import * as BlobStore from "./blob-store.ts";
@@ -89,16 +95,39 @@ export const fixture = () => {
     return found?.[1].readme === undefined ? { status: 404 } : { body: found[1].readme };
   });
 
-  // Every summary call the CLI path or a consumer makes, by prompt.
+  // Every summary call the CLI path or a consumer makes, by prompt, failed calls included.
   const asked: Array<string> = [];
-  const respond = (prompt: string) => {
-    asked.push(prompt);
-    return SummarizeFake.respond(prompt);
-  };
   // The batch answers, by prompt: the stand-in's, unless a test names repos whose answers do not decode, the first
   // time each is asked or every time.
   const broken = { once: new Set<number>(), always: new Set<number>() };
   const repoOf = (prompt: string) => Number(prompt.slice("Repository: owner/repo-".length, prompt.indexOf("\n")));
+  // Repos whose direct calls fail the way a CLI that crashed or ran out of its subscription does, the first time each
+  // is asked or every time.
+  const failing = { once: new Set<number>(), always: new Set<number>() };
+  const textGeneration = Layer.succeed(
+    TextGeneration.TextGeneration,
+    TextGeneration.make({
+      provider: "fake",
+      model: "fake/summary",
+      timeout: Duration.seconds(5),
+      run: (request) => {
+        asked.push(request.prompt);
+        const n = repoOf(request.prompt);
+        return failing.always.has(n) || failing.once.delete(n)
+          ? Effect.fail(
+              new AiRequestFailed({
+                operation: "generate",
+                model: "fake/summary",
+                detail: "claude exited with code 1",
+              }),
+            )
+          : Effect.sync(() => ({
+              output: SummarizeFake.respond(request.prompt),
+              usage: { inputTokens: 1, outputTokens: 1 },
+            }));
+      },
+    }),
+  );
   const batches = Fake.batches((prompt) => {
     const n = repoOf(prompt);
     if (broken.always.has(n)) return invalid;
@@ -115,7 +144,7 @@ export const fixture = () => {
         BlobStore.layerMemory,
         batches.layer,
         IconQueue.layerMemory().layer,
-        Fake.layerTextGeneration(respond, "fake/summary"),
+        textGeneration,
         Fake.layerEmbeddings(),
       ),
     );
@@ -124,7 +153,7 @@ export const fixture = () => {
     for (const n of numbers) remotes.set(n, { description: `A CLI for task ${n}`, readme: `# repo-${n}\n\nA CLI.` });
   };
 
-  return { remotes, github, asked, batches, broken, layer, seed };
+  return { remotes, github, asked, batches, broken, failing, layer, seed };
 };
 
 export const runWith = (refs: ReadonlyArray<GitHub.ArchiveRef>, options: Partial<Prefill.PrefillOptions>) =>
@@ -156,6 +185,23 @@ export const sweepAndConsume = Effect.gen(function* () {
 // The prompts among asked that name one of these repos.
 export const askedFor = (asked: ReadonlyArray<string>, ids: ReadonlyArray<number>) =>
   asked.filter((prompt) => ids.some((n) => prompt.startsWith(`Repository: owner/repo-${n}\n`)));
+
+// The driver's log. retrying waits for its next chunk retry, after which the driver sleeps with no query in flight, so a
+// test can move the clock without timing out a query.
+export const watchLogs = Effect.gen(function* () {
+  const logs = yield* Queue.unbounded<unknown>();
+  return {
+    layer: Logger.layer([Logger.make(({ message }) => Queue.offerUnsafe(logs, message))]),
+    retrying: Queue.take(logs).pipe(
+      Effect.repeat({ until: (message) => JSON.stringify(message).includes("trying it again") }),
+      Effect.asVoid,
+    ),
+  };
+});
+
+// Jitter pinned to a factor of 1, so a test moves the clock exactly onto each retry's wake. A jump past a wake would land
+// on the queries the woken driver sends, and time them out.
+export const unjittered = Effect.provideService(Random.Random, { nextDoubleUnsafe: () => 0.5, nextIntUnsafe: () => 0 });
 
 // Runs a prefill and kills it when it reaches its nth capture, before that capture writes anything, as a crash would.
 export const killedAtCapture = Effect.fn("test.killedAtCapture")(function* (
