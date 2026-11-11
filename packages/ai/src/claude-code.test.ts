@@ -98,11 +98,26 @@ describe("claude code text generation", () => {
       ]);
       expect(JSON.parse(seen.args[seen.args.indexOf("--settings") + 1] ?? "")).toEqual({
         disableAllHooks: true,
+        alwaysThinkingEnabled: true,
+      });
+      expect(seen.args.slice(seen.args.indexOf("--effort"), seen.args.indexOf("--effort") + 2)).toEqual([
+        "--effort",
+        "high",
+      ]);
+      expect(seen.args.join(" ")).not.toContain("PRIVATE README TEXT");
+      expect(seen.stdin).toContain("PRIVATE README TEXT");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("turns thinking off and sends no effort when a call asks for none", () => {
+    const { seen, layer } = fakeClaude({ stdout: result({ structured_output: summary }) });
+    return Effect.gen(function* () {
+      yield* Summarize.summarizePrompted(Summarize.promptOf(repo), "none");
+      expect(JSON.parse(seen.args[seen.args.indexOf("--settings") + 1] ?? "")).toEqual({
+        disableAllHooks: true,
         alwaysThinkingEnabled: false,
       });
       expect(seen.args).not.toContain("--effort");
-      expect(seen.args.join(" ")).not.toContain("PRIVATE README TEXT");
-      expect(seen.stdin).toContain("PRIVATE README TEXT");
     }).pipe(Effect.provide(layer));
   });
 
@@ -151,34 +166,39 @@ describe("claude code text generation", () => {
   );
 
   // The CLI's usage puts nearly all of a prompt in the cache fields, so input_tokens alone read 52 for 20 repos.
-  it.effect("counts cached input as input, keeps the cache shares apart, and names the CLI and its model", () => {
-    const { layer } = fakeClaude({
-      stdout: result({
-        structured_output: summary,
-        usage: {
-          input_tokens: 3,
-          cache_creation_input_tokens: 4_000,
-          cache_read_input_tokens: 2_500,
-          output_tokens: 420,
-        },
-      }),
-    });
-    return Effect.gen(function* () {
-      const textGeneration = yield* TextGeneration.TextGeneration;
-      expect([textGeneration.provider, textGeneration.model]).toEqual(["claude-code", "claude-code/haiku"]);
-      const before = yield* Port.tokensSpent("claude-code/haiku");
-      yield* Summarize.summarize(repo);
-      const after = yield* Port.tokensSpent("claude-code/haiku");
-      expect({
-        input: after.input - before.input,
-        output: after.output - before.output,
-        cacheRead: after.cacheRead - before.cacheRead,
-        cacheWrite: after.cacheWrite - before.cacheWrite,
-      }).toEqual({ input: 6_503, output: 420, cacheRead: 2_500, cacheWrite: 4_000 });
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "counts cached input as input, keeps the cache and thinking shares apart, and names the CLI and its model",
+    () => {
+      const { layer } = fakeClaude({
+        stdout: result({
+          structured_output: summary,
+          usage: {
+            input_tokens: 3,
+            cache_creation_input_tokens: 4_000,
+            cache_read_input_tokens: 2_500,
+            output_tokens: 420,
+            output_tokens_details: { thinking_tokens: 310 },
+          },
+        }),
+      });
+      return Effect.gen(function* () {
+        const textGeneration = yield* TextGeneration.TextGeneration;
+        expect([textGeneration.provider, textGeneration.model]).toEqual(["claude-code", "claude-code/haiku"]);
+        const before = yield* Port.tokensSpent("claude-code/haiku");
+        yield* Summarize.summarize(repo);
+        const after = yield* Port.tokensSpent("claude-code/haiku");
+        expect({
+          input: after.input - before.input,
+          output: after.output - before.output,
+          cacheRead: after.cacheRead - before.cacheRead,
+          cacheWrite: after.cacheWrite - before.cacheWrite,
+          reasoning: after.reasoning - before.reasoning,
+        }).toEqual({ input: 6_503, output: 420, cacheRead: 2_500, cacheWrite: 4_000, reasoning: 310 });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.effect("counts the uncached input alone when the CLI reports no cache, as an older CLI did", () => {
+  it.effect("counts the uncached input alone and no thinking when the CLI reports neither, as an older CLI did", () => {
     const { layer } = fakeClaude({
       stdout: result({
         structured_output: summary,
@@ -189,7 +209,11 @@ describe("claude code text generation", () => {
       const before = yield* Port.tokensSpent("claude-code/haiku");
       yield* Summarize.summarize(repo);
       const after = yield* Port.tokensSpent("claude-code/haiku");
-      expect([after.input - before.input, after.cacheRead - before.cacheRead]).toEqual([52, 0]);
+      expect([
+        after.input - before.input,
+        after.cacheRead - before.cacheRead,
+        after.reasoning - before.reasoning,
+      ]).toEqual([52, 0, 0]);
     }).pipe(Effect.provide(layer));
   });
 

@@ -57,7 +57,7 @@ const summaryModel = Flag.String("summary-model").pipe(
 
 const summaryReasoning = Flag.Literals("summary-reasoning", TextGeneration.Reasoning.literals).pipe(
   Flag.withDescription(
-    `How much the summary model may think, to try thinking on the same prompt. Each stored request and the report record it. Defaults to ${Summarize.reasoning}`,
+    `How much the summary model may think, to try another level on the same prompt. Each stored request and the report record it. Defaults to ${Summarize.reasoning}, the recipe's level`,
   ),
   Flag.withDefault(Summarize.reasoning),
 );
@@ -151,7 +151,7 @@ const runPrefill = Effect.fn("prefill.runPrefill")(function* (
     const saved = counts.get("saved") ?? 0;
     const perSaved = (total: number) => (saved === 0 ? "-" : Math.round(total / saved));
     yield* Console.log(
-      `direct calls: input ${tokens.input} (${tokens.cacheRead} read from cache, ${tokens.cacheWrite} written to it), output ${tokens.output}, per saved repo input ${perSaved(tokens.input)} and output ${perSaved(tokens.output)}`,
+      `direct calls: input ${tokens.input} (${tokens.cacheRead} read from cache, ${tokens.cacheWrite} written to it), output ${tokens.output} (${tokens.reasoning} thinking), per saved repo input ${perSaved(tokens.input)}, output ${perSaved(tokens.output)}, and thinking ${perSaved(tokens.reasoning)}`,
     );
     for (const stuck of report.manifests.stuck) yield* Console.log(`stuck manifest ${stuck.id}: ${remedy(stuck)}`);
     for (const { id, reason } of report.unresolved.slice(0, 20)) yield* Console.log(`unresolved: ${id} ${reason}`);

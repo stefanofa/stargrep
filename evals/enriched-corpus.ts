@@ -20,7 +20,7 @@ export const EnrichedRepo = Schema.Struct({
 });
 export type EnrichedRepo = typeof EnrichedRepo.Type;
 
-export const summaryFingerprint = (repo: Summarize.RepoFacts): string =>
+export const summaryFingerprint = (repo: Summarize.RepoFacts, reasoning = Summarize.reasoning): string =>
   new Bun.CryptoHasher("sha256")
     .update(
       JSON.stringify({
@@ -34,6 +34,7 @@ export const summaryFingerprint = (repo: Summarize.RepoFacts): string =>
         system: Summarize.system,
         prompt: Summarize.promptOf(repo).text,
         schema: Summarize.providerSchema,
+        reasoning,
       }),
     )
     .digest("hex");

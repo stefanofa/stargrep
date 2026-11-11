@@ -32,3 +32,7 @@ test("each repository fact invalidates a cached summary", () => {
   ])
     expect(summaryFingerprint(changed)).not.toBe(summaryFingerprint(repo));
 });
+
+test("a summary made at another thinking level is summarized again", () => {
+  expect(summaryFingerprint(repo, "none")).not.toBe(summaryFingerprint(repo, "high"));
+});

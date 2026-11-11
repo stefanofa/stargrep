@@ -14,6 +14,9 @@ const Usage = Schema.Struct({
   output_tokens: Schema.optional(Schema.Finite),
   cache_creation_input_tokens: Schema.optional(Schema.NullOr(Schema.Finite)),
   cache_read_input_tokens: Schema.optional(Schema.NullOr(Schema.Finite)),
+  output_tokens_details: Schema.optional(
+    Schema.NullOr(Schema.Struct({ thinking_tokens: Schema.optional(Schema.Finite) })),
+  ),
 });
 
 const ResultEnvelope = Schema.Struct({
@@ -26,6 +29,7 @@ const decodeEnvelope = Schema.decodeUnknownEffect(Schema.fromJsonString(ResultEn
 
 // The CLI reports the input it sent uncached apart from what it read from or wrote to the prompt cache, which holds
 // nearly all of a prompt. The port counts all three as input, as the Gateway reports it, and keeps the cache shares.
+// Its thinking tokens are a share of output_tokens, as the Gateway's reasoning tokens are.
 const usageOf = (usage: typeof Usage.Type | undefined): TextGeneration.RunResult["usage"] => {
   const cacheWriteTokens = usage?.cache_creation_input_tokens ?? undefined;
   const cacheReadTokens = usage?.cache_read_input_tokens ?? undefined;
@@ -35,6 +39,7 @@ const usageOf = (usage: typeof Usage.Type | undefined): TextGeneration.RunResult
   return {
     inputTokens: parts.length === 0 ? undefined : parts.reduce((total, part) => total + part, 0),
     outputTokens: usage?.output_tokens,
+    reasoningTokens: usage?.output_tokens_details?.thinking_tokens,
     cacheReadTokens,
     cacheWriteTokens,
   };

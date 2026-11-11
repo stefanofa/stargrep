@@ -101,9 +101,10 @@ export const system = [
   JSON.stringify(example, null, 2),
 ].join("\n");
 
-// A summary is made without thinking. The prefill's cost assumes none, and pilot 2's answers spent about 528 thinking
-// tokens each. A prefill trial may ask for a level, and its stored requests record it.
-export const reasoning: TextGeneration.Reasoning = "none";
+// A summary thinks at high. In pilot 4 it was the only Haiku setting whose claims passed every precision gate but
+// replaced_by, and its batch answers spent about 2,200 thinking tokens of 2,680 output. A prefill trial may ask for
+// another level, and its stored requests record it.
+export const reasoning: TextGeneration.Reasoning = "high";
 
 export const trimReadme = (readme: string): string =>
   readme.length <= readmeLimit ? readme : `${readme.slice(0, readmeLimit)}\n[README truncated]`;

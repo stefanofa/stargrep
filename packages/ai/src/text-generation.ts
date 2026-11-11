@@ -7,7 +7,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { type AiError, AiOutputInvalid, AiTimeout } from "./errors.ts";
-import { annotateTokens, countCachedTokens, countTokens } from "./port.ts";
+import { annotateTokens, countCachedTokens, countReasoningTokens, countTokens } from "./port.ts";
 import type { AiSchema } from "./schema-bridge.ts";
 
 // Whether the model may think before it answers, and how much: the AI SDK's levels. A provider's default can be adaptive
@@ -108,6 +108,7 @@ export const make = (options: {
         countTokens(model, "output", usage.outputTokens),
         countCachedTokens(model, "read", usage.cacheReadTokens),
         countCachedTokens(model, "write", usage.cacheWriteTokens),
+        countReasoningTokens(model, usage.reasoningTokens),
       ]).pipe(Effect.andThen(schema.decode(output)), Effect.catchTags({ SchemaError: () => Effect.fail(invalid) }));
 
   const generateOne = <A>(request: GenerateRequest<A>) =>

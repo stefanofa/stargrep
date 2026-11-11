@@ -82,10 +82,12 @@ export const consumeAll = <E>(
       SyncStarsConsumer.pipeline(share, syncs),
       runtime,
     ),
+    // A summary thinks, so a round of four direct calls takes about 15 s. Thirty messages are three chunks of at most ten
+    // rounds each, about 8 minutes when every repo has its own user, inside EnrichRepoConsumer's 10-minute deadline.
     consume(
       queueNames.enrichRepo,
       { queue: EnrichRepos, deadLetters: EnrichReposDeadLetters },
-      { batchSize: 100, maxConcurrency: 1, maxWaitTime: "5 seconds", ...retries },
+      { batchSize: 30, maxConcurrency: 1, maxWaitTime: "5 seconds", ...retries },
       EnrichRepoConsumer.pipeline(enrichers),
       runtime,
     ),
