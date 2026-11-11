@@ -37,7 +37,10 @@ const args = (model: string, request: TextGeneration.RunRequest): ReadonlyArray<
   "--setting-sources",
   "",
   "--settings",
-  '{"disableAllHooks":true}',
+  JSON.stringify({
+    disableAllHooks: true,
+    ...(request.reasoning === "none" ? { alwaysThinkingEnabled: false } : {}),
+  }),
   "--permission-mode",
   "dontAsk",
 ];

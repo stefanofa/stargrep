@@ -90,6 +90,33 @@ it.effect("asks the model once per query and answers repeats from the cache", ()
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("asks the model for no thinking, which its deadline leaves no room for", () => {
+  const asked: Array<TextGeneration.Reasoning> = [];
+  const layer = QueryPlanner.layer.pipe(
+    Layer.provide(
+      Layer.succeed(
+        TextGeneration.TextGeneration,
+        TextGeneration.make({
+          provider: "test",
+          model: "test/planner",
+          timeout: Duration.seconds(4),
+          run: (request) =>
+            Effect.sync(() => {
+              asked.push(request.reasoning);
+              return { output: encode(goYaml), usage: { inputTokens: 1, outputTokens: 1 } };
+            }),
+        }),
+      ),
+    ),
+    Layer.provide(SearchCache.layerMemory),
+    Layer.provide(ModelAllowance.layerUnmetered),
+  );
+  return Effect.gen(function* () {
+    expect((yield* plan("go library for parsing yaml")).source).toBe("model");
+    expect(asked).toEqual(["none"]);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("searches the query as typed when the model names a metric outside the registry, and never caches it", () => {
   const { prompts, layer } = planner(() => ({
     ...encode(goYaml),

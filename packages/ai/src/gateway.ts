@@ -168,6 +168,7 @@ const batchApi = (provider: AiProvider["Service"], model: string) => {
                 { role: "user" as const, content: [{ type: "text" as const, text: prompt }] },
               ],
               responseFormat: { type: "json" as const, schema: request.jsonSchema },
+              ...(request.reasoning === undefined ? {} : { reasoning: request.reasoning }),
             },
           })),
           providerOptions: { gateway: { idempotencyKey: key } },
@@ -274,21 +275,19 @@ const batchApi = (provider: AiProvider["Service"], model: string) => {
 };
 
 export interface TextOptions {
-  readonly reasoning: "none" | "provider-default";
   readonly timeout: Duration.Duration;
   readonly maxRetries: number;
   readonly batch: boolean;
 }
 
 const defaultTextOptions: TextOptions = {
-  reasoning: "provider-default",
   timeout: textTimeout,
   maxRetries: retries,
   batch: true,
 };
 
 export const layerTextGeneration = (model: string, options: Partial<TextOptions> = {}) => {
-  const { reasoning, timeout, maxRetries, batch } = { ...defaultTextOptions, ...options };
+  const { timeout, maxRetries, batch } = { ...defaultTextOptions, ...options };
   return Layer.effect(
     TextGeneration.TextGeneration,
     Effect.andThen(
@@ -308,7 +307,7 @@ export const layerTextGeneration = (model: string, options: Partial<TextOptions>
                   prompt: request.prompt,
                   maxRetries,
                   abortSignal,
-                  reasoning,
+                  reasoning: request.reasoning,
                 }),
               catch: fromSdkError("generate", model),
             }).pipe(
@@ -418,7 +417,6 @@ export const layerProviderConfig = Layer.unwrap(
 );
 
 export const layerPlanner = layerTextGeneration(Models.plannerModel, {
-  reasoning: "none",
   timeout: Duration.seconds(4),
   maxRetries: 0,
 });

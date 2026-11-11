@@ -23,13 +23,15 @@ const usage = { inputTokens: 7, outputTokens: 3 };
 
 // Each prompt's answer, in prompt order.
 const answers = (generation: TextGeneration.TextGeneration["Service"], prompts: ReadonlyArray<string>) =>
-  generation.generateBatch({ schema: Answer, system: "s", items: prompts, prompt: (prompt) => prompt }).pipe(
-    Stream.runCollect,
-    Effect.map((answered) => {
-      const byPrompt = new Map(answered);
-      return prompts.map((prompt) => byPrompt.get(prompt));
-    }),
-  );
+  generation
+    .generateBatch({ schema: Answer, system: "s", reasoning: "none", items: prompts, prompt: (prompt) => prompt })
+    .pipe(
+      Stream.runCollect,
+      Effect.map((answered) => {
+        const byPrompt = new Map(answered);
+        return prompts.map((prompt) => byPrompt.get(prompt));
+      }),
+    );
 
 describe("TextGeneration.make", () => {
   it.effect("hands the adapter the JSON schema and decodes its output", () =>
@@ -41,7 +43,9 @@ describe("TextGeneration.make", () => {
           return { output: { answer: 42 }, usage };
         }),
       );
-      expect(yield* generation.generate({ schema: Answer, system: "s", prompt: "p" })).toEqual({ answer: 42 });
+      expect(yield* generation.generate({ schema: Answer, system: "s", reasoning: "none", prompt: "p" })).toEqual({
+        answer: 42,
+      });
       expect(sent?.jsonSchema).toBe(Answer.jsonSchema);
     }),
   );
@@ -49,7 +53,9 @@ describe("TextGeneration.make", () => {
   it.effect("turns output that misses the schema into AiOutputInvalid without the output", () =>
     Effect.gen(function* () {
       const generation = service(() => Effect.succeed({ output: { answer: "forty-two" }, usage }));
-      const error = yield* Effect.flip(generation.generate({ schema: Answer, system: "s", prompt: "p" }));
+      const error = yield* Effect.flip(
+        generation.generate({ schema: Answer, system: "s", reasoning: "none", prompt: "p" }),
+      );
       expect(error._tag).toBe("AiOutputInvalid");
       expect(JSON.stringify(error)).not.toContain("forty-two");
     }),
@@ -59,7 +65,7 @@ describe("TextGeneration.make", () => {
     Effect.gen(function* () {
       const generation = service(() => Effect.never);
       const fiber = yield* Effect.forkChild(
-        Effect.flip(generation.generate({ schema: Answer, system: "s", prompt: "p" })),
+        Effect.flip(generation.generate({ schema: Answer, system: "s", reasoning: "none", prompt: "p" })),
       );
       yield* TestClock.adjust("10 seconds");
       const error = yield* Fiber.join(fiber);
@@ -94,7 +100,13 @@ describe("TextGeneration.make", () => {
         }),
       );
       const first = yield* generation
-        .generateBatch({ schema: Answer, system: "s", items: ["slow", "fast"], prompt: (prompt) => prompt })
+        .generateBatch({
+          schema: Answer,
+          system: "s",
+          reasoning: "none",
+          items: ["slow", "fast"],
+          prompt: (prompt) => prompt,
+        })
         .pipe(Stream.take(1), Stream.runCollect);
       expect(first).toEqual([["fast", Result.succeed({ answer: 4 })]]);
     }),
@@ -113,9 +125,9 @@ describe("TextGeneration.make", () => {
             return Effect.fail(new AiUnavailable({ operation: "generate", model: "seam/model", detail: "503" }));
           }),
       });
-      expect((yield* Effect.flip(generation.generate({ schema: Answer, system: "s", prompt: "p" })))._tag).toBe(
-        "AiUnavailable",
-      );
+      expect(
+        (yield* Effect.flip(generation.generate({ schema: Answer, system: "s", reasoning: "none", prompt: "p" })))._tag,
+      ).toBe("AiUnavailable");
       expect(attempts).toBe(1);
     }),
   );
@@ -214,6 +226,7 @@ describe("TextGeneration.make", () => {
       yield* service(() => Effect.succeed({ output: { answer: 1 }, usage })).generate({
         schema: Answer,
         system: "s",
+        reasoning: "none",
         prompt: "p",
       });
       expect((yield* Metric.value(input)).count - before).toBe(7);

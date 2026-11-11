@@ -70,6 +70,7 @@ const make = Effect.gen(function* () {
           schema: PlannerPrompt.schema,
           system: PlannerPrompt.system,
           prompt: PlannerPrompt.prompt({ today, query }),
+          reasoning: "none",
         }),
       ),
       Effect.tap((output) => cache.store(plans, key, { plannedOn: today, output })),

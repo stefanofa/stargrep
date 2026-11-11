@@ -200,7 +200,7 @@ A repo name, an `owner/name`, or two plain words skip the planner. When such a q
 
 ## AI providers
 
-`packages/ai` has two ports, because they have different providers. Production summarizes with `anthropic/claude-haiku-5.5` and embeds with `voyage/voyage-4` at 1,024 dimensions. `docs/evals.md` records the bakeoff that chose them. The query planner uses `anthropic/claude-haiku-5.5` with reasoning off through its own `TextGeneration` layer, `layerPlannerTextGeneration`, with a 4-second timeout and no retries. `TextGeneration` turns a prompt into a value of an Effect Schema, for summaries, query plans, and later reranking. `Embeddings` turns texts into vectors. Core code imports only the ports.
+`packages/ai` has two ports, because they have different providers. Production summarizes with `anthropic/claude-haiku-5.5` and embeds with `voyage/voyage-4` at 1,024 dimensions. `docs/evals.md` records the bakeoff that chose them. The query planner uses `anthropic/claude-haiku-5.5` through its own `TextGeneration` layer, `layerPlannerTextGeneration`, with a 4-second timeout and no retries. Each request states whether the model may think, because Haiku 5.5 thinks by default and bills those tokens. Summaries and plans both turn thinking off. The Gateway adapter sends the setting on a direct call and on each item of a batch, and the Claude Code adapter sets `alwaysThinkingEnabled` to false. `TextGeneration` turns a prompt into a value of an Effect Schema, for summaries, query plans, and later reranking. `Embeddings` turns texts into vectors. Core code imports only the ports.
 
 | Port | Adapters | Where it runs |
 |---|---|---|
