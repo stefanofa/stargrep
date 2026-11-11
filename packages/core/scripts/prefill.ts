@@ -1,5 +1,6 @@
 import * as BunRuntime from "@effect/platform-bun/BunRuntime";
 import * as BunServices from "@effect/platform-bun/BunServices";
+import * as Models from "@stargrep/ai/models";
 import * as Port from "@stargrep/ai/port";
 import * as TextGeneration from "@stargrep/ai/text-generation";
 import * as Clock from "effect/Clock";
@@ -10,7 +11,7 @@ import * as Flag from "effect/cli/Flag";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import type * as Option from "effect/Option";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -44,6 +45,13 @@ const askCurrent = Flag.Boolean("ask-current").pipe(
     "Ask repos whose summary is already current under the recipe too, once each. For pilot 2 on a branch of prod only",
   ),
   Flag.withDefault(false),
+);
+
+const summaryModel = Flag.String("summary-model").pipe(
+  Flag.withDescription(
+    `The Gateway model that writes every summary, such as anthropic/claude-sonnet-5.5, to try another model on the same prompt. Every manifest and receipt records it. Defaults to ${Models.summaryModel}, and needs --adapter batch`,
+  ),
+  Flag.optional,
 );
 
 const resendUnknown = Flag.Boolean("resend-unknown").pipe(
@@ -80,11 +88,14 @@ const waitForOwner = {
 
 const run = Command.make(
   "prefill",
-  { ids, adapter, chunk, concurrency, out, askCurrent, resendUnknown },
+  { ids, adapter, chunk, concurrency, out, askCurrent, resendUnknown, summaryModel },
   Effect.fn("prefill.run")(function* (flags) {
+    if (Option.isSome(flags.summaryModel) && flags.adapter !== "batch") {
+      return yield* new PrefillRefused({ reason: "--summary-model names a batch model, and --adapter cli has none" });
+    }
     const store = Runtime.requestStore(flags.adapter, yield* textProvider, yield* r2Bucket);
     if (Result.isFailure(store)) return yield* new PrefillRefused({ reason: store.failure });
-    yield* runPrefill(flags, store.success).pipe(Effect.provide(Runtime.layerPrefill));
+    yield* runPrefill(flags, store.success).pipe(Effect.provide(Runtime.layerPrefill(flags.summaryModel)));
   }),
 ).pipe(
   Command.withDescription(

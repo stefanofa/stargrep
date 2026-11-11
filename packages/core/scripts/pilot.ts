@@ -207,7 +207,7 @@ const sample = Command.make(
     yield* fs.writeFileString(flags.out, `${lines.join("\n")}\n`);
     yield* Console.log(lines.slice(0, 2).join("\n"));
     if (chosen.size < 200) yield* Console.log(`only ${chosen.size} of 200 filled: raise --pool`);
-  }, Effect.provide(Runtime.layerPrefill)),
+  }, Effect.provide(Runtime.layerPrefill())),
 ).pipe(Command.withDescription("Pick pilot 2's 300 repos: 100 enriched prod repos and 200 stratified prefill repos"));
 
 const share = (part: number, whole: number) => (whole === 0 ? 0 : part / whole);
@@ -330,6 +330,13 @@ const gates = Command.make(
 
     const table: ReadonlyArray<readonly [string, string, string]> = [
       ["Answers", `${answered.length} of ${ids.length} sampled repos have a current receipt`, "-"],
+      [
+        "Summary model",
+        Gates.answerModels(answered)
+          .map(([model, count]) => `${model} wrote ${count}`)
+          .join(", ") || "no answers",
+        "one model",
+      ],
       [
         "Whole answers that fail to decode",
         `${decode.retried} of ${decode.asked} asked repos needed a fallback batch (${percent(share(decode.retried, decode.asked))})`,

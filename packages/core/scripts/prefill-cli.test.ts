@@ -17,3 +17,16 @@ it.effect("exits non-zero when it refuses to start a Gateway batch run without R
     expect(`${refused.stdout}${refused.stderr}`).toContain("PREFILL_R2_BUCKET");
   }),
 );
+
+// The CLI adapter asks the Claude Code CLI or the Gateway one prompt at a time, so a summary model meant for a batch
+// would silently not apply. The CLI refuses it before it opens a database.
+it.effect("exits non-zero when --summary-model comes with --adapter cli", () =>
+  Effect.promise(async () => {
+    const refused = Bun.spawnSync(
+      ["bun", "scripts/prefill.ts", "--ids", "missing.txt", "--adapter", "cli", "--summary-model", "anthropic/x"],
+      { cwd: `${import.meta.dir}/..`, env: process.env, stdout: "pipe", stderr: "pipe" },
+    );
+    expect(refused.exitCode).not.toBe(0);
+    expect(`${refused.stdout}${refused.stderr}`).toContain("prefill refuses to start: --summary-model");
+  }),
+);
