@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { splitSqlStatements } from "@alchemy.run/sql/SqlFile";
-import { closed } from "@stargrep/knowledge/registry";
+import { closed, roles, traits } from "@stargrep/knowledge/registry";
 import * as it from "@stargrep/testing";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -144,14 +144,15 @@ it.layer(Layer.empty, { testTimeout: 60_000 })("kinds migration", (test) =>
   ),
 );
 
-// Projection reads the closed registry and its own rules, and the sweep projects only stale repos. So an edit to either
-// that moves no SQL, such as a new impliedBy name or a new projection rule, reaches the receipts already captured only
+// Projection reads the closed registry, the roles, the trait list, and its own rules, and the sweep projects only stale repos. So an
+// edit to any of them that moves no SQL, such as a new impliedBy name or a new projection rule, reaches the receipts
+// already captured only
 // through a migration that marks every repo stale. Write that migration, name it here, and record the new digest. An
 // edit to projection.ts that projects every repo as before, such as a comment, may keep the migration and only record
 // the digest.
 const reprojection = {
-  migration: "precision_recipe",
-  digest: "5de964be4c915c905855a7591975b0cf0f85a38c0b56d997f8c3fa73cd3ecaab",
+  migration: "trait_list_recipe",
+  digest: "132211b9cba0e6fac514820303d805f952020d55c84f16e8ea5235ebea2ccec3",
 };
 
 it.layer(Layer.empty, { testTimeout: 60_000 })("registry reprojection", (test) =>
@@ -160,7 +161,10 @@ it.layer(Layer.empty, { testTimeout: 60_000 })("registry reprojection", (test) =
       const rules = yield* Effect.promise(() =>
         Bun.file(Bun.resolveSync("@stargrep/knowledge/projection", import.meta.dir)).text(),
       );
-      const digest = new Bun.CryptoHasher("sha256").update(JSON.stringify(closed)).update(rules).digest("hex");
+      const digest = new Bun.CryptoHasher("sha256")
+        .update(JSON.stringify([closed, roles, traits]))
+        .update(rules)
+        .digest("hex");
       const stale = yield* across(reprojection.migration, twoProjectedRepos, staleRepos);
       expect({ ...reprojection, digest, stale }).toEqual({ ...reprojection, stale: [{ stale: 2, repos: 2 }] });
     }),

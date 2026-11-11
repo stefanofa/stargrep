@@ -66,7 +66,7 @@ describe("summary recipe", () => {
       expect({
         recipe: Models.summaryRecipe,
         digest: yield* digest.digestHex(Digest.sha256, new TextEncoder().encode(made)),
-      }).toEqual({ recipe: 4, digest: "694e5310ed4951c5fc3dd654275cdeebfb590d5ba63bee3a9023a3743d2f9741" });
+      }).toEqual({ recipe: 5, digest: "f8acd047320b602a57769076226248ee66cfb096dd177210a6c286d389b3d919" });
     }).pipe(Effect.provide(Digest.layerWebCrypto)),
   );
 });

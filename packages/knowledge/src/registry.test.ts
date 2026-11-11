@@ -107,6 +107,12 @@ describe("reservedKeys", () => {
       expect(reserved(term)).toEqual([term, false]);
     }
   });
+
+  // A trait is a subject, and a subject role drops a reserved key, so a reserved trait could never be kept.
+  test("leaves every listed trait free, each with its own key", () => {
+    expect(Registry.traits.map(reserved)).toEqual(Registry.traits.map((trait) => [trait, false]));
+    expect(new Set(Registry.traits.map(labelKey)).size).toBe(Registry.traits.length);
+  });
 });
 
 describe("roles", () => {
