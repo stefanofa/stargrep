@@ -12,8 +12,10 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as ClaudeCode from "./claude-code.ts";
 import type { AiError } from "./errors.ts";
+import * as Port from "./port.ts";
 import recordedAnswers from "./prompts/summarize.recorded.json";
 import * as Summarize from "./prompts/summarize.ts";
+import * as TextGeneration from "./text-generation.ts";
 
 interface Process {
   readonly stdout?: string;
@@ -123,6 +125,49 @@ describe("claude code text generation", () => {
     }),
   );
 
+  // The CLI's usage puts nearly all of a prompt in the cache fields, so input_tokens alone read 52 for 20 repos.
+  it.effect("counts cached input as input, keeps the cache shares apart, and names the CLI and its model", () => {
+    const { layer } = fakeClaude({
+      stdout: result({
+        structured_output: summary,
+        usage: {
+          input_tokens: 3,
+          cache_creation_input_tokens: 4_000,
+          cache_read_input_tokens: 2_500,
+          output_tokens: 420,
+        },
+      }),
+    });
+    return Effect.gen(function* () {
+      const textGeneration = yield* TextGeneration.TextGeneration;
+      expect([textGeneration.provider, textGeneration.model]).toEqual(["claude-code", "claude-code/haiku"]);
+      const before = yield* Port.tokensSpent("claude-code/haiku");
+      yield* Summarize.summarize(repo);
+      const after = yield* Port.tokensSpent("claude-code/haiku");
+      expect({
+        input: after.input - before.input,
+        output: after.output - before.output,
+        cacheRead: after.cacheRead - before.cacheRead,
+        cacheWrite: after.cacheWrite - before.cacheWrite,
+      }).toEqual({ input: 6_503, output: 420, cacheRead: 2_500, cacheWrite: 4_000 });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("counts the uncached input alone when the CLI reports no cache, as an older CLI did", () => {
+    const { layer } = fakeClaude({
+      stdout: result({
+        structured_output: summary,
+        usage: { input_tokens: 52, cache_creation_input_tokens: null, output_tokens: 7 },
+      }),
+    });
+    return Effect.gen(function* () {
+      const before = yield* Port.tokensSpent("claude-code/haiku");
+      yield* Summarize.summarize(repo);
+      const after = yield* Port.tokensSpent("claude-code/haiku");
+      expect([after.input - before.input, after.cacheRead - before.cacheRead]).toEqual([52, 0]);
+    }).pipe(Effect.provide(layer));
+  });
+
   const failures: ReadonlyArray<[string, Process, AiError["_tag"]]> = [
     ["output that is not JSON", { stdout: "Sure, here is a summary" }, "AiOutputInvalid"],
     ["partial JSON", { stdout: result({ structured_output: summary }).slice(0, 40) }, "AiOutputInvalid"],
@@ -159,7 +204,7 @@ describe("claude code text generation", () => {
       yield* TestClock.adjust("1 second");
       const error = yield* Fiber.join(fiber);
       expect(error._tag).toBe("AiTimeout");
-      expect(error.message).toBe("Model 'haiku' did not answer 'generate' within 180000 ms");
+      expect(error.message).toBe("Model 'claude-code/haiku' did not answer 'generate' within 180000 ms");
       expect(seen.closed).toBe(true);
     }).pipe(Effect.provide(layer));
   });

@@ -138,6 +138,12 @@ const runPrefill = Effect.fn("prefill.runPrefill")(function* (
       `manifests: resumed ${report.manifests.resumed}, dropped ${report.manifests.dropped}, created ${report.manifests.created}, closed ${report.manifests.closed}, fallbacks ${report.manifests.fallbacks}, stuck ${report.manifests.stuck.length}`,
     );
     yield* Console.log(`retried in a fallback batch: ${report.retried.length}, repaid items: ${report.repaid}`);
+    const tokens = yield* Port.tokensSpent(model);
+    const saved = counts.get("saved") ?? 0;
+    const perSaved = (total: number) => (saved === 0 ? "-" : Math.round(total / saved));
+    yield* Console.log(
+      `direct calls: input ${tokens.input} (${tokens.cacheRead} read from cache, ${tokens.cacheWrite} written to it), output ${tokens.output}, per saved repo input ${perSaved(tokens.input)} and output ${perSaved(tokens.output)}`,
+    );
     for (const stuck of report.manifests.stuck) yield* Console.log(`stuck manifest ${stuck.id}: ${remedy(stuck)}`);
     for (const { id, reason } of report.unresolved.slice(0, 20)) yield* Console.log(`unresolved: ${id} ${reason}`);
     yield* Console.log(
@@ -155,7 +161,7 @@ const runPrefill = Effect.fn("prefill.runPrefill")(function* (
       repaid: report.repaid,
       captures: report.captures,
       usage: report.usage,
-      directTokens: yield* Port.tokensSpent(model),
+      directTokens: tokens,
       statements,
     });
     yield* fs.writeFileString(flags.out.value, json);

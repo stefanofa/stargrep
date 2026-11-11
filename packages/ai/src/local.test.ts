@@ -51,7 +51,7 @@ describe("local provider selector", () => {
         AI_CLAUDE_CODE_MODEL: "sonnet",
       });
       const textGeneration = yield* TextGeneration.TextGeneration.pipe(Effect.provide(context));
-      expect(textGeneration.model).toBe("sonnet");
+      expect(textGeneration.model).toBe("claude-code/sonnet");
     }),
   );
 });
