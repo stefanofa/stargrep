@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 import { splitSqlStatements } from "@alchemy.run/sql/SqlFile";
+import { closed } from "@stargrep/knowledge/registry";
 import * as it from "@stargrep/testing";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -78,45 +79,85 @@ const apply = async (client: pg.Client, statements: ReadonlyArray<string>) => {
   await client.query("commit");
 };
 
+// Applies the migrations before the named one to a new database, runs setup, applies the rest, and reads the result.
+const across = <A>(
+  migration: string,
+  setup: (client: pg.Client) => Promise<void>,
+  read: (client: pg.Client) => Promise<A>,
+) =>
+  Effect.gen(function* () {
+    const name = `stargrep_migration_${yield* Random.nextIntBetween(0, 2 ** 31)}`;
+    yield* Effect.acquireRelease(
+      withClient(adminUrl, (client) => client.query(`create database ${client.escapeIdentifier(name)}`)),
+      () => dropDatabase(adminUrl, name),
+    );
+    const all = yield* migrations;
+    const at = all.findIndex((entry) => entry.file.endsWith(`_${migration}/migration.sql`));
+    expect([migration, at > 0]).toEqual([migration, true]);
+    return yield* withClient(databaseUrl(adminUrl, name), async (client: pg.Client) => {
+      for (const entry of all.slice(0, at)) await apply(client, entry.statements);
+      await setup(client);
+      for (const entry of all.slice(at)) await apply(client, entry.statements);
+      return read(client);
+    });
+  });
+
+const rows = async (client: pg.Client, text: string) => (await client.query(text)).rows;
+
+const twoProjectedRepos = async (client: pg.Client) => {
+  await client.query("insert into repos (id, owner, name) values (1, 'owner', 'one'), (2, 'owner', 'two')");
+  await client.query("update repo_facets set stale = false");
+};
+
+const staleRepos = (client: pg.Client) =>
+  rows(client, "select count(*) filter (where stale)::int as stale, count(*)::int as repos from repo_facets");
+
 it.layer(Layer.empty, { testTimeout: 60_000 })("kinds migration", (test) =>
   test.effect("drops the subject labels the new kinds now own and has every repo project again", () =>
     Effect.gen(function* () {
-      const name = `stargrep_kinds_${yield* Random.nextIntBetween(0, 2 ** 31)}`;
-      yield* Effect.acquireRelease(
-        withClient(adminUrl, (client) => client.query(`create database ${client.escapeIdentifier(name)}`)),
-        () => dropDatabase(adminUrl, name),
+      const after = yield* across(
+        "kinds_database_system",
+        async (client) => {
+          await client.query(
+            `insert into decisions (revision, kind, payload, actor, reason) values (1, 'create', '{"_tag":"Create"}', 'seed', 'seed')`,
+          );
+          const { rows: subjects } = await client.query(
+            "insert into subjects (label, status, origin_revision) values ('database', 'accepted', 1) returning id",
+          );
+          await client.query(
+            `insert into subject_labels (namespace, key, subject_id, is_default, source, revision)
+             select 'public', key, $1, key = 'database', 'decision', 1 from unnest(array['database', 'db', 'data store']) key`,
+            [subjects[0].id],
+          );
+          await twoProjectedRepos(client);
+        },
+        async (client) => ({
+          labels: await rows(client, "select key from subject_labels order by key"),
+          stale: await staleRepos(client),
+          kinds: await rows(client, "select unnest(enum_range(null::knowledge_kind))::text as kind"),
+        }),
       );
-      const all = yield* migrations;
-      const kinds = all.findIndex((migration) => migration.file.endsWith("_kinds_database_system/migration.sql"));
-      expect(kinds).toBeGreaterThan(0);
-      const after = yield* withClient(databaseUrl(adminUrl, name), async (client: pg.Client) => {
-        for (const migration of all.slice(0, kinds)) await apply(client, migration.statements);
-        await client.query(
-          `insert into decisions (revision, kind, payload, actor, reason) values (1, 'create', '{"_tag":"Create"}', 'seed', 'seed')`,
-        );
-        const { rows } = await client.query(
-          "insert into subjects (label, status, origin_revision) values ('database', 'accepted', 1) returning id",
-        );
-        await client.query(
-          `insert into subject_labels (namespace, key, subject_id, is_default, source, revision)
-           select 'public', key, $1, key = 'database', 'decision', 1 from unnest(array['database', 'db', 'data store']) key`,
-          [rows[0].id],
-        );
-        await client.query("insert into repos (id, owner, name) values (1, 'owner', 'one'), (2, 'owner', 'two')");
-        await client.query("update repo_facets set stale = false");
-        for (const migration of all.slice(kinds)) await apply(client, migration.statements);
-        const read = async (text: string) => (await client.query(text)).rows;
-        return {
-          labels: await read("select key from subject_labels order by key"),
-          stale: await read(
-            "select count(*) filter (where stale)::int as stale, count(*)::int as repos from repo_facets",
-          ),
-          kinds: await read("select unnest(enum_range(null::knowledge_kind))::text as kind"),
-        };
-      });
       expect(after.labels).toEqual([{ key: "data store" }]);
       expect(after.stale).toEqual([{ stale: 2, repos: 2 }]);
       expect(after.kinds.slice(-2)).toEqual([{ kind: "database" }, { kind: "system-software" }]);
+    }),
+  ),
+);
+
+// Projection reads the closed registry, and the sweep projects only stale repos. So a registry edit that moves no SQL,
+// such as a new impliedBy name, reaches the receipts already captured only through a migration that marks every repo
+// stale. Write that migration, name it here, and record the registry's new digest.
+const reprojection = {
+  migration: "kinds_implied_names",
+  digest: "dfd7be593963f3ea269b5c6efba92da1c197e706f74da882901beb4cd570d141",
+};
+
+it.layer(Layer.empty, { testTimeout: 60_000 })("registry reprojection", (test) =>
+  test.effect("names the migration that has every repo project again under the current closed registry", () =>
+    Effect.gen(function* () {
+      const digest = new Bun.CryptoHasher("sha256").update(JSON.stringify(closed)).digest("hex");
+      const stale = yield* across(reprojection.migration, twoProjectedRepos, staleRepos);
+      expect({ ...reprojection, digest, stale }).toEqual({ ...reprojection, stale: [{ stale: 2, repos: 2 }] });
     }),
   ),
 );
