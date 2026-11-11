@@ -601,6 +601,38 @@ describe("project: the primary kind", () => {
     }
   });
 
+  // The is terms of the pilot 2 README repos that got no kind. Fonts, ML research code, and an organization stay kindless.
+  test("comes from the pilot 2 terms that imply a kind, and stays free in a subject role", () => {
+    const pilot: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
+      ["calcom/sans", ["font", "typeface"]],
+      ["franktisellano/datatype", ["font"]],
+      ["noob-hackers/kalimux", ["shell script", "installer"]],
+      ["styfle/cancel-workflow-action", ["action"]],
+      ["gokarna-theme/gokarna-hugo", ["theme"]],
+      ["vadimgrn/usbip-win2", ["system", "driver"]],
+      ["stalomeow/StarRailNPRShader", ["shader"]],
+      ["wis/YT-sign-out-button-confirm", ["userscript"]],
+      ["JoePenna/Dreambooth-Stable-Diffusion", ["system"]],
+      ["GigaAI-research/DriveDreamer4D", ["research code", "system"]],
+      ["flashbots/pm", ["organization"]],
+    ];
+    expect(pilot.map(([name, terms]) => [name, atomsOf({ claims: terms.map((term) => claim("is", term)) })])).toEqual([
+      ["calcom/sans", []],
+      ["franktisellano/datatype", []],
+      ["noob-hackers/kalimux", ["kind:cli"]],
+      ["styfle/cancel-workflow-action", ["kind:plugin"]],
+      ["gokarna-theme/gokarna-hugo", ["kind:plugin"]],
+      ["vadimgrn/usbip-win2", ["kind:system-software"]],
+      ["stalomeow/StarRailNPRShader", ["kind:library"]],
+      ["wis/YT-sign-out-button-confirm", ["kind:plugin"]],
+      ["JoePenna/Dreambooth-Stable-Diffusion", []],
+      ["GigaAI-research/DriveDreamer4D", []],
+      ["flashbots/pm", []],
+    ]);
+    const free = run({ claims: [claim("about", "theme"), claim("for", "driver"), claim("trait", "userscript")] });
+    expect<unknown>(free.mints.map((mint) => mint.key)).toEqual(["theme", "driver", "userscript"]);
+  });
+
   test("follows the model's order, not the list's, and is null when no is claim names a kind", () => {
     const [cli, library] = [claim("is", "cli"), claim("is", "library")];
     expect(firstKind([library, cli])).toBe("cli");

@@ -28,10 +28,22 @@ const value = <const Id extends string>(
 // system-software reserves no bare "system", which would split a query such as "content management system".
 export const kinds = [
   value("app", "app", ["apps", "application", "applications"], ["platform", "shell"]),
-  value("library", "library", ["libraries", "lib", "libs"], ["sdk", "design system", "package"]),
+  value("library", "library", ["libraries", "lib", "libs"], ["sdk", "design system", "package", "shader"]),
   value("framework", "framework", ["frameworks"]),
-  value("cli", "CLI", ["clis", "command line tool", "command-line tool"], ["script", "tool"]),
-  value("plugin", "plugin", ["plugins", "extension", "extensions"], ["skill"]),
+  value(
+    "cli",
+    "CLI",
+    ["clis", "command line tool", "command-line tool"],
+    ["script", "shell script", "tool", "installer"],
+  ),
+  // A theme installs into a host, such as Hugo, WordPress, or VS Code, and updates from its upstream, as a plugin does.
+  // A template is copied once and then owned.
+  value(
+    "plugin",
+    "plugin",
+    ["plugins", "extension", "extensions"],
+    ["skill", "action", "github action", "userscript", "user script", "theme"],
+  ),
   value("template", "template", ["templates", "starter", "boilerplate"]),
   value("list", "list", ["lists", "awesome list"]),
   value(
@@ -48,7 +60,7 @@ export const kinds = [
     "system-software",
     "system software",
     [],
-    ["operating system", "os", "kernel", "microkernel", "firmware", "compiler", "runtime"],
+    ["operating system", "os", "kernel", "microkernel", "firmware", "driver", "compiler", "runtime"],
   ),
 ] as const;
 
