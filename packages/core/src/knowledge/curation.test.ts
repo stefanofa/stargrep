@@ -568,15 +568,17 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
         const excluded = new Set(noise.flatMap((entry) => [entry.label, ...entry.synonyms]).map(key));
 
         const noisePlan = yield* Curation.planSeed(noise, new Set());
+        const praise = ["secure", "simple", "fast", "enterprise", "modular", "online"];
         expect(noisePlan.decisions.map(({ decision }) => decision._tag)).toEqual([
           "Create",
           "Alias",
           "Alias",
           "Status",
           "Create",
+          ...praise.map(() => "Create" as const),
         ]);
         const noiseDone = yield* Curation.seed({ ...noisePlan, actor: "seed:noise", operator: false });
-        expect(noiseDone.moved).toEqual([1, 0, 0, 2, 0]);
+        expect(noiseDone.moved).toEqual([1, 0, 0, 2, 0, ...praise.map(() => 0)]);
 
         const react = labelled.get(key("react"));
         const reactjs = labelled.get(key("reactjs"));

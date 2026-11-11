@@ -78,6 +78,17 @@ export const noise: ReadonlyArray<SeedEntry> = [
     status: "rejected",
     reason: "noise: a list badge on its own",
   },
+  // Adjectives pilot 2's summary model wrote as traits. A filter on one finds nothing in common.
+  ...["secure", "simple", "fast", "enterprise", "modular", "online"].map(
+    (label): SeedEntry => ({
+      label,
+      definition: "",
+      aliases: [],
+      synonyms: [],
+      status: "rejected",
+      reason: "noise: praise, not a property a filter can check",
+    }),
+  ),
 ];
 
 const squash = (key: LabelKey) => key.replace(/[\s.]/g, "");
