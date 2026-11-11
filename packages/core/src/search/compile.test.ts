@@ -112,6 +112,8 @@ describe("compileQuery", () => {
     ]);
     expect(groups("only apps or libraries")).toEqual(["filter kind:app|kind:library"]);
     expect(groups("only cli apps")).toEqual(["filter kind:app"]);
+    expect(groups("only databases or system software")).toEqual(["filter kind:database|kind:system-software"]);
+    expect(groups("content management system")).toEqual(["boost any[content management system]"]);
     expect(groups("deprecated http clients")).toEqual(["boost any[http clients]"]);
     expect(groups("only deprecated http clients")).toEqual(["filter status:deprecated", "filter any[http clients]"]);
   });

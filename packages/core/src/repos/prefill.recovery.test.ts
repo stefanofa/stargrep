@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import * as Batches from "@stargrep/ai/batches";
 import { AiRequestFailed } from "@stargrep/ai/errors";
+import { summaryRecipe } from "@stargrep/ai/models";
 import * as Db from "@stargrep/db";
 import * as it from "@stargrep/testing";
 import * as Clock from "effect/Clock";
@@ -335,12 +336,12 @@ for (const [adapter, database] of adapters) {
         ).toEqual([
           { recipe: 1, model: "fake/summary", resumed: true },
           { recipe: 1, model: "fake/summary", resumed: true },
-          { recipe: 2, model: "fake/summary-next", resumed: false },
-          { recipe: 2, model: "fake/summary-next", resumed: false },
+          { recipe: summaryRecipe, model: "fake/summary-next", resumed: false },
+          { recipe: summaryRecipe, model: "fake/summary-next", resumed: false },
         ]);
         expect(yield* query(`select summary_recipe as recipe from repos where id = any($1::bigint[])`, [ids])).toEqual([
-          { recipe: 2 },
-          { recipe: 2 },
+          { recipe: summaryRecipe },
+          { recipe: summaryRecipe },
         ]);
       }),
     );

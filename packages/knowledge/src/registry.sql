@@ -2,7 +2,8 @@
 -- registry, not this file, and carry the result into a migration.
 
 create type knowledge_kind as enum (
-  'app', 'library', 'framework', 'cli', 'plugin', 'template', 'list', 'learning', 'dataset', 'model', 'config'
+  'app', 'library', 'framework', 'cli', 'plugin', 'template', 'list', 'learning', 'dataset', 'model', 'config',
+  'database', 'system-software'
 );
 --> statement-breakpoint
 
@@ -51,21 +52,21 @@ as $$
     '.net', 'abandoned', 'abap', 'ada', 'android', 'apex', 'app', 'application', 'applications', 'apps', 'assembly',
     'astro', 'awesome list', 'bash', 'blade', 'boilerplate', 'browser', 'bun', 'c', 'c plus plus', 'c#', 'c++',
     'cli', 'clis', 'clojure', 'cloudflare workers', 'cobol', 'coffeescript', 'command line tool', 'common lisp',
-    'config', 'configuration', 'course', 'cpp', 'crystal', 'csharp', 'css', 'd', 'dart', 'dataset', 'datasets',
-    'delphi', 'deno', 'deprecated', 'dotfiles', 'dotnet', 'ecmascript', 'elisp', 'elixir', 'elm', 'emacs lisp',
-    'embedded', 'embedded devices', 'erlang', 'examples', 'extension', 'extensions', 'f#', 'fortran', 'framework',
-    'frameworks', 'fsharp', 'gleam', 'go', 'golang', 'groovy', 'haskell', 'hcl', 'html', 'ios', 'ipad', 'ipados',
-    'iphone', 'java', 'javascript', 'jinja', 'js', 'julia', 'jupyter notebook', 'jvm', 'kotlin', 'learning',
-    'learning resource', 'lib', 'libraries', 'library', 'libs', 'linux', 'list', 'lists', 'lua', 'luau', 'mac',
-    'mac os', 'macos', 'makefile', 'markdown', 'matlab', 'mdx', 'model', 'model weights', 'models', 'nim', 'nix',
-    'no longer maintained', 'node', 'node.js', 'nodejs', 'not maintained', 'nushell', 'objc', 'objective c',
-    'objective c++', 'objective cpp', 'ocaml', 'osx', 'pascal', 'perl', 'php', 'pkl', 'plugin', 'plugins',
-    'powershell', 'prolog', 'purescript', 'py', 'python', 'python3', 'r', 'racket', 'rescript', 'ruby', 'rust',
-    'rust lang', 'scala', 'scheme', 'scss', 'shell', 'smalltalk', 'solidity', 'sql', 'starter', 'stata',
-    'superseded', 'svelte', 'swift', 'tcl', 'template', 'templates', 'terminal', 'the browser', 'the terminal', 'ts',
-    'tutorial', 'typescript', 'unmaintained', 'v', 'vala', 'vb', 'verilog', 'vhdl', 'vim script', 'viml',
-    'vimscript', 'visual basic', 'visual basic .net', 'visual basic 6.0', 'vue', 'wasm', 'webassembly', 'windows',
-    'workerd', 'zig', 'zsh'
+    'config', 'configuration', 'course', 'cpp', 'crystal', 'csharp', 'css', 'd', 'dart', 'database', 'databases',
+    'dataset', 'datasets', 'db', 'delphi', 'deno', 'deprecated', 'dotfiles', 'dotnet', 'ecmascript', 'elisp',
+    'elixir', 'elm', 'emacs lisp', 'embedded', 'embedded devices', 'erlang', 'examples', 'extension', 'extensions',
+    'f#', 'fortran', 'framework', 'frameworks', 'fsharp', 'gleam', 'go', 'golang', 'groovy', 'haskell', 'hcl',
+    'html', 'ios', 'ipad', 'ipados', 'iphone', 'java', 'javascript', 'jinja', 'js', 'julia', 'jupyter notebook',
+    'jvm', 'kotlin', 'learning', 'learning resource', 'lib', 'libraries', 'library', 'libs', 'linux', 'list',
+    'lists', 'lua', 'luau', 'mac', 'mac os', 'macos', 'makefile', 'markdown', 'matlab', 'mdx', 'model',
+    'model weights', 'models', 'nim', 'nix', 'no longer maintained', 'node', 'node.js', 'nodejs', 'not maintained',
+    'nushell', 'objc', 'objective c', 'objective c++', 'objective cpp', 'ocaml', 'osx', 'pascal', 'perl', 'php',
+    'pkl', 'plugin', 'plugins', 'powershell', 'prolog', 'purescript', 'py', 'python', 'python3', 'r', 'racket',
+    'rescript', 'ruby', 'rust', 'rust lang', 'scala', 'scheme', 'scss', 'shell', 'smalltalk', 'solidity', 'sql',
+    'starter', 'stata', 'superseded', 'svelte', 'swift', 'system software', 'tcl', 'template', 'templates',
+    'terminal', 'the browser', 'the terminal', 'ts', 'tutorial', 'typescript', 'unmaintained', 'v', 'vala', 'vb',
+    'verilog', 'vhdl', 'vim script', 'viml', 'vimscript', 'visual basic', 'visual basic .net', 'visual basic 6.0',
+    'vue', 'wasm', 'webassembly', 'windows', 'workerd', 'zig', 'zsh'
   ])
 $$;
 --> statement-breakpoint

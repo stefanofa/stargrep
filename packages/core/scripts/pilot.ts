@@ -142,7 +142,7 @@ const sample = Command.make(
     const github = yield* GitHub.GitHub;
     const blobs = yield* BlobStore.BlobStore;
     const fs = yield* FileSystem.FileSystem;
-    // 100 enriched prod repos with a legacy receipt, so recipe 2 answers can be compared with recipe 1 summaries.
+    // 100 enriched prod repos with a legacy receipt, so the current recipe's answers can be compared with recipe 1 summaries.
     const prod = yield* sql<{ id: number; fullName: string }>(
       `select r.id::float8 as id, r.owner || '/' || r.name as "fullName" from repos r
          where r.summary is not null and r.gone_at is null
@@ -342,7 +342,7 @@ const gates = Command.make(
       ],
       [
         "Against recipe 1 on the prod repos",
-        `recipe 2 on the batch path: ${prod.failed.length} never decoded and ${prod.retried} needed a fallback, of ${prod.asked} asked of ${prod.prod}. Recipe 1: ${prod.recipeOneFailed} of ${prod.prod} have no legacy answer. Legacy receipts keep final answers only, so recipe 1 has no first-try count`,
+        `recipe ${Gates.recipe} on the batch path: ${prod.failed.length} never decoded and ${prod.retried} needed a fallback, of ${prod.asked} asked of ${prod.prod}. Recipe 1: ${prod.recipeOneFailed} of ${prod.prod} have no legacy answer. Legacy receipts keep final answers only, so recipe 1 has no first-try count`,
         `no more answers that never decode than recipe 1 (${prod.pass ? "pass" : "fail"})`,
       ],
       [
