@@ -90,3 +90,13 @@ it.effect("counts the current answers by the model that wrote them, most first",
     ]);
   }),
 );
+
+it.effect("holds runs that asked for no thinking to zero, and does not gate a trial that asked for a level", () =>
+  Effect.sync(() => {
+    expect(Gates.thinkingPass([])).toBe("thinking 0");
+    expect(Gates.thinkingPass([undefined, "none"])).toBe("thinking 0");
+    expect(Gates.thinkingPass(["none", "low", "high", "low"])).toBe(
+      "thinking reported, not gated, as the runs asked for high, low",
+    );
+  }),
+);

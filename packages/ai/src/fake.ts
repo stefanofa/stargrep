@@ -54,6 +54,7 @@ export interface Submission {
   readonly batchId: string;
   // True when the key matched a batch an earlier submit started, so nothing new was paid for.
   readonly replayed: boolean;
+  readonly reasoning: Batches.BatchRequest["reasoning"];
 }
 
 // A provider batch API that answers every prompt with respond, and like the Gateway replays a submit whose idempotency
@@ -81,7 +82,7 @@ export const batches = (respond: (prompt: string) => unknown, model = "fake/text
         const key = yield* Batches.requestKey(request);
         const known = started.get(key);
         if (known !== undefined) {
-          submissions.push({ key, batchId: known, replayed: true });
+          submissions.push({ key, batchId: known, replayed: true, reasoning: request.reasoning });
           return known;
         }
         const batchId = `fake_batch_${byId.size + 1}`;
@@ -94,7 +95,7 @@ export const batches = (respond: (prompt: string) => unknown, model = "fake/text
         });
         started.set(key, batchId);
         byId.set(batchId, items);
-        submissions.push({ key, batchId, replayed: false });
+        submissions.push({ key, batchId, replayed: false, reasoning: request.reasoning });
         return batchId;
       }),
       collect: Effect.fn("FakeBatches.collect")(function* (batchId: string, size: number) {

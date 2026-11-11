@@ -102,7 +102,7 @@ export const system = [
 ].join("\n");
 
 // A summary is made without thinking. The prefill's cost assumes none, and pilot 2's answers spent about 528 thinking
-// tokens each.
+// tokens each. A prefill trial may ask for a level, and its stored requests record it.
 export const reasoning: TextGeneration.Reasoning = "none";
 
 export const trimReadme = (readme: string): string =>
@@ -210,21 +210,28 @@ const answer = (input: PromptInput, envelope: Envelope): RepoSummary => ({
 });
 
 // One direct call for a prompt already built, such as one a provider batch did not answer.
-export const summarizePrompted = Effect.fnUntraced(function* ({ text, input }: Prompted) {
+export const summarizePrompted = Effect.fnUntraced(function* (
+  { text, input }: Prompted,
+  level: TextGeneration.Reasoning = reasoning,
+) {
   const textGeneration = yield* TextGeneration.TextGeneration;
-  const envelope = yield* textGeneration.generate({ schema: answerSchema, system, prompt: text, reasoning });
+  const envelope = yield* textGeneration.generate({ schema: answerSchema, system, prompt: text, reasoning: level });
   return answer(input, envelope);
 });
 
 export const summarize = (repo: RepoFacts) => summarizePrompted(promptOf(repo));
 
 // The provider batch request for these prompts, in order, as the prefill stores and sends it.
-export const batchRequest = (model: string, prompts: ReadonlyArray<Prompted>): BatchRequest => ({
+export const batchRequest = (
+  model: string,
+  prompts: ReadonlyArray<Prompted>,
+  level: TextGeneration.Reasoning = reasoning,
+): BatchRequest => ({
   model,
   system,
   jsonSchema: providerSchema,
   prompts: prompts.map((prompt) => prompt.text),
-  reasoning,
+  reasoning: level,
 });
 
 // A raw batch answer decoded against the prompt it answers. A SchemaError means the answer is invalid as a whole.

@@ -1,3 +1,4 @@
+import { Reasoning } from "@stargrep/ai/text-generation";
 import { Login, RepoId, RepoName } from "@stargrep/github/schemas";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -38,6 +39,8 @@ const Report = Schema.Struct({
   unresolved: Schema.Array(Schema.Struct({ id: Schema.Int, reason: Schema.String })),
   // Whether the run ended on its own, or was stopped and wrote what it had done so far.
   finished: Schema.Boolean,
+  // The reasoning level the run asked new requests for. Reports before trials carried it asked for none.
+  summaryReasoning: Schema.optional(Reasoning),
   manifests: Schema.Struct({
     resumed: Schema.Int,
     dropped: Schema.Int,

@@ -279,6 +279,23 @@ for (const [adapter, database] of adapters) {
       }),
     );
 
+    it.effect("asks every batch of a run, its fallback too, at the run's reasoning level, and none by default", () =>
+      Effect.gen(function* () {
+        f.seed([5101, 5102, 5111]);
+        f.broken.once.add(5102);
+        const before = f.batches.submissions.length;
+        const report = yield* runWith([ref(5101), ref(5102)], { summaryReasoning: "low" });
+        expect(tally(report)).toEqual({ saved: 2 });
+        expect(report.manifests.fallbacks).toBe(1);
+        yield* run([ref(5111)]);
+        expect(f.batches.submissions.slice(before).map((submission) => submission.reasoning)).toEqual([
+          "low",
+          "low",
+          "none",
+        ]);
+      }),
+    );
+
     it.effect("answers stale when facts move while the batch is open, and leaves the repo pending", () =>
       Effect.gen(function* () {
         const db = yield* Db.Db;

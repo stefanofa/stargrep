@@ -287,14 +287,15 @@ const gates = Command.make(
       );
     const meanInput = mean(usage.flatMap((entry) => (entry.inputTokens === undefined ? [] : [entry.inputTokens])));
     const meanOutput = mean(usage.flatMap((entry) => (entry.outputTokens === undefined ? [] : [entry.outputTokens])));
-    const reasoning = usage.reduce((sum, entry) => sum + (entry.reasoningTokens ?? 0), 0);
-    const unreportedThinking = usage.filter((entry) => entry.reasoningTokens === undefined).length;
+    const reported = usage.flatMap((entry) => (entry.reasoningTokens === undefined ? [] : [entry.reasoningTokens]));
+    const reasoning = reported.reduce((sum, tokens) => sum + tokens, 0);
+    const perAnswer = `mean ${Math.round(mean(reported))} per answer, ${reasoning} in all`;
     const thinking =
       usage.length === 0
         ? "unknown, no batch answer reported"
-        : unreportedThinking > 0
-          ? `unknown for ${unreportedThinking} of ${usage.length} answers, ${reasoning} where reported`
-          : `${reasoning}`;
+        : reported.length < usage.length
+          ? `unknown for ${usage.length - reported.length} of ${usage.length} answers, ${perAnswer} where reported`
+          : perAnswer;
 
     const minting = answered
       .toSorted((a, b) => (a.capturedAt ?? "").localeCompare(b.capturedAt ?? ""))
@@ -386,7 +387,7 @@ const gates = Command.make(
       [
         "Tokens",
         `mean input ${Math.round(meanInput)}${Option.match(flags.baseInput, { onNone: () => "", onSome: (base) => ` (+${Math.round(meanInput - base)})` })}, output ${Math.round(meanOutput)}${Option.match(flags.baseOutput, { onNone: () => "", onSome: (base) => ` (+${Math.round(meanOutput - base)})` })}, thinking ${thinking}, over ${usage.length} batch answers`,
-        "+880 and +284 within 30%, thinking 0",
+        `+880 and +284 within 30%, ${Gates.thinkingPass(reports.map((report) => report.summaryReasoning))}`,
       ],
       [
         "Resume",

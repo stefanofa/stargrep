@@ -207,6 +207,9 @@ export interface PrefillOptions {
   // Sends a recorded batch's request again when the provider says it does not know the batch. Off, such a manifest is
   // stuck, since a wrong 404, such as from a key of another project, would pay for the batch again.
   readonly resendUnknown?: boolean;
+  // How much the summary model may think, for a trial. Each stored request records it, so a resumed manifest and its
+  // fallback ask at the level they were written with. Defaults to the summary's own, none.
+  readonly summaryReasoning?: TextGeneration.Reasoning;
 }
 
 // Another driver holds the prefill and its heartbeat is fresh.
@@ -413,9 +416,9 @@ const make = Effect.gen(function* () {
 
     // One CLI call for an item. The CLI has no provider batch, so this is the whole answer on that adapter. A call that
     // fails for a reason no repo caused adds to a streak that a call the model answered ends.
-    const askDirectly = ({ stored: item, text }: Item) =>
+    const askDirectly = ({ stored: item, text }: Item, reasoning: TextGeneration.Reasoning | undefined) =>
       Effect.result(
-        Summarize.summarizePrompted({ text, input: item.input }).pipe(
+        Summarize.summarizePrompted({ text, input: item.input }, reasoning).pipe(
           Effect.provideService(TextGeneration.TextGeneration, textGeneration),
         ),
       ).pipe(
@@ -749,10 +752,13 @@ const make = Effect.gen(function* () {
           manifest,
           textGeneration.model,
           Stream.fromIterable(pending).pipe(
-            Stream.mapEffect(({ item }) => Effect.map(askDirectly(item), (answered) => ({ item, answered })), {
-              concurrency: directConcurrency,
-              unordered: true,
-            }),
+            Stream.mapEffect(
+              ({ item }) => Effect.map(askDirectly(item, stored.request.reasoning), (answered) => ({ item, answered })),
+              {
+                concurrency: directConcurrency,
+                unordered: true,
+              },
+            ),
             Stream.filterMap(({ item, answered }) => {
               if (final || Result.isSuccess(answered.answer)) return Result.succeed(answered);
               again.push(item);
@@ -955,6 +961,7 @@ const make = Effect.gen(function* () {
             const request = Summarize.batchRequest(
               model,
               prompted.map(({ prompt }) => prompt),
+              options.summaryReasoning,
             );
             const requestKey = yield* Batches.requestKey(request);
             const draft: Db.NewManifest = {

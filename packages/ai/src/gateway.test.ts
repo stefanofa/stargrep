@@ -540,6 +540,27 @@ describe("gateway batch", () => {
     }).pipe(Effect.provide(Gateway.layerBatches("test/model").pipe(Layer.provide(fake.provider))));
   });
 
+  it.effect("sends a summary's reasoning level on every batch request, under a key of its own", () => {
+    const fake = fakeBatch({ items: [] });
+    const keyOf = (start: StartOptions | undefined) =>
+      (start?.providerOptions?.gateway as { readonly idempotencyKey?: string } | undefined)?.idempotencyKey;
+    return Effect.gen(function* () {
+      const batches = yield* Batches.Batches;
+      const prompts = [Summarize.promptOf(repo), Summarize.promptOf({ ...repo, fullName: "junegunn/fzf" })];
+      const low = Summarize.batchRequest("test/model", prompts, "low");
+      yield* batches.submit(low);
+      yield* batches.submit(Summarize.batchRequest("test/model", prompts));
+      expect(
+        fake.starts.map((start) => start.requests.map((item) => item.type === "text" && item.options.reasoning)),
+      ).toEqual([
+        ["low", "low"],
+        ["none", "none"],
+      ]);
+      expect(keyOf(fake.starts[0])).toBe(yield* Batches.requestKey(low));
+      expect(keyOf(fake.starts[0])).not.toBe(keyOf(fake.starts[1]));
+    }).pipe(Effect.provide(Gateway.layerBatches("test/model").pipe(Layer.provide(fake.provider))));
+  });
+
   it.effect(
     "sends a request stored before batches carried reasoning as it was, under the key it was stored with",
     () => {
