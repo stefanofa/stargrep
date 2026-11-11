@@ -588,6 +588,65 @@ describe("project: subjects and the curated rules", () => {
   });
 });
 
+describe("project: for on a list or a course", () => {
+  const atomsAs = (kinds: ReadonlyArray<string>, terms: ReadonlyArray<string>, input: Partial<ProjectionInput> = {}) =>
+    atomsOf({
+      claims: [...kinds.map((kind) => claim("is", kind)), ...terms.map((term) => claim("for", term))],
+      labels: labels({ react: 10, angular: 11, "google colab": 12, "linux kernel": 13, hadoop: 14, spark: 15 }),
+      ...input,
+    });
+
+  // The for claims pilot 2 wrote on repos whose primary kind is list or learning name what the repo covers. A language
+  // there resolves to no subject, so about drops it, as about drops any reserved key.
+  test("projects them as about when the primary kind is list or learning, and only then", () => {
+    const pilot: ReadonlyArray<readonly [string, ReadonlyArray<string>, ReadonlyArray<string>]> = [
+      ["jaywcjlove/awesome-uikit", ["list"], ["React", "Vue", "Angular"]],
+      ["awesome-lists/awesome-bash", ["list"], ["Bash"]],
+      ["firmai/awesome-google-colab", ["list"], ["Google Colab"]],
+      ["qmonnet/awesome-ebpf", ["list"], ["Linux kernel"]],
+      ["josonle/Coding-Now", ["learning", "dataset"], ["Hadoop", "Spark"]],
+      ["rkinas/cuda-learning", ["learning"], ["C++"]],
+      ["acme/react-admin-kit", ["app", "list"], ["React"]],
+    ];
+    expect(pilot.map(([name, kinds, terms]) => [name, atomsAs(kinds, terms)])).toEqual([
+      ["jaywcjlove/awesome-uikit", ["kind:list", "about:subject:10", "about:subject:11"]],
+      ["awesome-lists/awesome-bash", ["kind:list"]],
+      ["firmai/awesome-google-colab", ["kind:list", "about:subject:12"]],
+      ["qmonnet/awesome-ebpf", ["kind:list", "about:subject:13"]],
+      ["josonle/Coding-Now", ["kind:learning", "kind:dataset", "about:subject:14", "about:subject:15"]],
+      ["rkinas/cuda-learning", ["kind:learning"]],
+      ["acme/react-admin-kit", ["kind:app", "kind:list", "for:subject:10"]],
+    ]);
+  });
+
+  test("reads the primary kind after corrections, and leaves the for atoms of GitHub's topics alone", () => {
+    const corrections = new Map([
+      [
+        repo.id,
+        [{ atom: { role: "is" as const, value: { dim: "kind" as const, id: "list" as const } }, present: true }],
+      ],
+    ]);
+    const input = { facts: { ...noFacts, topics: ["python"] }, rules: { ...noRules, corrections } };
+    expect(atomsAs(["app"], ["React", "Python"], input)).toEqual([
+      "kind:list",
+      "kind:app",
+      "for:lang:python",
+      "about:subject:10",
+    ]);
+  });
+
+  test("an about claim and a for claim on the same subject keep one about atom", () => {
+    const claims = [claim("is", "list"), claim("about", "React"), claim("for", "react")];
+    const result = run({ claims, labels: labels({ react: 10 }) });
+    expect(result.atoms.map((atom) => formatAtom(atom))).toEqual(["kind:list", "about:subject:10"]);
+    expect(result.verdicts.map((verdict) => [verdict.outcome, verdict.atom])).toEqual([
+      ["used", "kind:list"],
+      ["used", "about:subject:10"],
+      ["used", "about:subject:10"],
+    ]);
+  });
+});
+
 describe("project: the primary kind", () => {
   const firstKind = (claims: ReadonlyArray<Claim>) =>
     run({ claims }).atoms.find((atom) => atom.role === "is")?.value.id ?? null;
