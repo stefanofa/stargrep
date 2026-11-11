@@ -515,14 +515,14 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
           {
             id: 54_001,
             facets: [
-              { role: "trait", term: "open-source", quote: "x" },
+              { role: "about", term: "open-source", quote: "x" },
               { role: "about", term: "reactjs", quote: "x" },
             ],
           },
           {
             id: 54_002,
             facets: [
-              { role: "trait", term: "Open Source", quote: "x" },
+              { role: "about", term: "Open Source", quote: "x" },
               { role: "about", term: "React", quote: "x" },
             ],
           },

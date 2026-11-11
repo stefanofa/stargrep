@@ -243,19 +243,19 @@ export const SubmissionJson = Schema.fromJsonString(
   Schema.Struct({ key: Schema.String, replayed: Schema.Boolean, prompts: Schema.Int }),
 );
 
-// The stand-in's batch API for local and preview runs. It answers as the stand-in summary does and keeps each batch in
-// a file named by its idempotency key, so a rerun of a killed process finds its batch again, as the Gateway would. Every
-// submit leaves a submissions/ entry that says whether it replayed one.
-export const layerStandInBatches = (dir: string) =>
+// The stand-in's batch API for local and preview runs. It answers as the stand-in summary does, under the model it
+// stands in for, and keeps each batch in a file named by its idempotency key, so a rerun of a killed process finds its
+// batch again, as the Gateway would. Every submit leaves a submissions/ entry that says whether it replayed one.
+export const layerStandInBatches = (dir: string, model: string) =>
   Layer.effect(
     Batches.Batches,
     Effect.gen(function* () {
       const store = yield* KeyValueStore.KeyValueStore;
       const unreadable = () =>
-        new AiRequestFailed({ operation: "generate", model: "fake/summary", detail: "stand-in batch unreadable" });
+        new AiRequestFailed({ operation: "generate", model, detail: "stand-in batch unreadable" });
       return Batches.Batches.of({
         provider: "fake",
-        model: "fake/summary",
+        model,
         submit: Effect.fn("StandInBatches.submit")(function* (request: Batches.BatchRequest) {
           const key = yield* Batches.requestKey(request);
           const replayed = yield* store.has(key).pipe(Effect.mapError(unreadable));
@@ -309,29 +309,43 @@ const noBatchApi = Layer.succeed(
   }),
 );
 
-// The batch API that matches AI_TEXT_PROVIDER: the Gateway's, the stand-in's, or none for the Claude Code CLI.
-export const layerBatches = Layer.unwrap(
-  Effect.gen(function* () {
-    const provider = yield* Config.String("AI_TEXT_PROVIDER").pipe(Config.withDefault("gateway"));
-    const standIn = yield* Config.String("PREFILL_STAND_IN_DIR").pipe(Config.withDefault(".cache/stand-in-batches"));
-    const layers: Record<
-      string,
-      Layer.Layer<Batches.Batches, PlatformError.PlatformError | Config.ConfigError, FileSystem.FileSystem | Path.Path>
-    > = {
-      fake: layerStandInBatches(standIn),
-      "claude-code": noBatchApi,
-    };
-    return (
-      layers[provider] ?? Gateway.layerBatches(Models.summaryModel).pipe(Layer.provide(Gateway.layerProviderConfig))
-    );
-  }),
-);
+// The batch API that matches AI_TEXT_PROVIDER: the Gateway's, the stand-in's, or none for the Claude Code CLI. A summary
+// model given on the prefill's command line replaces the default of the Gateway and the stand-in, so a trial of another
+// model records that model on every manifest and receipt.
+const layerBatches = (summaryModel: Option.Option<string>) =>
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const provider = yield* Config.String("AI_TEXT_PROVIDER").pipe(Config.withDefault("gateway"));
+      const standIn = yield* Config.String("PREFILL_STAND_IN_DIR").pipe(Config.withDefault(".cache/stand-in-batches"));
+      const layers: Record<
+        string,
+        Layer.Layer<
+          Batches.Batches,
+          PlatformError.PlatformError | Config.ConfigError,
+          FileSystem.FileSystem | Path.Path
+        >
+      > = {
+        fake: layerStandInBatches(
+          standIn,
+          Option.getOrElse(summaryModel, () => "fake/summary"),
+        ),
+        "claude-code": noBatchApi,
+      };
+      return (
+        layers[provider] ??
+        Gateway.layerBatches(Option.getOrElse(summaryModel, () => Models.summaryModel)).pipe(
+          Layer.provide(Gateway.layerProviderConfig),
+        )
+      );
+    }),
+  );
 
-export const layerPrefill = Layer.mergeAll(Prefill.layer, EnrichRepo.layer).pipe(
-  Layer.provideMerge(Layer.unwrap(Effect.map(Embeddings.Embeddings, (embeddings) => layerDb(embeddings.model.id)))),
-  Layer.provideMerge(Local.layer),
-  Layer.provideMerge(layerBatches),
-  Layer.provideMerge(layerGitHub),
-  Layer.provideMerge(layerBlobs),
-  Layer.provideMerge(IconQueue.layerMemory().layer),
-);
+export const layerPrefill = (summaryModel: Option.Option<string> = Option.none()) =>
+  Layer.mergeAll(Prefill.layer, EnrichRepo.layer).pipe(
+    Layer.provideMerge(Layer.unwrap(Effect.map(Embeddings.Embeddings, (embeddings) => layerDb(embeddings.model.id)))),
+    Layer.provideMerge(Local.layer),
+    Layer.provideMerge(layerBatches(summaryModel)),
+    Layer.provideMerge(layerGitHub),
+    Layer.provideMerge(layerBlobs),
+    Layer.provideMerge(IconQueue.layerMemory().layer),
+  );

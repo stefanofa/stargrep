@@ -133,12 +133,12 @@ describe("project: comparisons that name the repo itself", () => {
 });
 
 describe("project: what never mints", () => {
-  test("a reserved closed spelling in about, trait, or for is dropped, never minted, and never unresolved", () => {
+  test("a reserved closed spelling in about, for, or a comparison is dropped, never minted, and never unresolved", () => {
     const result = run({
       claims: [
         claim("about", "Rust"),
         claim("about", "CLI"),
-        claim("trait", "macOS"),
+        claim("about", "macOS"),
         claim("about", "deprecated"),
         claim("about", "tutorial"),
         claim("for", "library"),
@@ -416,7 +416,7 @@ describe("project: subjects and the curated rules", () => {
   const rules = (overrides: Partial<KnowledgeState>): Rules => ({ ...empty, ...overrides });
 
   test("a key with no label mints in a minting role and is recorded as unresolved until it has one", () => {
-    const result = run({ claims: [claim("about", "terminal UI"), claim("trait", "Terminal-UI")] });
+    const result = run({ claims: [claim("about", "terminal UI"), claim("for", "Terminal-UI")] });
     expect<unknown>(result.mints).toEqual([{ key: "terminal ui", label: "terminal UI" }]);
     expect<unknown>(result.unresolvedKeys).toEqual(["terminal ui"]);
     expect(result.atoms).toEqual([]);
@@ -448,7 +448,7 @@ describe("project: subjects and the curated rules", () => {
 
   test("a repeated key waiting on its mint holds one slot, not two", () => {
     const result = run({
-      claims: [claim("trait", "offline"), claim("trait", "Offline"), claim("trait", "local-first")],
+      claims: [claim("about", "offline"), claim("about", "Offline"), claim("about", "local-first")],
     });
     expect<unknown>(result.mints.map((mint) => mint.key)).toEqual(["offline", "local first"]);
   });
@@ -578,7 +578,12 @@ describe("project: subjects and the curated rules", () => {
   });
 
   test("the same inputs in any claim or topic order give the same atoms", () => {
-    const claims = [claim("about", "b"), claim("about", "a"), claim("for", "Python"), claim("trait", "offline")];
+    const claims = [
+      claim("about", "b"),
+      claim("about", "a"),
+      claim("for", "Python"),
+      claim("trait", "offline", { quote: "works offline", found: "quote" }),
+    ];
     const index = labels({ a: 3, b: 2, offline: 9 });
     const facts = { language: "Rust", license: "MIT", topics: ["linux", "macos", "a"] };
     const reversed = { ...facts, topics: [...facts.topics].reverse() };
@@ -647,6 +652,77 @@ describe("project: for on a list or a course", () => {
   });
 });
 
+describe("project: traits", () => {
+  const quoted = (term: string) => claim("trait", term, { quote: term, found: "quote" });
+
+  // Pilot 3's traits: features, praise, and checkable properties off the list all drop, and a listed one keeps in any
+  // spelling its label key folds.
+  test("keeps a listed trait with a found quote, and drops one off the list before it can mint", () => {
+    const result = run({
+      claims: [
+        quoted("self hosted"),
+        quoted("Cross-Platform"),
+        quoted("dark mode"),
+        quoted("lightweight"),
+        quoted("dependency-free"),
+        quoted("zero-dependency"),
+      ],
+      labels: labels({ "self-hosted": 20, "cross platform": 21 }),
+    });
+    expect(result.verdicts.map((verdict) => [verdict.outcome, verdict.reason])).toEqual([
+      ["used", "label"],
+      ["used", "label"],
+      ["dropped", "unlisted-trait"],
+      ["dropped", "unlisted-trait"],
+      ["dropped", "unlisted-trait"],
+      ["mint", "minted"],
+    ]);
+    expect([result.mints, result.unresolvedKeys]).toEqual([
+      [{ key: key("zero-dependency"), label: "zero-dependency" }],
+      [key("zero-dependency")],
+    ]);
+  });
+
+  test("needs its quote found in the input", () => {
+    const result = run({
+      claims: [claim("trait", "offline", { found: "term" }), claim("trait", "local-first", { found: "neither" })],
+      labels: labels({ offline: 22, "local-first": 23 }),
+    });
+    expect(result.verdicts.map((verdict) => verdict.reason)).toEqual(["quote-required", "quote-required"]);
+    expect(result.atoms).toEqual([]);
+  });
+});
+
+describe("project: comparisons that name a fork origin", () => {
+  // Pilot 3's comparisons: the three whose quotes speak of a fork named the project the repo was forked from.
+  test("drops a comparison whose quote speaks of a fork, and keeps one that says based on", () => {
+    const result = run({
+      claims: [
+        claim("alternative_to", "OllamaSharp", {
+          quote: "The project was forked from [this repository](https://github.com/awaescher/OllamaSharp)",
+          found: "quote",
+        }),
+        claim("alternative_to", "Prism Launcher", {
+          quote: "Fjord Launcher is a soft **fork** of [Prism Launcher]",
+          found: "quote",
+        }),
+        claim("alternative_to", "Lit", {
+          quote: "Component Model based on plain objects and pure functions",
+          found: "quote",
+        }),
+        claim("built_with", "Prism Launcher", { quote: "a soft fork of Prism Launcher", found: "quote" }),
+      ],
+      labels: labels({ ollamasharp: 30, "prism launcher": 31, lit: 32 }),
+    });
+    expect(result.verdicts.map((verdict) => [verdict.reason, verdict.atom])).toEqual([
+      ["fork-origin", null],
+      ["fork-origin", null],
+      ["label", "alt:subject:32"],
+      ["label", "with:subject:31"],
+    ]);
+  });
+});
+
 describe("project: the primary kind", () => {
   const firstKind = (claims: ReadonlyArray<Claim>) =>
     run({ claims }).atoms.find((atom) => atom.role === "is")?.value.id ?? null;
@@ -674,6 +750,9 @@ describe("project: the primary kind", () => {
       ["JoePenna/Dreambooth-Stable-Diffusion", ["system"]],
       ["GigaAI-research/DriveDreamer4D", ["research code", "system"]],
       ["flashbots/pm", ["organization"]],
+      ["RioChndr/jaksel-language", ["programming language", "interpreter"]],
+      ["eligrey/Blob.js", ["polyfill"]],
+      ["oqtane/oqtane.framework", ["framework", "cms"]],
     ];
     expect(pilot.map(([name, terms]) => [name, atomsOf({ claims: terms.map((term) => claim("is", term)) })])).toEqual([
       ["calcom/sans", []],
@@ -687,8 +766,13 @@ describe("project: the primary kind", () => {
       ["JoePenna/Dreambooth-Stable-Diffusion", []],
       ["GigaAI-research/DriveDreamer4D", []],
       ["flashbots/pm", []],
+      ["RioChndr/jaksel-language", ["kind:system-software"]],
+      ["eligrey/Blob.js", ["kind:library"]],
+      ["oqtane/oqtane.framework", ["kind:framework", "kind:app"]],
     ]);
-    const free = run({ claims: [claim("about", "theme"), claim("for", "driver"), claim("trait", "userscript")] });
+    const free = run({
+      claims: [claim("about", "theme"), claim("for", "driver"), claim("alternative_to", "userscript")],
+    });
     expect<unknown>(free.mints.map((mint) => mint.key)).toEqual(["theme", "driver", "userscript"]);
   });
 

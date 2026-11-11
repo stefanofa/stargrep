@@ -200,7 +200,7 @@ const check = Command.make(
     const json = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(summary);
     yield* fs.writeFileString(`${flags.dir}/check.json`, json);
     yield* Console.log(json);
-  }, Effect.provide(Runtime.layerPrefill)),
+  }, Effect.provide(Runtime.layerPrefill())),
 ).pipe(Command.withDescription("Kill, resume, and rerun a stand-in prefill beside the real sweep and consumer"));
 
 check.pipe(Command.run({ version: "0.0.0" }), Effect.provide(BunServices.layer), BunRuntime.runMain);

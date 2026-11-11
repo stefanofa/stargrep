@@ -16,6 +16,7 @@ import {
   reservedKeys,
   roleIds,
   roles,
+  traits,
 } from "./registry.ts";
 
 export interface RepoIdentity {
@@ -71,6 +72,8 @@ export type VerdictReason =
   | "unresolved-closed"
   | "quote-required"
   | "self-comparison"
+  | "unlisted-trait"
+  | "fork-origin"
   | "over-limit"
   | "topic-unknown"
   | "license-unknown";
@@ -150,6 +153,15 @@ const ownKeys = (repo: RepoIdentity) =>
 // A list or a course covers what it names rather than working with it, so on a repo whose primary kind is one of
 // these, a for claim projects as about.
 const coveringKinds: ReadonlySet<string> = new Set(["list", "learning"] satisfies ReadonlyArray<KindId>);
+
+const traitKeys: ReadonlySet<LabelKey> = new Set(traits.flatMap((trait) => labelKey(trait) ?? []));
+
+// A comparison whose quote speaks of a fork names the project the repo was forked from, not one a user could pick
+// instead. Pilot 3 wrote three, and no correct comparison quoted a fork. "based on" is no such sign: a correct
+// comparison to Lit quoted "based on plain objects".
+const forkWord = /\bfork(s|ed|ing)?\b/;
+const namesForkOrigin = (claim: Claim) =>
+  claim.role === "alternative_to" && claim.quote !== null && forkWord.test(evidenceText(claim.quote));
 
 // Every key project() looks up in the label index, so the caller can load exactly those.
 export const lookupKeys = (claims: ReadonlyArray<Claim>, facts: RepoFacts): ReadonlyArray<LabelKey> => [
@@ -246,6 +258,14 @@ const projectWith = (input: ProjectionInput, forClaimsAs: "for" | "about"): Proj
     }
     if (namesAnotherProject(role) && own.has(claim.key)) {
       record(source, "dropped", "self-comparison", null);
+      continue;
+    }
+    if (role === "trait" && !traitKeys.has(claim.key)) {
+      record(source, "dropped", "unlisted-trait", null);
+      continue;
+    }
+    if (namesForkOrigin(claim)) {
+      record(source, "dropped", "fork-origin", null);
       continue;
     }
     const resolved = resolveClosed(role, claim.key);

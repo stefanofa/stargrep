@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 export const sampleRows = `
   select r.id::float8 as id, r.owner, r.name, r.readme_oid is not null as "hasReadme",
     cardinality(r.kinds) > 0 as "hasKind", coalesce(cardinality(f.about), 0) > 0 as "hasAbout",
-    c.lanes, c.claims, c.carried_from is not null as carried, c.captured_at::text as "capturedAt",
+    c.lanes, c.claims, c.carried_from is not null as carried, c.captured_at::text as "capturedAt", c.model,
     exists (select 1 from extraction_batches b where b.retry_of is null and b.recipe = $2 and r.id = any(b.repo_ids))
       as asked,
     exists (select 1 from extraction_batches b where b.retry_of is not null and b.recipe = $2 and r.id = any(b.repo_ids))
@@ -43,6 +43,8 @@ export const SampleRow = Schema.Struct({
   claims: Schema.NullOr(Schema.Array(Claim)),
   carried: Schema.NullOr(Schema.Boolean),
   capturedAt: Schema.NullOr(Schema.String),
+  // The model that wrote the current answer, which tells a trial of another summary model from the default's run.
+  model: Schema.NullOr(Schema.String),
   // A first-attempt manifest under the recipe asked this repo.
   asked: Schema.Boolean,
   // Its first batch answer was missing or did not decode, so a fallback batch asked it again.
@@ -65,6 +67,13 @@ export const decodeGate = (rows: ReadonlyArray<SampleRow>) => {
     retried: asked.filter((row) => row.retried).length,
     failed: asked.filter((row) => row.failed).map((row) => row.id),
   };
+};
+
+// How many current answers each model wrote, most first.
+export const answerModels = (rows: ReadonlyArray<SampleRow>) => {
+  const counts = new Map<string, number>();
+  for (const row of rows) if (row.model !== null) counts.set(row.model, (counts.get(row.model) ?? 0) + 1);
+  return [...counts].sort(([a, x], [b, y]) => y - x || a.localeCompare(b));
 };
 
 // The prod repos against their own recipe 1 answers. Recipe 1's legacy receipts hold its final answers only, so the

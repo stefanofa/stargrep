@@ -174,6 +174,8 @@ A Gateway batch run keeps its paid requests in the stage's R2 bucket and refuses
 
 Two flags are off by default. `--ask-current` also asks repos whose summary is already current under the recipe, once each, and is for pilot 2 on a branch of prod only. `--resend-unknown` sends a recorded batch's request again when the Gateway says it does not know the batch, which pays for it again. Without it the driver keeps that manifest and its leases. The run prints one line for each manifest it keeps open, with what to do: restore a missing or unreadable request object from where the run stored it, or check the batch on the Gateway and rerun with `--resend-unknown` only if the batch is gone.
 
+`--summary-model <id>` writes every summary with another Gateway model on the same prompt, such as `anthropic/claude-sonnet-5.5`, and needs `--adapter batch`. Each manifest and receipt records the model, and `pilot gates` prints which model wrote the answers. Run such a trial on a branch of its own. A repo already summarized under the current recipe counts as done, so on a branch that holds another model's answers the trial asks nothing.
+
 ```sh
 bun run --cwd packages/core prefill --ids prefill.txt --adapter batch --chunk 250
 ```

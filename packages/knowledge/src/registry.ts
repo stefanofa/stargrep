@@ -27,8 +27,8 @@ const value = <const Id extends string>(
 // compiler or tool, is an impliedBy name rather than an alias, so the word stays free to be a subject. The id
 // system-software reserves no bare "system", which would split a query such as "content management system".
 export const kinds = [
-  value("app", "app", ["apps", "application", "applications"], ["platform", "shell"]),
-  value("library", "library", ["libraries", "lib", "libs"], ["sdk", "design system", "package", "shader"]),
+  value("app", "app", ["apps", "application", "applications"], ["platform", "shell", "cms"]),
+  value("library", "library", ["libraries", "lib", "libs"], ["sdk", "design system", "package", "shader", "polyfill"]),
   value("framework", "framework", ["frameworks"]),
   value(
     "cli",
@@ -60,7 +60,7 @@ export const kinds = [
     "system-software",
     "system software",
     [],
-    ["operating system", "os", "kernel", "microkernel", "firmware", "driver", "compiler", "runtime"],
+    ["operating system", "os", "kernel", "microkernel", "firmware", "driver", "compiler", "interpreter", "runtime"],
   ),
 ] as const;
 
@@ -293,7 +293,7 @@ export const roles: Readonly<Record<RoleId, RoleSpec>> = {
     accepts: ["kind"],
     matches: "bare",
     prompt:
-      "what the repo is, one or two of: {kinds}. Put the main one first. Always include at least one. system-software is an operating system, kernel, driver, firmware, compiler, or runtime. A server, daemon, or service you run is an app.",
+      "what the repo is, one or two of: {kinds}. Put the main one first. Always include at least one. system-software is an operating system, kernel, driver, firmware, compiler, or runtime. A server, daemon, or service you run is an app. A browser or editor extension is a plugin, and an installer is a cli.",
     quoteRequired: false,
     mints: false,
     max: 2,
@@ -346,7 +346,7 @@ export const roles: Readonly<Record<RoleId, RoleSpec>> = {
     accepts: ["language", "platform", "subject"],
     matches: "qualified",
     prompt:
-      "a framework, library, or engine its own code is built on, such as Flutter, Tauri, or Electron. Only the main ones.",
+      "a framework, library, or engine its own code is built on, such as Flutter, Tauri, or Electron. Only the main ones. Never a library it supports or integrates with, or a protocol, operating system, or platform API it targets, which are for. Never a build tool, a code generator, or its own language.",
     quoteRequired: false,
     mints: true,
     max: 4,
@@ -366,9 +366,8 @@ export const roles: Readonly<Record<RoleId, RoleSpec>> = {
     wire: "trait",
     accepts: ["subject"],
     matches: "bare",
-    prompt:
-      "a checkable property someone would filter on, such as self-hosted, local-first, offline, or zero-dependency, only when the input says so. Never praise such as secure, simple, or fast, and never a license. A feature is about.",
-    quoteRequired: false,
+    prompt: "one of {traits}, only when the input says the repo itself has it. Quote it. A feature is about.",
+    quoteRequired: true,
     mints: true,
     max: 6,
     phrase: (label) => label,
@@ -398,7 +397,7 @@ export const roles: Readonly<Record<RoleId, RoleSpec>> = {
     accepts: ["language", "platform", "subject"],
     matches: "comparison",
     prompt:
-      'a named product a user could pick instead of this one, such as a competitor or a product it replaces. Never a category or technique, something it uses, wraps, or works with, an analogy such as Jira in "Jira for technicians", the repo itself, code it contains, a project it was forked or renamed from, or its successor, which is replaced_by.',
+      'a named product a user could pick instead of this one, such as a competitor or a product it replaces. Never a category, API, format, language feature, or technique, something it uses, wraps, or works with, an analogy such as Jira in "Jira for technicians", the repo itself, code it contains, a project it was forked or renamed from, or its successor, which is replaced_by.',
     quoteRequired: false,
     mints: true,
     max: 6,
@@ -408,13 +407,18 @@ export const roles: Readonly<Record<RoleId, RoleSpec>> = {
     wire: "replaced-by",
     accepts: ["language", "platform", "subject"],
     matches: "comparison",
-    prompt: "another project the README tells this repo's users to switch to, never one this repo replaces. Quote it.",
+    prompt:
+      "another project the README tells this repo's users to switch to, never one this repo replaces. In a repo of many projects, only the whole repo's successor. Quote it.",
     quoteRequired: true,
     mints: true,
     max: 2,
     phrase: (label) => `replaced by ${label}`,
   },
 };
+
+// The only traits projection keeps, each a property a filter can check. Pilot 3's judges found the open trait list
+// they replace half features, praise, and properties the repo lacks.
+export const traits = ["self-hosted", "local-first", "offline", "zero-dependency", "cross-platform"] as const;
 
 export const roleIds = RoleId.literals;
 

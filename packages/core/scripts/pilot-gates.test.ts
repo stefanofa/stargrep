@@ -15,6 +15,7 @@ const row = (id: number, overrides: Partial<Gates.SampleRow>): Gates.SampleRow =
   claims: null,
   carried: null,
   capturedAt: null,
+  model: null,
   asked: true,
   retried: false,
   failed: false,
@@ -74,3 +75,18 @@ for (const [adapter, database] of adapters) {
     );
   });
 }
+
+it.effect("counts the current answers by the model that wrote them, most first", () =>
+  Effect.sync(() => {
+    const rows = [
+      row(1, { model: "anthropic/claude-haiku-5.5" }),
+      row(2, { model: "anthropic/claude-sonnet-5.5" }),
+      row(3, { model: "anthropic/claude-sonnet-5.5" }),
+      row(4, {}),
+    ];
+    expect(Gates.answerModels(rows)).toEqual([
+      ["anthropic/claude-sonnet-5.5", 2],
+      ["anthropic/claude-haiku-5.5", 1],
+    ]);
+  }),
+);
