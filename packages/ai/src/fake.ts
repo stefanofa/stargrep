@@ -57,13 +57,13 @@ export interface Submission {
   readonly reasoning: Batches.BatchRequest["reasoning"];
 }
 
-// A provider batch API that answers every prompt with respond, and like the Gateway replays a submit whose idempotency
-// key it has seen: the same batch ID and the answers stored when that batch was first paid for. submissions records
-// every submit, and paid every prompt answered, so a test can count what a run would have paid. collecting, when set,
-// may answer a collect in place of the stored batch, so a test can make the provider fail, forget, or stall. It gets
-// what the stored batch would answer, so a stall can still answer it, and returning undefined collects it. forgetKeys
-// makes the provider forget every idempotency key while it keeps every batch by ID.
-export const batches = (respond: (prompt: string) => unknown, model = "fake/text") => {
+// A provider batch API that answers every prompt with respond, which may fail an item, and like the Gateway replays a
+// submit whose idempotency key it has seen: the same batch ID and the answers stored when that batch was first paid
+// for. submissions records every submit, and paid every prompt answered, so a test can count what a run would have
+// paid. collecting, when set, may answer a collect in place of the stored batch, so a test can make the provider fail,
+// forget, or stall. It gets what the stored batch would answer, so a stall can still answer it, and returning undefined
+// collects it. forgetKeys makes the provider forget every idempotency key while it keeps every batch by ID.
+export const batches = (respond: (prompt: string) => Result.Result<unknown, AiError>, model = "fake/text") => {
   const submissions: Array<Submission> = [];
   const paid: Array<string> = [];
   const started = new Map<string, string>();
@@ -88,10 +88,10 @@ export const batches = (respond: (prompt: string) => unknown, model = "fake/text
         const batchId = `fake_batch_${byId.size + 1}`;
         const items = request.prompts.map((prompt) => {
           paid.push(prompt);
-          return Result.succeed({
-            output: respond(prompt),
+          return Result.map(respond(prompt), (output) => ({
+            output,
             usage: { inputTokens: tokens(request.system + prompt), outputTokens: 0, reasoningTokens: 0 },
-          });
+          }));
         });
         started.set(key, batchId);
         byId.set(batchId, items);

@@ -1,12 +1,13 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { AiOutputInvalid, AiRequestFailed } from "./errors.ts";
+import { AiOutputInvalid, AiRefused, AiRequestFailed } from "./errors.ts";
 import * as TextGeneration from "./text-generation.ts";
 
 const Usage = Schema.Struct({
@@ -22,10 +23,18 @@ const Usage = Schema.Struct({
 const ResultEnvelope = Schema.Struct({
   type: Schema.Literal("result"),
   is_error: Schema.Boolean,
+  stop_reason: Schema.optional(Schema.NullOr(Schema.String)),
+  result: Schema.optional(Schema.String),
   structured_output: Schema.optional(Schema.Unknown),
   usage: Schema.optional(Usage),
 });
+type ResultEnvelope = typeof ResultEnvelope.Type;
 const decodeEnvelope = Schema.decodeUnknownEffect(Schema.fromJsonString(ResultEnvelope));
+
+// The CLI prints a refusal as an error result and exits 1. Its stop_reason names the refusal, and when that is missing
+// the result text still says the safeguards flagged the message.
+const refused = (envelope: ResultEnvelope) =>
+  envelope.stop_reason === "refusal" || (envelope.is_error && /safeguards flagged/i.test(envelope.result ?? ""));
 
 // The CLI reports the input it sent uncached apart from what it read from or wrote to the prompt cache, which holds
 // nearly all of a prompt. The port counts all three as input, as the Gateway reports it, and keeps the cache shares.
@@ -126,13 +135,15 @@ const make = Effect.fn("ClaudeCode.make")(function* (alias: string) {
 
   const run = Effect.fnUntraced(function* (request: TextGeneration.RunRequest) {
     const { stdout, exitCode } = yield* exec(request);
+    const decoded = yield* Effect.option(decodeEnvelope(stdout));
+    if (Option.isSome(decoded) && refused(decoded.value)) {
+      return yield* new AiRefused({ operation: "generate", model, detail: "claude reported a refusal" });
+    }
     if (exitCode !== 0) return yield* failed(`claude exited with code ${exitCode}`);
-    const envelope = yield* decodeEnvelope(stdout).pipe(
-      Effect.catchTags({
-        SchemaError: () =>
-          Effect.fail(invalid(`claude printed ${stdout.length} characters that are not a JSON result`)),
-      }),
-    );
+    if (Option.isNone(decoded)) {
+      return yield* invalid(`claude printed ${stdout.length} characters that are not a JSON result`);
+    }
+    const envelope = decoded.value;
     if (envelope.is_error) return yield* failed("claude reported an error result");
     if (envelope.structured_output === undefined) return yield* invalid("claude returned no structured output");
     return { output: envelope.structured_output, usage: usageOf(envelope.usage) };

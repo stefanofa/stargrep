@@ -1,4 +1,4 @@
-import { AiRequestFailed } from "@stargrep/ai/errors";
+import { AiRefused, AiRequestFailed } from "@stargrep/ai/errors";
 import * as Fake from "@stargrep/ai/fake";
 import * as SummarizeFake from "@stargrep/ai/summarize.fake";
 import * as TextGeneration from "@stargrep/ai/text-generation";
@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as Random from "effect/Random";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as IconQueue from "../icons/icon-queue.ts";
 import * as BlobStore from "./blob-store.ts";
@@ -104,6 +105,9 @@ export const fixture = () => {
   // Repos whose direct calls fail the way a CLI that crashed or ran out of its subscription does, the first time each
   // is asked or every time.
   const failing = { once: new Set<number>(), always: new Set<number>() };
+  // Repos the model refuses every time, as Haiku's safeguards refuse a remote access trojan, on either adapter.
+  const refusing = new Set<number>();
+  const refusal = new AiRefused({ operation: "generate", model: "fake/summary", detail: "claude reported a refusal" });
   const textGeneration = Layer.succeed(
     TextGeneration.TextGeneration,
     TextGeneration.make({
@@ -113,6 +117,7 @@ export const fixture = () => {
       run: (request) => {
         asked.push(request.prompt);
         const n = repoOf(request.prompt);
+        if (refusing.has(n)) return Effect.fail(refusal);
         return failing.always.has(n) || failing.once.delete(n)
           ? Effect.fail(
               new AiRequestFailed({
@@ -130,9 +135,10 @@ export const fixture = () => {
   );
   const batches = Fake.batches((prompt) => {
     const n = repoOf(prompt);
-    if (broken.always.has(n)) return invalid;
-    if (broken.once.delete(n)) return invalid;
-    return SummarizeFake.respond(prompt);
+    if (refusing.has(n)) return Result.fail(refusal);
+    if (broken.always.has(n)) return Result.succeed(invalid);
+    if (broken.once.delete(n)) return Result.succeed(invalid);
+    return Result.succeed(SummarizeFake.respond(prompt));
   }, "fake/summary");
 
   const layer = <E>(database: Layer.Layer<Db.Db | Db.Transactions | TestDatabase.TestDatabase, E>) =>
@@ -153,7 +159,7 @@ export const fixture = () => {
     for (const n of numbers) remotes.set(n, { description: `A CLI for task ${n}`, readme: `# repo-${n}\n\nA CLI.` });
   };
 
-  return { remotes, github, asked, batches, broken, failing, layer, seed };
+  return { remotes, github, asked, batches, broken, failing, refusing, layer, seed };
 };
 
 export const runWith = (refs: ReadonlyArray<GitHub.ArchiveRef>, options: Partial<Prefill.PrefillOptions>) =>

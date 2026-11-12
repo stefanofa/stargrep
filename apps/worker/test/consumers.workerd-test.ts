@@ -4,6 +4,7 @@ import {
   AiKeyMissing,
   AiModelNotFound,
   AiOutputInvalid,
+  AiRefused,
   AiRequestFailed,
   AiTimeout,
   AiUnavailable,
@@ -900,6 +901,7 @@ describe("settlement table", () => {
       [new AiOutputInvalid({ operation: "generate", model: "m", detail: "d" }), "DeadLetter"],
       [new AiOutputInvalid({ operation: "embed", model: "m", detail: "d" }), "Retry"],
     ],
+    AiRefused: [[new AiRefused({ operation: "generate", model: "m", detail: "d" }), "DeadLetter"]],
     AnswerNotSaved: [
       [new EnrichRepo.AnswerNotSaved({ reason: "query", sqlState: "22P02", refused: true }), "DeadLetter"],
       [new EnrichRepo.AnswerNotSaved({ reason: "timeout", sqlState: null, refused: false }), "DeadLetter"],

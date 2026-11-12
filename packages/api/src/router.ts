@@ -98,6 +98,7 @@ const wireCodes = {
   ViewerUnavailable: "SERVICE_UNAVAILABLE",
   AiModelNotFound: "INTERNAL_SERVER_ERROR",
   AiOutputInvalid: "INTERNAL_SERVER_ERROR",
+  AiRefused: "INTERNAL_SERVER_ERROR",
   DbRowInvalid: "INTERNAL_SERVER_ERROR",
   EmbeddingModelMismatch: "INTERNAL_SERVER_ERROR",
 } satisfies Record<ApiFailure["_tag"], WireCode>;

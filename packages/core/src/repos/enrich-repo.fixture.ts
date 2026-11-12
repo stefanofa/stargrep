@@ -1,5 +1,5 @@
 import * as Embeddings from "@stargrep/ai/embeddings";
-import { AiRequestFailed, type AiUnavailable } from "@stargrep/ai/errors";
+import { type AiError, AiRequestFailed } from "@stargrep/ai/errors";
 import * as Fake from "@stargrep/ai/fake";
 import * as SummarizeFake from "@stargrep/ai/summarize.fake";
 import * as TextGeneration from "@stargrep/ai/text-generation";
@@ -97,7 +97,7 @@ export const fixture = () => {
   const usage = { inputTokens: 1, outputTokens: 1 };
 
   const textGeneration = (
-    run: (request: TextGeneration.RunRequest) => Effect.Effect<TextGeneration.RunResult, AiUnavailable>,
+    run: (request: TextGeneration.RunRequest) => Effect.Effect<TextGeneration.RunResult, AiError>,
   ) =>
     Layer.succeed(
       TextGeneration.TextGeneration,

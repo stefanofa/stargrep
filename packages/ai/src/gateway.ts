@@ -28,6 +28,7 @@ import {
   AiKeyMissing,
   AiModelNotFound,
   AiOutputInvalid,
+  AiRefused,
   AiRequestFailed,
   AiTimeout,
   AiUnavailable,
@@ -92,17 +93,28 @@ const statusOf = (cause: unknown) =>
 const isRetryable = (cause: unknown) =>
   (APICallError.isInstance(cause) || GatewayError.isInstance(cause)) && cause.isRetryable;
 
+// The SDK reports a provider's refusal, such as Anthropic's refusal stop reason, as a content-filter finish.
+const refusedFinish = "content-filter";
+const refusal = (operation: Operation, model: string) =>
+  new AiRefused({ operation, model, detail: `finish reason ${refusedFinish}` });
+
 const fromSdkError = (operation: Operation, model: string) => (thrown: unknown) => {
   const cause = RetryError.isInstance(thrown) ? thrown.lastError : thrown;
   const attempts = RetryError.isInstance(thrown) ? ` after ${thrown.errors.length} attempts` : "";
   if (GatewayModelNotFoundError.isInstance(cause)) return new AiModelNotFound({ model });
   if (NoObjectGeneratedError.isInstance(cause))
-    return new AiOutputInvalid({ operation, model, detail: "the model did not return a JSON object" });
+    return cause.finishReason === refusedFinish
+      ? refusal(operation, model)
+      : new AiOutputInvalid({ operation, model, detail: "the model did not return a JSON object" });
   if (isRetryable(cause)) return new AiUnavailable({ operation, model, detail: `${detailOf(cause)}${attempts}` });
   return new AiRequestFailed({ operation, model, detail: `${detailOf(cause)}${attempts}` });
 };
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+
+// The SDK checks only a batch item's ID and status, so an answered item may come without its finish reason.
+const refusedItem = (result: { readonly finishReason?: { readonly unified?: string } | undefined }) =>
+  result.finishReason?.unified === refusedFinish;
 
 const batchItemResult = (model: string, item: BatchItem): Effect.Effect<TextGeneration.RunResult, AiError> => {
   if (item.type !== "text") {
@@ -118,6 +130,7 @@ const batchItemResult = (model: string, item: BatchItem): Effect.Effect<TextGene
       }),
     );
   }
+  if (refusedItem(item.result)) return Effect.fail(refusal("generate", model));
   const text = item.result.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
   return decodeJson(text).pipe(
     Effect.map((output) => ({
@@ -313,9 +326,10 @@ export const layerTextGeneration = (model: string, options: Partial<TextOptions>
                 }),
               catch: fromSdkError("generate", model),
             }).pipe(
-              Effect.flatMap((result) =>
+              Effect.flatMap((result) => {
+                if (result.finishReason === refusedFinish) return Effect.fail(refusal("generate", model));
                 // The SDK's output getter throws when the last step stopped without text, such as on a length limit.
-                Effect.try({
+                return Effect.try({
                   try: () => ({
                     output: result.output,
                     usage: {
@@ -332,8 +346,8 @@ export const layerTextGeneration = (model: string, options: Partial<TextOptions>
                           detail: `the model returned no output, finish reason ${result.finishReason}`,
                         })
                       : fromSdkError("generate", model)(cause),
-                }),
-              ),
+                });
+              }),
             ),
           ...(batch ? { batch: { timeout: batchTimeout, run: batchApi(provider, model).run } } : {}),
         }),

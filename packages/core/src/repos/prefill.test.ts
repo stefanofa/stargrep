@@ -279,6 +279,29 @@ for (const [adapter, database] of adapters) {
       }),
     );
 
+    it.effect("caps a repo whose batch item the model refused, with no fallback batch and no sweep after it", () =>
+      Effect.gen(function* () {
+        f.seed([5021, 5022]);
+        f.refusing.add(5021);
+        const paidBefore = f.batches.paid.length;
+        const report = yield* run([ref(5021), ref(5022)]);
+        f.refusing.delete(5021);
+        expect(tally(report)).toEqual({ saved: 1, failed: 1 });
+        expect(report.retried).toEqual([]);
+        expect(report.manifests).toEqual({ ...quiet, created: 1, closed: 1 });
+        expect(f.batches.paid.length - paidBefore).toBe(2);
+        expect(
+          yield* query(
+            `select r.enrich_failures as failures, r.enrich_retry_at is null as free,
+               array(select unnest(b.failed_repo_ids)::int) as failed
+             from repos r join extraction_batches b on r.id = any(b.repo_ids) where r.id = 5021`,
+          ),
+        ).toEqual([{ failures: Db.enrichFailureCap, free: true, failed: [5021] }]);
+        yield* TestClock.adjust("2 hours");
+        expect((yield* sweepAndConsume).filter((n) => n === 5021)).toEqual([]);
+      }),
+    );
+
     it.effect(
       "asks every batch of a run, its fallback too, at the run's reasoning level, and the recipe's by default",
       () =>

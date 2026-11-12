@@ -244,6 +244,33 @@ describe("claude code text generation", () => {
     });
   }
 
+  const refusal = (fields: Record<string, unknown>) =>
+    result({ is_error: true, result: "API Error: Haiku 5.5's safeguards flagged this message.", ...fields });
+  const refusals: ReadonlyArray<[string, Process]> = [
+    ["a refusal stop reason with exit 1", { stdout: refusal({ stop_reason: "refusal" }), exitCode: 1 }],
+    ["an error result saying the safeguards flagged it, with no stop reason", { stdout: refusal({}), exitCode: 1 }],
+    ["a refusal stop reason with exit 0", { stdout: refusal({ stop_reason: "refusal" }) }],
+  ];
+
+  for (const [name, process] of refusals) {
+    it.effect(`maps ${name} to AiRefused, a failure of the prompt's own`, () => {
+      const { layer } = fakeClaude(process);
+      return Effect.gen(function* () {
+        const error = yield* Effect.flip(Summarize.summarize(repo));
+        expect(error._tag).toBe("AiRefused");
+        expect(error.message).not.toContain("safeguards flagged");
+      }).pipe(Effect.provide(layer));
+    });
+  }
+
+  it.effect("keeps a non-zero exit whose stdout is not a refusal as AiRequestFailed naming the code", () => {
+    const { layer } = fakeClaude({ stdout: result({ is_error: true, result: "auth failed" }), exitCode: 1 });
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(Summarize.summarize(repo));
+      expect(error).toMatchObject({ _tag: "AiRequestFailed", detail: "claude exited with code 1" });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("fails with AiTimeout and closes the process when claude hangs", () => {
     const { seen, layer } = fakeClaude({ hang: true });
     return Effect.gen(function* () {

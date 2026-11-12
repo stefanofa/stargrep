@@ -21,6 +21,7 @@ import * as Postgres from "../postgres.ts";
 import { excluded, NullableTime, requireRow, rowsDecoder, timeParam, writeEncoder } from "../rows.ts";
 import {
   accountType,
+  enrichFailureCap,
   iconPlate,
   iconSource,
   pendingEnrichment,
@@ -239,11 +240,14 @@ export interface Lease {
   readonly until: DateTime.Utc;
 }
 
-// How an attempt ends a lease whose paid call failed. A counted failure adds one to enrich_failures and turns the lease
-// into that failure's backoff in the same statement, and any other failure gives the lease back.
+// How an attempt ends a lease whose paid call failed. count adds one to enrich_failures and turns the lease into that
+// failure's backoff in the same statement. cap puts the repo at the cap at once, for a failure that would repeat on
+// every call, so the sweep never sends it again. release gives the lease back.
+export type FailureSettlement = "count" | "cap" | "release";
+
 export interface LeaseFailures {
   readonly until: DateTime.Utc;
-  readonly failures: ReadonlyArray<{ readonly id: RepoId; readonly counted: boolean }>;
+  readonly failures: ReadonlyArray<{ readonly id: RepoId; readonly settled: FailureSettlement }>;
   readonly at: DateTime.Utc;
   /** The wait after each failure, in order. A failure past the last delay leaves no retry time. */
   readonly retryDelays: ReadonlyArray<Duration.Duration>;
@@ -641,18 +645,19 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           ),
     settleFailures: ({ until, failures, at, retryDelays }) => {
       const sorted = inIdOrder(failures);
-      const counts = sql`settled.counted and ${needsEnrichment}`;
+      const counts = sql`settled.kind = 'count' and ${needsEnrichment}`;
+      const caps = sql`settled.kind = 'cap' and ${needsEnrichment}`;
       return sorted.length === 0
         ? Effect.void
         : run("repos.settleFailures", (db) =>
             db
               .update(repos)
               .set({
-                enrichFailures: sql`${repos.enrichFailures} + case when ${counts} then 1 else 0 end`,
+                enrichFailures: sql`case when ${caps} then greatest(${repos.enrichFailures}, ${sql.raw(String(enrichFailureCap))}) when ${counts} then ${repos.enrichFailures} + 1 else ${repos.enrichFailures} end`,
                 enrichRetryAt: sql`case when ${counts} then ${retryAt(at, retryDelays)} end`,
               })
               .from(
-                sql`unnest(${sql.param(sorted.map((failure) => failure.id))}::bigint[], ${sql.param(sorted.map((failure) => failure.counted))}::boolean[]) as settled (id, counted)`,
+                sql`unnest(${sql.param(sorted.map((failure) => failure.id))}::bigint[], ${sql.param(sorted.map((failure) => failure.settled))}::text[]) as settled (id, kind)`,
               )
               .where(
                 sql`${repos.id} = settled.id and ${repos.id} in (${lockedRepoIds(sorted.map((failure) => failure.id))}) and ${repos.enrichRetryAt} = ${timeParam(until)}`,
