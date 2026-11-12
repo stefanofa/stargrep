@@ -132,11 +132,12 @@ export const make = (options: {
     item: Result.Result<RunResult, AiError> | undefined,
   ) => {
     const direct = generate({ schema: request.schema, system: request.system, prompt, reasoning: request.reasoning });
-    const answered =
-      item === undefined || Result.isFailure(item)
-        ? direct
-        : accept(request.schema)(item.success).pipe(Effect.catch(() => direct));
-    return Effect.result(answered);
+    if (item === undefined) return Effect.result(direct);
+    if (Result.isSuccess(item)) {
+      return Effect.result(accept(request.schema)(item.success).pipe(Effect.catch(() => direct)));
+    }
+    // A direct call gets the same refusal a batch item got, so a refused item fails as the batch answered it.
+    return Effect.result(item.failure._tag === "AiRefused" ? Effect.fail(item.failure) : direct);
   };
 
   // A batch job of one prompt only adds minutes of waiting, so that prompt is answered directly.

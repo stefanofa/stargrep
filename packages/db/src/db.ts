@@ -57,6 +57,7 @@ export type {
   DueIcon,
   EnrichFailures,
   FactsLease,
+  FailureSettlement,
   IconCheck,
   Lease,
   LeasedFacts,

@@ -65,6 +65,8 @@ export const afterFailure = (error: Failure, now: number): Settlement =>
     // the repo again. A queue retry of a repo that just reached the cap would pay again. An embedding answer counts
     // against no repo, and a second one can decode.
     AiOutputInvalid: (failure) => (EnrichRepo.ownError(failure) ? deadLetter(failure) : retry(failure)),
+    // EnrichRepo has capped a refused repo, so neither the queue nor the sweep sends it again.
+    AiRefused: deadLetter,
     // EnrichRepo has counted a refused answer, or left a lost save holding its lease, so the sweep, not the queue, sends
     // the repo again. A queue retry of a repo that just reached the cap would pay again.
     AnswerNotSaved: deadLetter,

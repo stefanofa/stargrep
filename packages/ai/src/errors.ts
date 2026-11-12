@@ -21,6 +21,18 @@ export class AiOutputInvalid extends Schema.TaggedError<AiOutputInvalid>()("AiOu
   }
 }
 
+// The model declined to answer the prompt, such as when its safeguards flagged it. The same prompt gets the same
+// refusal, so a refusal is the prompt's own failure, and asking again only pays for it again.
+export class AiRefused extends Schema.TaggedError<AiRefused, { readonly brand: unique symbol }>()("AiRefused", {
+  operation: Operation,
+  model: Schema.String,
+  detail: Schema.String,
+}) {
+  override get message(): string {
+    return `Model '${this.model}' refused to answer '${this.operation}': ${this.detail}`;
+  }
+}
+
 export class AiTimeout extends Schema.TaggedError<AiTimeout>()("AiTimeout", {
   operation: Operation,
   model: Schema.String,
@@ -63,4 +75,11 @@ export class AiKeyMissing extends Schema.TaggedError<AiKeyMissing, { readonly br
   }
 }
 
-export type AiError = AiModelNotFound | AiOutputInvalid | AiTimeout | AiRequestFailed | AiUnavailable | AiKeyMissing;
+export type AiError =
+  | AiModelNotFound
+  | AiOutputInvalid
+  | AiRefused
+  | AiTimeout
+  | AiRequestFailed
+  | AiUnavailable
+  | AiKeyMissing;

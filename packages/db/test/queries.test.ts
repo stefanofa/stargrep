@@ -423,8 +423,8 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.repos.settleFailures({
         until: first.until,
         failures: [
-          { id: free, counted: true },
-          { id: held, counted: false },
+          { id: free, settled: "count" },
+          { id: held, settled: "release" },
         ],
         at: now,
         retryDelays,
@@ -437,7 +437,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       // A counted failure turns its lease into the failure's backoff in the same statement.
       yield* db.repos.settleFailures({
         until: second.until,
-        failures: [{ id: free, counted: true }],
+        failures: [{ id: free, settled: "count" }],
         at: now,
         retryDelays,
       });
@@ -451,11 +451,33 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* database.query("update repos set gone_at = now() where id = $1", [gone]);
       yield* db.repos.settleFailures({
         until: first.until,
-        failures: [{ id: gone, counted: true }],
+        failures: [{ id: gone, settled: "count" }],
         at: now,
         retryDelays,
       });
       expect(yield* settled(gone)).toEqual([{ failures: 0, at: null }]);
+
+      // A refusal caps its repo at once, even one with counted failures behind it, so the sweep never sends it again.
+      const [refused, refusedBefore] = [repoId(2552), repoId(2553)];
+      yield* db.repos.upsertRefs([ref(refused), ref(refusedBefore)]);
+      yield* database.query("update repos set enrich_failures = 1 where id = $1", [refusedBefore]);
+      expect(yield* db.repos.lease({ ids: [refused, refusedBefore], ...first })).toEqual([refused, refusedBefore]);
+      yield* db.repos.settleFailures({
+        until: first.until,
+        failures: [
+          { id: refused, settled: "cap" },
+          { id: refusedBefore, settled: "cap" },
+        ],
+        at: now,
+        retryDelays,
+      });
+      expect([yield* settled(refused), yield* settled(refusedBefore)]).toEqual([
+        [{ failures: Db.enrichFailureCap, at: null }],
+        [{ failures: Db.enrichFailureCap, at: null }],
+      ]);
+      const sweptLater = yield* db.repos.sweepable({ now: at("2026-06-01T00:00:00Z"), limit: 1000 });
+      expect(sweptLater.filter((id) => id === refused || id === refusedBefore)).toEqual([]);
+      expect(yield* db.repos.pendingEnrichment([refused, refusedBefore])).toEqual([refused, refusedBefore]);
     }),
   );
 

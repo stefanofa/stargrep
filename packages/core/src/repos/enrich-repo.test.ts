@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { AiKeyMissing, AiRequestFailed, AiUnavailable } from "@stargrep/ai/errors";
+import { AiKeyMissing, AiRefused, AiRequestFailed, AiUnavailable } from "@stargrep/ai/errors";
 import * as SummarizeFake from "@stargrep/ai/summarize.fake";
 import * as TextGeneration from "@stargrep/ai/text-generation";
 import * as Db from "@stargrep/db";
@@ -22,6 +22,7 @@ import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
 import * as IconQueue from "../icons/icon-queue.ts";
 import * as BlobStore from "./blob-store.ts";
+import * as EnrichQueue from "./enrich-queue.ts";
 import { embeddingModel, fixture, id, oid, repo, wideOid } from "./enrich-repo.fixture.ts";
 import * as EnrichRepo from "./enrich-repo.ts";
 import * as EnrichRetry from "./enrich-retry.ts";
@@ -741,6 +742,34 @@ import * as EnrichRetry from "./enrich-retry.ts";
         ]);
         expect(yield* f.failuresOf(36)).toEqual([{ enrich_failures: 0 }]);
         expect(yield* enrichAll).toMatchObject([{ _tag: "Summarized" }]);
+      }),
+    );
+
+    it.effect("caps a repo the model refuses, so neither the queue nor the sweep asks it again", () =>
+      Effect.gen(function* () {
+        f.remotes.set(41, { description: "Remote access tool", readme: { oid: wideOid(41), text: "# RAT" } });
+        let calls = 0;
+        const refusing = f.textGeneration(() =>
+          Effect.suspend(() => {
+            calls++;
+            return Effect.fail(
+              new AiRefused({ operation: "generate", model: "test/text", detail: "finish reason content-filter" }),
+            );
+          }),
+        );
+        const ids = yield* f.store([41]);
+        const enrichAll = Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) => enricher.enrichRepos(ids));
+        expect(yield* enrichAll.pipe(f.using(refusing))).toMatchObject([
+          { _tag: "Failed", error: { _tag: "AiRefused" } },
+        ]);
+        expect(yield* f.failuresOf(41)).toEqual([{ enrich_failures: Db.enrichFailureCap }]);
+        expect(EnrichRepo.ownError(new AiRefused({ operation: "generate", model: "m", detail: "d" }))).toBe(true);
+
+        yield* TestClock.adjust("2 hours");
+        const queue = EnrichQueue.layerMemory();
+        yield* EnrichRetry.sweep().pipe(Effect.provide(queue.layer));
+        expect(queue.sent.filter((message) => Number(message.repoId) === 41)).toEqual([]);
+        expect(calls).toBe(1);
       }),
     );
     it.effect(

@@ -74,6 +74,7 @@ export const ownError = (error: EnrichRepoError): boolean =>
     // A summary answer is one paid call for one repo, so a repo whose answers never decode must reach the cap. An
     // embedding answer covers a whole batch, so its bad shape is the provider's fault, not any one repo's.
     AiOutputInvalid: (failure) => failure.operation === "generate",
+    AiRefused: () => true,
     AnswerNotSaved: (failure) => failure.refused,
     RateLimited: () => false,
     TokenBudgetExhausted: () => false,
@@ -88,10 +89,14 @@ export const ownError = (error: EnrichRepoError): boolean =>
   });
 
 // How a failed paid summary call ends the attempt's lease. A save that failed for a reason any repo could hit keeps its
-// lease, so the repo waits it out and the sweep sends it again, as for a run cut short. Otherwise the failure is counted
-// and backs the repo off, or the lease is given back.
-export const settlement = (error: EnrichRepoError): "count" | "release" | "keep" =>
-  error._tag === "AnswerNotSaved" && !error.refused ? "keep" : ownError(error) ? "count" : "release";
+// lease, so the repo waits it out and the sweep sends it again, as for a run cut short. A refusal would come again on
+// every call for the same prompt, so it caps the repo at once. Otherwise the failure is counted and backs the repo off,
+// or the lease is given back.
+export const settlement = (error: EnrichRepoError): Db.FailureSettlement | "keep" => {
+  if (error._tag === "AnswerNotSaved" && !error.refused) return "keep";
+  if (error._tag === "AiRefused") return "cap";
+  return ownError(error) ? "count" : "release";
+};
 
 // What an attempt logs about a failed repo: the failure's tag, whether it counts toward the cap, and the error's own
 // message, which carries short facts such as a status or a model name and never README text, prompts, model output,
@@ -368,7 +373,7 @@ const make = Effect.gen(function* () {
       failures: ended.flatMap((outcome) => {
         if (outcome._tag !== "Failed") return [];
         const settled = settlement(outcome.error);
-        return settled === "keep" ? [] : [{ id: outcome.id, counted: settled === "count" }];
+        return settled === "keep" ? [] : [{ id: outcome.id, settled }];
       }),
       at: yield* DateTime.now,
       retryDelays: EnrichRetry.retryDelays,

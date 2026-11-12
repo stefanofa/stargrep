@@ -106,7 +106,7 @@ export const outcomes = [
   "saved",
   // Its answer is kept as history only, because its README or inputs moved on while the batch was open.
   "stale",
-  // Its answer failed and is settled: counted against the repo, or its lease given back.
+  // Its answer failed and is settled: counted against the repo, capped for a refusal, or its lease given back.
   "failed",
   // It still holds its manifest's lease, so the next run resumes it.
   "waiting",
@@ -353,6 +353,10 @@ const itemsOf = (stored: StoredRequest, open: ReadonlySet<number>) =>
     open.has(item.repoId) ? [{ item: { stored: item, text } satisfies Item, index }] : [],
   );
 
+// A failed answer is asked once more in a fallback, unless the model refused it, which a second ask would repeat.
+const askAgain = (answer: Result.Result<Summarize.RepoSummary, AiError>) =>
+  Result.isFailure(answer) && answer.failure._tag !== "AiRefused";
+
 // The answer an item gets when its batch had none that decodes: the error a direct call would have given, so settling
 // it counts the same failures enrichment counts.
 const unanswered = (raw: Batches.BatchItems[number], model: string): AiError =>
@@ -565,9 +569,7 @@ const make = Effect.gen(function* () {
       ].map(({ id, error }) => ({ id, error, settled: settlement(error) }));
       yield* db.repos.settleFailures({
         until: manifest.leaseUntil,
-        failures: failures.flatMap(({ id, settled }) =>
-          settled === "keep" ? [] : [{ id, counted: settled === "count" }],
-        ),
+        failures: failures.flatMap(({ id, settled }) => (settled === "keep" ? [] : [{ id, settled }])),
         at: yield* DateTime.now,
         retryDelays: EnrichRetry.retryDelays,
       });
@@ -723,7 +725,8 @@ const make = Effect.gen(function* () {
     });
 
     // Every item of the manifest that still holds its lease gets an answer, in groups, and the manifest closes once
-    // no repo holds it. Items the batch answered badly go to one fallback batch, and a fallback's own are final.
+    // no repo holds it. Items the batch answered badly, other than refusals, go to one fallback batch, and a fallback's
+    // own are final.
     const settle: (
       manifest: Db.Manifest,
       stored: StoredRequest,
@@ -742,7 +745,7 @@ const make = Effect.gen(function* () {
       }
       if (pending.length === 0) return yield* close(manifest);
       // The CLI answers each item with its own call. An item whose first call fails is asked again in a fallback
-      // manifest, as a batch item would be, and a fallback's own failures are final.
+      // manifest, as a batch item would be, unless the model refused it. A fallback's own failures are final.
       if (manifest.adapter === "claude-code") {
         if (resumed) done.repaid += pending.length;
         yield* db.knowledge.submittedBatch({ id: manifest.id, providerBatchId: null });
@@ -760,7 +763,7 @@ const make = Effect.gen(function* () {
               },
             ),
             Stream.filterMap(({ item, answered }) => {
-              if (final || Result.isSuccess(answered.answer)) return Result.succeed(answered);
+              if (final || !askAgain(answered.answer)) return Result.succeed(answered);
               again.push(item);
               return Result.failVoid;
             }),
@@ -809,13 +812,13 @@ const make = Effect.gen(function* () {
       const final = stored.request.attempt !== undefined;
       const settled = results.flatMap(
         ({ item, answer }): Array<Answered> =>
-          Result.isSuccess(answer) || final ? [{ item: item.stored, answer, direct: false }] : [],
+          final || !askAgain(answer) ? [{ item: item.stored, answer, direct: false }] : [],
       );
       yield* flushAll(current, answerModel, Stream.fromIterable(settled));
       if (settled.length > 0) {
         captures.push({ items: settled.length, seconds: ((yield* Clock.currentTimeMillis) - answeredFrom) / 1000 });
       }
-      const again = final ? [] : results.flatMap(({ item, answer }) => (Result.isFailure(answer) ? [item] : []));
+      const again = final ? [] : results.flatMap(({ item, answer }) => (askAgain(answer) ? [item] : []));
       if (again.length > 0) yield* fallback(current, stored, again);
       return yield* close(current);
     });

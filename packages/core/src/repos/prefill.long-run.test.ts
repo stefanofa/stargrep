@@ -194,6 +194,28 @@ for (const [adapter, database] of adapters) {
       }),
     );
 
+    // The live run stopped this way: a resumed fallback full of repos Haiku refuses, such as remote access trojans.
+    it.effect("caps sixty refused CLI items without a fallback, and never stops the run for them", () =>
+      Effect.gen(function* () {
+        const ids = range(7701, 60);
+        f.seed(ids);
+        for (const n of ids) f.refusing.add(n);
+        const report = yield* runWith(ids.map(ref), { adapter: "claude-code" });
+        for (const n of ids) f.refusing.delete(n);
+        expect(tally(report)).toEqual({ failed: ids.length });
+        expect(report.retried).toEqual([]);
+        expect(report.manifests).toEqual({ ...quiet, created: 1, closed: 1 });
+        expect(askedFor(f.asked, ids).length).toBe(ids.length);
+        expect(
+          yield* query(
+            `select count(*)::int as capped from repos
+             where id = any($1::bigint[]) and enrich_failures = $2 and enrich_retry_at is null`,
+            [ids, Db.enrichFailureCap],
+          ),
+        ).toEqual([{ capped: ids.length }]);
+      }),
+    );
+
     it.effect("stops when the model fails fifty calls in a row, keeping every lease for a rerun", () =>
       Effect.gen(function* () {
         const ids = range(7601, 60);

@@ -47,6 +47,13 @@ const noTextResult: GenerateResult = {
   finishReason: { unified: "length", raw: "max_tokens" },
 };
 
+// Anthropic's refusal stop reason, as the SDK reports it, with whatever text the model wrote before it stopped.
+const refusedResult = (text: string): GenerateResult => ({
+  ...textResult(text),
+  content: text === "" ? [] : [{ type: "text", text }],
+  finishReason: { unified: "content-filter", raw: "refusal" },
+});
+
 const unused = () => {
   throw new Error("not used in this test");
 };
@@ -149,6 +156,18 @@ describe("gateway text generation", () => {
       });
     }).pipe(Effect.provide(textLayer(async () => noTextResult))),
   );
+
+  for (const [name, text] of [
+    ["no text", ""],
+    ["a sentence", "I can't help with that."],
+  ] as const) {
+    it.effect(`fails with AiRefused when the model refuses after writing ${name}`, () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(Summarize.summarize(repo));
+        expect(error).toMatchObject({ _tag: "AiRefused", detail: "finish reason content-filter" });
+      }).pipe(Effect.provide(textLayer(async () => refusedResult(text)))),
+    );
+  }
 
   it.effect("fails with AiOutputInvalid when the JSON does not match the schema", () =>
     Effect.gen(function* () {
@@ -452,6 +471,21 @@ describe("gateway batch", () => {
     }).pipe(Effect.provide(fake.layer));
   });
 
+  it.effect("fails an item the model refused as the batch answered it, with no direct call", () => {
+    const fake = fakeBatch({
+      items: [
+        succeeded("0", JSON.stringify(validAnswer)),
+        { type: "text", id: "1", status: "succeeded", result: refusedResult("") },
+      ],
+    });
+    return Effect.gen(function* () {
+      const results = yield* summaries(batchRepos.slice(0, 2));
+      expect(results[0]).toEqual(Result.succeed(validSummary));
+      expect(results[1]).toMatchObject(Result.fail({ _tag: "AiRefused" }));
+      expect(fake.direct.calls).toBe(0);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
   it.effect("puts token counts on each direct call's span, not on the batch span, and counts every item", () => {
     const { spans, tracer } = collectSpans();
     const fake = fakeBatch({
@@ -602,6 +636,26 @@ describe("gateway batch", () => {
       }
       return yield* Fiber.await(fiber);
     });
+
+  it.effect("collects an item the model refused as AiRefused", () => {
+    const fake = fakeBatch({
+      items: [
+        succeeded("0", JSON.stringify(validAnswer)),
+        { type: "text", id: "1", status: "succeeded", result: refusedResult("I can't help with that.") },
+      ],
+    });
+    return viaBatches(
+      fake,
+      Effect.gen(function* () {
+        const batches = yield* Batches.Batches;
+        const collected = yield* batches.collect("job_1", 2);
+        expect(
+          collected._tag === "Answered" &&
+            collected.items.map((item) => item && Result.isFailure(item) && item.failure._tag),
+        ).toEqual([false, "AiRefused"]);
+      }),
+    );
+  });
 
   it.effect("collects a batch the provider failed as Failed, and asks nothing directly", () => {
     const fake = fakeBatch({ items: [], fails: true });
