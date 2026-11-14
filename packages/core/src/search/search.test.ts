@@ -21,8 +21,8 @@ import * as QueryPlan from "./query-plan.ts";
 import * as QueryPlanner from "./query-planner.ts";
 import { recordingEmbeddings, type Seed, seedLibrary } from "./search.fixture.ts";
 import * as Search from "./search.ts";
-import * as Spelling from "./spelling.ts";
 import * as SearchCache from "./search-cache.ts";
+import * as Spelling from "./spelling.ts";
 
 const model = Schema.decodeSync(EmbeddingModelId)("fake/hash-embedding");
 const decodeEmbedding = Schema.decodeUnknownEffect(Embedding);
@@ -223,10 +223,10 @@ const fixture = () => {
     test.effect("asks the planner instead of matching names for typed text longer than any name it would spell", () =>
       Effect.gen(function* () {
         const long = "a".repeat(Spelling.longest + 1);
-        const scope = yield* seed(924, [
-          ...orms(9100),
+        const scope = yield* seed(990, [
+          ...orms(12000),
           {
-            id: 9199,
+            id: 12099,
             name: long,
             summary: "a repo with a very long name",
             language: "Rust",
