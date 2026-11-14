@@ -75,7 +75,3 @@ export const reserve = (lines: RateLines, line: Line, at: DateTime.Utc, units: n
 
 // How long a reservation made at this time would wait.
 export const wait = (lines: RateLines, line: Line, at: DateTime.Utc) => lines.wait(line.key, at, tolerance(line.rate));
-
-// Moves the line by a signed number of units: later to bill what work spent, earlier to give back what it did not.
-export const bill = (lines: RateLines, line: Line, at: DateTime.Utc, units: number) =>
-  lines.adjust(line.key, at, durationOf(line.rate, units));

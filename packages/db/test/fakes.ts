@@ -67,7 +67,6 @@ const defaults = {
     wait: unexpected("rateLines.wait"),
     reserve: unexpected("rateLines.reserve"),
     release: unexpected("rateLines.release"),
-    adjust: unexpected("rateLines.adjust"),
     prune: unexpected("rateLines.prune"),
   },
   usage: {

@@ -56,6 +56,7 @@ import {
   answering,
   batchOf,
   inMillis,
+  receipt,
   recordingLine,
   recordingQueues,
   repoId,
@@ -100,12 +101,12 @@ describe("sync-stars consumer", () => {
     const { queues } = recordingQueues();
     const line = recordingLine();
     const batch = batchOf("sync-stars", [
-      { login: "octocat", mode: "incremental", reserved: 2 },
-      { login: "hubot", mode: "incremental", reserved: 9 },
+      { login: "octocat", mode: "incremental", reserved: receipt(2) },
+      { login: "hubot", mode: "incremental", reserved: receipt(9) },
       { login: "debugged", mode: "full" },
     ]);
     const result = await syncing(sending(7), line)(queues, batch);
-    expect(line.adjusted.toSorted((a, b) => a.units - b.units)).toEqual([
+    expect(line.moved.toSorted((a, b) => a.units - b.units)).toEqual([
       { line: "all", units: -2 },
       { line: "all", units: 5 },
       { line: "all", units: 7 },
@@ -116,41 +117,53 @@ describe("sync-stars consumer", () => {
   it("gives back what a failed first delivery did not use, and bills what it sent", async () => {
     const { queues } = recordingQueues();
     const line = recordingLine();
-    const batch = batchOf("sync-stars", [{ login: "octocat", mode: "incremental", reserved: 9 }]);
+    const batch = batchOf("sync-stars", [{ login: "octocat", mode: "incremental", reserved: receipt(9) }]);
     const dropped = Effect.fail(new DbQueryFailed({ operation: "stars.upsert", reason: "transport", sqlState: null }));
     const result = await syncing(sending(3, dropped), line)(queues, batch);
-    expect(line.adjusted).toEqual([{ line: "all", units: -6 }]);
+    expect(line.moved).toEqual([{ line: "all", units: -6 }]);
     expect(result.retryMessages).toEqual([{ msgId: "m0" }]);
   });
 
   it("bills every request a later delivery sends, because the first one settled the reservation", async () => {
     const { queues } = recordingQueues();
     const line = recordingLine();
-    const batch = batchOf("sync-stars", [{ login: "octocat", mode: "incremental", reserved: 9 }], 2);
+    const batch = batchOf("sync-stars", [{ login: "octocat", mode: "incremental", reserved: receipt(9) }], 2);
     await syncing(sending(3), line)(queues, batch);
-    expect(line.adjusted).toEqual([{ line: "all", units: 3 }]);
+    expect(line.moved).toEqual([{ line: "all", units: 3 }]);
   });
 
   it("acks a sync whose reconciliation fails to write, and logs it, so GitHub is not read again", async () => {
     const { queues } = recordingQueues();
     const logs: Array<unknown> = [];
-    const batch = batchOf("sync-stars", [{ login: "octocat", mode: "incremental", reserved: 2 }]);
+    const batch = batchOf("sync-stars", [{ login: "octocat", mode: "incremental", reserved: receipt(2) }]);
     const result = await syncing(sending(7), recordingLine(true), logs)(queues, batch);
     expect(result.explicitAcks).toEqual(["m0"]);
     expect(result.retryMessages).toEqual([]);
     expect(logs).toContainEqual(["Could not reconcile a sync with the line", { reason: "transport" }]);
   });
 
+  it("gives nothing back for a message queued before receipts, and bills what it spent past its units", async () => {
+    const { queues } = recordingQueues();
+    const line = recordingLine();
+    const batch = batchOf("sync-stars", [
+      { login: "octocat", mode: "incremental", reserved: 9 },
+      { login: "hubot", mode: "incremental", reserved: 0 },
+    ]);
+    const result = await syncing(sending(3), line)(queues, batch);
+    expect(line.moved).toEqual([{ line: "all", units: 3 }]);
+    expect(result.explicitAcks.toSorted()).toEqual(["m0", "m1"]);
+  });
+
   it("sends a deferred sync again without its reservation, which its first delivery already settled", async () => {
     const { queues, later } = recordingQueues();
     const requestedAt = Date.parse("2026-11-04T12:00:00Z");
-    const batch = batchOf("sync-stars", [{ login: "octocat", mode: "incremental", requestedAt, reserved: 9 }]);
+    const batch = batchOf("sync-stars", [{ login: "octocat", mode: "incremental", requestedAt, reserved: receipt(9) }]);
     const exhausted = Effect.flatMap(inMillis(600_000), (resetAt) =>
       Effect.fail(new TokenBudgetExhausted({ resource: "core", resetAt })),
     );
     const line = recordingLine();
     await syncing(sending(2, exhausted), line)(queues, batch);
-    expect(line.adjusted).toEqual([{ line: "all", units: -7 }]);
+    expect(line.moved).toEqual([{ line: "all", units: -7 }]);
     expect(later.map((sent) => sent.body)).toEqual([{ login: "octocat", mode: "incremental", requestedAt }]);
   });
 
@@ -222,7 +235,7 @@ describe("sync-stars consumer", () => {
     expect(deadLetters).toEqual([]);
     expect(later).toEqual([{ body: { login: "octocat", mode: "full" }, delaySeconds: 65 }]);
     expect(github.sent).toHaveLength(4);
-    expect(line.adjusted).toEqual([{ line: "all", units: 4 }]);
+    expect(line.moved).toEqual([{ line: "all", units: 4 }]);
     expect(result.explicitAcks).toEqual(["m0"]);
   });
 

@@ -732,7 +732,6 @@ it.layer(signedInWith(queue.layer), { timeout: 30_000 })("opening your own stars
           login: ada.account.login,
           mode: "incremental",
           requestedAt: DateTime.makeUnsafe(now),
-          reserved: 0,
           userId: ada.userId,
         },
       ]);

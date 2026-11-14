@@ -45,11 +45,14 @@ const reserveNew = (name: string, time: DateTime.Utc) =>
     }),
   ).pipe(Effect.map(Option.map((reserved) => reserved.startsAt)));
 
-const adjust = (time: DateTime.Utc, count: number) => Db.Db.use((db) => db.rateLines.adjust(all, time, units(count)));
-
 const query = (text: string) => TestDatabase.TestDatabase.use((database) => database.query(text));
 
 const clear = query("delete from rate_lines");
+
+const releasedMillis = Effect.map(
+  query("select released_ms from rate_lines where key = 'all'"),
+  (rows) => (rows as ReadonlyArray<{ readonly released_ms: number }>)[0]?.released_ms,
+);
 
 const lines = Effect.map(query("select key from rate_lines order by key"), (rows) =>
   (rows as ReadonlyArray<{ readonly key: string }>).map((row) => row.key),
@@ -138,32 +141,6 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | Test
     }),
   );
 
-  test.effect("bills a line by a positive adjustment, as a forced reservation would", () =>
-    Effect.gen(function* () {
-      yield* clear;
-      yield* adjust(start, 30);
-      expect(yield* busyFor(start)).toEqual(units(30));
-      yield* adjust(later(10), 5);
-      expect(yield* busyFor(start)).toEqual(units(35));
-      yield* adjust(later(100), 5);
-      expect(yield* busyFor(later(100))).toEqual(units(5));
-    }),
-  );
-
-  test.effect("releases a line by a negative adjustment, never earlier than now", () =>
-    Effect.gen(function* () {
-      yield* clear;
-      yield* reserve(start, 300);
-      yield* adjust(start, -100);
-      expect(yield* busyFor(start)).toEqual(units(200));
-      expect(yield* reserve(start, 1)).toEqual(Option.some(start));
-      yield* adjust(later(150), -500);
-      expect(yield* busyFor(later(150))).toEqual(Duration.zero);
-      yield* adjust(later(150), 2);
-      expect(yield* busyFor(later(150))).toEqual(units(2));
-    }),
-  );
-
   test.effect("releases a reservation the line still owes in full, which moves later ones earlier", () =>
     Effect.gen(function* () {
       yield* clear;
@@ -194,6 +171,30 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | Test
     }),
   );
 
+  test.effect("releases the end of a reservation, only the part the line has not paid out", () =>
+    Effect.gen(function* () {
+      yield* clear;
+      const first = Option.getOrThrow(yield* take(start, 10));
+      yield* take(start, 5);
+      yield* Db.Db.use((db) => db.rateLines.release({ ...first, cost: units(6) }, later(7)));
+      expect(yield* busyFor(later(7))).toEqual(units(5));
+    }),
+  );
+
+  test.effect("owes what its reservations cost less what it gave back in all", () =>
+    Effect.gen(function* () {
+      yield* clear;
+      const first = yield* take(start, 10);
+      yield* take(start, 20);
+      const third = Option.getOrThrow(yield* take(start, 5));
+      yield* take(start, 7, true);
+      yield* release(first, start);
+      yield* Db.Db.use((db) => db.rateLines.release({ ...third, cost: units(3) }, start));
+      expect(yield* busyFor(start)).toEqual(units(10 + 20 + 5 + 7 - 10 - 3));
+      expect(yield* releasedMillis).toBe(Duration.toMillis(units(10 + 3)));
+    }),
+  );
+
   test.effect("releases what is left of a reservation after an earlier one was given back", () =>
     Effect.gen(function* () {
       yield* clear;
@@ -219,18 +220,6 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | Test
         yield* release(second, later(9));
         expect(yield* busyFor(later(9))).toEqual(units(5));
       }),
-  );
-
-  test.effect("counts time a bill gave back as moving the reservations behind it", () =>
-    Effect.gen(function* () {
-      yield* clear;
-      yield* take(start, 10);
-      const second = yield* take(start, 20);
-      yield* take(start, 5);
-      yield* adjust(start, -10);
-      yield* release(second, later(9));
-      expect(yield* busyFor(later(9))).toEqual(units(5));
-    }),
   );
 
   test.effect("gives back too little rather than too much when time behind a reservation was given back first", () =>
@@ -265,16 +254,6 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | Test
       yield* Db.Db.use((db) => db.rateLines.prune(later(11)));
       yield* release(first, later(11));
       expect(yield* lines).toEqual([]);
-    }),
-  );
-
-  test.effect("leaves a released line with no row clear", () =>
-    Effect.gen(function* () {
-      yield* clear;
-      yield* adjust(start, -40);
-      expect(yield* busyFor(start)).toEqual(Duration.zero);
-      expect(yield* reserve(start, 27)).toEqual(Option.some(start));
-      expect(yield* busyFor(start)).toEqual(units(27));
     }),
   );
 };

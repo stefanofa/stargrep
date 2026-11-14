@@ -156,7 +156,7 @@ const fixture = () => {
       Effect.gen(function* () {
         yield* clearLines;
         const db = yield* Db.Db;
-        yield* RateLine.bill(db.rateLines, RateLine.modelAll, yield* DateTime.now, 599);
+        yield* RateLine.reserve(db.rateLines, RateLine.modelAll, yield* DateTime.now, 599, true);
         expect(yield* allowed("network-19", "plan")).toBe(true);
         const refused = yield* Effect.flip(take("network-20", "plan"));
         expect(refused).toMatchObject({ _tag: "ModelCallRefused", call: "plan", reason: "all" });
@@ -319,7 +319,7 @@ const fixture = () => {
         Effect.gen(function* () {
           yield* f.clearLines;
           const db = yield* Db.Db;
-          yield* RateLine.bill(db.rateLines, RateLine.modelAll, yield* DateTime.now, 570);
+          yield* RateLine.reserve(db.rateLines, RateLine.modelAll, yield* DateTime.now, 570, true);
           const answers = yield* Effect.all(
             Array.from({ length: 63 }, (_, index) => f.allowed(`network-burst-${index % 21}`, "plan")),
             { concurrency: 50 },

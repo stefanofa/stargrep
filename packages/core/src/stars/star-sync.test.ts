@@ -772,9 +772,9 @@ it.layer(admission, { timeout: 30_000 })("SyncRequests with StarSync", (it) => {
       yield* TestClock.adjust("11 minutes");
       const at = yield* now;
       starred(f.newestFirst(300).map((star, i) => ({ repo: star.repo, at: at - (i + 1) * second })));
-      yield* Db.Db.use((db) => RateLine.bill(db.rateLines, all, DateTime.makeUnsafe(at), 300));
+      yield* Db.Db.use((db) => RateLine.reserve(db.rateLines, all, DateTime.makeUnsafe(at), 300, true));
       const run = yield* admitAndRun(anyone);
-      expect(run.message.reserved).toBe(2);
+      expect(run.message.reserved).toMatchObject({ units: 2 });
       expect(run.served).toBe(1 + 1 + 3);
 
       f.users.set("grace", { id: 8, login: "grace" });
