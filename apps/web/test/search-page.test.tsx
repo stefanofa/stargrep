@@ -79,6 +79,9 @@ const api = (): Client => ({
     const refusal = server.refusals[login];
     if (refusal === "zone") return edgeAnswers(429).triggerSync({ login });
     if (refusal !== undefined) throw answered(refusal);
+    // An import that starts queues a login the API had never seen.
+    if (server.status.state === "unknown")
+      server.status = status({ login, state: "queued", syncedAt: null, enrichment: server.status.enrichment });
     return server.status;
   },
   stars: async ({ login }: { login: string }) => ({ login, repos: server.repos, nextCursor: null, labels: {} }),
@@ -748,6 +751,37 @@ describe("the search page in each state", () => {
     expect(server.searches.at(-1)).toBe("async");
     await waitFor(() => expect(chips()).toEqual([]));
     expect(strip()).not.toContain("so far");
+  }, 15_000);
+
+  test("a first search before the import creates the account waits for the import instead of failing", async () => {
+    const created = { account: false };
+    server.signedIn = false;
+    server.repos = [];
+    server.status = status({
+      login: "newcomer",
+      state: "unknown",
+      syncedAt: null,
+      requestedAt: null,
+      enrichment: { total: 0, read: 0, failed: 0 },
+    });
+    server.search = () => {
+      if (!created.account) throw answered("ACCOUNT_NOT_SYNCED");
+      return [hit(repos()[0] as Repo)];
+    };
+    await open("/newcomer?q=terminal", "Search @newcomer's stars");
+    await waitFor(() => expect(server.searches).toEqual(["terminal"]));
+    await waitFor(() =>
+      expect(page().getByRole("heading", { name: "i haven't read @newcomer's stars yet" })).toBeTruthy(),
+    );
+    expect(page().getByText("i'll search again when reading finishes")).toBeTruthy();
+    expect(strip()).not.toContain("didn't answer");
+
+    created.account = true;
+    server.repos = repos().map((entry) => ({ ...entry, read: true }));
+    server.status = status({ login: "newcomer", starredTotal: 6, enrichment: allRead });
+    await poll();
+    await waitFor(() => expect(server.searches).toEqual(["terminal", "terminal"]));
+    await waitFor(() => expect(strip()).toContain("found"));
   }, 15_000);
 
   test("someone GitHub doesn't know: the tile and its pill stay, and the page says so", async () => {
