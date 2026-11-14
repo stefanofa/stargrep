@@ -221,9 +221,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     revision: sync === undefined ? undefined : libraryRevision(sync),
     settled: stage.name === "ready",
     known:
-      first?.hits == null
-        ? undefined
-        : { query: first.query, results: first.hits, revision: libraryRevision(first.sync) },
+      first?.hits == null ? undefined : { query: first.query, ...first.hits, revision: libraryRevision(first.sync) },
   });
 
   const hits = hitsOf(semantic);

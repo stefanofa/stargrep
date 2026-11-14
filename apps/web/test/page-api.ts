@@ -1,5 +1,6 @@
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
+import * as AnswerCache from "@stargrep/api/answer-cache";
 import { Caller } from "@stargrep/api/caller";
 import { IconHost } from "@stargrep/api/icon-host";
 import { RateLimiter } from "@stargrep/api/rate-limiter";
@@ -88,24 +89,25 @@ const syncRequests = Layer.mock(SyncRequests.SyncRequests, {
 // Every search the API ran, by query. Planning and embedding run inside search, so no search means no model call.
 export const searched: Array<string> = [];
 
-const search = Layer.succeed(
-  Search.Search,
-  Search.Search.of({
-    search: Effect.fn("Search.search")((request: Search.SearchRequest) =>
-      Effect.sync(() => searched.push(request.query)).pipe(
-        Effect.as({
-          plan: QueryPlan.asTyped(request.query, "sentence"),
-          planSource: "fallback",
-          results:
-            request.scope._tag === "stars" && request.scope.login.toLowerCase() === "stefanofa"
-              ? [{ repo: demoRepos[0], nameMatch: false, textRank: 1, vectorRank: 1, metrics: [] }]
-              : [],
-          applied: [],
-        } satisfies Search.SearchOutcome),
+const searchWith = (planSource: Search.SearchOutcome["planSource"], record: (query: string) => void) =>
+  Layer.succeed(
+    Search.Search,
+    Search.Search.of({
+      search: Effect.fn("Search.search")((request: Search.SearchRequest) =>
+        Effect.sync(() => record(request.query)).pipe(
+          Effect.as({
+            plan: QueryPlan.asTyped(request.query, "sentence"),
+            planSource,
+            results:
+              request.scope._tag === "stars" && request.scope.login.toLowerCase() === "stefanofa"
+                ? [{ repo: demoRepos[0], nameMatch: false, textRank: 1, vectorRank: 1, metrics: [] }]
+                : [],
+            applied: [],
+          } satisfies Search.SearchOutcome),
+        ),
       ),
-    ),
-  }),
-);
+    }),
+  );
 
 let pageTwo: { readonly released: Promise<void>; readonly arrived: () => void } | undefined;
 export const holdSecondPage = () => {
@@ -169,7 +171,7 @@ const db = makeDb({
   },
 });
 
-export const serveApi = testServer((request) =>
+const layerWith = (search: Layer.Layer<Search.Search>) => (request: Request) =>
   Layer.mergeAll(
     search,
     syncRequests,
@@ -178,15 +180,29 @@ export const serveApi = testServer((request) =>
     Layer.succeed(Viewers, Viewers.of({ current: Effect.fail(new NotSignedIn()), signedIn: Effect.succeedNone })),
     Layer.succeed(IconHost, IconHost.of({ origin: new URL(request.url).origin })),
     Layer.succeed(Caller, Caller.of({ key: Db.CallerKey.make("caller-page"), address: "192.0.2.1" })),
-  ),
-);
+  );
 
-// The browser's client, answered by the same API in this process.
-export const browserClient = (): Client =>
+// The planner falls back on every query, so this API keeps no search answer.
+export const serveApi = testServer(layerWith(searchWith("fallback", (query) => searched.push(query))));
+
+const clientOf = (serve: (request: Request) => Promise<Response> | undefined): Client =>
   createORPCClient(
     new RPCLink({
       url: "/rpc",
       origin: "http://localhost",
-      fetch: (url, init) => serveApi(new Request(url, init)) ?? Promise.resolve(new Response(null, { status: 404 })),
+      fetch: (url, init) => serve(new Request(url, init)) ?? Promise.resolve(new Response(null, { status: 404 })),
     }),
   );
+
+// The browser's client, answered by the same API in this process.
+export const browserClient = (): Client => clientOf(serveApi);
+
+// An answer cache that holds the demo's planned answer for q, as a search stored it minutesAgo minutes ago. That search
+// ran before the page, so it records nothing in searched.
+export const cacheHolding = async (q: string, minutesAgo: number): Promise<AnswerCache.AnswerCache> => {
+  const { cache } = AnswerCache.memory();
+  const filling = testServer(layerWith(searchWith("model", () => {})), { answerCache: () => cache });
+  await clientOf(filling).search({ scope: { kind: "stars", login: "stefanofa" }, q });
+  const ago = (stored: AnswerCache.StoredAnswer) => ({ ...stored, storedAt: stored.storedAt - minutesAgo * 60_000 });
+  return { ...cache, get: (key) => Effect.map(cache.get(key), Option.map(ago)) };
+};

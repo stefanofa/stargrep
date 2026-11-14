@@ -11,11 +11,13 @@ export type { Semantic };
 
 const none: Semantic = { kind: "none" };
 
-// An answer the page already has, and the library revision it was answered from.
+// An answer the page already has, and the library revision it was answered from. A stale one stays on screen while the
+// page asks for its query again.
 export interface Known {
   readonly query: string;
   readonly results: ReadonlyArray<SearchResult>;
   readonly revision: string;
+  readonly stale: boolean;
 }
 
 export function useSemanticSearch(
@@ -30,7 +32,7 @@ export function useSemanticSearch(
   // The library revision the answer on screen was searched in. Once the library settles on another one, a search by
   // meaning asks again, since the answer may describe stars that changed.
   const answeredIn = useRef(known?.revision);
-  const [answered] = useState(known?.query);
+  const [answered] = useState(known?.stale ? undefined : known?.query);
 
   useEffect(() => {
     const client = api();
