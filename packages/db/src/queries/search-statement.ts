@@ -294,8 +294,11 @@ const starredBy = (scope: SearchScope) =>
   [sql`s.account_id = ${scope.accountId}`, sql`s.unstarred_at is null`, sql`r.gone_at is null`] as const;
 
 // Reads s's repo_facets row by primary key and tests every facet filter, or missing when the repo has no row.
-const probeTest = (facets: Arr.NonEmptyReadonlyArray<FacetFilter>): SQL =>
-  sql`coalesce((select ${allOf(Arr.map(facets, (filter) => filter.test))} from repo_facets fc where fc.repo_id = s.repo_id), ${allOf(Arr.map(facets, (filter) => filter.missing))})`;
+const probeTest = (facets: Arr.NonEmptyReadonlyArray<FacetFilter>): SQL => {
+  const test = allOf(Arr.map(facets, (filter) => filter.test));
+  const missing = allOf(Arr.map(facets, (filter) => filter.missing));
+  return sql`coalesce((select ${test} from repo_facets fc where fc.repo_id = s.repo_id), ${missing})`;
+};
 
 // The statement for one search. Every pipeline is the same: the account's stars joined to repos, full text and vectors
 // ranked to 100 each, and reciprocal rank fusion. Closed atoms add array tests on the repos row. Filters that read
