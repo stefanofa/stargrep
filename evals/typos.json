@@ -94,5 +94,143 @@
     "category": "typo",
     "query": "kubernets",
     "expected": ["kubernetes/kubernetes"]
+  },
+  {
+    "id": "t17",
+    "category": "obscure",
+    "query": "tenre",
+    "expected": ["pythops/tenere"]
+  },
+  {
+    "id": "t18",
+    "category": "obscure",
+    "query": "ngrram",
+    "expected": ["wintermute-cell/ngrrram"]
+  },
+  {
+    "id": "t19",
+    "category": "obscure",
+    "query": "intermodel torrent",
+    "expected": ["casey/intermodal"]
+  },
+  {
+    "id": "t20",
+    "category": "obscure",
+    "query": "neonmodme",
+    "expected": ["mrusme/neonmodem"]
+  },
+  {
+    "id": "t21",
+    "category": "obscure",
+    "query": "tetirgo",
+    "expected": ["Broderick-Westrope/tetrigo"]
+  },
+  {
+    "id": "t22",
+    "category": "obscure",
+    "query": "pacsek",
+    "expected": ["moson-mo/pacseek"]
+  },
+  {
+    "id": "t23",
+    "category": "obscure",
+    "query": "clidel",
+    "expected": ["ajeetdsouza/clidle"]
+  },
+  {
+    "id": "t24",
+    "category": "obscure",
+    "query": "miasam nvim",
+    "expected": ["xero/miasma.nvim"]
+  },
+  {
+    "id": "t25",
+    "category": "obscure",
+    "query": "lacklustre.nvim",
+    "expected": ["slugbyte/lackluster.nvim"]
+  },
+  {
+    "id": "t26",
+    "category": "obscure",
+    "query": "nvim-sissors",
+    "expected": ["chrisgrieser/nvim-scissors"]
+  },
+  {
+    "id": "t27",
+    "category": "obscure",
+    "query": "hlrags",
+    "expected": ["m-demare/hlargs.nvim"]
+  },
+  {
+    "id": "t28",
+    "category": "obscure",
+    "query": "starcil",
+    "expected": ["hedyhli/starcli"]
+  },
+  {
+    "id": "t29",
+    "category": "obscure",
+    "query": "spotiu",
+    "expected": ["ceuk/spotui"]
+  },
+  {
+    "id": "t30",
+    "category": "obscure",
+    "query": "hamox",
+    "expected": ["msz/hammox"]
+  },
+  {
+    "id": "t31",
+    "category": "obscure",
+    "query": "zigloa",
+    "expected": ["natecraddock/ziglua"]
+  },
+  {
+    "id": "t32",
+    "category": "obscure",
+    "query": "habbit trove",
+    "expected": ["dohsimpson/HabitTrove"]
+  },
+  {
+    "id": "t33",
+    "category": "obscure",
+    "query": "hakatiem",
+    "expected": ["mujx/hakatime"]
+  },
+  {
+    "id": "t34",
+    "category": "obscure",
+    "query": "code minimpa",
+    "expected": ["wfxr/code-minimap"]
+  },
+  {
+    "id": "t35",
+    "category": "obscure",
+    "query": "postgres extention for uuid v7",
+    "expected": ["fboulnois/pg_uuidv7"]
+  },
+  {
+    "id": "t36",
+    "category": "obscure",
+    "query": "pdf reader for the termnial with kitty graphics",
+    "expected": ["freref/fancy-cat"]
+  },
+  {
+    "id": "t37",
+    "category": "obscure",
+    "query": "react hook to mesure dom nodes",
+    "expected": ["Swizec/useDimensions"]
+  },
+  {
+    "id": "t38",
+    "category": "obscure",
+    "query": "cli to extract pdf metdata",
+    "expected": ["py-pdf/pdfly"]
+  },
+  {
+    "id": "t39",
+    "category": "obscure",
+    "query": "star wars ascii movie over telent",
+    "expected": ["gabe565/ascii-movie"]
   }
 ]
