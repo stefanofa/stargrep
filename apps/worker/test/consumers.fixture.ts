@@ -9,7 +9,6 @@ import { BudgetShare, RepoId } from "@stargrep/github/schemas";
 import * as TokenGate from "@stargrep/github/token-gate";
 import { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Clock from "effect/Clock";
-import type * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Headers from "effect/http/Headers";
@@ -54,21 +53,39 @@ export const run = async <E>(effect: Effect.Effect<void, E>, batch: MessageBatch
 
 const unit = Duration.toMillis(RateLine.durationOf(RateLine.githubAll(share).rate, 1));
 
-// Records each move of a line, in units of githubAll at the test share.
+// A receipt admission could have put in a message for a reservation of this many units.
+export const receipt = (units: number) => ({
+  units,
+  endsAt: Date.parse("2026-11-04T12:00:00Z"),
+  generation: 1,
+  released: 0,
+});
+
+// Records each move of a line in units of githubAll at the test share: a forced reservation adds its units, and a
+// release takes away what it asked to give back.
 export const recordingLine = (fail = false) => {
-  const adjusted: Array<{ readonly line: string; readonly units: number }> = [];
+  const moved: Array<{ readonly line: string; readonly units: number }> = [];
+  const failed = (operation: "rateLines.reserve" | "rateLines.release") =>
+    Effect.fail(new DbQueryFailed({ operation, reason: "transport", sqlState: null }));
   const layer = Layer.succeed(
     Db.Db,
     makeDb({
       rateLines: {
-        adjust: (line: Db.LineKey, _: DateTime.Utc, by: Duration.Duration) =>
+        reserve: ({ line, cost }: Db.Reservation) =>
           fail
-            ? Effect.fail(new DbQueryFailed({ operation: "rateLines.adjust", reason: "transport", sqlState: null }))
-            : Effect.sync(() => void adjusted.push({ line, units: Duration.toMillis(by) / unit })),
+            ? failed("rateLines.reserve")
+            : Effect.sync(() => {
+                moved.push({ line, units: Duration.toMillis(cost) / unit });
+                return Option.none();
+              }),
+        release: ({ line, cost }: Db.Receipt) =>
+          fail
+            ? failed("rateLines.release")
+            : Effect.sync(() => void moved.push({ line, units: -Duration.toMillis(cost) / unit })),
       },
     }),
   );
-  return { adjusted, layer };
+  return { moved, layer };
 };
 
 export const reply: TokenGate.Reply = {

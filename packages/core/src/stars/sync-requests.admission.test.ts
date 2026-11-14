@@ -64,7 +64,14 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests admission", (it) => {
           syncedAt: null,
           ...octocat,
         });
-        expect(sent).toEqual([{ login: "octocat" as Login, mode: "incremental", requestedAt: at(start), reserved: 4 }]);
+        expect(sent).toEqual([
+          {
+            login: "octocat" as Login,
+            mode: "incremental",
+            requestedAt: at(start),
+            reserved: { units: 4, endsAt: at(start + 5 * unitMillis), generation: expect.any(Number), released: 0 },
+          },
+        ]);
 
         yield* synced("octocat", start + 30_000);
         expect(yield* status("Octocat")).toEqual({ state: "done", syncedAt: at(start + 30_000), ...octocat });
@@ -255,7 +262,7 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests for the owner", (it) => {
           ...signedUp,
         });
         expect(sent).toEqual([
-          { login: "octocat" as Login, mode: "incremental", requestedAt: at(start), reserved: 0, userId: ownerId },
+          { login: "octocat" as Login, mode: "incremental", requestedAt: at(start), userId: ownerId },
         ]);
         expect(lookups).toEqual([]);
       }),
@@ -300,9 +307,7 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests for the owner", (it) => {
           yield* TestClock.adjust("8 minutes");
           yield* TestClock.adjust("58 seconds");
           yield* request("octocat", owner);
-          expect(sent).toEqual([
-            { login: "octocat" as Login, mode: "full", requestedAt: at(start), reserved: 0, userId: ownerId },
-          ]);
+          expect(sent).toEqual([{ login: "octocat" as Login, mode: "full", requestedAt: at(start), userId: ownerId }]);
 
           yield* TestClock.adjust("1 second");
           expect(yield* request("octocat", owner)).toMatchObject({ state: "queued", requestedAt: at(start + 600_000) });
@@ -334,7 +339,6 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests for the owner", (it) => {
           login: "octocat" as Login,
           mode: "full",
           requestedAt: at(start + 15 * minute),
-          reserved: 0,
           userId: ownerId,
         });
         expect(yield* status("octocat")).toEqual(opened);

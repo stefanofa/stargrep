@@ -124,20 +124,28 @@ const pagesOf = (read: StarRead) =>
 export const costOf = (read: StarRead): number => 1 + (read._tag === "every" ? 2 : 0) + pagesOf(read);
 
 // After each delivery of a sync, whether it succeeded or failed, githubAll settles with the GitHub requests the token
-// gate counted on the server's token. A first delivery spends what admission reserved for it, so it bills what it
-// counted past that and gives back what it did not use. A later delivery, and a message that reserved nothing, bills
-// its whole count. The line never moves earlier than now.
+// gate counted on the server's token. A first delivery spends what admission reserved for it. It bills what it counted
+// past that, or releases the unused end of the reservation through its receipt, which gives back only what the line
+// still owes, so a delivery that settles late never credits work reserved after it. A later delivery, and a message
+// that reserved nothing, bills its whole count. A message queued before receipts gives nothing back.
 export const billDelivery = Effect.fn("SyncRequests.billDelivery")(function* (
   share: BudgetShare,
   delivery: { readonly body: LoginSyncRequest; readonly attempts: number },
   counted: number,
 ) {
-  const reserved = delivery.attempts > 1 ? 0 : (delivery.body.reserved ?? 0);
-  const owed = counted - reserved;
-  yield* Effect.annotateCurrentSpan({ "sync.requests": counted, "sync.reserved": reserved, "sync.owed": owed });
-  if (owed === 0) return;
+  const all = RateLine.githubAll(share);
+  const reserved = delivery.attempts > 1 ? undefined : delivery.body.reserved;
+  const units = typeof reserved === "object" ? reserved.units : (reserved ?? 0);
+  yield* Effect.annotateCurrentSpan({ "sync.requests": counted, "sync.reserved": units, "sync.owed": counted - units });
   const db = yield* Db.Db;
-  yield* RateLine.bill(db.rateLines, RateLine.githubAll(share), yield* DateTime.now, owed);
+  const now = yield* DateTime.now;
+  if (counted > units) {
+    yield* RateLine.reserve(db.rateLines, all, now, counted - units, true);
+  } else if (counted < units && typeof reserved === "object") {
+    const { endsAt, generation, released } = reserved;
+    const unused = RateLine.durationOf(all.rate, units - counted);
+    yield* db.rateLines.release({ line: all.key, cost: unused, endsAt, generation, released }, now);
+  }
 });
 
 // The body a deferred sync goes out again with, or none to send it as it arrived. Its delivery settled the
@@ -451,11 +459,14 @@ const make = Effect.fnUntraced(function* (share: BudgetShare) {
         ? costOf(yield* starRead(login, syncedAt === null, looked.starredTotal ?? 0))
         : 0;
     if (firstReadOn !== null) yield* charge(firstReadOn, now, work, { _tag: "CallerLimit" }, stopped);
-    const startsAt = waitsInLine
-      ? (yield* charge(all, now, work, { _tag: "LineFull", cost: lookupCost, wait: all.rate.maxWait }, stopped))
-          .startsAt
-      : now;
-    const reserved = waitsInLine ? work : 0;
+    const turn = waitsInLine
+      ? yield* charge(all, now, work, { _tag: "LineFull", cost: lookupCost, wait: all.rate.maxWait }, stopped)
+      : undefined;
+    const startsAt = turn?.startsAt ?? now;
+    const reserved =
+      turn === undefined
+        ? {}
+        : { reserved: { units: work, endsAt: turn.endsAt, generation: turn.generation, released: turn.released } };
     const fullReadDue =
       policy.fullReads &&
       current.status.state !== "queued" &&
@@ -468,10 +479,10 @@ const make = Effect.fnUntraced(function* (share: BudgetShare) {
     const mode: Mode = fullReadDue ? "full" : "incremental";
     // An interruption lands before the send or after it finishes, so the flag says whether the message may be queued.
     yield* Ref.set(sending, true).pipe(
-      Effect.andThen(queue.send({ login, mode, requestedAt: now, reserved, ...paidBy }, wait)),
+      Effect.andThen(queue.send({ login, mode, requestedAt: now, ...reserved, ...paidBy }, wait)),
       Effect.uninterruptible,
     );
-    const cost = lookupPaidBy(policy) + reserved;
+    const cost = lookupPaidBy(policy) + (turn === undefined ? 0 : work);
     return { _tag: "Sent", startsAt, cost, fields: { ...looked, syncedAt } } satisfies Sent;
   });
 

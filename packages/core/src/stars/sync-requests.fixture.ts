@@ -215,11 +215,13 @@ export const lineUnits = () => unitsOn(all);
 
 export const networkUnits = (caller = "caller-a") => unitsOn(network(caller));
 
-export const fillNetwork = (count: number, caller = "caller-a") =>
-  Effect.flatMap(DateTime.now, (now) => Db.Db.use((db) => RateLine.bill(db.rateLines, network(caller), now, count)));
+const forced = (db: Db.Db["Service"], line: RateLine.Line, count: number) =>
+  Effect.flatMap(DateTime.now, (now) => RateLine.reserve(db.rateLines, line, now, count, true)).pipe(Effect.asVoid);
 
-export const reserveUnits = (db: Db.Db["Service"], count: number) =>
-  Effect.flatMap(DateTime.now, (now) => RateLine.bill(db.rateLines, all, now, count)).pipe(Effect.orDie);
+export const fillNetwork = (count: number, caller = "caller-a") =>
+  Db.Db.use((db) => forced(db, network(caller), count));
+
+export const reserveUnits = (db: Db.Db["Service"], count: number) => forced(db, all, count).pipe(Effect.orDie);
 
 export const fill = (count: number) => Db.Db.use((db) => reserveUnits(db, count));
 

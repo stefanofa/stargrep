@@ -18,14 +18,23 @@ import * as DiffPage from "./diff-page.ts";
 export const Mode = Schema.Literals(["incremental", "full"]);
 export type Mode = typeof Mode.Type;
 
+// The units admission reserved in githubAll for a sync's own GitHub requests, with the line's receipt for them, so a
+// delivery can give back what the line still owes for the units it did not use.
+const Reserved = Schema.Struct({
+  units: Schema.Int.check(Schema.isGreaterThan(0)),
+  endsAt: Schema.DateTimeUtcFromMillis,
+  generation: Schema.Int,
+  released: Schema.Finite,
+});
+
 export const LoginSyncRequest = Schema.Struct({
   login: Login,
   mode: Mode,
   // The debug Worker's queue route and messages queued before triggers recorded a request time carry none.
   requestedAt: Schema.optionalKey(Schema.DateTimeUtcFromMillis),
-  // The units admission reserved in the line for the sync's own GitHub requests. A message without them, such as one
-  // from the debug Worker, pays for every request the sync makes.
-  reserved: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  // A message without a reservation, such as one from the debug Worker or a signed-in user's, pays for every request
+  // the sync makes. A message queued before receipts carries only the units.
+  reserved: Schema.optionalKey(Schema.Union([Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)), Reserved])),
   // The signed-in user who started the sync. Their token pays for its GitHub reads and for the enrichment it queues.
   userId: Schema.optionalKey(UserId),
 });

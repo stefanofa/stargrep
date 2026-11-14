@@ -193,9 +193,7 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests line", (it) => {
           accountType: "user",
         });
         expect(delays).toEqual([Duration.zero]);
-        expect(sent).toEqual([
-          { login: "octocat" as Login, mode: "full", requestedAt: at(start), reserved: 0, userId: ownerId },
-        ]);
+        expect(sent).toEqual([{ login: "octocat" as Login, mode: "full", requestedAt: at(start), userId: ownerId }]);
         expect(yield* lineUnits()).toBe(4_500);
       }),
     ),
@@ -225,7 +223,7 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests line", (it) => {
         });
         expect(delays).toEqual([Duration.zero]);
         expect(sent).toEqual([
-          { login: "octocat" as Login, mode: "incremental", requestedAt: at(start), reserved: 0, userId: memberId },
+          { login: "octocat" as Login, mode: "incremental", requestedAt: at(start), userId: memberId },
         ]);
         expect(yield* lineUnits()).toBe(4_500 + 1);
       }),
@@ -246,7 +244,6 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests line", (it) => {
           login: "octocat" as Login,
           mode: "incremental",
           requestedAt: at(start),
-          reserved: 0,
           userId: memberId,
         });
         expect(yield* request("octocat", signedIn("caller-c"))).toMatchObject({ state: "queued" });

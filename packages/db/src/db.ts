@@ -51,7 +51,7 @@ export type {
   SubjectInfo,
   Variant,
 } from "./queries/knowledge/index.ts";
-export type { Reservation, Reserved } from "./queries/rate-lines.ts";
+export type { Receipt, Reservation, Reserved } from "./queries/rate-lines.ts";
 export { CallerKey, LineKey } from "./queries/rate-lines.ts";
 export type {
   DueIcon,

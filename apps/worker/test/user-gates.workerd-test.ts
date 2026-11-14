@@ -58,10 +58,10 @@ describe("sync-stars consumer for signed-in users", () => {
     const { queues } = recordingQueues();
     const line = recordingLine();
     const users = userGates(5);
-    const batch = batchOf("sync-stars", [{ login: "octocat", mode: "full", reserved: 0, userId: "user-ada" }]);
+    const batch = batchOf("sync-stars", [{ login: "octocat", mode: "full", userId: "user-ada" }]);
     const result = await syncing(sending(7), line, [], users.layer)(queues, batch);
     expect(users.asked).toEqual([UserId.make("user-ada")]);
-    expect(line.adjusted).toEqual([{ line: "all", units: 2 }]);
+    expect(line.moved).toEqual([{ line: "all", units: 2 }]);
     expect(result.explicitAcks).toEqual(["m0"]);
   });
 

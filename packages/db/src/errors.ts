@@ -48,7 +48,6 @@ export const Operation = Schema.Literals([
   "syncRequests.settle",
   "rateLines.wait",
   "rateLines.reserve",
-  "rateLines.adjust",
   "rateLines.release",
   "rateLines.prune",
   "usage.increment",

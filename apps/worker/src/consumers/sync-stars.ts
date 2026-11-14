@@ -25,9 +25,10 @@ const markFailed = Effect.fn("SyncStarsConsumer.markFailed")(function* (body: Bo
 // GitHub again.
 const bill = (share: BudgetShare, delivery: Settle.Delivery<Body>, counted: number) =>
   SyncRequests.billDelivery(share, delivery, counted).pipe(
-    Effect.catchTag("DbQueryFailed", (error) =>
-      Effect.logWarning("Could not reconcile a sync with the line", { reason: error.reason }),
-    ),
+    Effect.catchTags({
+      DbQueryFailed: (error) => Effect.logWarning("Could not reconcile a sync with the line", { reason: error.reason }),
+      DbRowInvalid: (error) => Effect.logWarning("Could not reconcile a sync with the line", { column: error.column }),
+    }),
   );
 
 // Each message runs on a token gate of its own that counts the requests it sends on the server's token, so the line is

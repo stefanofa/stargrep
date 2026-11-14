@@ -30,15 +30,19 @@ export interface Reservation {
   readonly force: boolean;
 }
 
-// A reservation the line took: when it starts, by when the line has paid out its cost, and which row of the line
-// took it and how many milliseconds that row had given back in all by then.
-export interface Reserved {
+// What a release reads of a reservation: how much of its end to give back, by when the line pays it out, and which
+// row of the line took it and how many milliseconds that row had given back in all by then.
+export interface Receipt {
   readonly line: LineKey;
   readonly cost: Duration.Duration;
-  readonly startsAt: DateTime.Utc;
   readonly endsAt: DateTime.Utc;
   readonly generation: number;
   readonly released: number;
+}
+
+// A reservation the line took, with when it starts.
+export interface Reserved extends Receipt {
+  readonly startsAt: DateTime.Utc;
 }
 
 export interface Queries {
@@ -50,11 +54,10 @@ export interface Queries {
   ) => Effect.Effect<Duration.Duration, DbQueryFailed | DbRowInvalid>;
   // The reservation the line took, or none when it would wait past maxWait. A refusal changes nothing.
   readonly reserve: (reservation: Reservation) => Effect.Effect<Option.Option<Reserved>, DbQueryFailed | DbRowInvalid>;
-  // Gives back the part of a reservation's cost the line has not paid out by at, never earlier than at. A reservation
-  // the line has paid out gives back nothing, so a late release never credits work reserved after it.
-  readonly release: (reserved: Reserved, at: DateTime.Utc) => Effect.Effect<void, DbQueryFailed>;
-  // Moves the line later by a positive amount, as a forced reservation does, or earlier by a negative one, never past at.
-  readonly adjust: (line: LineKey, at: DateTime.Utc, by: Duration.Duration) => Effect.Effect<void, DbQueryFailed>;
+  // Gives back up to the receipt's cost from the end of its reservation, only the part the line has not paid out by at,
+  // and never earlier than at. A reservation the line has paid out gives back nothing, so a late release never credits
+  // work reserved after it.
+  readonly release: (receipt: Receipt, at: DateTime.Utc) => Effect.Effect<void, DbQueryFailed>;
   // Deletes every line the clock has passed. Such a line reserves the same as no row.
   readonly prune: (at: DateTime.Utc) => Effect.Effect<void, DbQueryFailed>;
 }
@@ -76,10 +79,6 @@ const startOf = (now: SQL, busy: SQL, tolerance: Duration.Duration) =>
   sql`greatest(${now}, ${busy} - ${interval(tolerance)})`;
 
 const busyUntil = sql`${rateLines.busyUntil}`;
-
-// Adds what a write takes off the line, from busy_until to next, to the line's released total.
-const releasing = (from: SQL, next: SQL) =>
-  sql`${rateLines.releasedMs} + greatest(extract(epoch from (${from} - ${next})) * 1000, 0)`;
 
 export const make = Effect.gen(function* () {
   const { run } = yield* Postgres.Postgres;
@@ -124,14 +123,14 @@ export const make = Effect.gen(function* () {
         Effect.map((rows) => Option.map(Arr.head(rows), (row) => ({ line, cost, ...row }))),
       );
     },
-    // What the line still owes for the reservation is the part of its cost due after at. Later reservations only
-    // queue behind it, and time given back since it was taken may have moved it earlier by as much as the line's
+    // What the line still owes of the receipt's cost is the part due after at, counted back from the reservation's
+    // end. Later reservations only queue behind it, and time given back since it was taken may have moved it earlier by as much as the line's
     // released total grew, so its end is taken to be that much earlier, and never later than busy_until. Time given
     // back behind it then makes the release smaller, never larger. A line the prune deleted had paid out every
     // reservation on it, so a receipt from it releases nothing into the row that replaced it. One statement, under the
     // row lock.
     release: Effect.fn("Db.rateLines.release")(function* (
-      { line, cost, endsAt, generation, released }: Reserved,
+      { line, cost, endsAt, generation, released }: Receipt,
       at: DateTime.Utc,
     ) {
       const now = timeParam(at);
@@ -142,28 +141,13 @@ export const make = Effect.gen(function* () {
       yield* run("rateLines.release", (db) =>
         db
           .update(rateLines)
-          .set({ busyUntil: next, releasedMs: releasing(busyUntil, next) })
+          .set({
+            busyUntil: next,
+            releasedMs: sql`${rateLines.releasedMs} + greatest(extract(epoch from (${busyUntil} - ${next})) * 1000, 0)`,
+          })
           .where(and(eq(rateLines.key, line), eq(rateLines.generation, generation))),
       );
     }),
-    adjust: (line, at, by) => {
-      const now = timeParam(at);
-      return run("rateLines.adjust", (db) =>
-        db
-          .insert(rateLines)
-          .values({ key: line, busyUntil: sql`${now} + greatest(${interval(by)}, '0'::interval)` })
-          .onConflictDoUpdate({
-            target: rateLines.key,
-            set: {
-              busyUntil: sql`greatest(greatest(${busyUntil}, ${now}) + ${interval(by)}, ${now})`,
-              releasedMs: releasing(
-                sql`greatest(${busyUntil}, ${now})`,
-                sql`greatest(greatest(${busyUntil}, ${now}) + ${interval(by)}, ${now})`,
-              ),
-            },
-          }),
-      ).pipe(Effect.asVoid);
-    },
     prune: (at) =>
       run("rateLines.prune", (db) => db.delete(rateLines).where(lt(rateLines.busyUntil, timeParam(at)))).pipe(
         Effect.asVoid,
