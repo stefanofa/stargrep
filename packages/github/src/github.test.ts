@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import * as Otlp from "@stargrep/telemetry/otlp";
 import { effect } from "@stargrep/testing";
 import * as Cause from "effect/Cause";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -15,6 +16,7 @@ import * as OtlpExporter from "effect/observability/OtlpExporter";
 import * as OtlpSerialization from "effect/observability/OtlpSerialization";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { blobOid } from "./blob-oid.ts";
 import * as Fake from "./github.fixture.ts";
 import * as GitHub from "./github.ts";
 import { type BudgetShare, Login, ObjectId, RepoId, RepoName, type RepoNodeId } from "./schemas.ts";
@@ -639,6 +641,167 @@ describe("readme", () => {
       expect(fake.sent[0]?.headers["if-none-match"]).toBeUndefined();
     }).pipe(Effect.provide(fake.layer));
   });
+});
+
+// One repo's README as GitHub holds it, and what its GraphQL batch alias answers.
+interface Held {
+  readonly text: string;
+  readonly answer?: "text" | "repo-gone" | "forbidden" | "blob-gone" | "cut-short";
+}
+
+const oidOf = (text: string) =>
+  Effect.map(blobOid(new TextEncoder().encode(text)), ObjectId.make).pipe(Effect.provide(Digest.layerWebCrypto));
+
+// Answers README batches by node ID and object ID, and REST blob reads by object ID, from the repos GitHub holds.
+const readmeHandler =
+  (held: ReadonlyMap<string, Held & { readonly oid: ObjectId }>): Fake.Handler =>
+  (sent) => {
+    if (sent.url.pathname !== "/graphql") {
+      const found = [...held.values()].find((entry) => sent.url.pathname.endsWith(`/git/blobs/${entry.oid}`));
+      return found === undefined ? { status: 404 } : { body: found.text, headers: Fake.rateLimitHeaders(4000) };
+    }
+    const variables: Record<string, string> = JSON.parse(sent.body ?? "{}").variables;
+    const data: Record<string, unknown> = {};
+    const errors: Array<unknown> = [];
+    for (let index = 0; `r${index}` in variables; index++) {
+      const entry = held.get(variables[`r${index}`] ?? "");
+      const answer = entry?.answer ?? "text";
+      if (entry === undefined || entry.oid !== variables[`o${index}`]) data[`b${index}`] = { object: null };
+      else if (answer === "repo-gone" || answer === "forbidden") {
+        data[`b${index}`] = null;
+        const type = answer === "repo-gone" ? "NOT_FOUND" : "FORBIDDEN";
+        errors.push({ type, path: [`b${index}`], message: "Could not resolve" });
+      } else if (answer === "blob-gone") data[`b${index}`] = { object: null };
+      else data[`b${index}`] = { object: { text: answer === "cut-short" ? entry.text.slice(0, 8) : entry.text } };
+    }
+    return { headers: Fake.rateLimitHeaders(4000, 3600, "graphql"), body: { data, errors } };
+  };
+
+const holding = Effect.fn("test.holding")(function* (entries: ReadonlyArray<readonly [string, Held]>) {
+  const held = new Map<string, Held & { readonly oid: ObjectId }>();
+  for (const [nodeId, entry] of entries) held.set(nodeId, { ...entry, oid: yield* oidOf(entry.text) });
+  return held;
+});
+
+const refOf = (held: ReadonlyMap<string, { readonly oid: ObjectId }>, nodeId: string) => ({
+  nodeId: nodeId as RepoNodeId,
+  oid: held.get(nodeId)?.oid ?? ObjectId.make("0".repeat(40)),
+});
+
+describe("readmes", () => {
+  effect("reads READMEs 25 to a request and keeps only text that hashes to the object ID asked for", () =>
+    Effect.gen(function* () {
+      const answers: Record<number, Held["answer"]> = {
+        27: "repo-gone",
+        28: "blob-gone",
+        29: "forbidden",
+        30: "cut-short",
+      };
+      const held = yield* holding(
+        Array.from({ length: 30 }, (_, i) => [
+          `R_${i + 1}`,
+          { text: `# repo-${i + 1}\n\nA CLI.`, answer: answers[i + 1] ?? "text" },
+        ]),
+      );
+      const fake = Fake.layer(readmeHandler(held));
+      const refs = [...held.keys()].map((nodeId) => refOf(held, nodeId));
+      // A fork that keeps its parent's README asks for the same blob, so it is read once.
+      const fork = { nodeId: "R_31" as RepoNodeId, oid: refs[0]?.oid ?? ObjectId.make("0".repeat(40)) };
+      const texts = yield* Effect.flatMap(GitHub.GitHub, (github) => github.readmes([...refs, fork])).pipe(
+        Effect.provide(fake.layer),
+      );
+      expect([...texts.values()]).toEqual(Array.from({ length: 26 }, (_, i) => `# repo-${i + 1}\n\nA CLI.`));
+      expect([...texts.keys()]).toEqual(refs.slice(0, 26).map((ref) => ref.oid));
+      expect(
+        fake.sent.map((sent) => {
+          const variables: Record<string, string> = JSON.parse(sent.body ?? "{}").variables;
+          return [sent.url.pathname, Object.keys(variables).length / 2, variables.r0, variables.o0];
+        }),
+      ).toEqual([
+        ["/graphql", 25, "R_1", refs[0]?.oid],
+        ["/graphql", 5, "R_26", refs[25]?.oid],
+      ]);
+    }),
+  );
+
+  effect("returns the string a REST read returns, with a leading byte order mark dropped", () =>
+    Effect.gen(function* () {
+      const held = yield* holding([
+        ["R_1", { text: "\uFEFF# Bom\n\nSaved by Notepad." }],
+        ["R_2", { text: "# Crlf\r\n\r\nWindows line endings.\r\n" }],
+        ["R_3", { text: "# Ünïcödé 🚀\n\n日本語のドキュメント  \n" }],
+      ]);
+      const fake = Fake.layer(readmeHandler(held));
+      yield* Effect.gen(function* () {
+        const github = yield* GitHub.GitHub;
+        const batched = yield* github.readmes([...held.keys()].map((nodeId) => refOf(held, nodeId)));
+        const rest = yield* Effect.forEach([...held.values()], (entry) =>
+          github.readme({ owner: Login.make("owner"), name: RepoName.make("repo"), oid: entry.oid }),
+        );
+        expect([...batched.values()]).toEqual(rest);
+        expect(rest[0]).toBe("# Bom\n\nSaved by Notepad.");
+      }).pipe(Effect.provide(fake.layer));
+    }),
+  );
+
+  effect("leaves every README of a batch GitHub failed to answer to REST", () =>
+    Effect.gen(function* () {
+      const held = yield* holding([["R_1", { text: "# One" }]]);
+      const replies: ReadonlyArray<Fake.Reply> = [
+        { body: { data: null, errors: [{ type: "MAX_NODE_LIMIT_EXCEEDED", message: "Too many" }] } },
+        { body: { data: { nodes: [] } } },
+        { status: 502 },
+      ];
+      for (const reply of replies) {
+        const fake = Fake.layer(() => reply);
+        const texts = yield* Effect.gen(function* () {
+          const github = yield* GitHub.GitHub;
+          const fiber = yield* Effect.forkChild(github.readmes([refOf(held, "R_1")]));
+          yield* TestClock.adjust("1 minute");
+          return yield* Fiber.join(fiber);
+        }).pipe(Effect.provide(fake.layer));
+        expect(texts.size).toBe(0);
+      }
+    }),
+  );
+
+  effect("waits out a short GraphQL rate limit on a batch", () =>
+    Effect.gen(function* () {
+      const held = yield* holding([["R_1", { text: "# One" }]]);
+      const answer = readmeHandler(held);
+      const fake = Fake.layer((sent, index) =>
+        index === 0
+          ? {
+              headers: Fake.rateLimitHeaders(0, 30, "graphql"),
+              body: { data: null, errors: [{ type: "RATE_LIMITED", message: "slow down" }] },
+            }
+          : answer(sent, index),
+      );
+      const texts = yield* Effect.gen(function* () {
+        const github = yield* GitHub.GitHub;
+        const fiber = yield* Effect.forkChild(github.readmes([refOf(held, "R_1")]));
+        yield* TestClock.adjust("30 seconds");
+        return yield* Fiber.join(fiber);
+      }).pipe(Effect.provide(fake.layer));
+      expect([...texts.values()]).toEqual(["# One"]);
+      expect(fake.sent.map((sent) => sent.startedAt)).toEqual([0, 30_000]);
+    }),
+  );
+
+  effect("fails on a long GraphQL rate limit rather than spend REST requests while limited", () =>
+    Effect.gen(function* () {
+      const held = yield* holding([["R_1", { text: "# One" }]]);
+      const fake = Fake.layer(() => ({
+        headers: Fake.rateLimitHeaders(0, 600, "graphql"),
+        body: { data: null, errors: [{ type: "RATE_LIMITED", message: "slow down" }] },
+      }));
+      const error = yield* Effect.flatMap(GitHub.GitHub, (github) =>
+        Effect.flip(github.readmes([refOf(held, "R_1")])),
+      ).pipe(Effect.provide(fake.layer));
+      expect(error).toMatchObject({ _tag: "RateLimited", resource: "graphql", retryAfterMillis: 600_000 });
+      expect(fake.sent).toHaveLength(1);
+    }),
+  );
 });
 
 describe("telemetry", () => {
