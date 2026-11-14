@@ -120,6 +120,18 @@ export const holdSecondPage = () => {
 };
 
 const db = makeDb({
+  // Page tests test pages, not limits, so every turn in a rate line starts at once.
+  rateLines: {
+    reserve: ({ line, at, cost }) =>
+      Effect.succeedSome({
+        line,
+        cost,
+        startsAt: at,
+        endsAt: DateTime.addDuration(at, cost),
+        generation: 1,
+        released: 0,
+      }),
+  },
   accounts: { byLogin: (login: Login) => Effect.succeed(accountOf(login)) },
   stars: {
     // A hydration test can hold page two until it has checked the first page.

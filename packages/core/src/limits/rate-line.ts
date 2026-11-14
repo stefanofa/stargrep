@@ -46,6 +46,13 @@ export const modelAll: Line = {
   rate: { units: 6_000, per: Duration.hours(1), burst: 600, maxWait: Duration.zero },
 };
 
+// Each page of public stars that misses the answer cache counts one. A page costs one database read and no GitHub
+// request or model call, so no line holds everyone's pages.
+export const starsNetwork = (caller: Db.CallerKey): Line => ({
+  key: Db.LineKey.make(`stars/${caller}`),
+  rate: { units: 60, per: Duration.minutes(1), burst: 60, maxWait: Duration.zero },
+});
+
 // How long the rate takes to pay out this many units.
 export const durationOf = (rate: Rate, units: number) =>
   Duration.millis((units * Duration.toMillis(rate.per)) / rate.units);

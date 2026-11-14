@@ -1,4 +1,7 @@
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Db from "../src/db.ts";
 
 export { accountRow, repo } from "./fixtures.ts";
@@ -122,3 +125,27 @@ export const makeDb = (overrides: Overrides = {}): Db.Db["Service"] =>
     knowledge: { ...defaults.knowledge, ...overrides.knowledge },
     facets: { ...defaults.facets, ...overrides.facets },
   });
+
+// The reservation rule of the rate_lines upsert, kept in a map, for a fake database behind procedures that meter.
+export const memoryRateLines = (): Pick<Db.Db["Service"]["rateLines"], "reserve"> => {
+  const busyUntil = new Map<Db.LineKey, number>();
+  return {
+    reserve: ({ line, at, cost, tolerance, maxWait, force }) =>
+      Effect.sync(() => {
+        const now = DateTime.toEpochMillis(at);
+        const from = Math.max(busyUntil.get(line) ?? now, now);
+        const startsAt = Math.max(now, from - Duration.toMillis(tolerance));
+        if (!force && startsAt > now + Duration.toMillis(maxWait)) return Option.none();
+        const endsAt = from + Duration.toMillis(cost);
+        busyUntil.set(line, endsAt);
+        return Option.some({
+          line,
+          cost,
+          startsAt: DateTime.makeUnsafe(startsAt),
+          endsAt: DateTime.makeUnsafe(endsAt),
+          generation: 1,
+          released: 0,
+        });
+      }),
+  };
+};

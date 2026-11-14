@@ -1004,11 +1004,15 @@ const starsApi = Effect.gen(function* () {
     builds++;
     return Context.merge(services({ limiter: (kind) => Effect.sync(() => limits.push(kind)) }), real);
   });
-  const stars = (input: { readonly login: string; readonly limit?: number; readonly cursor?: string }) =>
+  const stars = (
+    input: { readonly login: string; readonly limit?: number; readonly cursor?: string },
+    network = "caller-test",
+  ) =>
     Effect.gen(function* () {
       const resHeaders = new Headers();
+      const caller = Caller.of({ key: Db.CallerKey.make(network), address: "192.0.2.1" });
       const context: ApiContext = {
-        ...contextFor("rest", built),
+        ...contextFor("rest", Effect.map(built, Context.add(Caller, caller))),
         "effect/context": yield* Effect.context<never>(),
         answerCache: memory.cache,
         resHeaders,
@@ -1133,6 +1137,31 @@ it.layer(TestDatabase.layerMemory({ embeddingModel: "test/model" as EmbeddingMod
         yield* stars({ login: "ada", limit: 1 });
         yield* stars({ login: "ada", limit: 2 });
         expect(limits).toEqual(["stars"]);
+      }),
+    );
+
+    it.effect("refuses a network's 61st uncached page in a minute, synced or not, and reopens a second later", () =>
+      Effect.gen(function* () {
+        yield* seedStars([801]);
+        yield* (yield* TestDatabase.TestDatabase).query("delete from rate_lines");
+        const { stars } = yield* starsApi;
+        const answer = (login: string, network: string) =>
+          stars({ login }, network).pipe(
+            Effect.map(({ page, cache }) => (page instanceof ORPCError ? page.code : cache)),
+          );
+        expect(yield* answer("ada", "network-a")).toBe("miss");
+        const unsynced = yield* Effect.forEach(Array.from({ length: 59 }), () => answer("nobody-synced", "network-a"));
+        expect(unsynced).toEqual(Array(59).fill("ACCOUNT_NOT_SYNCED"));
+        expect(yield* answer("nobody-synced", "network-a")).toBe("TOO_MANY_REQUESTS");
+        expect(yield* answer("ada", "network-a")).toBe("hit");
+        expect(yield* answer("nobody-synced", "network-b")).toBe("ACCOUNT_NOT_SYNCED");
+        yield* TestClock.adjust("999 millis");
+        expect(yield* answer("nobody-synced", "network-a")).toBe("TOO_MANY_REQUESTS");
+        yield* TestClock.adjust("1 millis");
+        expect([yield* answer("nobody-synced", "network-a"), yield* answer("nobody-synced", "network-a")]).toEqual([
+          "ACCOUNT_NOT_SYNCED",
+          "TOO_MANY_REQUESTS",
+        ]);
       }),
     );
 
