@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import * as Db from "@stargrep/db";
 import { EmbeddingModelId } from "@stargrep/db/embedding";
 import * as TestDatabase from "@stargrep/db/test-database";
+import { blobOid } from "@stargrep/github/blob-oid";
 import * as GitHubFake from "@stargrep/github/github.fixture";
 import { ObjectId, Repo, type RepoFile, type RepoId } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
@@ -23,7 +24,7 @@ const oid = (digit: string) => Schema.decodeSync(ObjectId)(digit.repeat(40));
 const repo = (n: number) => Schema.decodeSync(Repo)({ id: n, nodeId: `R_${n}`, owner: "acme", name: `kit-${n}` });
 const idOf = (n: number) => repo(n).id;
 const encode = (text: string) => new TextEncoder().encode(text);
-const blobOidOf = (text: string) => Effect.map(FetchIcon.blobOid(encode(text)), Schema.decodeSync(ObjectId));
+const blobOidOf = (text: string) => Effect.map(blobOid(encode(text)), Schema.decodeSync(ObjectId));
 const templateFavicon = new Uint8Array(
   await Bun.file(new URL("./fixtures/next-favicon-current.ico", import.meta.url)).arrayBuffer(),
 );
