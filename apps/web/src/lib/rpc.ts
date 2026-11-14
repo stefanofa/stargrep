@@ -1,4 +1,4 @@
-import { createORPCClient, ORPCError } from "@orpc/client";
+import { createORPCClient, ORPCError, ResponseError } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { ContractRouterClient, InferContractRouterOutputs } from "@orpc/contract";
 import type { contract } from "@stargrep/api/contract";
@@ -26,6 +26,9 @@ export const api = createIsomorphicFn()
   });
 
 // The contract's code for a failure the API answered, or undefined for any other failure, such as a dropped connection.
-// Only an error the contract defines arrives marked as defined.
-export const wireCode = (error: unknown): WireCode | undefined =>
-  error instanceof ORPCError && error.defined ? (error.code as WireCode) : undefined;
+// Only an error the contract defines arrives marked as defined. Prod's zone rate limit answers 429 with Cloudflare's own
+// HTML page before the API sees the request, which says what the API's TOO_MANY_REQUESTS says.
+export const wireCode = (error: unknown): WireCode | undefined => {
+  if (error instanceof ORPCError) return error.defined ? (error.code as WireCode) : undefined;
+  return error instanceof ResponseError && error.response.status === 429 ? "TOO_MANY_REQUESTS" : undefined;
+};

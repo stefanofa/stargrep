@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createORPCErrorFromJson, ORPCError } from "@orpc/client";
 import type { WireCode } from "@stargrep/api/errors";
 import { libraryTrouble, refusalOf, rememberedRefusal } from "../src/lib/trouble.ts";
+import { edgeAnswers } from "./edge-answers.ts";
 
 // The API marks every error its contract defines.
 const answered = (code: WireCode) => createORPCErrorFromJson({ defined: true, code, message: code, data: undefined });
@@ -16,6 +17,20 @@ describe("why a stars page can't show stars", () => {
     expect(refusalOf(new ORPCError("TOO_MANY_REQUESTS"))).toBe("unavailable");
     expect(libraryTrouble(answered("TOO_MANY_REQUESTS"))).toBe("load-limited");
     expect(libraryTrouble(new Error("offline"))).toBe("load-failed");
+  });
+
+  test("a 429 page from the zone's rate limit is too many requests, and any other page from the edge is not", async () => {
+    const failureFrom = (status: 429 | 502) =>
+      edgeAnswers(status)
+        .triggerSync({ login: "octocat" })
+        .then(
+          () => expect.unreachable(),
+          (error: unknown) => error,
+        );
+    const blocked = await failureFrom(429);
+    expect([refusalOf(blocked), libraryTrouble(blocked)]).toEqual(["limited", "load-limited"]);
+    const down = await failureFrom(502);
+    expect([refusalOf(down), libraryTrouble(down)]).toEqual(["unavailable", "load-failed"]);
   });
 
   test("reads a remembered refusal for its own login only", () => {

@@ -1,5 +1,5 @@
 import "./register.ts";
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, setSystemTime, spyOn, test } from "bun:test";
 import { createORPCErrorFromJson } from "@orpc/client";
 import type { WireCode } from "@stargrep/api/errors";
 import { Login } from "@stargrep/github/schemas";
@@ -16,7 +16,9 @@ import userEvent from "@testing-library/user-event";
 import * as DateTime from "effect/DateTime";
 import * as real from "../src/lib/library-collection.ts";
 import type { Client, LibraryRepo, SearchResult, SyncStatus, Viewer } from "../src/lib/rpc.ts";
+import { rememberedRefusal } from "../src/lib/trouble.ts";
 import type {} from "../src/routeTree.gen.ts";
+import { edgeAnswers } from "./edge-answers.ts";
 import { syncStatus } from "./sync-status.fixture.ts";
 
 type Repo = LibraryRepo;
@@ -28,7 +30,8 @@ interface Server {
   status: SyncStatus;
   search: (q: string) => Array<SearchResult> | Promise<Array<SearchResult>>;
   searches: Array<string>;
-  refusals: Record<string, "LOGIN_NOT_FOUND" | "SYNC_BUSY" | "TOO_MANY_REQUESTS" | "SERVICE_UNAVAILABLE">;
+  // A refusal the API answers, or the zone's rate limit turning the address away before the API sees the request.
+  refusals: Record<string, "LOGIN_NOT_FOUND" | "SYNC_BUSY" | "TOO_MANY_REQUESTS" | "SERVICE_UNAVAILABLE" | "zone">;
   calls: { library: number; syncStatus: number };
 }
 
@@ -71,6 +74,7 @@ const api = (): Client => ({
   },
   triggerSync: async ({ login }: { login: string }) => {
     const refusal = server.refusals[login];
+    if (refusal === "zone") return edgeAnswers(429).triggerSync({ login });
     if (refusal !== undefined) throw answered(refusal);
     return server.status;
   },
@@ -771,6 +775,24 @@ describe("the search page in each state", () => {
       expect(page().getByRole("heading", { name: "lots of requests from your network" })).toBeTruthy(),
     );
     expect(strip()).toContain("taking a breather");
+  });
+
+  test("an address the zone turned away is told to wait, not that github is out of reach, and only for a minute", async () => {
+    server.refusals.flooded = "zone";
+    server.status = status({ login: "flooded", state: "unknown", syncedAt: null, requestedAt: null });
+    await open("/flooded", "Search @flooded's stars");
+    await waitFor(() =>
+      expect(page().getByRole("heading", { name: "lots of requests from your network" })).toBeTruthy(),
+    );
+    expect(strip()).toContain("taking a breather");
+    expect(page().getAllByRole("button", { name: "Try again" }).length).toBeGreaterThan(0);
+    expect(rememberedRefusal(document.cookie, "flooded")).toBe("limited");
+    try {
+      setSystemTime(DateTime.toEpochMillis(DateTime.add(DateTime.nowUnsafe(), { seconds: 61 })));
+      expect(rememberedRefusal(document.cookie, "flooded")).toBeUndefined();
+    } finally {
+      setSystemTime();
+    }
   });
 
   test("a visitor lands on the demo account with the hero, the sign-in tile and example searches", async () => {
