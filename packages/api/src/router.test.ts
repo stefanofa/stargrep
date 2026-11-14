@@ -105,6 +105,9 @@ const reading = { total: 1776, read: 412, failed: 3 };
 
 const services = (fakes: Fakes): Context.Context<ApiServices> => {
   const db = makeDb({
+    accounts: {
+      claimedBy: (userId: UserId) => Effect.succeed(userId === ada.userId ? Option.some(ada.account) : Option.none()),
+    },
     repos: {
       require: (id: RepoId) =>
         id === repo.id
@@ -312,16 +315,22 @@ describe("sync", () => {
     }
   });
 
-  test("queues a signed-in import as that user's work, and a broken session as a signed-out one", async () => {
+  test("queues your own login as its owner, another login as your work, and a broken session as a signed-out one", async () => {
     const sent: Array<readonly [Login, SyncRequests.Requester]> = [];
     const caller = Db.CallerKey.make("caller-test");
-    const userId = UserId.make("user-ada");
+    const userId = ada.userId;
+    await client({ sent, signedIn: Effect.succeedSome(userId) }).api.triggerSync({ login: "Ada" });
     await client({ sent, signedIn: Effect.succeedSome(userId) }).api.triggerSync({ login: "octocat" });
+    await client({ sent, signedIn: Effect.succeedSome(UserId.make("user-unclaimed")) }).api.triggerSync({
+      login: "ada",
+    });
     await client({ sent, signedIn: Effect.fail(new ViewerUnavailable({ step: "session" })) }).api.triggerSync({
       login: "hubot",
     });
     expect(sent).toEqual([
+      ["Ada" as Login, { _tag: "owner", userId }],
       ["octocat" as Login, { _tag: "signed-in", userId, caller }],
+      ["ada" as Login, { _tag: "signed-in", userId: UserId.make("user-unclaimed"), caller }],
       ["hubot" as Login, { _tag: "anyone", caller }],
     ]);
   });
@@ -362,6 +371,17 @@ describe("sync", () => {
     });
     expect((await failure(limited.api.triggerSync({ login: "octocat" }))).code).toBe("TOO_MANY_REQUESTS");
     expect([asked, sent]).toEqual([["sync"], []]);
+  });
+
+  test("lets the owner's sync past the sync limits, which guard the server's token", async () => {
+    const sent: Array<readonly [Login, SyncRequests.Requester]> = [];
+    const owner = client({
+      sent,
+      signedIn: Effect.succeedSome(ada.userId),
+      limiter: () => Effect.fail(new RateLimited({ limit: "all" })),
+    });
+    expect(await owner.api.triggerSync({ login: "ada" })).toMatchObject({ login: "ada", state: "queued" });
+    expect(sent).toEqual([["ada" as Login, { _tag: "owner", userId: ada.userId }]]);
   });
 
   test("maps a sync queue failure to service unavailable", async () => {
@@ -615,7 +635,7 @@ describe("signed-in procedures", () => {
       avatarUrl: "https://avatars.githubusercontent.com/u/7",
       starredCount: 2431,
     });
-    expect(sent).toEqual([["ada" as Login, { _tag: "owner", userId: ada.userId }]]);
+    expect(sent).toEqual([]);
     expect(await api.library()).toEqual({
       repos: [
         expect.objectContaining({
@@ -648,7 +668,11 @@ const syncedAccount = Effect.gen(function* () {
   const db = yield* Db.Db;
   const { id, type, login, name, avatarUrl, followers, publicRepos } = ada.account;
   const lastSync = DateTime.makeUnsafe(now - 80 * 60_000);
-  yield* db.accounts.upsert({ id, type, login, name, avatarUrl, followers, publicRepos });
+  yield* db.accounts.claim({
+    facts: { id, type, login, name, avatarUrl, followers, publicRepos },
+    userId: ada.userId,
+    starredCount: 2431,
+  });
   yield* db.stars.applySnapshot({ accountId: id, stars: [], at: lastSync });
   yield* db.accounts.recordStarSync({ accountId: id, at: lastSync });
 });
@@ -662,29 +686,42 @@ const signedInWith = (sender: Layer.Layer<SyncQueue.SyncQueue>) =>
 
 const ownerApi = Effect.gen(function* () {
   const real = yield* Effect.context<Db.Db | SyncRequests.SyncRequests>();
-  const fakes = services({ viewer: Effect.succeed(ada) });
+  const fakes = services({ viewer: Effect.succeed(ada), signedIn: Effect.succeedSome(ada.userId) });
   const merged = Context.merge(fakes, real);
   return createRouterClient(router, { context: contextFor("rpc", Effect.succeed(merged)) });
 });
 
-const openLibrary = Effect.gen(function* () {
+const openOwnPage = Effect.gen(function* () {
   const api = yield* ownerApi;
-  yield* Effect.promise(() => api.viewer());
-  return yield* Effect.promise(() => api.syncStatus({ login: ada.account.login }));
+  return yield* Effect.promise(() => api.triggerSync({ login: ada.account.login }));
 });
 
 const resetOwner = Effect.gen(function* () {
   queue.sent.length = 0;
-  yield* (yield* TestDatabase.TestDatabase).query("truncate github_accounts, sync_requests cascade");
+  const database = yield* TestDatabase.TestDatabase;
+  yield* database.query('truncate github_accounts, sync_requests, "user" cascade');
+  yield* database.query(`insert into "user" (id, name, email) values ($1, 'Ada', 'ada@example.test')`, [ada.userId]);
   yield* TestClock.setTime(now);
   yield* syncedAccount;
 });
 
-it.layer(signedInWith(queue.layer), { timeout: 30_000 })("opening the library", (it) => {
-  it.effect("starts a sync that syncStatus reports as queued right after", () =>
+it.layer(signedInWith(queue.layer), { timeout: 30_000 })("opening your own stars", (it) => {
+  it.effect("reads the viewer without asking for a sync", () =>
     Effect.gen(function* () {
       yield* resetOwner;
-      expect(yield* openLibrary).toMatchObject({
+      const api = yield* ownerApi;
+      expect(yield* Effect.promise(() => api.viewer())).toMatchObject({ login: "ada" });
+      expect(yield* Effect.promise(() => api.syncStatus({ login: ada.account.login }))).toMatchObject({
+        state: "done",
+      });
+      expect(queue.sent).toEqual([]);
+    }),
+  );
+
+  it.effect("starts a sync as the owner that syncStatus reports as queued right after", () =>
+    Effect.gen(function* () {
+      yield* resetOwner;
+      expect(yield* openOwnPage).toMatchObject({
         login: "ada",
         state: "queued",
         requestedAt: "2026-11-05T12:55:30.000Z",
@@ -705,15 +742,15 @@ it.layer(signedInWith(queue.layer), { timeout: 30_000 })("opening the library", 
   it.effect("waits for a queued sync, then starts at most one a minute after the last one finished", () =>
     Effect.gen(function* () {
       yield* resetOwner;
-      yield* openLibrary;
+      yield* openOwnPage;
       yield* TestClock.adjust("70 seconds");
-      expect(yield* openLibrary).toMatchObject({ state: "queued", requestedAt: "2026-11-05T12:55:30.000Z" });
+      expect(yield* openOwnPage).toMatchObject({ state: "queued", requestedAt: "2026-11-05T12:55:30.000Z" });
       const finished = DateTime.makeUnsafe(now + 40_000);
       yield* Db.Db.use((db) => db.accounts.recordStarSync({ accountId: ada.account.id, at: finished }));
-      expect(yield* openLibrary).toMatchObject({ state: "done", syncedAt: "2026-11-05T12:56:10.000Z" });
+      expect(yield* openOwnPage).toMatchObject({ state: "done", syncedAt: "2026-11-05T12:56:10.000Z" });
       expect(queue.sent).toHaveLength(1);
       yield* TestClock.adjust("30 seconds");
-      expect(yield* openLibrary).toMatchObject({ state: "queued", requestedAt: "2026-11-05T12:57:10.000Z" });
+      expect(yield* openOwnPage).toMatchObject({ state: "queued", requestedAt: "2026-11-05T12:57:10.000Z" });
       expect(queue.sent).toHaveLength(2);
     }),
   );
@@ -724,16 +761,14 @@ const downQueue = Layer.succeed(
   SyncQueue.SyncQueue.of({ send: () => Effect.fail(new SyncQueue.SyncQueueFailed({ cause: "down" })) }),
 );
 
-it.layer(signedInWith(downQueue), { timeout: 30_000 })("opening the library with the sync queue down", (it) => {
-  it.effect("still answers the viewer and reports the sync failed", () =>
+it.layer(signedInWith(downQueue), { timeout: 30_000 })("opening your own stars with the sync queue down", (it) => {
+  it.effect("still answers, with the sync reported failed", () =>
     Effect.gen(function* () {
       yield* resetOwner;
+      const failed = { state: "failed", requestedAt: "2026-11-05T12:55:30.000Z" };
+      expect(yield* openOwnPage).toMatchObject(failed);
       const api = yield* ownerApi;
-      expect(yield* Effect.promise(() => api.viewer())).toMatchObject({ login: "ada" });
-      expect(yield* Effect.promise(() => api.syncStatus({ login: ada.account.login }))).toMatchObject({
-        state: "failed",
-        requestedAt: "2026-11-05T12:55:30.000Z",
-      });
+      expect(yield* Effect.promise(() => api.syncStatus({ login: ada.account.login }))).toMatchObject(failed);
     }),
   );
 });

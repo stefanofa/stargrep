@@ -1,5 +1,5 @@
 import "./register.ts";
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, setSystemTime, spyOn, test } from "bun:test";
 import { createORPCErrorFromJson } from "@orpc/client";
 import type { WireCode } from "@stargrep/api/errors";
 import { Login } from "@stargrep/github/schemas";
@@ -16,7 +16,9 @@ import userEvent from "@testing-library/user-event";
 import * as DateTime from "effect/DateTime";
 import * as real from "../src/lib/library-collection.ts";
 import type { Client, LibraryRepo, SearchResult, SyncStatus, Viewer } from "../src/lib/rpc.ts";
+import { rememberedRefusal } from "../src/lib/trouble.ts";
 import type {} from "../src/routeTree.gen.ts";
+import { edgeAnswers } from "./edge-answers.ts";
 import { syncStatus } from "./sync-status.fixture.ts";
 
 type Repo = LibraryRepo;
@@ -28,7 +30,10 @@ interface Server {
   status: SyncStatus;
   search: (q: string) => Array<SearchResult> | Promise<Array<SearchResult>>;
   searches: Array<string>;
-  refusals: Record<string, "LOGIN_NOT_FOUND" | "SYNC_BUSY" | "TOO_MANY_REQUESTS" | "SERVICE_UNAVAILABLE">;
+  // Every login the page asked to sync.
+  triggered: Array<string>;
+  // A refusal the API answers, or the zone's rate limit turning the address away before the API sees the request.
+  refusals: Record<string, "LOGIN_NOT_FOUND" | "SYNC_BUSY" | "TOO_MANY_REQUESTS" | "SERVICE_UNAVAILABLE" | "zone">;
   calls: { library: number; syncStatus: number };
 }
 
@@ -70,8 +75,13 @@ const api = (): Client => ({
     return server.status;
   },
   triggerSync: async ({ login }: { login: string }) => {
+    server.triggered.push(login);
     const refusal = server.refusals[login];
+    if (refusal === "zone") return edgeAnswers(429).triggerSync({ login });
     if (refusal !== undefined) throw answered(refusal);
+    // An import that starts queues a login the API had never seen.
+    if (server.status.state === "unknown")
+      server.status = status({ login, state: "queued", syncedAt: null, enrichment: server.status.enrichment });
     return server.status;
   },
   stars: async ({ login }: { login: string }) => ({ login, repos: server.repos, nextCursor: null, labels: {} }),
@@ -166,6 +176,7 @@ beforeEach(() => {
     status: status({ enrichment: allRead }),
     search: () => [],
     searches: [],
+    triggered: [],
     refusals: {},
     calls: { library: 0, syncStatus: 0 },
   };
@@ -322,6 +333,25 @@ describe("the search page in each state", () => {
     await poll();
     await waitFor(() => expect(page().getByText("A semantic layer.")).toBeTruthy());
     expect(strip()).toContain("7 stars");
+  });
+
+  test("your own page asks for a sync as it opens, and someone else's synced stars never ask", async () => {
+    await open("/");
+    await waitFor(() => expect(server.triggered).toEqual(["junodev"]));
+    cleanup();
+    server.status = status({ login: "octodone" });
+    await open("/octodone", "Search @octodone's stars");
+    await poll();
+    expect(server.triggered).toEqual(["junodev"]);
+  });
+
+  test("a refused ask on your own page keeps your stars on screen, with no trouble in their place", async () => {
+    server.refusals.junodev = "zone";
+    await open("/");
+    await waitFor(() => expect(server.triggered).toEqual(["junodev"]));
+    await waitFor(() => expect(strip()).toContain("6 stars"));
+    expect(page().queryByRole("heading", { name: "lots of requests from your network" })).toBeNull();
+    expect(rememberedRefusal(document.cookie, "junodev")).toBeUndefined();
   });
 
   test("a sync that starts after the page settled is picked up when the tab is shown again", async () => {
@@ -724,6 +754,37 @@ describe("the search page in each state", () => {
     expect(strip()).not.toContain("so far");
   }, 15_000);
 
+  test("a first search before the import creates the account waits for the import instead of failing", async () => {
+    const created = { account: false };
+    server.signedIn = false;
+    server.repos = [];
+    server.status = status({
+      login: "newcomer",
+      state: "unknown",
+      syncedAt: null,
+      requestedAt: null,
+      enrichment: { total: 0, read: 0, failed: 0 },
+    });
+    server.search = () => {
+      if (!created.account) throw answered("ACCOUNT_NOT_SYNCED");
+      return [hit(repos()[0] as Repo)];
+    };
+    await open("/newcomer?q=terminal", "Search @newcomer's stars");
+    await waitFor(() => expect(server.searches).toEqual(["terminal"]));
+    await waitFor(() =>
+      expect(page().getByRole("heading", { name: "i haven't read @newcomer's stars yet" })).toBeTruthy(),
+    );
+    expect(page().getByText("i'll search again when reading finishes")).toBeTruthy();
+    expect(strip()).not.toContain("didn't answer");
+
+    created.account = true;
+    server.repos = repos().map((entry) => ({ ...entry, read: true }));
+    server.status = status({ login: "newcomer", starredTotal: 6, enrichment: allRead });
+    await poll();
+    await waitFor(() => expect(server.searches).toEqual(["terminal", "terminal"]));
+    await waitFor(() => expect(strip()).toContain("found"));
+  }, 15_000);
+
   test("someone GitHub doesn't know: the tile and its pill stay, and the page says so", async () => {
     server.refusals["nobody-here-x"] = "LOGIN_NOT_FOUND";
     server.status = status({ login: "nobody-here-x", state: "unknown", syncedAt: null, requestedAt: null });
@@ -772,6 +833,24 @@ describe("the search page in each state", () => {
       expect(page().getByRole("heading", { name: "lots of requests from your network" })).toBeTruthy(),
     );
     expect(strip()).toContain("taking a breather");
+  });
+
+  test("an address the zone turned away is told to wait, not that github is out of reach, and only for a minute", async () => {
+    server.refusals.flooded = "zone";
+    server.status = status({ login: "flooded", state: "unknown", syncedAt: null, requestedAt: null });
+    await open("/flooded", "Search @flooded's stars");
+    await waitFor(() =>
+      expect(page().getByRole("heading", { name: "lots of requests from your network" })).toBeTruthy(),
+    );
+    expect(strip()).toContain("taking a breather");
+    expect(page().getAllByRole("button", { name: "Try again" }).length).toBeGreaterThan(0);
+    expect(rememberedRefusal(document.cookie, "flooded")).toBe("limited");
+    try {
+      setSystemTime(DateTime.toEpochMillis(DateTime.add(DateTime.nowUnsafe(), { seconds: 61 })));
+      expect(rememberedRefusal(document.cookie, "flooded")).toBeUndefined();
+    } finally {
+      setSystemTime();
+    }
   });
 
   test("a visitor lands on the demo account with the hero, the sign-in tile and example searches", async () => {

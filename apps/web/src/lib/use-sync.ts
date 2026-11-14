@@ -16,9 +16,10 @@ const visible = Effect.callback<void>((resume) => {
 const whenVisible = Effect.suspend(() => (document.visibilityState === "visible" ? Effect.void : visible));
 
 // Rendering a page never starts an import, since crawlers and link previews render pages too. The browser asks once the
-// page is hydrated and its tab is visible. A refusal, from this page or remembered from an earlier load, stays on screen
-// until the visitor tries again, so the page never asks twice on its own.
-export function useSync(login: string, onProgress: () => void, initial?: SyncStatus, refused?: Refusal) {
+// page is hydrated and its tab is visible: for a login with no stars yet, or for the owner's own stars on every open. A
+// refusal, from this page or remembered from an earlier load, stays on screen until the visitor tries again, so the page
+// never asks twice on its own.
+export function useSync(login: string, own: boolean, onProgress: () => void, initial?: SyncStatus, refused?: Refusal) {
   const [watch, setWatch] = useState<SyncWatch>(
     refused === undefined ? { kind: "watching", status: initial, at: undefined } : { kind: refused },
   );
@@ -39,6 +40,7 @@ export function useSync(login: string, onProgress: () => void, initial?: SyncSta
     const poll = watchSync({
       initial,
       retry: round !== 0,
+      own,
       read,
       trigger,
       visible,
@@ -51,7 +53,7 @@ export function useSync(login: string, onProgress: () => void, initial?: SyncSta
     return () => {
       Effect.runFork(Fiber.interrupt(fiber));
     };
-  }, [login, round, initial, refused]);
+  }, [login, own, round, initial, refused]);
 
   return { watch, retry: () => setRound((value) => value + 1) };
 }

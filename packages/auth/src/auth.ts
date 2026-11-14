@@ -15,9 +15,8 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import type pg from "pg";
-import type { AuthConfig, TokenConfig } from "./config.ts";
+import { type AuthConfig, basePath, type TokenConfig } from "./config.ts";
 
-export const basePath = "/auth";
 export const providerId = "github";
 
 const tokenEndpoint = "https://github.com/login/oauth/access_token";

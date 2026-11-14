@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./website": "./website.ts"
+    "./website": "./website.ts",
+    "./zone-rate-limit": "./zone-rate-limit.ts"
   },
   "scripts": {
     "budget": "bun scripts/landing-budget.ts",

@@ -10,17 +10,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Record from "effect/Record";
 import * as Redacted from "effect/Redacted";
-import { declare, previewEnv } from "./declare-app.ts";
-
-const prodEnv = {
-  AI_GATEWAY_API_KEY: "test-ai-key",
-  STARGREP_GITHUB_SERVER_TOKEN: "app",
-  STARGREP_GITHUB_APP_PRIVATE_KEY: "test-app-key",
-  STARGREP_GITHUB_APP_CLIENT_ID: "test-client-id",
-  STARGREP_GITHUB_APP_CLIENT_SECRET: "test-client-secret",
-  BETTER_AUTH_SECRET: "test-auth-secret",
-  AUTH_PROXY_SECRET: "test-proxy-secret",
-};
+import { declare, previewEnv, prodEnv } from "./declare-app.ts";
 
 const aiNames: ReadonlyArray<string> = [apiKeyName, aiProviderName];
 

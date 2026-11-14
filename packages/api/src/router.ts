@@ -375,16 +375,19 @@ export const router = implementer.router({
       return yield* searchAnswer(input);
     }),
 
-  triggerSync: withServices.triggerSync.use(admission("sync")).effect(function* ({
+  // The owner's page asks on every open, so a star made on GitHub shows up. Their sync runs on their own token at most
+  // once a minute, so it skips the limits that guard the server's token.
+  triggerSync: withServices.triggerSync.effect(function* ({
     input,
+    context,
   }): ApiResult<"triggerSync", typeof SyncStatus.Type> {
     const { key } = yield* Caller;
     // A session that cannot be read still imports, as a signed-out request.
     const signedIn = yield* (yield* Viewers).signedIn.pipe(Effect.orElseSucceed(Option.none));
-    const by: SyncRequests.Requester = Option.match(signedIn, {
-      onNone: () => ({ _tag: "anyone", caller: key }),
-      onSome: (userId) => ({ _tag: "signed-in", userId, caller: key }),
-    });
+    const by = yield* OwnerAccount.requesterOf(input.login, signedIn, key);
+    if (by._tag === "owner")
+      return yield* withProgress(input.login, OwnerAccount.requestOwnerSync(input.login, by.userId, "page open"));
+    if (context.execution === "request") yield* (yield* RateLimiter).acquire("sync");
     return yield* withProgress(
       input.login,
       SyncRequests.SyncRequests.use((requests) => requests.request(input.login, by)),
@@ -398,10 +401,8 @@ export const router = implementer.router({
     );
   }),
 
-  // The page reads syncStatus only after viewer answers, so a sync claimed here is already queued when it looks.
   viewer: withServices.viewer.effect(function* ({ context }): ApiResult<"viewer", typeof WireViewer.Type> {
-    const { userId, account } = yield* context.viewer;
-    yield* OwnerAccount.requestOwnerSync(account.login, userId, "library open");
+    const { account } = yield* context.viewer;
     return {
       login: account.login,
       name: account.name,

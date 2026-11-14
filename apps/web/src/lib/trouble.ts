@@ -13,12 +13,8 @@ const refusals: Partial<Record<WireCode, Refusal>> = {
   TOO_MANY_REQUESTS: "limited",
 };
 
-const allRefusals: ReadonlyArray<Refusal> = ["missing", "busy", "limited", "unavailable"];
-
 // Everything that keeps a stars page from showing progress or stars: a refused import, or a library that didn't load.
 export type Trouble = Refusal | "load-limited" | "load-failed";
-
-const isRefusal = (value: string): value is Refusal => allRefusals.some((refusal) => refusal === value);
 
 export const refusalOf = (cause: unknown): Refusal => {
   const code = wireCode(cause);
@@ -29,9 +25,12 @@ export const libraryTrouble = (failure: unknown): Trouble =>
   wireCode(failure) === "TOO_MANY_REQUESTS" ? "load-limited" : "load-failed";
 
 // A refused import is remembered for a while in a cookie, so a reload shows the refusal again, from the server, instead
-// of asking GitHub again. Trying again, or an import that starts, forgets it.
+// of asking GitHub again. Trying again, or an import that starts, forgets it. A rate limit turns a network away before
+// anything reaches GitHub, and the zone's block lasts 10 seconds, so it is remembered for a minute.
 const remembered = "stargrep-refused";
-const remembering = 600;
+const remembering: Record<Refusal, number> = { missing: 600, busy: 600, limited: 60, unavailable: 600 };
+
+const isRefusal = (value: string): value is Refusal => Object.hasOwn(remembering, value);
 
 export const rememberedRefusal = (cookies: string | null, login: string): Refusal | undefined => {
   const value = cookieValue(cookies, remembered);
@@ -43,7 +42,7 @@ export const rememberedRefusal = (cookies: string | null, login: string): Refusa
 };
 
 export const rememberRefusal = (login: string, refusal: Refusal) =>
-  setCookie(remembered, `${login}:${refusal}`, remembering);
+  setCookie(remembered, `${login}:${refusal}`, remembering[refusal]);
 
 export const forgetRefusal = (login: string) => {
   if (rememberedRefusal(document.cookie, login) !== undefined) setCookie(remembered, "", 0);

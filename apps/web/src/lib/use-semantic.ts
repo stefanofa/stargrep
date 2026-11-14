@@ -35,7 +35,16 @@ export function useSemanticSearch(
   useEffect(() => {
     const client = api();
     const running = startSemanticSearch(
-      (q, signal) => client.search({ scope: { kind: "stars", login }, q }, { signal }).then(({ results }) => results),
+      (q, signal) =>
+        client.search({ scope: { kind: "stars", login }, q }, { signal }).then(
+          ({ results }) => results,
+          // A login whose import hasn't created its account yet has no stars to find. The page shows the import, and
+          // the search asks again once reading settles.
+          (error: unknown) => {
+            if (wireCode(error) === "ACCOUNT_NOT_SYNCED") return [];
+            throw error;
+          },
+        ),
       setAnswer,
       answered,
     );
