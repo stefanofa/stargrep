@@ -1,6 +1,7 @@
 import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Digest from "effect/crypto/Digest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -84,6 +85,12 @@ export class GitHub extends Context.Service<
       readonly name: RepoName;
       readonly oid: ObjectId;
     }) => Effect.Effect<string, GitHubError>;
+    // README texts by object ID, read through GraphQL in batches. One GitHub cannot return byte for byte is left out for
+    // readme to read, such as one whose repo is gone or whose text GraphQL cut short, and so is every README of a batch
+    // GitHub failed to answer. A rate limit or a token problem would stop those reads too, so it fails the call.
+    readonly readmes: (
+      refs: ReadonlyArray<Readme.ReadmeRef>,
+    ) => Effect.Effect<ReadonlyMap<ObjectId, string>, GitHubError>;
   }
 >()("@stargrep/github/github") {}
 
@@ -130,6 +137,7 @@ const factsQuery = GraphQL.operation(Facts.query, Facts.Data);
 
 const make = Effect.gen(function* () {
   const gate = yield* TokenGate.TokenGate;
+  const digest = yield* Digest.Digest;
 
   const exchange = <A>(
     operation: Operation,
@@ -249,7 +257,28 @@ const make = Effect.gen(function* () {
     return yield* exchange("readme", Readme.request(input), (body) => Effect.succeed(body));
   });
 
-  return GitHub.of({ viewer, owner, starPages, stars, repoFacts, resolveRepos, readme });
+  const unanswered = (error: GitHubRequestFailed | GitHubResponseInvalid) =>
+    Effect.logWarning("GitHub left a README batch unanswered, reading its READMEs over REST", {
+      error: error._tag,
+      reason: error.reason,
+    }).pipe(Effect.as(new Map<ObjectId, string>()));
+
+  const readmeBatch = Effect.fn("GitHub.readmeBatch")(
+    function* (refs: ReadonlyArray<Readme.ReadmeRef>) {
+      const query = GraphQL.operation(Readme.batchQuery(refs.length), Readme.BatchData);
+      const { data } = yield* graphql("readme", query, Readme.batchVariables(refs), Readme.isAliasError);
+      return yield* Effect.provideService(Readme.verify(refs, data), Digest.Digest, digest);
+    },
+    Effect.catchTags({ GitHubRequestFailed: unanswered, GitHubResponseInvalid: unanswered }),
+  );
+
+  const readmes = Effect.fn("GitHub.readmes")(function* (refs: ReadonlyArray<Readme.ReadmeRef>) {
+    const unique = Arr.dedupeWith(refs, (a, b) => a.oid === b.oid);
+    const batches = yield* Effect.forEach(Arr.chunksOf(unique, Readme.batchSize), readmeBatch);
+    return new Map(batches.flatMap((batch) => [...batch]));
+  });
+
+  return GitHub.of({ viewer, owner, starPages, stars, repoFacts, resolveRepos, readme, readmes });
 });
 
-export const layer = Layer.effect(GitHub, make);
+export const layer = Layer.effect(GitHub, make).pipe(Layer.provide(Digest.layerWebCrypto));

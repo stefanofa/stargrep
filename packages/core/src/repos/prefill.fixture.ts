@@ -39,6 +39,11 @@ interface Remote {
   // The ID GitHub now gives the name, when another repo took it.
   readonly databaseId?: number;
   readonly readme?: string;
+  // The README's real git object ID, so a GraphQL batch can return it. Without one, the README gets an ID its text
+  // does not hash to, and only REST reads it.
+  readonly readmeOid?: ObjectId;
+  // The README GitHub lists that no read can return any longer.
+  readonly readmeGone?: boolean;
   readonly isPrivate?: boolean;
 }
 
@@ -51,6 +56,26 @@ export const invalid = { summary: "", keywords: [] };
 
 export const fixture = () => {
   const remotes = new Map<number, Remote>();
+  const readmeOid = (n: number, remote: Remote) => remote.readmeOid ?? oid(n);
+  // README batches answer while on is set. A queued reply answers the next batch in its place.
+  const readmeBatches = { on: true, replies: [] as Array<GitHubFake.Reply> };
+  const readmeBatch = (variables: Record<string, unknown>): GitHubFake.Reply => {
+    const data: Record<string, unknown> = {};
+    const errors: Array<unknown> = [];
+    for (let index = 0; `r${index}` in variables; index++) {
+      const found = [...remotes].find(([n, remote]) => `R_${remote.databaseId ?? n}` === variables[`r${index}`]);
+      if (found === undefined) {
+        data[`b${index}`] = null;
+        errors.push({ type: "NOT_FOUND", path: [`b${index}`], message: "Could not resolve to a node" });
+        continue;
+      }
+      const [n, remote] = found;
+      const served =
+        remote.readme !== undefined && !remote.readmeGone && readmeOid(n, remote) === variables[`o${index}`];
+      data[`b${index}`] = { object: served ? { text: remote.readme } : null };
+    }
+    return { body: { data, errors } };
+  };
   const node = (n: number, remote: Remote) => ({
     databaseId: remote.databaseId ?? n,
     id: `R_${remote.databaseId ?? n}`,
@@ -68,11 +93,19 @@ export const fixture = () => {
     isPrivate: remote.isPrivate ?? false,
     stargazerCount: 100,
     forkCount: 5,
-    root: { entries: remote.readme === undefined ? [] : [{ name: "README.md", type: "blob", oid: oid(n) }] },
+    root: {
+      entries: remote.readme === undefined ? [] : [{ name: "README.md", type: "blob", oid: readmeOid(n, remote) }],
+    },
   });
   const github = GitHubFake.layer((sent) => {
     if (sent.url.pathname === "/graphql") {
-      const { variables } = JSON.parse(sent.body ?? "{}") as { variables: Record<string, unknown> };
+      const { query, variables } = JSON.parse(sent.body ?? "{}") as {
+        query: string;
+        variables: Record<string, unknown>;
+      };
+      if (query.startsWith("query Readmes")) {
+        return readmeBatches.replies.shift() ?? (readmeBatches.on ? readmeBatch(variables) : { body: { data: {} } });
+      }
       if (Array.isArray(variables.ids)) {
         const nodes = variables.ids.map((nodeId: string) => {
           const n = Number(nodeId.slice(2));
@@ -92,8 +125,8 @@ export const fixture = () => {
       return { body: { data, errors } };
     }
     const blob = sent.url.pathname.split("/").at(-1);
-    const found = [...remotes].find(([n]) => oid(n) === blob);
-    return found?.[1].readme === undefined ? { status: 404 } : { body: found[1].readme };
+    const found = [...remotes].find(([n, remote]) => readmeOid(n, remote) === blob);
+    return found?.[1].readme === undefined || found[1].readmeGone ? { status: 404 } : { body: found[1].readme };
   });
 
   // Every summary call the CLI path or a consumer makes, by prompt, failed calls included.
@@ -159,7 +192,13 @@ export const fixture = () => {
     for (const n of numbers) remotes.set(n, { description: `A CLI for task ${n}`, readme: `# repo-${n}\n\nA CLI.` });
   };
 
-  return { remotes, github, asked, batches, broken, failing, refusing, layer, seed };
+  // The README batches and the REST README reads sent to GitHub.
+  const readmeReads = () => ({
+    batches: github.sent.filter((sent) => (sent.body ?? "").includes("query Readmes")).length,
+    rest: github.sent.filter((sent) => sent.url.pathname.includes("/git/blobs/")).length,
+  });
+
+  return { remotes, github, readmeBatches, readmeReads, asked, batches, broken, failing, refusing, layer, seed };
 };
 
 export const runWith = (refs: ReadonlyArray<GitHub.ArchiveRef>, options: Partial<Prefill.PrefillOptions>) =>

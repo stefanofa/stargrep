@@ -154,6 +154,21 @@ interface Job {
   readonly work: Work;
 }
 
+// A pending repo's saved facts, with its saved summary when that is current, before any README is read.
+interface Planned {
+  readonly id: RepoId;
+  readonly facts: RepoFacts;
+  readonly inputHash: InputHash;
+  readonly summary: Option.Option<Summary>;
+}
+
+interface ReadmeFile {
+  readonly facts: RepoFacts;
+  readonly oid: ObjectId;
+}
+
+type ReadmeRead = Result.Result<string, GitHubError | BlobStore.BlobStoreFailed>;
+
 interface Embeddable {
   readonly job: Job;
   readonly summary: Summary;
@@ -199,6 +214,30 @@ const storedFacts = (facts: RepoFacts): Db.RepoFacts => ({
 
 const fullName = (facts: RepoFacts) => `${facts.owner}/${facts.name}`;
 
+// A repo with no README has no read, and summarizes without one.
+const jobOf = ({ summary, ...job }: Planned, readme: ReadmeRead | undefined): Step<Job> =>
+  Option.match(summary, {
+    onSome: (current) => Result.succeed({ ...job, work: { _tag: "Embed", summary: current } }),
+    onNone: () =>
+      Result.match(readme ?? Result.succeed(null), {
+        onFailure: (error) => Result.fail(Enrichment.Failed({ id: job.id, error })),
+        onSuccess: (text) =>
+          Result.succeed({
+            ...job,
+            work: {
+              _tag: "Summarize",
+              prompt: {
+                fullName: fullName(job.facts),
+                description: job.facts.description,
+                topics: job.facts.topics,
+                language: job.facts.language,
+                readme: text,
+              },
+            },
+          }),
+      }),
+  });
+
 const guarded = <A, E>(id: RepoId, save: Effect.Effect<boolean, E | RepoNotFound>, saved: A) =>
   save.pipe(
     Effect.map((applied): Step<A> => (applied ? Result.succeed(saved) : Result.fail(Enrichment.Stale({ id })))),
@@ -213,48 +252,54 @@ const make = Effect.gen(function* () {
   const textGeneration = yield* TextGeneration.TextGeneration;
   const icons = yield* IconQueue;
 
-  const readme = Effect.fn("EnrichRepo.readme")(function* (facts: RepoFacts) {
-    if (facts.readme === null) return null;
-    const key = BlobStore.readmeKey(facts.readme.oid);
-    const stored = yield* blobs.get(key);
-    if (Option.isSome(stored)) return stored.value;
-    const text = yield* github.readme({ owner: facts.owner, name: facts.name, oid: facts.readme.oid });
-    yield* blobs.put(key, text);
-    return text;
-  });
-
-  const summarizeWork = (facts: RepoFacts) =>
-    Effect.map(
-      readme(facts),
-      (text): Work => ({
-        _tag: "Summarize",
-        prompt: {
-          fullName: fullName(facts),
-          description: facts.description,
-          topics: facts.topics,
-          language: facts.language,
-          readme: text,
-        },
+  // One read per file, in order. A README that cannot be read fails only its own repo.
+  const readmes = Effect.fn("EnrichRepo.readmes")(function* (files: ReadonlyArray<ReadmeFile>) {
+    const stored = Arr.zip(
+      files,
+      yield* Effect.forEach(files, ({ oid }) => Effect.result(blobs.get(BlobStore.readmeKey(oid))), {
+        concurrency: planConcurrency,
       }),
     );
+    const missing = stored.flatMap(([file, text]) =>
+      Result.isSuccess(text) && Option.isNone(text.success) ? [{ nodeId: file.facts.nodeId, oid: file.oid }] : [],
+    );
+    const fetched =
+      missing.length === 0
+        ? Result.succeed(new Map<ObjectId, string>())
+        : yield* Effect.result(github.readmes(missing));
+    const fromGitHub = ({ facts, oid }: ReadmeFile) =>
+      Effect.fromResult(fetched).pipe(
+        Effect.flatMap((texts) =>
+          Option.match(Option.fromUndefinedOr(texts.get(oid)), {
+            onSome: Effect.succeed,
+            onNone: () => github.readme({ owner: facts.owner, name: facts.name, oid }),
+          }),
+        ),
+        Effect.tap((text) => blobs.put(BlobStore.readmeKey(oid), text)),
+      );
+    return yield* Effect.forEach(
+      stored,
+      ([file, text]) =>
+        Effect.result(
+          Effect.fromResult(text).pipe(
+            Effect.flatMap(Option.match({ onSome: Effect.succeed, onNone: () => fromGitHub(file) })),
+          ),
+        ),
+      { concurrency: planConcurrency },
+    );
+  });
 
   const planOne = Effect.fn("EnrichRepo.planOne")(function* (
     row: Db.StoredRepo,
     facts: RepoFacts | undefined,
-  ): Effect.fn.Return<Step<Job>, DbQueryFailed | DbRowInvalid> {
+  ): Effect.fn.Return<Step<Planned>, DbQueryFailed | DbRowInvalid> {
     const id = row.id;
     if (facts === undefined) return Result.fail(Enrichment.Gone({ id }));
     // saveFacts can clear pending, and nothing fetches a repo that is not pending, so the counts go first.
     yield* db.repos.saveCounts({ id: facts.id, stars: facts.stars, forks: facts.forks });
     const { pending, inputHash } = yield* db.repos.saveFacts(storedFacts(facts));
     if (!pending) return Result.fail(Enrichment.Unchanged({ id }));
-    const work = yield* Option.match(summaryOf(row, readmeOidOf(facts), inputHash), {
-      onSome: (summary) => Effect.succeed(Result.succeed<Work>({ _tag: "Embed", summary })),
-      onNone: () => Effect.result(summarizeWork(facts)),
-    });
-    return Result.isSuccess(work)
-      ? Result.succeed({ id, facts, inputHash, work: work.success })
-      : Result.fail(Enrichment.Failed({ id, error: work.failure }));
+    return Result.succeed({ id, facts, inputHash, summary: summaryOf(row, readmeOidOf(facts), inputHash) });
   });
 
   const plan = Effect.fn("EnrichRepo.plan")(function* (ids: ReadonlyArray<RepoId>) {
@@ -288,7 +333,7 @@ const make = Effect.gen(function* () {
             Effect.logWarning("Icon send failed, enriching anyway", { messages: error.messages }),
         }),
       );
-    return yield* Effect.forEach(
+    const planned = yield* Effect.forEach(
       located,
       (step) =>
         Result.isFailure(step)
@@ -296,6 +341,19 @@ const make = Effect.gen(function* () {
           : planOne(step.success, factsById.get(step.success.id)),
       { concurrency: planConcurrency },
     );
+    // Every README the due summaries need is read at once, so GraphQL can read them in batches.
+    const files = planned.flatMap((step) =>
+      Result.isSuccess(step) && Option.isNone(step.success.summary) && step.success.facts.readme !== null
+        ? [{ facts: step.success.facts, oid: step.success.facts.readme.oid }]
+        : [],
+    );
+    const texts = new Map(
+      Arr.zip(
+        files.map(({ facts }) => facts.id),
+        yield* readmes(files),
+      ),
+    );
+    return planned.map((step) => Result.flatMap(step, (job) => jobOf(job, texts.get(job.id))));
   });
 
   // Commit A for a paid answer, as soon as it arrives. Capture gives the attempt's lease back when it saves or keeps

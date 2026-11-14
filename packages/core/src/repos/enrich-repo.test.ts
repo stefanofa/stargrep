@@ -23,7 +23,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as IconQueue from "../icons/icon-queue.ts";
 import * as BlobStore from "./blob-store.ts";
 import * as EnrichQueue from "./enrich-queue.ts";
-import { embeddingModel, fixture, id, oid, repo, wideOid } from "./enrich-repo.fixture.ts";
+import { blobOidOf, embeddingModel, fixture, id, oid, repo, wideOid } from "./enrich-repo.fixture.ts";
 import * as EnrichRepo from "./enrich-repo.ts";
 import * as EnrichRetry from "./enrich-retry.ts";
 
@@ -44,6 +44,49 @@ import * as EnrichRetry from "./enrich-retry.ts";
           expect(f.readmeRequests() - before).toBe(1);
           expect(yield* f.failuresOf(901)).toEqual([{ enrich_failures: 0 }]);
         }),
+      );
+
+      it.effect(
+        "reads the READMEs its summaries need in one GraphQL batch, and over REST only those it leaves out",
+        () =>
+          Effect.gen(function* () {
+            const blobs = yield* BlobStore.BlobStore;
+            const texts = { 911: "# Batched\n\nOne.", 912: "# Batched\n\nTwo.", 914: "# Cached" };
+            const held = {
+              911: { oid: yield* blobOidOf(texts[911]), text: texts[911] },
+              912: { oid: yield* blobOidOf(texts[912]), text: texts[912] },
+              // GraphQL returns a text that does not hash to this object ID, as for one it cut short.
+              913: { oid: wideOid(913), text: "# Read over REST" },
+              914: { oid: yield* blobOidOf(texts[914]), text: texts[914] },
+            };
+            for (const [n, readme] of Object.entries(held))
+              f.remotes.set(Number(n), { description: `Repo ${n}`, readme });
+            yield* blobs.put(BlobStore.readmeKey(held[914].oid), held[914].text);
+            const before = { batches: f.readmeBatches(), rest: f.readmeRequests(), prompts: f.prompts.length };
+            const ids = yield* f.store([911, 912, 913, 914]);
+            const outcomes = yield* Effect.flatMap(EnrichRepo.EnrichRepo, (enricher) => enricher.enrichRepos(ids));
+            expect(outcomes.map((outcome) => outcome._tag)).toEqual([
+              "Summarized",
+              "Summarized",
+              "Summarized",
+              "Summarized",
+            ]);
+            expect({ batches: f.readmeBatches() - before.batches, rest: f.readmeRequests() - before.rest }).toEqual({
+              batches: 1,
+              rest: 1,
+            });
+            const batch = f.github.sent.findLast((sent) => (sent.body ?? "").includes("query Readmes"));
+            const asked: Record<string, string> = JSON.parse(batch?.body ?? "{}").variables;
+            expect(Object.entries(asked).flatMap(([key, value]) => (key.startsWith("r") ? [value] : []))).toEqual([
+              "R_911",
+              "R_912",
+              "R_913",
+            ]);
+            for (const readme of Object.values(held)) {
+              expect(yield* blobs.get(BlobStore.readmeKey(readme.oid))).toEqual(Option.some(readme.text));
+              expect(f.prompts.slice(before.prompts).some((prompt) => prompt.includes(readme.text))).toBe(true);
+            }
+          }),
       );
 
       it.effect("stores facts, the README blob, the summary, and its embedding for a new repo", () =>
