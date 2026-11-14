@@ -5,7 +5,7 @@ import { QueryPlan, Search } from "@stargrep/core/search";
 import { OwnerLookup, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import { DbQueryFailed, RepoNotFound } from "@stargrep/db/errors";
-import { accountRow, makeDb, repo as repoRow } from "@stargrep/db/testing";
+import { accountRow, makeDb, memoryRateLines, repo as repoRow } from "@stargrep/db/testing";
 import { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -100,6 +100,7 @@ const search = Search.Search.of({
 });
 
 const db = makeDb({
+  rateLines: memoryRateLines(),
   accounts: {
     byLogin: (login: Login) => Effect.succeed(login === ada.login ? Option.some(ada) : Option.none()),
   },

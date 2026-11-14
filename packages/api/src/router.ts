@@ -1,6 +1,7 @@
 import "@orpc/effect/extensions/effect";
 import { middlewareGen, type WithEffectContext } from "@orpc/effect";
 import { implement } from "@orpc/server";
+import { RateLine } from "@stargrep/core/limits";
 import { MetricRegistry, QueryPlan, type QueryPlanner, Search } from "@stargrep/core/search";
 import { OwnerAccount, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
@@ -44,7 +45,7 @@ import {
 import { errorStatus, type WireCode, wireError } from "./errors.ts";
 import { IconHost, iconUrl } from "./icon-host.ts";
 import { instrumentation, type ProcedureTime, type Transport } from "./middleware/instrumentation.ts";
-import { type RateLimited, RateLimiter, type RateLimiterUnavailable, type RateLimitKind } from "./rate-limiter.ts";
+import { RateLimited, RateLimiter, type RateLimiterUnavailable, type RateLimitKind } from "./rate-limiter.ts";
 import type { ApiServices, ApiServicesUnavailable } from "./services.ts";
 import * as Services from "./services.ts";
 import { NotSignedIn, type Viewer, type ViewerError, Viewers } from "./viewers.ts";
@@ -274,8 +275,14 @@ const encodeCursor = Schema.encodeSync(StarsCursor);
 // Stars are read and cached in pages of 100 or 1,000, so a client cannot miss the cache by asking for another limit.
 const pageSizeFor = (limit: number) => (limit <= 100 ? 100 : maxStarsPage);
 
+// The binding admission takes from counts approximately and per location, so a page that misses the cache also takes
+// a turn in its network's line in Postgres, which holds exactly. The turn comes before the account read, so asking for
+// logins Stargrep never synced costs turns too.
 const starsPage = Effect.fnUntraced(function* (login: Login, size: number, after: Option.Option<Db.StarsPosition>) {
   const db = yield* Db.Db;
+  const { key } = yield* Caller;
+  const turn = yield* RateLine.reserve(db.rateLines, RateLine.starsNetwork(key), yield* DateTime.now, 1);
+  if (Option.isNone(turn)) return yield* new RateLimited({ limit: "network" });
   const account = yield* db.accounts.byLogin(login);
   if (Option.isNone(account)) return yield* new Search.AccountNotSynced({ login });
   const page = yield* db.stars.page(account.value.id, { limit: size, after });
