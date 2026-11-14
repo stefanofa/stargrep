@@ -123,7 +123,7 @@ const db = makeDb({
   },
 });
 
-const serve = testServer((request) =>
+export const layerFor = (request: Request) =>
   Layer.mergeAll(
     Layer.succeed(Search.Search, search),
     Layer.succeed(Viewers, Viewers.of({ current: Effect.fail(new NotSignedIn()), signedIn: Effect.succeedNone })),
@@ -131,8 +131,9 @@ const serve = testServer((request) =>
     admission,
     layerRateLimiter(env),
     Layer.succeed(Db.Db, db),
-  ).pipe(Layer.provideMerge(layerCaller(env.CALLER_KEY, request))),
-);
+  ).pipe(Layer.provideMerge(layerCaller(env.CALLER_KEY, request)));
+
+const serve = testServer(layerFor);
 
 export default {
   fetch: withHealth(env, (request) => serve(request) ?? Promise.resolve(new Response("Not found", { status: 404 }))),

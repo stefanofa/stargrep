@@ -1,10 +1,13 @@
-import { env, exports } from "cloudflare:workers";
+import { env } from "cloudflare:workers";
 import { RateLimiter, type RateLimitKind } from "@stargrep/api/rate-limiter";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vitest";
 import { layerCaller } from "../src/server/caller.ts";
 import { layerRateLimiter, type RateLimitBindings } from "../src/server/rate-limiter.ts";
+import { layerFor } from "./entry.ts";
+import { testServer } from "./serve.ts";
 
 const acquire = (kind: RateLimitKind, ip: string, bindings: RateLimitBindings = env) =>
   Effect.runPromise(
@@ -50,9 +53,16 @@ describe("the rate limiter on Workers rate limiting", () => {
 });
 
 describe("the stars limit", () => {
+  // The binding counts in windows of the wall clock's minute, so 61 pages can straddle two of them. Every request here
+  // reads a test clock that stands still, so all 61 land in one instant of the network's line, which refuses the last.
+  const serve = testServer((request) => layerFor(request).pipe(Layer.provideMerge(TestClock.layer())));
+
   it("answers the 61st page of stars in a minute from one network with 429, and still answers another network", async () => {
-    const stars = (ip: string) =>
-      exports.default.fetch(new Request("http://web/api/stars/ada", { headers: { "cf-connecting-ip": ip } }));
+    const stars = async (ip: string) => {
+      const answered = await serve(new Request("http://web/api/stars/ada", { headers: { "cf-connecting-ip": ip } }));
+      if (answered === undefined) throw new Error("no route answered /api/stars/ada");
+      return answered;
+    };
     const statuses: Array<number> = [];
     for (let attempt = 0; attempt < 61; attempt++) statuses.push((await stars("192.0.2.90")).status);
     expect(statuses.slice(0, 60).every((status) => status === 200)).toBe(true);
