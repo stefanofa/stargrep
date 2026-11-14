@@ -131,13 +131,15 @@ it("delivers one batch through the generated queue handler with mixed acknowledg
   expect(rows).toEqual([{ login: "good-org", synced: true }]);
 });
 
-it("caches a fetched README in the real R2 binding through the enrichment queue entry", async () => {
+it("caches a README read in a GraphQL batch in the real R2 binding through the enrichment queue entry", async () => {
   await Effect.runPromise(
     withClient(env.Database.connectionString, (client) =>
       client.query("insert into repos (id, node_id, owner, name) values (900002, 'R_900002', 'owner', 'kit')"),
     ),
   );
-  const oid = "b".repeat(40);
+  const readme = "# Kit\n\nA cached README";
+  // git hash-object of the README, which the batch must match before it trusts the text.
+  const oid = "9821655e8d7647bcd72fadf124c64da876b51960";
   respond("/graphql", 200, {
     data: {
       nodes: [
@@ -163,7 +165,7 @@ it("caches a fetched README in the real R2 binding through the enrichment queue 
       ],
     },
   });
-  respond(`/repos/owner/kit/git/blobs/${oid}`, 200, "# Kit\n\nA cached README");
+  respond("/graphql", 200, { data: { b0: { object: { text: readme } } } });
   const batch = createMessageBatch("enrich-repo", [
     { id: "enrich", timestamp: 0, attempts: 1, body: { repoId: 900002 } },
   ]);
@@ -171,5 +173,5 @@ it("caches a fetched README in the real R2 binding through the enrichment queue 
   const { default: Worker } = await import(env.RUNTIME_ENTRY);
   await new Worker(context, env).queue(batch);
   expect((await getQueueResult(batch, context)).explicitAcks).toEqual(["enrich"]);
-  expect(await (await env.Readmes.get(`readmes/${oid}`))?.text()).toBe("# Kit\n\nA cached README");
+  expect(await (await env.Readmes.get(`readmes/${oid}`))?.text()).toBe(readme);
 });

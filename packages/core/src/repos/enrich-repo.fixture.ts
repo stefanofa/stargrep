@@ -7,9 +7,11 @@ import * as Db from "@stargrep/db";
 import { EmbeddingModelId } from "@stargrep/db/embedding";
 import * as TestDatabase from "@stargrep/db/test-database";
 import { summarize } from "@stargrep/db/testing";
+import { blobOid } from "@stargrep/github/blob-oid";
 import * as GitHubFake from "@stargrep/github/github.fixture";
 import { ObjectId, Repo, type RepoId } from "@stargrep/github/schemas";
 import * as Arr from "effect/Array";
+import * as Digest from "effect/crypto/Digest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -22,6 +24,11 @@ import * as EnrichRepo from "./enrich-repo.ts";
 export const embeddingModel = Schema.decodeSync(EmbeddingModelId)("fake/hash-embedding");
 export const oid = (digit: string) => Schema.decodeSync(ObjectId)(digit.repeat(40));
 export const wideOid = (n: number) => Schema.decodeSync(ObjectId)(String(n).padStart(40, "b"));
+// The real object ID git gives a README, which a GraphQL README batch can return.
+export const blobOidOf = (text: string) =>
+  Effect.map(blobOid(new TextEncoder().encode(text)), Schema.decodeSync(ObjectId)).pipe(
+    Effect.provide(Digest.layerWebCrypto),
+  );
 export const repo = (n: number) =>
   Schema.decodeSync(Repo)({ id: n, nodeId: `R_${n}`, owner: "owner", name: `repo-${n}` });
 export const id = (n: number) => repo(n).id;
@@ -60,9 +67,30 @@ export const fixture = () => {
     root: { entries: remote.readme === undefined ? [] : [{ name: "README.md", type: "blob", oid: remote.readme.oid }] },
   });
 
+  // A README batch answers each repo by node ID with the blob it asks for, when the repo still has that README.
+  const readmeBatch = (variables: Record<string, string>): GitHubFake.Reply => {
+    const data: Record<string, unknown> = {};
+    const errors: Array<unknown> = [];
+    for (let index = 0; `r${index}` in variables; index++) {
+      const remote = remotes.get(Number(variables[`r${index}`]?.slice(2)));
+      if (remote === undefined || remote.forbidden) {
+        data[`b${index}`] = null;
+        const type = remote === undefined ? "NOT_FOUND" : "FORBIDDEN";
+        errors.push({ type, path: [`b${index}`], message: "Could not resolve to a node" });
+        continue;
+      }
+      const readme = remote.readme;
+      const served = readme !== undefined && readme.text !== missingBlob && readme.oid === variables[`o${index}`];
+      data[`b${index}`] = { object: served ? { text: readme.text } : null };
+    }
+    return { body: { data, errors } };
+  };
+
   const github = GitHubFake.layer((sent) => {
     if (sent.url.pathname === "/graphql") {
-      const ids: ReadonlyArray<string> = JSON.parse(sent.body ?? "{}").variables.ids;
+      const { query, variables } = JSON.parse(sent.body ?? "{}");
+      if (String(query).startsWith("query Readmes")) return readmeBatch(variables);
+      const ids: ReadonlyArray<string> = variables.ids;
       const asked = ids.map((nodeId) => Number(nodeId.slice(2)));
       const nodes = asked.map((n) => {
         const remote = remotes.get(n);
@@ -83,6 +111,7 @@ export const fixture = () => {
   });
 
   const readmeRequests = () => github.sent.filter((sent) => sent.url.pathname.includes("/git/blobs/")).length;
+  const readmeBatches = () => github.sent.filter((sent) => (sent.body ?? "").includes("query Readmes")).length;
 
   const iconQueue = IconQueue.layerMemory();
 
@@ -184,6 +213,7 @@ export const fixture = () => {
     missingBlob,
     github,
     readmeRequests,
+    readmeBatches,
     iconQueue,
     prompts,
     usage,

@@ -304,7 +304,16 @@ const budgetRetry = {
         if (input._tag === "TokenBudgetExhausted") return Duration.millis(Math.max(input.resetAt - now, 1_000));
         if (input._tag === "RateLimited") return Duration.millis(Math.max(input.retryAfterMillis, 1_000));
         return duration;
-      }),
+      }).pipe(
+        Effect.tap((delay) =>
+          input._tag === "TokenBudgetExhausted" || input._tag === "RateLimited"
+            ? Effect.logInfo("Prefill waits for GitHub's limit to lift", {
+                resource: input.resource,
+                seconds: Math.ceil(Duration.toSeconds(delay)),
+              })
+            : Effect.void,
+        ),
+      ),
     ),
   ),
   times: 12,
@@ -394,27 +403,61 @@ const make = Effect.gen(function* () {
 
     // The blob store only caches READMEs by object ID, so a read or a write it fails costs a GitHub request, never the
     // repo or the run.
-    const readme = (facts: RepoFacts): Effect.Effect<string | null, GitHubError> => {
+    const uncached = (repoId: RepoId) => (error: BlobStore.BlobStoreFailed) =>
+      Effect.logWarning("Prefill README cache failed, reading GitHub instead", {
+        repoId,
+        operation: error.operation,
+      });
+    const cached = (facts: RepoFacts, oid: ObjectId) =>
+      blobs.get(BlobStore.readmeKey(oid)).pipe(
+        Effect.catchTags({
+          BlobStoreFailed: (error) => uncached(facts.id)(error).pipe(Effect.as(Option.none<string>())),
+        }),
+      );
+    const keep = (facts: RepoFacts, oid: ObjectId, text: string) =>
+      blobs.put(BlobStore.readmeKey(oid), text).pipe(Effect.catchTags({ BlobStoreFailed: uncached(facts.id) }));
+
+    const readmes = Effect.fn("Prefill.readmes")(function* (chunk: ReadonlyArray<RepoFacts>) {
+      const files = chunk.flatMap((facts) => (facts.readme === null ? [] : [{ facts, oid: facts.readme.oid }]));
+      const stored = yield* Effect.forEach(
+        files,
+        ({ facts, oid }) =>
+          Effect.map(
+            cached(facts, oid),
+            Option.map((text) => [oid, text] as const),
+          ),
+        { concurrency: readmeConcurrency },
+      );
+      const texts = new Map(stored.flatMap(Option.toArray));
+      const missing = files.filter(({ oid }) => !texts.has(oid));
+      const fetched =
+        missing.length === 0
+          ? new Map<ObjectId, string>()
+          : yield* github
+              .readmes(missing.map(({ facts, oid }) => ({ nodeId: facts.nodeId, oid })))
+              .pipe(Effect.retry(budgetRetry));
+      yield* Effect.forEach(
+        missing,
+        ({ facts, oid }) => {
+          const text = fetched.get(oid);
+          return text === undefined ? Effect.void : keep(facts, oid, text);
+        },
+        { concurrency: readmeConcurrency, discard: true },
+      );
+      return new Map([...texts, ...fetched]);
+    });
+
+    const readme = (
+      facts: RepoFacts,
+      texts: ReadonlyMap<ObjectId, string>,
+    ): Effect.Effect<string | null, GitHubError> => {
       const oid = facts.readme?.oid;
       if (oid === undefined) return Effect.succeed(null);
-      const key = BlobStore.readmeKey(oid);
-      const uncached = (error: BlobStore.BlobStoreFailed) =>
-        Effect.logWarning("Prefill README cache failed, reading GitHub instead", {
-          repoId: facts.id,
-          operation: error.operation,
-        });
-      const cached = blobs
-        .get(key)
-        .pipe(Effect.catchTags({ BlobStoreFailed: (error) => uncached(error).pipe(Effect.as(Option.none<string>())) }));
-      return Effect.flatMap(cached, (stored) =>
-        Option.match(stored, {
-          onSome: Effect.succeed,
-          onNone: () =>
-            github.readme({ owner: facts.owner, name: facts.name, oid }).pipe(
-              Effect.retry(budgetRetry),
-              Effect.tap((text) => blobs.put(key, text).pipe(Effect.catchTags({ BlobStoreFailed: uncached }))),
-            ),
-        }),
+      const text = texts.get(oid);
+      if (text !== undefined) return Effect.succeed(text);
+      return github.readme({ owner: facts.owner, name: facts.name, oid }).pipe(
+        Effect.retry(budgetRetry),
+        Effect.tap((read) => keep(facts, oid, read)),
       );
     };
 
@@ -1017,10 +1060,11 @@ const make = Effect.gen(function* () {
       const todo = refs.filter((ref) => !done.has(ref.id));
       if (todo.length === 0) return Option.none();
       const facts = yield* resolve(todo);
+      const texts = yield* readmes(facts);
       const read = yield* Effect.forEach(
         facts,
         (entry) =>
-          readme(entry).pipe(
+          readme(entry, texts).pipe(
             Effect.map((text) => Option.some({ facts: entry, readme: text })),
             Effect.catchIf(unreadable, () =>
               Effect.sync(() => {
