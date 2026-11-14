@@ -128,6 +128,23 @@ export const bindQueues = Effect.fn("Consumer.bindQueues")(function* (
   } satisfies Queues;
 });
 
+// Alchemy acks every message of a batch once its handler returns, and retries every one when the handler fails, even
+// a message the handler already settled. The first ack or retry wins and later calls do nothing, so the queue sees one
+// call per message. A message the handler never settled takes Alchemy's call.
+export const settleOnce = (message: Message): Message => {
+  const ack = message.ack.bind(message);
+  const retry = message.retry.bind(message);
+  let settled = false;
+  const once = (call: () => void) => {
+    if (settled) return;
+    settled = true;
+    call();
+  };
+  message.ack = () => once(ack);
+  message.retry = (options) => once(() => retry(options));
+  return message;
+};
+
 const sendOrRetry = Effect.fn("Consumer.sendOrRetry")(function* (
   send: Effect.Effect<void, QueueSendFailed>,
   message: Message,

@@ -81,7 +81,7 @@ for (const [name, share] of [
   });
 }
 
-it("delivers one batch through the generated queue handler with mixed acknowledgement and retry", async () => {
+it("delivers one batch through the generated queue handler with one acknowledgement or retry per message", async () => {
   respond(
     "/graphql",
     200,
@@ -111,12 +111,26 @@ it("delivers one batch through the generated queue handler with mixed acknowledg
       body: { login, mode: "full" },
     })),
   );
+  const calls: Array<string> = [];
+  for (const message of batch.messages) {
+    const ack = message.ack.bind(message);
+    const retry = message.retry.bind(message);
+    message.ack = () => {
+      calls.push(`ack ${message.id}`);
+      ack();
+    };
+    message.retry = (options) => {
+      calls.push(`retry ${message.id}`);
+      retry(options);
+    };
+  }
   const context = createExecutionContext();
   const { default: Worker } = await import(env.RUNTIME_ENTRY);
   await new Worker(context, env).queue(batch);
   const result = await getQueueResult(batch, context);
   expect(result.explicitAcks).toEqual(["message-0"]);
   expect(result.retryMessages).toEqual([{ msgId: "message-1" }]);
+  expect(calls).toEqual(["ack message-0", "retry message-1"]);
   const rows = await Effect.runPromise(
     withClient(
       env.Database.connectionString,
