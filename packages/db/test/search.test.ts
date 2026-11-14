@@ -389,7 +389,7 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
       ]);
       const near = (text: string, scope = stars(owner)) =>
         db.search
-          .nearNames({ scope, text, limit: 10 })
+          .nearNames({ scope, text, explicit: everything, limit: 10 })
           .pipe(Effect.map((found) => found.map((repo): string => repo.name)));
 
       expect(

@@ -250,12 +250,16 @@ export const make = Effect.gen(function* () {
 
   // The planner cannot place a little-known name and reads it as the nearest thing it knows, as it reads "hlrags" as
   // RAG, and a misspelled name's meaning is too far from its repo to rank it. So a repo the typed words spell with one
-  // edit at most answers first, the closest whole name first. The query does not apply the caller's own filter, so a
-  // filtered search goes on to the planner.
+  // edit at most answers first, the closest whole name first.
   const similarNames = Effect.fn("Search.similarNames")(function* (scope: Db.SearchScope, request: SearchRequest) {
     const typed = Spelling.letters(request.query);
-    if (request.filter !== undefined || typed.length < Spelling.shortest || typed.length > Spelling.longest) return [];
-    const found = yield* db.search.nearNames({ scope, text: request.query, limit: similarNameCandidates });
+    if (typed.length < Spelling.shortest || typed.length > Spelling.longest) return [];
+    const found = yield* db.search.nearNames({
+      scope,
+      text: request.query,
+      explicit: request.filter ?? everything,
+      limit: similarNameCandidates,
+    });
     return found
       .map((repo) => ({ repo, edits: Spelling.edits(typed, Spelling.letters(repo.name)) }))
       .sort((left, right) => left.edits - right.edits)

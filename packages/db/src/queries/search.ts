@@ -2,7 +2,7 @@ import type { GitHubAccountId } from "@stargrep/github/schemas";
 import { type AtomRole, type ClosedAtom, everything, type Selection } from "@stargrep/knowledge/atom";
 import { SubjectId } from "@stargrep/knowledge/ids";
 import type { LabelKey } from "@stargrep/knowledge/label-key";
-import { and, eq, isNull, type SQL, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import * as Clock from "effect/Clock";
 import type * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -15,8 +15,8 @@ import { type DbQueryFailed, DbRowInvalid } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
 import { resultRows, rowsDecoder } from "../rows.ts";
 import { repos, stars } from "../schema.ts";
-import { Repo, repoColumns } from "./repos.ts";
-import { hybridQuery } from "./search-statement.ts";
+import { Repo } from "./repos.ts";
+import { hybridQuery, nearNamesQuery } from "./search-statement.ts";
 
 export const MetricFamily = Schema.Literals([
   "stars",
@@ -141,6 +141,8 @@ export interface PrefixSearch {
 export interface NameSearch {
   readonly scope: SearchScope;
   readonly text: string;
+  // The caller's selection, which always filters.
+  readonly explicit: Selection;
   readonly limit: number;
 }
 
@@ -150,28 +152,13 @@ export interface Queries {
   ) => Effect.Effect<Hybrid, DbQueryFailed | DbRowInvalid | EmbeddingModelMismatch>;
   readonly matchesAsPrefix: (search: PrefixSearch) => Effect.Effect<boolean, DbQueryFailed>;
   // The account's repos one edit at most from the text with its letters and digits run together: the name run
-  // together, one part of the name, or the owner and name run together. Shortest names first.
+  // together, one part of the name, or the owner and name run together. Only repos the caller's selection keeps,
+  // shortest names first.
   readonly nearNames: (search: NameSearch) => Effect.Effect<ReadonlyArray<Repo>, DbQueryFailed | DbRowInvalid>;
 }
 
 const decodeHits = rowsDecoder(SearchHit);
 const decodeRepos = rowsDecoder(Schema.Struct({ repo: Repo }));
-
-// Every spelling at most one edit from a word of letters and digits, as regular expression alternatives: the word,
-// and the word with one character dropped, changed, or added, or two neighbors swapped.
-const oneEdit = (word: string) => {
-  const any = "[a-z0-9]";
-  const spellings = new Set([word]);
-  for (let index = 0; index <= word.length; index++) {
-    const [before, after] = [word.slice(0, index), word.slice(index)];
-    spellings.add(`${before}${any}${after}`);
-    if (after === "") continue;
-    spellings.add(`${before}${after.slice(1)}`);
-    spellings.add(`${before}${any}${after.slice(1)}`);
-    if (after.length > 1) spellings.add(`${before}${after[1]}${after[0]}${after.slice(2)}`);
-  }
-  return [...spellings].join("|");
-};
 
 // Words keep only letters and digits, so the text can never be tsquery syntax. The last word matches as a prefix.
 const prefixQuery = (text: string) => {
@@ -254,39 +241,13 @@ export const make = Effect.fn("Db.search.make")(function* (
           .limit(1),
       ).pipe(Effect.map((rows) => rows.length > 0));
     },
-    nearNames: Effect.fnUntraced(function* ({ scope, text, limit }: NameSearch) {
+    nearNames: ({ text, ...search }) => {
       const word = text.toLowerCase().replace(/[^a-z0-9]/g, "");
-      if (word === "") return [];
-      const spellings = oneEdit(word);
-      const whole = `^(${spellings})$`;
-      const [shortest, longest] = [word.length - 1, word.length + 1];
-      // One edit leaves the first or the last of these many characters as typed, so only a name holding one of them
-      // pays for the regular expression, which is slow over thousands of stars.
-      const kept = Math.floor((word.length - 1) / 2);
-      const [head, tail] = [word.slice(0, kept), word.slice(word.length - kept)];
-      const name = sql`lower(${repos.name})`;
-      const together = (value: SQL) => sql`regexp_replace(lower(${value}), '[^a-z0-9]', '', 'g')`;
-      const spelled = (value: SQL) =>
-        sql`(length(${value}) between ${shortest} and ${longest} and ${value} ~ ${whole})`;
-      const rows = yield* run("search.nearNames", (db) =>
-        db
-          .select({ repo: repoColumns })
-          .from(stars)
-          .innerJoin(repos, eq(repos.id, stars.repoId))
-          .where(
-            and(
-              eq(stars.accountId, scope.accountId),
-              isNull(stars.unstarredAt),
-              sql`(${spelled(together(sql`${repos.name}`))}
-                or ${spelled(together(sql`${repos.owner} || ${repos.name}`))}
-                or ((strpos(${name}, ${head}) > 0 or strpos(${name}, ${tail}) > 0)
-                  and ${name} ~ ${`(^|[^a-z0-9])(${spellings})([^a-z0-9]|$)`}))`,
-            ),
-          )
-          .orderBy(sql`length(${repos.name})`, repos.owner, repos.name)
-          .limit(limit),
-      ).pipe(Effect.flatMap(decodeRepos("search.nearNames")));
-      return rows.map((row) => row.repo);
-    }),
+      if (word === "") return Effect.succeed([]);
+      return run("search.nearNames", (db) => nearNamesQuery(db, word, search)).pipe(
+        Effect.flatMap(decodeRepos("search.nearNames")),
+        Effect.map((rows) => rows.map((row) => row.repo)),
+      );
+    },
   } satisfies Queries;
 });

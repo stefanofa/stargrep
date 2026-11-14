@@ -10,7 +10,7 @@ import { timeParam } from "../rows.ts";
 import { repoMetrics, repos } from "../schema.ts";
 import { allOf, anyOf, closedTest, subjectIndexTest, subjectTest, widens } from "./atom-predicates.ts";
 import { repoColumns } from "./repos.ts";
-import type { AtomQuery, HybridSearch, MetricFamily, MetricVariant } from "./search.ts";
+import type { AtomQuery, HybridSearch, MetricFamily, MetricVariant, NameSearch, SearchScope } from "./search.ts";
 
 interface FamilyColumns {
   readonly total: PgColumn;
@@ -289,6 +289,14 @@ const atomParts = (atoms: AtomQuery, accepted: ReadonlySet<string>) => {
   return { resolution, closedFilters, facetFilters, closedBoosts, subjectBoosts, envelope };
 };
 
+// The account's current stars, read as stars s joined to repos r.
+const starredBy = (scope: SearchScope) =>
+  [sql`s.account_id = ${scope.accountId}`, sql`s.unstarred_at is null`, sql`r.gone_at is null`] as const;
+
+// Reads s's repo_facets row by primary key and tests every facet filter, or missing when the repo has no row.
+const probeTest = (facets: Arr.NonEmptyReadonlyArray<FacetFilter>): SQL =>
+  sql`coalesce((select ${allOf(Arr.map(facets, (filter) => filter.test))} from repo_facets fc where fc.repo_id = s.repo_id), ${allOf(Arr.map(facets, (filter) => filter.missing))})`;
+
 // The statement for one search. Every pipeline is the same: the account's stars joined to repos, full text and vectors
 // ranked to 100 each, and reciprocal rank fusion. Closed atoms add array tests on the repos row. Filters that read
 // repo_facets run the probe pipeline, c, which reads repo_facets by primary key once per starred repo. When the route
@@ -331,9 +339,7 @@ const ranked = (
       ? sql`null::float8`
       : sql`case when r.embedding_model = ${model} then r.embedding <=> ${`[${vector.join(",")}]`}::halfvec end`;
   const where = allOf([
-    sql`s.account_id = ${account}`,
-    sql`s.unstarred_at is null`,
-    sql`r.gone_at is null`,
+    ...starredBy(search.scope),
     ...(filters.archived === null ? [] : [sql`r.archived = ${filters.archived}`]),
     ...(filters.starredAfter === null ? [] : [sql`s.starred_at >= ${timeParam(filters.starredAfter)}`]),
     ...(filters.starredBefore === null ? [] : [sql`s.starred_at < ${timeParam(filters.starredBefore)}`]),
@@ -434,10 +440,7 @@ const ranked = (
     picks.push(sql`select * from pick`);
   } else {
     const test = allOf(Arr.map(facets, (filter) => filter.test));
-    const missing = allOf(Arr.map(facets, (filter) => filter.missing));
-    const probe = pipeline("_c", starsJoin, [
-      sql`coalesce((select ${test} from repo_facets fc where fc.repo_id = s.repo_id), ${missing})`,
-    ]);
+    const probe = pipeline("_c", starsJoin, [probeTest(facets)]);
     const shape = route(facets);
     if (shape._tag === "Probe") {
       ctes.push(probe);
@@ -553,4 +556,62 @@ export const hybridQuery = (
     .from(hits)
     .leftJoin(repos, eq(repos.id, hits.id))
     .orderBy(hits.position);
+};
+
+// Every spelling at most one edit from a word of letters and digits, as regular expression alternatives: the word,
+// and the word with one character dropped, changed, or added, or two neighbors swapped.
+const oneEdit = (word: string) => {
+  const any = "[a-z0-9]";
+  const spellings = new Set([word]);
+  for (let index = 0; index <= word.length; index++) {
+    const [before, after] = [word.slice(0, index), word.slice(index)];
+    spellings.add(`${before}${any}${after}`);
+    if (after === "") continue;
+    spellings.add(`${before}${after.slice(1)}`);
+    spellings.add(`${before}${any}${after.slice(1)}`);
+    if (after.length > 1) spellings.add(`${before}${after[1]}${after[0]}${after.slice(2)}`);
+  }
+  return [...spellings].join("|");
+};
+
+// The statement search.nearNames runs for word, the typed text's letters and digits run together. The caller's
+// selection applies as hybridQuery's probe pipeline applies it.
+export const nearNamesQuery = (db: Postgres.Database, word: string, search: Omit<NameSearch, "text">) => {
+  const spellings = oneEdit(word);
+  const whole = `^(${spellings})$`;
+  const [shortest, longest] = [word.length - 1, word.length + 1];
+  // One edit leaves the first or the last of these many characters as typed, so only a name holding one of them pays
+  // for the regular expression, which is slow over thousands of stars.
+  const kept = Math.floor((word.length - 1) / 2);
+  const [head, tail] = [word.slice(0, kept), word.slice(word.length - kept)];
+  const together = (value: SQL) => sql`regexp_replace(lower(${value}), '[^a-z0-9]', '', 'g')`;
+  const spelled = (value: SQL) => sql`(length(${value}) between ${shortest} and ${longest} and ${value} ~ ${whole})`;
+  const parts = atomParts({ explicit: search.explicit, stated: [] }, new Set());
+  const facets = parts.facetFilters;
+  const where = allOf([
+    ...starredBy(search.scope),
+    ...parts.closedFilters,
+    ...(Arr.isReadonlyArrayNonEmpty(facets) ? [probeTest(facets)] : []),
+    sql`(${spelled(together(sql`r.name`))}
+      or ${spelled(together(sql`r.owner || r.name`))}
+      or ((strpos(lower(r.name), ${head}) > 0 or strpos(lower(r.name), ${tail}) > 0)
+        and lower(r.name) ~ ${`(^|[^a-z0-9])(${spellings})([^a-z0-9]|$)`}))`,
+  ]);
+  const near = db
+    .$with("near", {
+      id: sql<number>`id`.mapWith(Number).as("id"),
+      position: sql<number>`position`.mapWith(Number).as("position"),
+    })
+    .as(sql`${parts.resolution.length === 0 ? sql`` : sql`with ${sql.join(parts.resolution, sql`, `)}`}
+  select r.id, row_number() over (order by length(r.name), r.owner, r.name) as position
+  from stars s join repos r on r.id = s.repo_id
+  where ${where}
+  order by position
+  limit ${search.limit}`);
+  return db
+    .with(near)
+    .select({ repo: repoColumns })
+    .from(near)
+    .innerJoin(repos, eq(repos.id, near.id))
+    .orderBy(near.position);
 };
