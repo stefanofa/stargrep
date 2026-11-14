@@ -2,7 +2,7 @@ import { env, waitUntil } from "cloudflare:workers";
 import type { PublicConfig } from "@stargrep/api/contract";
 import { publicConfig } from "@stargrep/api/public-config";
 import { authConfig } from "@stargrep/auth/config";
-import { aiSetup } from "@stargrep/runtime/ai-key";
+import { aiSetup, searchModels } from "@stargrep/runtime/ai-key";
 import { budgetShare } from "@stargrep/runtime/server-token";
 import * as Tracing from "@stargrep/telemetry/cloudflare";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -39,7 +39,10 @@ const layerForRequest = (request: Request) => {
 };
 
 // The page keeps its first answers beside the API's answers.
-export const answers = makeAnswerCache(() => Promise.resolve(workerCache()));
+export const answers = makeAnswerCache(
+  () => Promise.resolve(workerCache()),
+  () => searchModels(readConfig().ai),
+);
 
 export { waitUntil };
 
