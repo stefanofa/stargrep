@@ -41,8 +41,8 @@ test("the panel header shows the repo's own icon left of its name", () => {
   );
 });
 
-test("the panel header falls back to the owner's avatar, then the monogram", () => {
-  const url = "https://avatars.githubusercontent.com/u/1?s=88";
+test("without a repo icon, the panel header shows the owner's avatar, or else the monogram", () => {
+  const url = "https://avatars.githubusercontent.com/u/1?s=112";
   expect(slotIn({ kind: "avatar", url, letters: "ra" }).querySelector("img")?.getAttribute("src")).toBe(url);
   cleanup();
   expect(slotIn({ kind: "monogram", letters: "ra" }).textContent).toBe("ra");

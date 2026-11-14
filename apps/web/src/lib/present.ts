@@ -87,7 +87,7 @@ export const toResult = (
     stars: repo.stars,
     starred: starredOn(repo.starredAt),
     network: [],
-    visual: repoVisual(repo),
+    visual: repoVisual(repo, "card"),
     language: repo.language,
     unread: flagUnread && !repo.read,
   };
@@ -105,5 +105,5 @@ export const toDetail = (repo: LibraryEntry, at: number, whose: Whose): RepoDeta
   ...(repo.license === null ? {} : { license: repo.license }),
   network: [],
   githubUrl: repo.url,
-  visual: repoVisual(repo),
+  visual: repoVisual(repo, "panel"),
 });
