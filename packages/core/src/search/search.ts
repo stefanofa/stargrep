@@ -15,7 +15,7 @@ import * as Schema from "effect/Schema";
 import * as Compile from "./compile.ts";
 import { type MetricId, registry } from "./metric-registry.ts";
 import * as ModelAllowance from "./model-allowance.ts";
-import * as QueryPlan from "./query-plan.ts";
+import type * as QueryPlan from "./query-plan.ts";
 import * as QueryPlanner from "./query-planner.ts";
 import * as SearchCache from "./search-cache.ts";
 
@@ -173,8 +173,8 @@ export const make = Effect.gen(function* () {
     return { kind: "stars", accountId: account.value.id } satisfies Db.SearchScope;
   });
 
-  // A query embedding the allowance refuses runs the words as typed on full text alone, reported as a fallback. It
-  // drops what the planner read into the query, never a filter the caller chose.
+  // A query embedding the allowance refuses runs the same plan on full text alone, reported as a fallback, so a plan
+  // the model was paid for keeps its filters and ranking.
   const find = Effect.fn("Search.find")(function* (
     scope: Db.SearchScope,
     planned: QueryPlanner.Planned,
@@ -186,11 +186,7 @@ export const make = Effect.gen(function* () {
     );
     const ran: QueryPlanner.Planned = Option.isSome(embedding)
       ? planned
-      : {
-          plan: QueryPlan.asTyped(planned.plan.textQuery, QueryPlan.queryKind(planned.plan.textQuery)),
-          source: "fallback",
-          failure: "ModelCallRefused",
-        };
+      : { plan: planned.plan, source: "fallback", failure: "ModelCallRefused" };
     const metrics = planMetrics(ran.plan);
     const { filters } = ran.plan;
     const compiled = Compile.compileQuery({

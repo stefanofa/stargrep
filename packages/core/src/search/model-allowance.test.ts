@@ -38,9 +38,19 @@ const fixture = () => {
     ranking: { _tag: "relevance" },
   });
 
-  const planner = Fake.layerTextGeneration(() => {
+  const rustQuery = "an orm in rust for sql databases";
+
+  const rustOutput: QueryPlan.PlannerOutput = {
+    semanticText: "an object relational mapper written in rust",
+    filters: { ...QueryPlan.noFilters, languages: [{ language: "Rust", said: "rust" }] },
+    ranking: { _tag: "relevance" },
+  };
+
+  const rustPlan = Schema.encodeSync(QueryPlan.PlannerOutput)(rustOutput);
+
+  const planner = Fake.layerTextGeneration((prompt) => {
     calls.prompts++;
-    return ormPlan;
+    return prompt.endsWith(`Query: ${rustQuery}`) ? rustPlan : ormPlan;
   }, "fake/planner");
 
   const network = (name: string) => Db.CallerKey.make(name);
@@ -178,6 +188,23 @@ const fixture = () => {
           expect(outcome.results.every((result) => result.vectorRank === null)).toBe(true);
         }
         expect(calls).toEqual({ prompts: 0, embedded: 0 });
+      }),
+    );
+
+    test.effect("keeps a plan the model made, on full text alone, when the query embedding after it is refused", () =>
+      Effect.gen(function* () {
+        yield* clearLines;
+        yield* seeded;
+        yield* takeAll("network-j", 29);
+        const outcome = yield* searchAs("network-j", rustQuery);
+        expect(outcome).toMatchObject({
+          planSource: "fallback",
+          plan: QueryPlan.fromPlannerOutput(rustQuery, rustOutput),
+        });
+        expect(outcome.applied.map(({ atom, mode }) => `${mode} ${atom}`)).toContain("filter lang:rust");
+        expect(outcome.results.map((result): string => result.repo.name)).toEqual(["diesel"]);
+        expect(outcome.results.every((result) => result.vectorRank === null)).toBe(true);
+        expect(calls).toEqual({ prompts: 1, embedded: 0 });
       }),
     );
 

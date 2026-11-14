@@ -162,7 +162,7 @@ export const AppliedAtom = Schema.Struct({
 export const SearchOutput = Schema.Struct({
   planSource: PlanSource.annotate({
     description:
-      "How the query was read. keyword searched the words as typed, cache and model used a query plan, and fallback searched the words as typed because the planner failed or the network's model allowance ran out.",
+      "How the query was read. keyword searched the words as typed, and cache and model used a query plan. fallback means the planner failed or the model allowance ran out. The search then ran the words as typed when it had no plan, and full text alone, without search by meaning, when it could not embed the query.",
   }),
   results: Schema.Array(SearchResult),
   applied: Schema.Array(AppliedAtom).annotate({
