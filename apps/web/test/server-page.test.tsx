@@ -3,10 +3,13 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:
 import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { hydrate } from "@tanstack/react-router/ssr/client";
 import { act, waitFor } from "@testing-library/react";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
 import { hydrateRoot, type Root } from "react-dom/client";
 import { loadEngine } from "../src/lib/engine.ts";
 import { getLibrary } from "../src/lib/library-collection.ts";
-import { browserClient, holdSecondPage, requested } from "./page-api.ts";
+import { pause } from "../src/lib/search-stream.ts";
+import { browserClient, holdSecondPage, requested, searched } from "./page-api.ts";
 
 // A page goes from the Worker to the browser in two steps, and each runs here as it does in production. The server
 // step renders in its own process (render-server.tsx) through the real routes, server loaders and in-process API. This
@@ -21,6 +24,7 @@ interface Rendered {
   readonly html: string;
   readonly requested: ReadonlyArray<string>;
   readonly searched: ReadonlyArray<string>;
+  readonly headers: Readonly<Record<string, string>>;
 }
 
 const renderOnServer = async (path: string, cookie?: string, env: Record<string, string> = {}): Promise<Rendered> => {
@@ -58,6 +62,7 @@ const errors: Array<string> = [];
 beforeEach(() => {
   errors.length = 0;
   requested.length = 0;
+  searched.length = 0;
   spyOn(console, "error").mockImplementation((...args: Array<unknown>) => {
     const message = args.map(String).join(" ");
     // happy-dom loads no stylesheets, and says so for the page's one link.
@@ -98,6 +103,28 @@ const statusText = () => document.querySelector("[role=status]")?.textContent ??
 const resultNames = () =>
   Array.from(document.querySelectorAll("main ol li h3"), (heading) => heading.textContent?.trim() ?? "");
 const searchValue = () => (document.querySelector("[data-reveal-tile] input") as HTMLInputElement | null)?.value;
+
+// Every distinct status and result list the page showed from now until stop.
+const watchScreen = () => {
+  const now = () => ({ status: statusText(), results: resultNames().join(", ") });
+  const shown = new Map([[JSON.stringify(now()), now()]]);
+  const watching = new MutationObserver(() => shown.set(JSON.stringify(now()), now()));
+  watching.observe(document.body, { subtree: true, childList: true, characterData: true });
+  return {
+    now,
+    stop: () => {
+      watching.disconnect();
+      return [...shown.values()];
+    },
+  };
+};
+
+// The demo's planned answer for this shared link's query sits in the API's answer cache, stored minutesAgo before the
+// render. No keyword in it matches a star, so only that answer names mobile-mcp.
+const cachedPath = "/stefanofa?q=phone%20automation";
+const cachedSearch = (minutesAgo: number) => ({
+  STARGREP_CACHED_SEARCH: JSON.stringify({ q: "phone automation", minutesAgo }),
+});
 
 describe("a stars page from the Worker to the browser", () => {
   test("the home page paints the demo answer on the server and keeps it once the live library takes over", async () => {
@@ -182,6 +209,56 @@ describe("a stars page from the Worker to the browser", () => {
     watching.disconnect();
     expect([...shown]).toEqual(["found 1!"]);
     expect(errors).toEqual([]);
+  }, 60_000);
+
+  test("a shared link paints the answer by meaning the API cache holds for it, and searches nothing on the server", async () => {
+    const cases = [
+      ["/stefanofa?q=phone%20automation", undefined, "miss"],
+      ["/stefanofa?q=phone%20automation", 1, "hit"],
+      ["/stefanofa?q=Phone%20%20Automation", 6, "stale"],
+      ["/stefanofa?q=phone%20automation", 24 * 60 + 6, "miss"],
+      ["/octodone?q=phone%20automation", 1, "miss"],
+    ] as const;
+    for (const [path, minutesAgo, outcome] of cases) {
+      const page = await renderOnServer(path, undefined, minutesAgo === undefined ? {} : cachedSearch(minutesAgo));
+      // No keyword matches the query, so only the answer by meaning names mobile-mcp.
+      expect([
+        path,
+        minutesAgo,
+        page.headers["x-answer-cache"],
+        page.html.includes(">mobile-mcp</a>"),
+        page.searched,
+      ]).toEqual([path, minutesAgo, outcome, outcome !== "miss", []]);
+    }
+  }, 60_000);
+
+  test("a fresh cached answer hydrates as painted, and the browser never asks for it again", async () => {
+    const page = await renderOnServer(cachedPath, undefined, cachedSearch(1));
+    const router = await hydratePage(cachedPath, page.html);
+    const loaded = router.state.matches.at(-1)?.loaderData as { first: { hits: { stale: boolean } } } | undefined;
+    expect(loaded?.first.hits.stale).toBe(false);
+    const shown = watchScreen();
+    expect(shown.now()).toEqual({ status: "found 1!", results: "mobile-mcp" });
+    await waitFor(() =>
+      expect(document.querySelector("[role=status]")?.closest("p")?.textContent).toContain("3 stars"),
+    );
+    // The browser asks only once typing pauses, so the page waits past that before it checks no search ran.
+    await act(() => Effect.runPromise(Effect.sleep(Duration.times(pause, 2))));
+    expect([shown.stop(), searched, errors]).toEqual([[{ status: "found 1!", results: "mobile-mcp" }], [], []]);
+  }, 60_000);
+
+  test("a stale cached answer stays on screen while the browser asks for it again", async () => {
+    const page = await renderOnServer(cachedPath, undefined, cachedSearch(6));
+    const router = await hydratePage(cachedPath, page.html);
+    const loaded = router.state.matches.at(-1)?.loaderData as { first: { hits: { stale: boolean } } } | undefined;
+    expect(loaded?.first.hits.stale).toBe(true);
+    const shown = watchScreen();
+    expect(shown.now()).toEqual({ status: "found 1!", results: "mobile-mcp" });
+    await waitFor(() => expect(searched).toEqual(["phone automation"]));
+    await waitFor(() =>
+      expect(document.querySelector("[role=status]")?.closest("p")?.textContent).toContain("3 stars"),
+    );
+    expect([shown.stop(), errors]).toEqual([[{ status: "found 1!", results: "mobile-mcp" }], []]);
   }, 60_000);
 
   test("an HTML request for a new query on another login, or a cold demo query, makes no search and no model call", async () => {

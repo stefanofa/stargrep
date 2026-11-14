@@ -17,7 +17,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
-import { type AnswerContext, type AnswerPolicy, answerCache, searchWindows } from "./answer-cache.ts";
+import { type AnswerContext, type AnswerPolicy, answerCache, miss, reader, searchWindows } from "./answer-cache.ts";
 import { Caller } from "./caller.ts";
 import {
   type AppliedAtom,
@@ -35,7 +35,7 @@ import {
   type RepoDetail,
   RepoId,
   requiresSession,
-  type SearchInput,
+  SearchInput,
   SearchOutput,
   StarsCursor,
   type StarsInput,
@@ -253,6 +253,25 @@ const answerKey = (input: typeof SearchInput.Type) =>
 // Only the demo account's own stars are cached, so the landing page answers without building any service.
 const demoSearchKey = (input: typeof SearchInput.Type, config: PublicConfig) =>
   loginKey(input.scope.login) === loginKey(config.demoLogin) ? Option.some(answerKey(input)) : Option.none();
+
+const decodeSearchInput = Schema.decodeEffect(SearchInput);
+const readSearch = reader({ json: Schema.fromJsonString(SearchOutput), ...searchWindows });
+
+// The answer search would serve from the cache, read without searching, so a server render can paint it with no model
+// call, rate limit turn, or refresh. A search the cache never keeps, such as another login's, misses.
+export const cachedSearch = (
+  input: typeof SearchInput.Encoded,
+  { answerCache, publicConfig }: Pick<ApiContext, "answerCache" | "publicConfig">,
+) =>
+  decodeSearchInput(input).pipe(
+    Effect.flatMap((decoded) =>
+      Option.match(demoSearchKey(decoded, publicConfig), {
+        onNone: () => Effect.succeed(miss),
+        onSome: (key) => readSearch(answerCache, key),
+      }),
+    ),
+    Effect.catchTags({ SchemaError: () => Effect.succeed(miss) }),
+  );
 
 const admission = (kind: RateLimitKind) =>
   middlewareGen<WithEffectContext<ApiServices> & Pick<AnswerContext, "execution">>(function* ({ context, next }) {

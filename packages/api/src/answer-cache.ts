@@ -108,6 +108,28 @@ export const claimRefresh = (
   return true;
 };
 
+// What the cache would serve for a key. A hit is fresh enough to serve as is, a stale answer is past that but inside its
+// stale window, and a miss is nothing to serve. A read never computes or refreshes an answer.
+export type Cached<A> =
+  | { readonly outcome: "hit" | "stale"; readonly answer: A; readonly storedAt: number }
+  | { readonly outcome: "miss" };
+
+export const miss: Cached<never> = { outcome: "miss" };
+
+export const reader = <A>(policy: Pick<AnswerPolicy<A>, "json" | "fresh" | "stale">) => {
+  const decode = Schema.decodeEffect(policy.json);
+  const keepFor = Duration.sum(policy.fresh, policy.stale);
+  return Effect.fnUntraced(function* (cache: AnswerCache, key: string) {
+    const stored = yield* cache.get(key);
+    if (Option.isNone(stored)) return miss;
+    const age = Duration.millis(Math.max(0, (yield* Clock.currentTimeMillis) - stored.value.storedAt));
+    const answer = yield* Effect.option(decode(stored.value.body));
+    if (Option.isNone(answer) || !Duration.isLessThan(age, keepFor)) return miss;
+    const outcome = Duration.isLessThan(age, policy.fresh) ? "hit" : "stale";
+    return { outcome, answer: answer.value, storedAt: stored.value.storedAt } satisfies Cached<A>;
+  });
+};
+
 export const answerCache = <I, A, C extends AnswerContext>(
   policy: AnswerPolicy<A>,
   keyOf: (input: I, context: C) => Option.Option<string>,
@@ -115,7 +137,7 @@ export const answerCache = <I, A, C extends AnswerContext>(
   const refreshStarts = new Map<string, number>();
   // Refreshes outlive the request signal. middlewareGen still joins the background fiber's interruption signal.
   const refreshSignal = new AbortController().signal;
-  const decode = Schema.decodeEffect(policy.json);
+  const read = reader(policy);
   const encode = Schema.encodeEffect(policy.json);
   const keepFor = Duration.sum(policy.fresh, policy.stale);
   const refreshContext = { execution: "refresh", resHeaders: undefined } satisfies Pick<
@@ -135,51 +157,46 @@ export const answerCache = <I, A, C extends AnswerContext>(
         }),
       );
 
-    const stored = yield* context.answerCache.get(key);
-    if (Option.isSome(stored)) {
-      const now = yield* Clock.currentTimeMillis;
-      const answer = yield* Effect.option(decode(stored.value.body));
-      const age = Duration.millis(Math.max(0, now - stored.value.storedAt));
-      if (Option.isSome(answer) && Duration.isLessThan(age, keepFor)) {
-        if (Duration.isLessThan(age, policy.fresh)) {
-          yield* served(context, policy.procedure, "hit", stored.value.storedAt);
-          return done({ output: answer.value });
-        }
-        if (claimRefresh(refreshStarts, key, now, policy.fresh)) {
-          yield* context.background(
-            Effect.gen(function* () {
-              // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC erases downstream failures to unknown.
-              const fresh = yield* next({
-                context: refreshContext,
-                signal: refreshSignal,
-              });
-              return fresh.output;
-            }).pipe(
-              Effect.flatMap((fresh) =>
-                policy.keep(fresh)
-                  ? Effect.andThen(
-                      store(fresh),
-                      Effect.sync(() => refreshStarts.delete(key)),
-                    )
-                  : Effect.void,
-              ),
-              Effect.catch((error) =>
-                policy.refused(error)
-                  ? Effect.andThen(
-                      context.answerCache.delete(key),
-                      Effect.sync(() => refreshStarts.delete(key)),
-                    )
-                  : Effect.logWarning("Answer refresh failed", {
-                      procedure: policy.procedure,
-                      error: error instanceof Error ? error.name : typeof error,
-                    }),
-              ),
+    const cached = yield* read(context.answerCache, key);
+    if (cached.outcome === "hit") {
+      yield* served(context, policy.procedure, "hit", cached.storedAt);
+      return done({ output: cached.answer });
+    }
+    if (cached.outcome === "stale") {
+      if (claimRefresh(refreshStarts, key, yield* Clock.currentTimeMillis, policy.fresh)) {
+        yield* context.background(
+          Effect.gen(function* () {
+            // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC erases downstream failures to unknown.
+            const fresh = yield* next({
+              context: refreshContext,
+              signal: refreshSignal,
+            });
+            return fresh.output;
+          }).pipe(
+            Effect.flatMap((fresh) =>
+              policy.keep(fresh)
+                ? Effect.andThen(
+                    store(fresh),
+                    Effect.sync(() => refreshStarts.delete(key)),
+                  )
+                : Effect.void,
             ),
-          );
-        }
-        yield* served(context, policy.procedure, "stale", stored.value.storedAt);
-        return done({ output: answer.value });
+            Effect.catch((error) =>
+              policy.refused(error)
+                ? Effect.andThen(
+                    context.answerCache.delete(key),
+                    Effect.sync(() => refreshStarts.delete(key)),
+                  )
+                : Effect.logWarning("Answer refresh failed", {
+                    procedure: policy.procedure,
+                    error: error instanceof Error ? error.name : typeof error,
+                  }),
+            ),
+          ),
+        );
       }
+      yield* served(context, policy.procedure, "stale", cached.storedAt);
+      return done({ output: cached.answer });
     }
     // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC erases downstream failures to unknown.
     const result = yield* next();

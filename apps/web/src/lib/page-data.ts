@@ -4,13 +4,21 @@ import type { SearchView } from "./search-state.ts";
 import type { Refusal } from "./trouble.ts";
 import { sameLogin } from "./whose.ts";
 
+// An answer by meaning the server painted. A stale one is a search answer the server read from the API's answer cache
+// past its fresh window, so the browser asks for it again and keeps it on screen until the new answer lands. The demo
+// landing's own answer is never stale here, because the server refreshes it.
+export interface Hits {
+  readonly results: ReadonlyArray<SearchResult>;
+  readonly stale: boolean;
+}
+
 // What the server already knows when it renders a stars page, so the page paints its first answer with no request.
 export interface FirstAnswer {
   readonly query: string;
   readonly at: number;
   readonly sync: SyncStatus;
   // The answer by meaning, or null when the server painted keyword matches alone and left that search to the browser.
-  readonly hits: ReadonlyArray<SearchResult> | null;
+  readonly hits: Hits | null;
   readonly view: SearchView;
 }
 

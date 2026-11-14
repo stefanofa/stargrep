@@ -6,6 +6,7 @@ import { normalize, searchText } from "../lib/keyword.ts";
 import {
   type Asked,
   type FirstAnswer,
+  type Hits,
   type PageData,
   type PageRequest,
   pageOwner,
@@ -13,7 +14,7 @@ import {
 } from "../lib/page-data.ts";
 import { liveView, type Semantic } from "../lib/page-view.ts";
 import { now } from "../lib/present.ts";
-import { api, type Client, type LibraryRepo, type SearchResult, type SyncStatus, type Viewer } from "../lib/rpc.ts";
+import { api, type Client, type LibraryRepo, type PublicConfig, type SyncStatus, type Viewer } from "../lib/rpc.ts";
 import { validateParams } from "../lib/search-params.ts";
 import { stageOf } from "../lib/search-state.ts";
 import { minimumLength } from "../lib/search-stream.ts";
@@ -50,14 +51,14 @@ const firstView = (
   repos: ReadonlyArray<LibraryRepo>,
   sync: SyncStatus,
   { query, sort, whose, starred }: Asking,
-  hits: ReadonlyArray<SearchResult> | null,
+  hits: Hits | null,
 ): FirstAnswer => {
   const entries = repos.map((repo) => ({ ...repo, text: searchText(repo) }));
   const byId = new Map(entries.map((entry) => [entry.id as number, entry]));
   const at = now();
   const semantic: Semantic =
     hits !== null
-      ? { kind: "answered", results: hits }
+      ? { kind: "answered", results: hits.results }
       : normalize(query).length < minimumLength
         ? { kind: "none" }
         : { kind: "pending", results: [] };
@@ -96,7 +97,7 @@ const demoAnswer = async (request: Request, client: Client, sync: SyncStatus, as
   const compute = async (): Promise<Computed> => {
     const [repos, { answer, searchedAt }] = await Promise.all([allStars(client, login), searched(login, query)]);
     return {
-      first: firstView(repos, sync, asking, answer.results),
+      first: firstView(repos, sync, asking, { results: answer.results, stale: false }),
       searchedAt,
       keep: answer.planSource !== "fallback",
     };
@@ -112,10 +113,26 @@ const demoAnswer = async (request: Request, client: Client, sync: SyncStatus, as
   return first;
 };
 
-// Any other query, a shared link's or a crawler's, paints from the library alone. The server searches nothing for it,
-// so an HTML request never spends model work, and the browser asks for the search by meaning through the API.
-const keywordAnswer = async (client: Client, sync: SyncStatus, asking: Asking) =>
-  firstView(await allStars(client, asking.login), sync, asking, null);
+// Any other query, a shared link's or a crawler's, is never searched on the server, so an HTML request spends no model
+// work. The page paints the answer by meaning when the API's answer cache already holds one, and keyword matches alone
+// when it doesn't. The browser then asks for the search by meaning through the API, unless the answer was fresh.
+const sharedAnswer = async (
+  request: Request,
+  config: PublicConfig,
+  client: Client,
+  sync: SyncStatus,
+  asking: Asking,
+) => {
+  const [{ answers }, { cachedSearch }] = await Promise.all([import("./app.ts"), import("@stargrep/api/router")]);
+  const input = { scope: { kind: "stars" as const, login: asking.login }, q: asking.query };
+  const [repos, cached] = await Promise.all([
+    allStars(client, asking.login),
+    Effect.runPromise(cachedSearch(input, { answerCache: answers(request), publicConfig: config })),
+  ]);
+  setResponseHeader("x-answer-cache", cached.outcome);
+  const hits = cached.outcome === "miss" ? null : { results: cached.answer.results, stale: cached.outcome === "stale" };
+  return firstView(repos, sync, asking, hits);
+};
 
 const loadSession = async (): Promise<Session> => {
   const request = getRequest();
@@ -146,7 +163,7 @@ const loadPage = async ({ login }: PageRequest, { viewer, config }: Session): Pr
   const answer = (library: SyncStatus) =>
     showcase && query === config.demoQuery
       ? demoAnswer(request, client, library, asking)
-      : keywordAnswer(client, library, asking);
+      : sharedAnswer(request, config, client, library, asking);
   const [first, opened] = await Promise.all([
     imported === null || query === "" ? null : answer(imported).catch(() => null),
     imported === null || repo === undefined ? null : findStar(client, owner, repo).catch(() => null),

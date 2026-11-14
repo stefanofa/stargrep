@@ -30,7 +30,7 @@ import { errorStatus, type WireCode } from "./errors.ts";
 import { IconHost } from "./icon-host.ts";
 import type { Transport } from "./middleware/instrumentation.ts";
 import { RateLimited, RateLimiter, RateLimiterUnavailable, type RateLimitKind } from "./rate-limiter.ts";
-import { type ApiContext, router } from "./router.ts";
+import { type ApiContext, cachedSearch, router } from "./router.ts";
 import { type ApiServices, ApiServicesUnavailable } from "./services.ts";
 import { NotSignedIn, type Viewer, type ViewerError, Viewers, ViewerUnavailable } from "./viewers.ts";
 
@@ -949,6 +949,65 @@ describe("the demo answer cache", () => {
         failure(client({ limiter }).api.search({ scope: { kind: "stars", login: "ada" }, q: "other words" })),
       );
       expect([error.code, acquired]).toEqual(["TOO_MANY_REQUESTS", ["search", "search"]]);
+    }),
+  );
+});
+
+describe("the cached search read", () => {
+  const read = (memory: ReturnType<typeof AnswerCache.memory>, input: Parameters<typeof cachedSearch>[0]) =>
+    cachedSearch(input, { answerCache: memory.cache, publicConfig });
+  const demoQuery = { scope: { kind: "stars" as const, login: "ada" }, q: "terminal dashboards" };
+
+  it.effect("answers what search would serve, fresh and then stale, without searching or building a service", () =>
+    Effect.gen(function* () {
+      const demo = demoSearch();
+      const { answer } = yield* demo.call(demoQuery);
+      const asked = { scope: { kind: "stars" as const, login: "ADA" }, q: "  Terminal   dashboards " };
+      expect(yield* read(demo.memory, asked)).toMatchObject({ outcome: "hit", answer });
+      yield* TestClock.adjust("6 minutes");
+      expect(yield* read(demo.memory, asked)).toMatchObject({ outcome: "stale", answer });
+      yield* TestClock.adjust(Duration.days(1));
+      expect(yield* read(demo.memory, asked)).toEqual({ outcome: "miss" });
+      // Search ran once, to fill the cache. Planning and embedding run inside it, so the reads made no model call.
+      expect([demo.searched.length, demo.builds()]).toEqual([1, 1]);
+    }),
+  );
+
+  it.effect("misses a query, a filter, or a limit search never answered, and an input search would refuse", () =>
+    Effect.gen(function* () {
+      const demo = demoSearch();
+      yield* demo.call(demoQuery);
+      for (const input of [
+        { ...demoQuery, q: "terminal dashboard" },
+        { ...demoQuery, filter: "lang:rust" },
+        { ...demoQuery, limit: 5 },
+        { ...demoQuery, q: " " },
+      ])
+        expect([input, yield* read(demo.memory, input)]).toEqual([input, { outcome: "miss" }]);
+      expect(demo.searched.length).toBe(1);
+    }),
+  );
+
+  it.effect("misses every login but the demo's, even one whose answer the cache still holds", () =>
+    Effect.gen(function* () {
+      const demo = demoSearch();
+      yield* demo.call(demoQuery);
+      const grace = { ...demoQuery, scope: { kind: "stars" as const, login: "grace" } };
+      yield* demo.call(grace);
+      expect(yield* read(demo.memory, grace)).toEqual({ outcome: "miss" });
+      const graceIsDemo = { ...publicConfig, demoLogin: GitHubLogin.make("grace") };
+      expect(yield* cachedSearch(demoQuery, { answerCache: demo.memory.cache, publicConfig: graceIsDemo })).toEqual({
+        outcome: "miss",
+      });
+      expect(yield* read(demo.memory, demoQuery)).toMatchObject({ outcome: "hit" });
+    }),
+  );
+
+  it.effect("never answers what the planner could not plan, since search never keeps it", () =>
+    Effect.gen(function* () {
+      const demo = demoSearch("fallback");
+      yield* demo.call(demoQuery);
+      expect(yield* read(demo.memory, demoQuery)).toEqual({ outcome: "miss" });
     }),
   );
 });
