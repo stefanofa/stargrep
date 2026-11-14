@@ -3,6 +3,7 @@ import type * as Embeddings from "@stargrep/ai/embeddings";
 import * as Fake from "@stargrep/ai/fake";
 import * as Db from "@stargrep/db";
 import { EmbeddingModelId } from "@stargrep/db/embedding";
+import { DbQueryFailed } from "@stargrep/db/errors";
 import * as TestDatabase from "@stargrep/db/test-database";
 import { Login } from "@stargrep/github/schemas";
 import { everything, type Selection, SelectionKey } from "@stargrep/knowledge/atom";
@@ -66,18 +67,33 @@ const fixture = () => {
   const takeAll = (caller: string, count: number) =>
     Effect.forEach(Array.from({ length: count }), () => allowed(caller, "plan"));
 
-  const searchAs = (caller: string, query: string, filter: Selection = everything) =>
+  const searchAs = (
+    caller: string,
+    query: string,
+    filter: Selection = everything,
+    allowance: Layer.Layer<ModelAllowance.ModelAllowance, never, Db.Db> = ModelAllowance.layerMetered(network(caller)),
+  ) =>
     Search.Search.use((search) =>
       search.search({ scope: { _tag: "stars", login: Login.make("user-77") }, query, limit: 10, filter }),
     ).pipe(
       Effect.provide(
-        Search.layer.pipe(
-          Layer.provideMerge(QueryPlanner.layer),
-          Layer.provide(ModelAllowance.layerMetered(network(caller))),
-          Layer.provide(planner),
-        ),
+        Search.layer.pipe(Layer.provideMerge(QueryPlanner.layer), Layer.provide(allowance), Layer.provide(planner)),
       ),
     );
+
+  const unreadableMeter = Layer.effect(
+    Db.Db,
+    Db.Db.use((db) =>
+      Effect.succeed({
+        ...db,
+        rateLines: {
+          ...db.rateLines,
+          reserve: () =>
+            Effect.fail(new DbQueryFailed({ operation: "rateLines.reserve", reason: "transport", sqlState: null })),
+        },
+      }),
+    ),
+  );
 
   const clearLines = TestDatabase.TestDatabase.use((database) => database.query("delete from rate_lines"));
 
@@ -205,6 +221,21 @@ const fixture = () => {
         expect(outcome.results.map((result): string => result.repo.name)).toEqual(["diesel"]);
         expect(outcome.results.every((result) => result.vectorRank === null)).toBe(true);
         expect(calls).toEqual({ prompts: 1, embedded: 0 });
+      }),
+    );
+
+    test.effect("refuses every model call as meter-down when the lines cannot be read, and still answers", () =>
+      Effect.gen(function* () {
+        yield* seeded;
+        const before = [yield* refusals("plan", "meter-down"), yield* refusals("embed", "meter-down")];
+        const query = "a rust orm for sql databases";
+        const unreadable = ModelAllowance.layerMetered(network("network-k")).pipe(Layer.provide(unreadableMeter));
+        const outcome = yield* searchAs("network-k", query, everything, unreadable);
+        expect(outcome).toMatchObject({ planSource: "fallback", plan: QueryPlan.asTyped(query, "sentence") });
+        expect(outcome.results.map((result): string => result.repo.name)).toEqual(["diesel"]);
+        expect(calls).toEqual({ prompts: 0, embedded: 0 });
+        const after = [yield* refusals("plan", "meter-down"), yield* refusals("embed", "meter-down")];
+        expect(after.map((count, index) => count - (before[index] ?? 0))).toEqual([1, 1]);
       }),
     );
 
