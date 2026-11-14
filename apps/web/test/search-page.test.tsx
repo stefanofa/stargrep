@@ -1,4 +1,4 @@
-import "./register.ts";
+import "./client-branch.ts";
 import { afterEach, beforeEach, describe, expect, mock, setSystemTime, spyOn, test } from "bun:test";
 import { createORPCErrorFromJson } from "@orpc/client";
 import type { WireCode } from "@stargrep/api/errors";

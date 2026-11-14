@@ -33,7 +33,6 @@
   },
   "devDependencies": {
     "@effect/tsgo": "catalog:",
-    "@happy-dom/global-registrator": "21.0.4",
     "@stargrep/config": "workspace:*",
     "@tailwindcss/vite": "4.3.4",
     "@testing-library/dom": "10.4.2",

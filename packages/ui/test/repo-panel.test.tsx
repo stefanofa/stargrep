@@ -1,4 +1,3 @@
-import "./register.ts";
 import { expect, test } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
 import { type RepoDetail, RepoPanel, type RepoVisual } from "../src/index.ts";

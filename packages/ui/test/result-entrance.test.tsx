@@ -1,4 +1,3 @@
-import "./register.ts";
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
 import { type Result, Results } from "../src/index.ts";

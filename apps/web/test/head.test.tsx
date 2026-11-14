@@ -1,4 +1,4 @@
-import "./register.ts";
+import "./client-branch.ts";
 import { expect, mock, test } from "bun:test";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { renderToString } from "react-dom/server";

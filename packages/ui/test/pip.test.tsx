@@ -1,4 +1,3 @@
-import "./register.ts";
 import "./dom.ts";
 import { describe, expect, test } from "bun:test";
 import { act, render } from "@testing-library/react";

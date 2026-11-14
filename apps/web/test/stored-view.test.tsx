@@ -1,4 +1,4 @@
-import "./register.ts";
+import "./client-branch.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { type View, ViewToggle } from "@stargrep/ui";
 import { cleanup, render, within } from "@testing-library/react";

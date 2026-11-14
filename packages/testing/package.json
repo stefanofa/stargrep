@@ -9,6 +9,7 @@
     "typecheck": "effect-tsgo tsc -p ."
   },
   "dependencies": {
+    "@happy-dom/global-registrator": "21.0.4",
     "effect": "catalog:"
   },
   "devDependencies": {
