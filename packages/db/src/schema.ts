@@ -237,7 +237,6 @@ export const repos = pgTable(
   (table) => [
     index("repos_search_idx").using("gin", table.search),
     index("repos_retryable_enrichment_idx").on(table.enrichRetryAt, table.id).where(retryableEnrichment(table)),
-    index("repos_icon_checked_at_idx").on(table.iconCheckedAt),
     check(
       "repos_icon_complete",
       sql`(${table.iconKey} is null) = (${table.iconSource} is null) and (${table.iconKey} is null) = (${table.iconPlate} is null) and (${table.iconKey} is null) = (${table.iconSize} is null)`,

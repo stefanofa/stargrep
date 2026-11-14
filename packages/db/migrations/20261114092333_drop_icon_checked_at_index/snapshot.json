@@ -1,0 +1,38 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "3654f239-250a-4241-b81d-eac12c0c5e19",
+  "prevIds": [
+    "32d5d4ff-8d25-406a-81f0-dea0053de581"
+  ],
+  "footprints": [
+    {
+      "statementType": "drop_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repos",
+        "repos_icon_checked_at_idx"
+      ],
+      "writes": [
+        "s|idx|public.repos_icon_checked_at_idx",
+        "n|idx|public.repos_icon_checked_at_idx",
+        "e|idx|public.repos_icon_checked_at_idx",
+        "n|rel|public.repos_icon_checked_at_idx"
+      ],
+      "reads": [
+        "e|tbl|public.repos",
+        "n|sch|public",
+        "e|col|public.repos.icon_checked_at"
+      ],
+      "sharedWrites": []
+    }
+  ],
+  "deltas": [
+    {
+      "op": "drop",
+      "key": "indexes\u0000[\"public\",\"repos_icon_checked_at_idx\"]"
+    }
+  ]
+}
