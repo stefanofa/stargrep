@@ -464,7 +464,7 @@ describe("atoms", () => {
     { atom: "kind:library", label: "library", listed: true, repoId: null },
     { atom: "about:subject:4127", label: "TUI", listed: true, repoId: null },
     { atom: "trait:subject:9001", label: "one repo's concept", listed: false, repoId: null },
-    { atom: "replaced-by:subject:9310", label: "ratatui", repoId: 552_661_142 as RepoId, listed: true },
+    { atom: "alt:subject:9310", label: "ratatui", repoId: 552_661_142 as RepoId, listed: true },
   ];
   const held = { held: () => Effect.succeed(new Map([[repo.id, facets]])) };
 

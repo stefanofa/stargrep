@@ -34,6 +34,8 @@ Receipts and decisions are the only sources of truth. Atoms are rebuilt from the
 | `alternative_to` | `alt` | language, platform, subject | its own atoms, as a comparison |
 | `replaced_by` | `replaced-by` | language, platform, subject | its own atoms, as a comparison |
 
+`replaced_by` is hidden, because its claims are not yet reliable enough to show. Extraction still writes it, projection still stores it, and its own `replaced-by:` filter still matches it, but no read in `facets.ts` returns it. `hiddenRoles` in the registry holds that one switch, and projection never reads it, so emptying it shows the role again without reprojecting.
+
 The summary model writes every role that has a prompt line. GitHub's license writes `licensed`, and a GitHub topic that names a known subject writes `tagged`.
 
 The `matches` field decides which filters reach a role:
@@ -101,7 +103,7 @@ Search reads two rules as functions. `knowledge_key_meanings(keys)` gives each l
 
 ## What the API reads
 
-`packages/db/src/queries/facets.ts` reads atoms for the API through the views, so a merge, a split, a rejection, or the self rule shows there as it does in search.
+`packages/db/src/queries/facets.ts` reads atoms for the API through the views, so a merge, a split, a rejection, or the self rule shows there as it does in search. Held and matching atoms leave out every role in `hiddenRoles`.
 
 - **Held atoms** come from `effective_atoms`. Each is the atom's shortest key, such as `written-in:lang:rust` or `about:subject:4127`, which also works as a filter, with its label, `listed`, and the repo a Link decision ties its subject to. Search results and `getRepo` carry them as `facets`, grouped by role with the primary kind first. A subject only one repo holds is there, with `listed` false.
 - **Matching atoms** come from `matching_atoms`. The library and `stars` pages carry each repo's as `atoms`, with one `labels` dictionary per response. They are bare keys, built_with's `with:` keys, and comparison keys, never role-qualified keys such as `for:subject:812`, which the read drops by `qualified`, and a subject key only once the subject is listed. So counting them gives the number of repos each chip's filter returns, and no chip shows a concept one repo names.

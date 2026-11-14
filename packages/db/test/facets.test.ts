@@ -127,6 +127,40 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
     }),
   );
 
+  test.effect("a replaced-by atom stays stored and reaches no panel or chip, while the other roles still do", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const successor = yield* subjectNamed("wombat next");
+      const rival = yield* subjectNamed("wombat rival");
+      const topic = yield* subjectNamed("wombat topic");
+      const [old, peer] = [repoId(9_801), repoId(9_802)];
+      const atoms = [
+        subject("about", topic),
+        subject("alternative_to", rival),
+        subject("replaced_by", successor),
+        atom("replaced_by", { dim: "language", id: "rust" }),
+      ];
+      yield* seed(
+        new Map([
+          [old, atoms],
+          [peer, atoms],
+        ]),
+      );
+
+      expect(
+        yield* database.query("select role from effective_atoms where repo_id = $1 and role = 'replaced_by'", [old]),
+      ).toHaveLength(2);
+      expect(((yield* db.facets.held([old])).get(old) ?? []).map((facet) => facet.atom)).toEqual([
+        `about:subject:${topic}`,
+        `alt:subject:${rival}`,
+      ]);
+      const chips = yield* db.facets.matching([old, peer]);
+      expect(chips.atoms.get(old)).toEqual([`alt:subject:${rival}`, `subject:${topic}`]);
+      expect(Object.keys(chips.labels).sort()).toEqual([`alt:subject:${rival}`, `subject:${topic}`]);
+    }),
+  );
+
   test.effect("lookup lists closed values and listed public subjects by a key prefix, most-held first", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;

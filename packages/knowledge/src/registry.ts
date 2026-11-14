@@ -422,6 +422,11 @@ export const traits = ["self-hosted", "local-first", "offline", "zero-dependency
 
 export const roleIds = RoleId.literals;
 
+// The roles whose atoms the API leaves out of result facets, the repo panel, and library chips. Extraction, projection,
+// and the role's own filter still keep them, and projection never reads this list, so changing it needs no
+// reprojection. replaced_by claims are not yet reliable enough to show.
+export const hiddenRoles: ReadonlyArray<RoleId> = ["replaced_by"];
+
 // The roles a bare value like "lang:rust" or "subject:4127" matches.
 export const defaultRoles = (dim: Dim): ReadonlyArray<RoleId> =>
   roleIds.filter((id) => roles[id].matches === "bare" && roles[id].accepts.includes(dim));

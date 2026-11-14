@@ -80,7 +80,7 @@ export const Facet = Schema.Struct({
       "False for a subject fewer than two repos hold. Library atoms and lookupFacets leave such a subject out, and a filter by it still works.",
   }),
   repoId: Schema.NullOr(RepoId).annotate({
-    description: "The repo a subject is the project of, as a replaced-by subject names its successor, or null.",
+    description: "The repo a subject is the project of, or null.",
   }),
 });
 
