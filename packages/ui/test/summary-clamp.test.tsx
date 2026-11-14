@@ -45,24 +45,25 @@ const reasonsOf = (view: View) => {
   return { hero, tile };
 };
 
-const clamps = (element: Element) => element.className.split(/\s+/).filter((name) => name.includes("line-clamp"));
+const clamps = (element: Element) =>
+  new Set(element.className.split(/\s+/).filter((name) => name.includes("line-clamp")));
 
 test("a tile clamps its summary to four lines and a list row to two, with the whole text and marks still there", () => {
   const { tile } = reasonsOf("tiles");
-  expect(clamps(tile)).toEqual(["line-clamp-4", "list:line-clamp-2"]);
+  expect(clamps(tile)).toEqual(new Set(["line-clamp-4", "list:line-clamp-2"]));
   expect(tile.closest(".view-tiles")).not.toBeNull();
   expect(tile.textContent).toBe(summary);
   expect([...tile.querySelectorAll("mark")].map((mark) => mark.textContent)).toEqual(["UIs"]);
 
   const row = reasonsOf("list").tile;
   expect(row.closest(".view-list")).not.toBeNull();
-  expect(clamps(row)).toContain("list:line-clamp-2");
+  expect(clamps(row).has("list:line-clamp-2")).toBe(true);
   expect(row.textContent).toBe(summary);
 });
 
 test("the wide hero tile clamps its larger text to three lines from the small breakpoint, four on phones", () => {
   const { hero } = reasonsOf("tiles");
-  expect(clamps(hero)).toEqual(["line-clamp-4", "tiles:sm:line-clamp-3", "list:line-clamp-2"]);
+  expect(clamps(hero)).toEqual(new Set(["line-clamp-4", "tiles:sm:line-clamp-3", "list:line-clamp-2"]));
   expect(hero.textContent).toBe(summary);
 });
 
@@ -73,7 +74,7 @@ test("the panel shows the whole summary, unclamped", () => {
   expect(text?.textContent).toBe(summary);
   let node: Element | null | undefined = text;
   while (node) {
-    expect(clamps(node)).toEqual([]);
+    expect(clamps(node).size).toBe(0);
     node = node.parentElement;
   }
 });

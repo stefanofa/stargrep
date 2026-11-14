@@ -55,10 +55,18 @@ test("the panel says who starred the repo: the viewer on their own page, the own
   });
 });
 
-test("the panel shows the same repo visual as the card", () => {
+test("the panel shows the card's owner avatar, asked for at twice each slot's side", () => {
   const repo = entry("Widgets for charts.", null);
-  expect(toDetail(repo, at, { own: true }).visual).toEqual(toResult(repo, at).visual);
-  expect(toDetail(repo, at, { own: true }).visual).toMatchObject({ kind: "avatar", letters: "ra" });
+  expect(toResult(repo, at).visual).toEqual({
+    kind: "avatar",
+    url: "https://avatars.githubusercontent.com/u/1?s=88",
+    letters: "ra",
+  });
+  expect(toDetail(repo, at, { own: true }).visual).toEqual({
+    kind: "avatar",
+    url: "https://avatars.githubusercontent.com/u/1?s=112",
+    letters: "ra",
+  });
 });
 
 test("a result's link opens the repo over the same query, view and sort, and drops a sign-in error", () => {

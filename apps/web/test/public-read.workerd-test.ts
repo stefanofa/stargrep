@@ -10,8 +10,10 @@ import { QueryPlan, Search } from "@stargrep/core/search";
 import { SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import { makeDb } from "@stargrep/db/testing";
+import { searchModels } from "@stargrep/runtime/ai-key";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { describe, expect, it } from "vitest";
 import { answerUrl, makeAnswerCache } from "../src/server/answer-cache.ts";
 import { repo } from "./entry.ts";
@@ -27,6 +29,8 @@ const post = (input: object, ip = "192.0.2.1"): RequestInit => ({
 });
 
 let nextCache = 0;
+
+const models = searchModels({ provider: "gateway", key: Option.none() });
 
 describe("the demo answer cache on the Cache API", () => {
   const fixture = () => {
@@ -84,7 +88,7 @@ describe("the demo answer cache on the Cache API", () => {
     const cache = () => caches.open(cacheName);
     const serve = testServer(layerFor, {
       publicConfig: () => ({ ...defaultPublicConfig, demoLogin: GitHubLogin.make("ada") }),
-      answerCache: makeAnswerCache(cache),
+      answerCache: makeAnswerCache(cache, () => models),
       waitUntil: (promise) => pending.push(promise),
     });
 
@@ -103,7 +107,7 @@ describe("the demo answer cache on the Cache API", () => {
   };
 
   const demo = { scope: { kind: "stars", login: "ada" }, q: "terminal dashboards" };
-  const url = answerUrl("http://web", "search/ada/stars/20//terminal dashboards");
+  const url = answerUrl("http://web", models, "search/ada/stars/20//terminal dashboards");
 
   it("stores a demo answer and serves it without building services", async () => {
     const { counts, ask, cache } = fixture();

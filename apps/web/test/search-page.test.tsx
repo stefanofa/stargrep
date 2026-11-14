@@ -424,9 +424,10 @@ describe("the search page in each state", () => {
           });
     await open("/?q=terminal");
     await waitFor(() => expect(strip()).toContain("found 3 of 6"));
-    const box = page().getByRole("searchbox");
-    await user.clear(box);
-    await user.type(box, "qzxvbnm");
+    const box = page().getByRole<HTMLInputElement>("searchbox");
+    // Bun loads React DOM before happy-dom registers, so React reports a change only on a key or selection event. A
+    // clear sends no key, and a render before the next selection event put the old query back.
+    await user.type(box, "qzxvbnm", { initialSelectionStart: 0, initialSelectionEnd: box.value.length });
     await waitFor(() => expect(server.searches.at(-1)).toBe("qzxvbnm"));
     expect(strip()).toContain("searching");
     expect(page().getByRole("link", { name: "tui-rs" })).toBeTruthy();

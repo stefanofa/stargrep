@@ -8,7 +8,7 @@ export { EmptyTile, RephraseChips } from "./components/empty-tile.tsx";
 export { LanguageBar, type LanguageShare } from "./components/language-bar.tsx";
 export { popupSurface } from "./components/popup.ts";
 export { ProgressRing } from "./components/progress-ring.tsx";
-export { Monogram, type Plate, RepoIcon, type RepoVisual } from "./components/repo-icon.tsx";
+export { Monogram, type Plate, RepoIcon, type RepoIconSize, type RepoVisual } from "./components/repo-icon.tsx";
 export { type RepoDetail, RepoPanel } from "./components/repo-panel.tsx";
 export {
   type Activity,

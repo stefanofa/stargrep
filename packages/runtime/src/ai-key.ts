@@ -1,4 +1,6 @@
+import * as Fake from "@stargrep/ai/fake";
 import * as Gateway from "@stargrep/ai/gateway";
+import * as Models from "@stargrep/ai/models";
 import * as StandIn from "@stargrep/ai/stand-in";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -44,6 +46,17 @@ export const layerModels = (ai: AiSetup) =>
 // The web Worker's planner and query embeddings.
 export const layerSearch = (ai: AiSetup) =>
   ai.provider === "fake" ? StandIn.layerSearch : Gateway.layerSearchForKey(ai.key);
+
+export interface SearchModels {
+  readonly planner: string;
+  readonly embedding: string;
+}
+
+// The models layerSearch plans and embeds with. The stand-in planner never plans, so it names none.
+export const searchModels = (ai: AiSetup): SearchModels =>
+  ai.provider === "fake"
+    ? { planner: "none", embedding: Fake.hashEmbeddingModel.id }
+    : { planner: Models.plannerModel, embedding: Models.embeddingModel.id };
 
 const isName = (path: ConfigProvider.Path, name: string) => path.length === 1 && path[0] === name;
 

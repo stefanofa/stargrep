@@ -13,7 +13,7 @@ const everyone = new Set(["org", "user"] as const);
 describe("the repo icon slot", () => {
   test("the repo's own icon comes first, with its plate", () => {
     const icon = { url: "https://icons.stargrep.com/git/abc.webp", plate: "dark" as const, size: 128 };
-    expect(repoVisual({ ...repo, icon })).toEqual({
+    expect(repoVisual({ ...repo, icon }, "card")).toEqual({
       kind: "icon",
       url: icon.url,
       plate: "dark",
@@ -22,31 +22,36 @@ describe("the repo icon slot", () => {
     });
   });
 
-  test("an org without an icon shows its avatar, asked for at slot size", () => {
-    expect(repoVisual(repo)).toEqual({
+  test("an org without an icon shows its avatar, asked for at twice the slot's side", () => {
+    expect(repoVisual(repo, "card")).toEqual({
       kind: "avatar",
       url: "https://avatars.githubusercontent.com/u/20248544?v=4&s=88",
       letters: "to",
+    });
+    expect(repoVisual(repo, "panel")).toMatchObject({
+      url: "https://avatars.githubusercontent.com/u/20248544?v=4&s=112",
     });
   });
 
   test("a person's repo without an icon shows their avatar", () => {
     expect(avatarOwners.has("user")).toBe(true);
-    expect(repoVisual({ ...repo, owner: "ClementTsang", ownerType: "user" })).toMatchObject({
+    expect(repoVisual({ ...repo, owner: "ClementTsang", ownerType: "user" }, "card")).toMatchObject({
       kind: "avatar",
       letters: "cl",
     });
   });
 
   test("with only orgs switched on, a person's repo gets a monogram of two lowercase owner letters", () => {
-    expect(repoVisual({ ...repo, owner: "ClementTsang", ownerType: "user" }, new Set(["org"] as const))).toEqual({
+    expect(
+      repoVisual({ ...repo, owner: "ClementTsang", ownerType: "user" }, "card", new Set(["org"] as const)),
+    ).toEqual({
       kind: "monogram",
       letters: "cl",
     });
   });
 
   test("a repo the server has not described yet gets a monogram", () => {
-    expect(repoVisual({ owner: "x", icon: null, ownerType: null, ownerAvatarUrl: null }, everyone)).toEqual({
+    expect(repoVisual({ owner: "x", icon: null, ownerType: null, ownerAvatarUrl: null }, "card", everyone)).toEqual({
       kind: "monogram",
       letters: "x",
     });
