@@ -1,4 +1,4 @@
-import "./register.ts";
+import "./client-branch.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { useLiveQuery } from "@tanstack/react-db";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";

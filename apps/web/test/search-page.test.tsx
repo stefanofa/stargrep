@@ -1,4 +1,4 @@
-import "./register.ts";
+import "./client-branch.ts";
 import { afterEach, beforeEach, describe, expect, mock, setSystemTime, spyOn, test } from "bun:test";
 import { createORPCErrorFromJson } from "@orpc/client";
 import type { WireCode } from "@stargrep/api/errors";
@@ -454,10 +454,9 @@ describe("the search page in each state", () => {
           });
     await open("/?q=terminal");
     await waitFor(() => expect(strip()).toContain("found 3 of 6"));
-    const box = page().getByRole<HTMLInputElement>("searchbox");
-    // Bun loads React DOM before happy-dom registers, so React reports a change only on a key or selection event. A
-    // clear sends no key, and a render before the next selection event put the old query back.
-    await user.type(box, "qzxvbnm", { initialSelectionStart: 0, initialSelectionEnd: box.value.length });
+    const box = page().getByRole("searchbox");
+    await user.clear(box);
+    await user.type(box, "qzxvbnm");
     await waitFor(() => expect(server.searches.at(-1)).toBe("qzxvbnm"));
     expect(strip()).toContain("searching");
     expect(page().getByRole("link", { name: "tui-rs" })).toBeTruthy();

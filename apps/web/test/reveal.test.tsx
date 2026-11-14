@@ -1,4 +1,4 @@
-import "./register.ts";
+import "./client-branch.ts";
 import { afterEach, describe, expect, test } from "bun:test";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { useReveal } from "../src/lib/reveal.ts";

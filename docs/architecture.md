@@ -372,6 +372,7 @@ Deployed stages keep Alchemy state in the Cloudflare account through `Cloudflare
 - `apps/web` and `apps/worker` tests run on workerd through `@cloudflare/vitest-plugin`. Both apps set `testTimeout` to 30 seconds to allow for workerd module loading. Workerd test files are named `*.workerd-test.ts`, which `bun test` never matches from any folder, and the vitest config includes only that pattern. `bunfig.toml` ignores `repos/`, so a root `bun test` runs the other `*.test.ts` and `*.test.tsx` files in the repo.
 - The worker test command also runs `vitest.runtime.config.ts`. It bundles the real Worker through Alchemy and exercises its bindings, queues, Durable Objects, and per-invocation database layers on workerd with a separate migrated Postgres database.
 - Web polling and reveal programs use `TestClock` in Bun tests, with separate DOM integration tests.
+- A `*.test.tsx` file is a DOM test. The root `bunfig.toml` preloads `packages/testing/src/dom.ts`, which registers happy-dom when a `.test.tsx` file loads, before its imports. React DOM reads the globals once, when it loads, and Bun evaluates CommonJS such as React DOM before any test module body, so a registration inside the test file comes too late and React falls back to its old-browser input events. A `*.test.ts` file gets no DOM and keeps Bun's `fetch`, `Request` and `Response`.
 - `bun test` runs with `--parallel`, not `--concurrent`, so a test that times out still interrupts its fiber and runs its finalizers.
 
 ## Settled by prototypes

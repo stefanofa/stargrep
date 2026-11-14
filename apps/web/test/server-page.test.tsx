@@ -1,4 +1,4 @@
-import "./register.ts";
+import "./client-branch.ts";
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { hydrate } from "@tanstack/react-router/ssr/client";

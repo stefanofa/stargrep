@@ -1,2 +1,3 @@
 [test]
 pathIgnorePatterns = ["repos/**"]
+preload = ["./packages/testing/src/dom.ts"]
