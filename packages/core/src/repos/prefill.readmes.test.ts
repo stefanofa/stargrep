@@ -1,4 +1,5 @@
 import { expect } from "bun:test";
+import * as TestDatabase from "@stargrep/db/test-database";
 import { blobOid } from "@stargrep/github/blob-oid";
 import * as GitHubFake from "@stargrep/github/github.fixture";
 import { ObjectId } from "@stargrep/github/schemas";
@@ -14,7 +15,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
 import * as BlobStore from "./blob-store.ts";
-import { adapters, fixture, query, range, ref, run, tally } from "./prefill.fixture.ts";
+import { embeddingModel, fixture, query, range, ref, run, tally } from "./prefill.fixture.ts";
 import * as Prefill from "./prefill.ts";
 
 const oidOf = (text: string) =>
@@ -39,10 +40,13 @@ const readmeOf = (n: number) =>
     ),
   );
 
-for (const [adapter, database] of adapters) {
+// README reads do not depend on the database, so one in-process database serves every case.
+const database = TestDatabase.layerMemory({ embeddingModel });
+
+{
   const f = fixture();
 
-  it.layer(f.layer(database), { timeout: 60_000, testTimeout: 60_000 })(`prefill README reads on ${adapter}`, (it) => {
+  it.layer(f.layer(database), { timeout: 60_000, testTimeout: 60_000 })("prefill README reads", (it) => {
     it.effect(
       "reads the READMEs the blob store lacks in one GraphQL batch, and over REST only those it leaves out",
       () =>
