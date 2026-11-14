@@ -1,6 +1,10 @@
 // Typed text shorter than this sits one edit from too many names, as "code" does from core.
 export const shortest = 5;
 
+// Typed text longer than this is a sentence, not a name, and its one-edit spellings would make a regular expression
+// thousands of alternatives long.
+export const longest = 64;
+
 // The fewest insertions, deletions, substitutions, and swaps of two neighboring letters that turn one word into the
 // other, counting no further than 2.
 export const edits = (from: string, to: string): number => {

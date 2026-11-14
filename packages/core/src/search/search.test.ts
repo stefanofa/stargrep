@@ -21,6 +21,7 @@ import * as QueryPlan from "./query-plan.ts";
 import * as QueryPlanner from "./query-planner.ts";
 import { recordingEmbeddings, type Seed, seedLibrary } from "./search.fixture.ts";
 import * as Search from "./search.ts";
+import * as Spelling from "./spelling.ts";
 import * as SearchCache from "./search-cache.ts";
 
 const model = Schema.decodeSync(EmbeddingModelId)("fake/hash-embedding");
@@ -216,6 +217,26 @@ const fixture = () => {
           ["similar name"],
           [],
         ]);
+      }),
+    );
+
+    test.effect("asks the planner instead of matching names for typed text longer than any name it would spell", () =>
+      Effect.gen(function* () {
+        const long = "a".repeat(Spelling.longest + 1);
+        const scope = yield* seed(924, [
+          ...orms(9100),
+          {
+            id: 9199,
+            name: long,
+            summary: "a repo with a very long name",
+            language: "Rust",
+            starredAt: "2025-03-01T00:00:00Z",
+            stars: 10,
+          },
+        ]);
+        respond = () => ormPlan({}, { _tag: "relevance" }, "a software project matching the unclear term");
+        const outcome = yield* search({ scope, query: `${long.slice(1)}b`, limit: 10 });
+        expect([outcome.planSource, outcome.results.some((result) => result.similarName)]).toEqual(["model", false]);
       }),
     );
 

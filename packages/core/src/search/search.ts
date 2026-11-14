@@ -254,7 +254,7 @@ export const make = Effect.gen(function* () {
   // filtered search goes on to the planner.
   const similarNames = Effect.fn("Search.similarNames")(function* (scope: Db.SearchScope, request: SearchRequest) {
     const typed = Spelling.letters(request.query);
-    if (request.filter !== undefined || typed.length < Spelling.shortest) return [];
+    if (request.filter !== undefined || typed.length < Spelling.shortest || typed.length > Spelling.longest) return [];
     const found = yield* db.search.nearNames({ scope, text: request.query, limit: similarNameCandidates });
     return found
       .map((repo) => ({ repo, edits: Spelling.edits(typed, Spelling.letters(repo.name)) }))
