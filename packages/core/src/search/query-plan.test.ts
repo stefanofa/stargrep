@@ -184,6 +184,14 @@ describe("PlannerPrompt", () => {
     expect(excluded.filter((atom) => /(^|:)lang:/.test(atom))).not.toEqual([]);
   });
 
+  // A description of text with no meaning, such as "a repository with no clear purpose", matches repos whose own
+  // summaries say that, so such text is searched as typed.
+  test("shows the model a query with no meaning, whose plan keeps it as typed", () => {
+    expect(
+      PlannerPrompt.examples.filter(({ query, output }) => output.semanticText === query).map(({ query }) => query),
+    ).not.toEqual([]);
+  });
+
   test("lists every registry metric for the model", () => {
     expect(PlannerPrompt.system).toContain("- active_contributors_growth_90d: Growth of active contributors");
   });
@@ -191,6 +199,6 @@ describe("PlannerPrompt", () => {
   // The version keys the plan cache and the answer cache. A change here empties both and is never a side effect of
   // the knowledge registry, so search keeps its own kind list.
   test("keeps the version that keys the plan and answer caches", () => {
-    expect(PlannerPrompt.version).toBe(-897997569);
+    expect(PlannerPrompt.version).toBe(997343326);
   });
 });
