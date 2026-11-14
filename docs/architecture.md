@@ -168,7 +168,7 @@ Search normally combines full text and vectors. If the model allowance refuses t
 A query such as "open source apps like Wispr Flow with growing contributors" needs filters and a ranking, not only text matching. The planner turns each natural-language query into a typed `QueryPlan`. Growth and activity metrics parse today but match nothing until a rollup producer fills `repo_metrics`.
 
 - **Scope.** The public API accepts only `{ kind: "stars", login }`. Core rejects other scopes with `SearchScopeUnavailable`. The caller sets the scope, never the model.
-- **Semantic text.** The text to embed. "Like Wispr Flow" becomes a description of what Wispr Flow does, because the product has no repo to compare against.
+- **Semantic text.** The text to embed. "Like Wispr Flow" becomes a description of what Wispr Flow does, because the product has no repo to compare against. Text that names nothing the model knows, such as "zzzzzz" or a made-up name, stays as typed, because a description such as "a repository with no clear purpose" matches repos whose own summaries say that.
 - **Filters.** Kind, license, language, archived, starred date, and bounds on any metric. A bound is strict or inclusive, so "more than 200 stars" leaves out a repo with exactly 200. Kinds, licenses, and languages become atoms, described under "Atoms in search" below. A language filter matches a repo written in that language or for it, from GitHub's language, a language topic, or the summary model's claims, because a Python package manager is often written in Rust. A JavaScript filter also matches TypeScript.
 - **Ranking.** Relevance alone, or the best matches reordered by a metric such as 90-day contributor growth. A metric never lifts a repo that did not match into the results.
 

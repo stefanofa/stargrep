@@ -249,7 +249,7 @@ Recall, known typos, and nonsense answers are the same with and without the step
 
 At 20,000 stars, the same six nonsense queries get an answer before and after the similar-name step. Four answers are right for an account that stars those repos. "asdf asdf asdf" finds `asdf-vm/asdf`, "plumber" finds `akavel/up`, "the Ultimate Plumber", "lawn mower" finds `ClemensElflein/OpenMower`, and "zxcvbnm" finds `dropbox/zxcvbn`, one edit from its name. The other two are meaning matches to stand-ins. "aaaaaaaa" and "zzzzzz" both reach a repo whose owner and name are only the letter e.
 
-One more run summarized the six stand-ins that decided an answer, for about $0.01. Each moved 0.065 to 0.18 farther from the typed text, to between 0.383 and 0.539, and "aaaaaaaa" then got nothing. "zzzzzz" and "lkjhgfdsa" still got the e repo, through the planner. It rewrites them as a repository "whose name or description consists of random repeated characters, with no clear purpose", and that repo's summary says its purpose cannot be determined, 0.305 and 0.311 away. Only a floor of 0.30 drops it, which costs a query of recall and a typo on the corpus. So a large account can answer gibberish with one repo that is itself gibberish, and the floor stays at 0.36. A planner that kept gibberish as typed instead of describing it would end that too.
+One more run summarized the six stand-ins that decided an answer, for about $0.01. Each moved 0.065 to 0.18 farther from the typed text, to between 0.383 and 0.539, and "aaaaaaaa" then got nothing. "zzzzzz" and "lkjhgfdsa" still got the e repo, through the planner. It rewrites them as a repository "whose name or description consists of random repeated characters, with no clear purpose", and that repo's summary says its purpose cannot be determined, 0.305 and 0.311 away. Only a floor of 0.30 drops it, which costs a query of recall and a typo on the corpus. So a large account can answer gibberish with one repo that is itself gibberish, and the floor stays at 0.36. A planner that kept gibberish as typed instead of describing it would end that too, and "Gibberish as typed" below measures it.
 
 Lower floors barely help at 20,000 stars, and higher ones answer more gibberish.
 
@@ -269,12 +269,29 @@ Four of the 16 known typos miss at 20,000 stars, the same four before and after,
 
 Recall@10 is 0.934 at 20,000 stars before and after. The expected repos compete with thousands of popular alternatives, such as tmux with every other terminal multiplexer, so the 0.97 bar does not apply there, and a `--stars` run only reports.
 
+### Gibberish as typed
+
+On 2026-11-14 the planner prompt changed so text that names nothing the model knows stays as typed. Of the 31 nonsense queries with no meaning, the old prompt kept 5 as typed and described the other 26, mostly in words a gibberish repo's summary also uses: "zzzzzz" became a repository "whose name or description consists of random repeated characters, with no clear purpose", and "kvorbna plintuska" "a term that is unclear and may be a misspelling". The new prompt tells the planner to read past misspellings of names and words it knows, to keep text that names nothing it knows exactly as typed, and never to call the query unclear, unknown, random, or meaningless. It shows two more examples, "dokcer" read as Docker and "vlorpt zinxe" kept as typed, neither from the eval. It keeps all 31 as typed and still describes the 12 nonsense queries that mean something, such as "lawn mower". It reads 15 of the 16 known typos past their misspelling and keeps "zustnad" as typed, which the similar-name step answers before the planner runs.
+
+The wording took four tries on the 82 typo and nonsense queries. Without the examples, a broad rule also kept "zustnad", "neovm", "imich photos", and "code minimpa" as typed, and a narrow one described the made-up names again, "wemplix" as a tool "whose purpose is not clearly known" and "kvorbna plintuska" as a library for Kubernetes plugins.
+
+| Stars | Prompt | recall@10 | Known typos | Obscure typos | Nonsense answered |
+|---|---|---|---|---|---|
+| 759 | before | 0.997 | 16 of 16 | 23 of 23 | 0 of 43 |
+| 759 | after | 0.997 | 16 of 16 | 23 of 23 | 0 of 43 |
+| 20,000, stand-ins | before | 0.932 | 12 of 16 | 23 of 23 | 6 of 43 |
+| 20,000, stand-ins | after | 0.942 | 12 of 16 | 23 of 23 | 6 of 43 |
+| 20,000, six summarized | before | 0.932 | 12 of 16 | 23 of 23 | 7 of 43 |
+| 20,000, six summarized | after | 0.942 | 12 of 16 | 23 of 23 | 4 of 43 |
+
+The 20,000 most-starred repos were fetched again for these runs, down to the same 3,367 stars, so the stand-in runs score 0.932 before against 0.934 above. With stand-ins alone, the same six nonsense queries get an answer before and after, because none of them reaches the planner: "aaaaaaaa" and "zzzzzz" reach the e repo's stand-in as typed. With the six stand-ins that decided answers summarized, as in the run above, the old plans of "zzzzzz", "lkjhgfdsa", and "aaaaaaaa" reach the e repo. This run's summary of it differs from the earlier one, so "aaaaaaaa" still answers here. The new plans answer none of them, and the four answers left are `asdf-vm/asdf`, `dropbox/zxcvbn`, `akavel/up`, and `ClemensElflein/OpenMower`. At 20,000 stars the new plans also find `laurent22/joplin`, `reduxjs/redux-toolkit`, `oven-sh/bun`, and `jax-ml/jax` for their queries and lose no expected repo. Plans vary from run to run, so that gain is not credited to the prompt.
+
 ### In CI
 
 CI runs `bun run evals/recall.ts --fixture`. The fixture is three files in `evals/fixtures`, one entry per line, so a rewrite shows as a readable diff.
 
 - `recall.json` names 18 queries and the recall the fixture scored on the 11 from `queries.json` when it was written, 0.970. They are the first query of each category in each set: 11 from `queries.json`, all planned, the first typo of each of the 2 kinds, and the first nonsense query of each of the 5 kinds.
-- `recall-repos.jsonl` holds 48 repos: the expected repos and the three highest-ranked wrong results for each query in the last full run. Each repo has its public metadata, summary, keywords, the facts the summary model stated with their quotes, and vector, and no README text. So the fixture checks the query compiler and atom filters against real claims.
+- `recall-repos.jsonl` holds 49 repos: the expected repos and the three highest-ranked wrong results for each query in the last full run. Each repo has its public metadata, summary, keywords, the facts the summary model stated with their quotes, and vector, and no README text. So the fixture checks the query compiler and atom filters against real claims.
 - `recall-answers.jsonl` holds every cached plan and query embedding those searches read, under the cache namespace that names the model and the prompt version. A typo or nonsense query typed as a keyword reads two embeddings and one plan.
 
 The fixture run loads PGlite in the test process and fails any model or embedding call, so it needs no key and no Postgres. It fails when recall drops under the recorded recall, when a typo misses its repo, or when a nonsense query gets a result. It also fails when a query is missing from the cache, which happens after a change to the planner prompt or a model. After such a change, run `--write-fixture` with a key and commit the new fixture.
@@ -286,6 +303,8 @@ A fixture of real vectors and plans tests the ranking that production runs. A ru
 Calibrating the meaning floor on 2026-11-05 used 222,107 input and 10,365 output tokens of `anthropic/claude-haiku-5.5` for plans and 1,286 tokens of `voyage/voyage-4`, about $0.03 at catalog prices. Every other plan and vector came from the cache.
 
 Measuring obscure typos and larger accounts on 2026-11-14 used 246,689 input and 76,091 output tokens of `anthropic/claude-haiku-5.5`, for 29 summaries and the new queries' plans, and 1.09 million tokens of `voyage/voyage-4`, almost all for the 19,241 stand-ins, about $0.13 at catalog prices. The 20,000 most-starred repos came from GitHub's GraphQL search, which is free.
+
+Keeping gibberish as typed on 2026-11-14 used 1,921,097 input and 145,184 output tokens of `anthropic/claude-haiku-5.5`, for 29 summaries, four rounds of plans for the 82 typo and nonsense queries, and 126 new plans, and 937,182 tokens of `voyage/voyage-4`, almost all for the 19,241 stand-ins, about $0.32 at catalog prices.
 
 The AI Gateway ledger shows $1.10 for every run on 2026-11-03: a 10-query smoke run, two full runs, one run that a gateway error stopped after its first stage, and the live checks. The script's own price estimate for the same work is about four times higher. The ledger is the bill.
 
