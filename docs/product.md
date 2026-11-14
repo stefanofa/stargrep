@@ -12,7 +12,7 @@ The planner reads natural-language filters for language, license, project kind, 
 
 Visiting an account in a visible browser tab asks for a sync if Stargrep does not know it. A signed-out import can wait for GitHub capacity. The page shows import and enrichment progress and lets the visitor retry a refused request. Server rendering alone never starts an import.
 
-Repos, summaries, and embeddings are shared across accounts. Signing in claims your GitHub account and requests a sync. A weekly full read detects unstars when the owner's viewer call finds it due.
+Repos, summaries, and embeddings are shared across accounts. Signing in claims your GitHub account and requests a sync. A weekly full read detects unstars when the owner's page asks for a sync and finds it due.
 
 ## API and MCP
 

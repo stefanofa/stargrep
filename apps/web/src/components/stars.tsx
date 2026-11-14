@@ -203,6 +203,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   const whole = useWhole(library);
   const { watch, retry } = useSync(
     owner,
+    data.own,
     () => library?.reload(),
     first?.sync ?? data.sync ?? undefined,
     data.refusal ?? undefined,

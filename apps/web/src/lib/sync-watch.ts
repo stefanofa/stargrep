@@ -29,6 +29,9 @@ export type SyncWatch =
 interface Watch {
   readonly initial: SyncStatus | undefined;
   readonly retry: boolean;
+  // The owner's page asks for a sync on every open, since only a sync finds a star made on GitHub. A refused ask of
+  // theirs reads the status instead, so their library stays on screen.
+  readonly own: boolean;
   readonly read: Effect.Effect<SyncStatus, SyncFailed>;
   readonly trigger: Effect.Effect<SyncStatus, SyncRefused>;
   readonly visible: Effect.Effect<void>;
@@ -69,7 +72,8 @@ export const watchSync = Effect.fn("Sync.watch")(function* (watch: Watch) {
         SyncFailed: (error) => Effect.as(Effect.logWarning("sync status failed", error.cause), before),
       }),
     );
-  let current = yield* step(watch.retry ? trigger : read, watch.initial);
+  const opening = watch.own ? Effect.catchTag(trigger, "SyncRefused", () => watch.read) : watch.retry ? trigger : read;
+  let current = yield* step(opening, watch.initial);
   while (true) {
     yield* Effect.raceFirst(Effect.sleep(intervalOf(current)), watch.visible);
     yield* watch.whenVisible;

@@ -30,6 +30,8 @@ interface Server {
   status: SyncStatus;
   search: (q: string) => Array<SearchResult> | Promise<Array<SearchResult>>;
   searches: Array<string>;
+  // Every login the page asked to sync.
+  triggered: Array<string>;
   // A refusal the API answers, or the zone's rate limit turning the address away before the API sees the request.
   refusals: Record<string, "LOGIN_NOT_FOUND" | "SYNC_BUSY" | "TOO_MANY_REQUESTS" | "SERVICE_UNAVAILABLE" | "zone">;
   calls: { library: number; syncStatus: number };
@@ -73,6 +75,7 @@ const api = (): Client => ({
     return server.status;
   },
   triggerSync: async ({ login }: { login: string }) => {
+    server.triggered.push(login);
     const refusal = server.refusals[login];
     if (refusal === "zone") return edgeAnswers(429).triggerSync({ login });
     if (refusal !== undefined) throw answered(refusal);
@@ -170,6 +173,7 @@ beforeEach(() => {
     status: status({ enrichment: allRead }),
     search: () => [],
     searches: [],
+    triggered: [],
     refusals: {},
     calls: { library: 0, syncStatus: 0 },
   };
@@ -326,6 +330,25 @@ describe("the search page in each state", () => {
     await poll();
     await waitFor(() => expect(page().getByText("A semantic layer.")).toBeTruthy());
     expect(strip()).toContain("7 stars");
+  });
+
+  test("your own page asks for a sync as it opens, and someone else's synced stars never ask", async () => {
+    await open("/");
+    await waitFor(() => expect(server.triggered).toEqual(["junodev"]));
+    cleanup();
+    server.status = status({ login: "octodone" });
+    await open("/octodone", "Search @octodone's stars");
+    await poll();
+    expect(server.triggered).toEqual(["junodev"]);
+  });
+
+  test("a refused ask on your own page keeps your stars on screen, with no trouble in their place", async () => {
+    server.refusals.junodev = "zone";
+    await open("/");
+    await waitFor(() => expect(server.triggered).toEqual(["junodev"]));
+    await waitFor(() => expect(strip()).toContain("6 stars"));
+    expect(page().queryByRole("heading", { name: "lots of requests from your network" })).toBeNull();
+    expect(rememberedRefusal(document.cookie, "junodev")).toBeUndefined();
   });
 
   test("a sync that starts after the page settled is picked up when the tab is shown again", async () => {

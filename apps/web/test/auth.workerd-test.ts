@@ -222,7 +222,7 @@ describe("direct sign-in", () => {
     expect((await githubSaw()).viewerReads).toBe(0);
   });
 
-  it("queues a sync when the owner opens the library a minute after the last one, and still makes anyone wait", async () => {
+  it("reads the viewer without a sync, and queues the owner's own a minute after the last one, inside anyone's wait", async () => {
     await visit(local, githubReturn(await startSignIn(local), { code: ada.code }));
     await githubSaw();
     await execute(
@@ -236,13 +236,14 @@ describe("direct sign-in", () => {
     expect(before).toMatchObject({ state: "done" });
 
     expect((await local.send("/api/viewer")).status).toBe(200);
-    const opened = await syncStatus(await local.send("/api/sync/ada"));
+    expect(await syncStatus(await local.send("/api/sync/ada"))).toMatchObject({ state: "done" });
+
+    const opened = await syncStatus(await local.send("/api/sync/ada", { method: "POST" }));
     expect(opened).toMatchObject({ state: "queued", syncedAt: before.syncedAt });
     expect(Date.parse(opened.requestedAt)).toBeGreaterThan(Date.parse(before.syncedAt));
 
-    expect((await local.send("/api/viewer")).status).toBe(200);
-    const triggered = await syncStatus(await local.send("/api/sync/ada", { method: "POST" }));
-    expect(triggered).toMatchObject({ state: "queued", requestedAt: opened.requestedAt });
+    const again = await syncStatus(await local.send("/api/sync/ada", { method: "POST" }));
+    expect(again).toMatchObject({ state: "queued", requestedAt: opened.requestedAt });
   });
 
   it("sends a denied consent back to the landing page with the error", async () => {

@@ -24,9 +24,11 @@ export const importViewer = (userId: UserId, token: Redacted.Redacted<string>) =
 
 type ImportServices = Db.Db | SyncRequests.SyncRequests | HttpClient.HttpClient;
 
+// A new session imports the account and queues its sync, so the import is under way when the page opens.
 const signIn = ({ userId, githubToken }: Auth.SignIn) =>
   githubToken.pipe(
     Effect.flatMap((token) => importViewer(userId, token)),
+    Effect.flatMap((account) => OwnerAccount.requestOwnerSync(account.login, userId, "sign-in")),
     Effect.catchCause((cause) => Effect.logWarning("Import after sign-in failed", { cause })),
     Effect.asVoid,
   );

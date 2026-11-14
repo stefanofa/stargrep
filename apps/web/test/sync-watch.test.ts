@@ -19,6 +19,7 @@ const harness = Effect.fn("test.watch")(function* (initial: SyncStatus) {
     watchSync({
       initial,
       retry: false,
+      own: false,
       read: Effect.sync(() => {
         reads++;
         return current;
@@ -109,6 +110,7 @@ it.effect("an unknown login triggers once, and a refusal waits for the visitor t
       watchSync({
         initial: undefined,
         retry: false,
+        own: false,
         read: Effect.succeed(syncStatus({ state: "unknown" })),
         trigger: Effect.sync(() => {
           triggered++;
@@ -135,6 +137,7 @@ it.effect("a failed status read keeps the previous polling interval and recovers
       watchSync({
         initial: previous,
         retry: false,
+        own: false,
         read: Effect.suspend(() =>
           reads++ === 0 ? Effect.fail(new SyncFailed({ cause: "offline" })) : Effect.succeed(previous),
         ),
@@ -152,5 +155,47 @@ it.effect("a failed status read keeps the previous polling interval and recovers
     yield* TestClock.adjust("1 millis");
     expect(reads).toBe(2);
     expect(changes).toEqual([{ kind: "watching", status: previous, at: 2000 }]);
+  }),
+);
+
+const ownerWatch = (trigger: Effect.Effect<SyncStatus, SyncRefused>) =>
+  Effect.gen(function* () {
+    const changes: Array<SyncWatch> = [];
+    const refused: Array<string> = [];
+    let reads = 0;
+    yield* Effect.forkChild(
+      watchSync({
+        initial: syncStatus({ state: "done" }),
+        retry: false,
+        own: true,
+        read: Effect.sync(() => {
+          reads++;
+          return syncStatus({ state: "failed" });
+        }),
+        trigger,
+        visible: Effect.never,
+        whenVisible: Effect.void,
+        changed: (watch) => changes.push(watch),
+        progressed: () => {},
+        refused: (refusal) => refused.push(refusal),
+      }),
+    );
+    yield* TestClock.adjust(0);
+    return { changes, refused, reads: () => reads };
+  });
+
+it.effect("the owner's page asks for a sync when it opens, before it reads anything", () =>
+  Effect.gen(function* () {
+    const queued = syncStatus({ state: "queued" });
+    const watch = yield* ownerWatch(Effect.succeed(queued));
+    expect([watch.changes, watch.reads()]).toEqual([[{ kind: "watching", status: queued, at: 0 }], 0]);
+  }),
+);
+
+it.effect("a refused ask from the owner reads the status instead, so their library stays on screen", () =>
+  Effect.gen(function* () {
+    const watch = yield* ownerWatch(Effect.fail(new SyncRefused({ refusal: "limited" })));
+    expect(watch.changes).toEqual([{ kind: "watching", status: syncStatus({ state: "failed" }), at: 0 }]);
+    expect([watch.refused, watch.reads()]).toEqual([[], 1]);
   }),
 );
