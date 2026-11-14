@@ -61,6 +61,7 @@ describe("the demo answer cache on the Cache API", () => {
                       {
                         repo,
                         nameMatch: false,
+                        similarName: false,
                         textRank: 1,
                         vectorRank: 1,
                         metrics: [{ metric: "stars", value: counts.searches }],

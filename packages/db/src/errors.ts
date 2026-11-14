@@ -40,6 +40,7 @@ export const Operation = Schema.Literals([
   "search.acceptedKeys",
   "search.hybrid",
   "search.matchesAsPrefix",
+  "search.nearNames",
   "syncRequests.get",
   "syncRequests.claim",
   "syncRequests.prune",

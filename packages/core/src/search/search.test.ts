@@ -194,15 +194,42 @@ const fixture = () => {
       }),
     );
 
-    test.effect("finds a misspelled repo name through the planner when the typed word matches nothing", () =>
+    test.effect("finds a name misspelled past one edit through the planner when the typed word matches nothing", () =>
       Effect.gen(function* () {
         const scope = yield* seed(917, orms(9030));
         respond = () => ormPlan({}, { _tag: "relevance" }, "rust orm for sql databases");
-        const outcome = yield* search({ scope, query: "deisel", limit: 10 });
+        const outcome = yield* search({ scope, query: "deisl", limit: 10 });
         expect(outcome.planSource).toBe("model");
         expect(names(outcome)[0]).toBe("diesel");
         expect(names(outcome)).not.toContain("ratatui");
         expect(calls.prompts).toHaveLength(1);
+      }),
+    );
+
+    test.effect("finds a name one edit from the typed word without the planner", () =>
+      Effect.gen(function* () {
+        const scope = yield* seed(922, orms(9080));
+        const outcome = yield* search({ scope, query: "ratatiu", limit: 10 });
+        expect([outcome.planSource, names(outcome), outcome.results.map(Search.reasonLine), calls.prompts]).toEqual([
+          "keyword",
+          ["ratatui"],
+          ["similar name"],
+          [],
+        ]);
+      }),
+    );
+
+    test.effect("asks the planner instead of matching names when the caller filters", () =>
+      Effect.gen(function* () {
+        const scope = yield* seed(923, orms(9090));
+        respond = () => ormPlan({}, { _tag: "relevance" }, "a software project matching the unclear term drizlze");
+        const filter = yield* Schema.decodeEffect(SelectionKey)("-lang:rust");
+        const outcome = yield* search({ scope, query: "drizlze", limit: 10, filter });
+        expect([
+          outcome.planSource,
+          calls.prompts.length,
+          outcome.results.some((result) => result.similarName),
+        ]).toEqual(["model", 1, false]);
       }),
     );
 
@@ -247,7 +274,7 @@ const fixture = () => {
           Effect.map(Metric.value(Metric.withAttributes(Search.plansMade, { source })), (state) => state.count);
         const keywordBefore = yield* count("keyword");
         const modelBefore = yield* count("model");
-        expect(names(yield* search({ scope, query: "prsima", limit: 10 }))[0]).toBe("prisma");
+        expect(names(yield* search({ scope, query: "pirsam", limit: 10 }))[0]).toBe("prisma");
         expect([yield* count("keyword"), yield* count("model")]).toEqual([keywordBefore, modelBefore + 1]);
       }),
     );

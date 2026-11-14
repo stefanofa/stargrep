@@ -375,6 +375,38 @@ const searchCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Tes
     }),
   );
 
+  test.effect("finds the account's repos one edit from the typed words run together, shortest name first", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const owner = accountId(830);
+      yield* seed(owner, [
+        { id: repoId(9301), name: "hlargs.nvim" },
+        { id: repoId(9302), name: "pacseek" },
+        { id: repoId(9303), name: "HabitTrove" },
+        { id: repoId(9304), name: "code-minimap" },
+        { id: repoId(9305), name: "query" },
+        { id: repoId(9306), name: "pacseek-web" },
+      ]);
+      const near = (text: string, scope = stars(owner)) =>
+        db.search
+          .nearNames({ scope, text, limit: 10 })
+          .pipe(Effect.map((found) => found.map((repo): string => repo.name)));
+
+      expect(
+        yield* Effect.all([
+          near("hlrags"),
+          near("pacsek"),
+          near("habbit trove"),
+          near("code minimpa"),
+          near("ownr query"),
+        ]),
+      ).toEqual([["hlargs.nvim"], ["pacseek", "pacseek-web"], ["HabitTrove"], ["code-minimap"], ["query"]]);
+      expect(
+        yield* Effect.all([near("pcsek"), near("dfsfgdsrg"), near(""), near("pacsek", stars(accountId(831)))]),
+      ).toEqual([[], [], [], []]);
+    }),
+  );
+
   test.effect("dies when a ranking names a metric the search does not compute", () =>
     Effect.gen(function* () {
       const owner = accountId(808);

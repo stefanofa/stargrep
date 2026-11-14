@@ -18,6 +18,7 @@ import * as ModelAllowance from "./model-allowance.ts";
 import type * as QueryPlan from "./query-plan.ts";
 import * as QueryPlanner from "./query-planner.ts";
 import * as SearchCache from "./search-cache.ts";
+import * as Spelling from "./spelling.ts";
 
 export class SearchScopeUnavailable extends Schema.TaggedError<
   SearchScopeUnavailable,
@@ -85,6 +86,8 @@ export interface MetricValue {
 export interface SearchResult {
   readonly repo: Db.SearchHit["repo"];
   readonly nameMatch: boolean;
+  // Found because the typed words spell its name with one edit at most, after nothing else matched.
+  readonly similarName: boolean;
   readonly textRank: number | null;
   readonly vectorRank: number | null;
   readonly metrics: ReadonlyArray<MetricValue>;
@@ -117,6 +120,9 @@ export const plansMade = Metric.counter("stargrep_search_plans", {
 
 const decodeEmbedding = Schema.decodeUnknownEffect(Embedding);
 
+// How many repos with a similar name search reads before it orders them by how close the whole name is.
+const similarNameCandidates = 50;
+
 const planMetrics = (plan: QueryPlan.QueryPlan): ReadonlyArray<MetricId> => [
   ...new Set([
     ...plan.filters.metrics.map((bound) => bound.metric),
@@ -127,6 +133,7 @@ const planMetrics = (plan: QueryPlan.QueryPlan): ReadonlyArray<MetricId> => [
 export const reasonLine = (result: SearchResult): string =>
   [
     ...(result.nameMatch ? ["exact name"] : []),
+    ...(result.similarName ? ["similar name"] : []),
     ...(result.textRank === null ? [] : [`keyword match #${result.textRank}`]),
     ...(result.vectorRank === null ? [] : [`meaning match #${result.vectorRank}`]),
     ...result.metrics.flatMap(({ metric, value }) => (value === null ? [] : [registry[metric].format(value)])),
@@ -232,12 +239,37 @@ export const make = Effect.gen(function* () {
         (hit): SearchResult => ({
           repo: hit.repo,
           nameMatch: hit.nameMatch,
+          similarName: false,
           textRank: hit.textRank,
           vectorRank: hit.vectorRank,
           metrics: metrics.map((metric, index) => ({ metric, value: hit.metrics[index] ?? null })),
         }),
       ),
     } satisfies Found;
+  });
+
+  // The planner cannot place a little-known name and reads it as the nearest thing it knows, as it reads "hlrags" as
+  // RAG, and a misspelled name's meaning is too far from its repo to rank it. So a repo the typed words spell with one
+  // edit at most answers first, the closest whole name first. The query does not apply the caller's own filter, so a
+  // filtered search goes on to the planner.
+  const similarNames = Effect.fn("Search.similarNames")(function* (scope: Db.SearchScope, request: SearchRequest) {
+    const typed = Spelling.letters(request.query);
+    if (request.filter !== undefined || typed.length < Spelling.shortest) return [];
+    const found = yield* db.search.nearNames({ scope, text: request.query, limit: similarNameCandidates });
+    return found
+      .map((repo) => ({ repo, edits: Spelling.edits(typed, Spelling.letters(repo.name)) }))
+      .sort((left, right) => left.edits - right.edits)
+      .slice(0, request.limit)
+      .map(
+        ({ repo }): SearchResult => ({
+          repo,
+          nameMatch: false,
+          similarName: true,
+          textRank: null,
+          vectorRank: null,
+          metrics: [],
+        }),
+      );
   });
 
   const outcome = ({ planned, results, applied }: Found) =>
@@ -249,10 +281,13 @@ export const make = Effect.gen(function* () {
     const scope = yield* dbScope(request.scope);
     const typed = yield* find(scope, yield* planner.plan(request.query), request);
     if (typed.results.length > 0 || typed.planned.source !== "keyword") return yield* outcome(typed);
-    // Typed words that match nothing are often a misspelled name, which the planner can read past. Words that still
-    // match as a prefix are most likely a word the user is still typing, so they skip the planner.
+    // Typed words that match nothing are often a misspelled name. Words that still match as a prefix are most likely a
+    // word the user is still typing, so they stop here. A name the typed words spell with one edit answers next, and the
+    // planner reads past any other misspelling.
     const text = typed.planned.plan.textQuery;
     if (yield* db.search.matchesAsPrefix({ scope, text })) return yield* outcome(typed);
+    const similar = yield* similarNames(scope, request);
+    if (similar.length > 0) return yield* outcome({ ...typed, results: similar });
     const read = yield* planner.planWithModel(request.query);
     if (read.source === "fallback") return yield* outcome({ ...typed, planned: read });
     return yield* outcome(yield* find(scope, read, request));

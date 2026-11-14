@@ -100,7 +100,16 @@ const searchWith = (planSource: Search.SearchOutcome["planSource"], record: (que
             planSource,
             results:
               request.scope._tag === "stars" && request.scope.login.toLowerCase() === "stefanofa"
-                ? [{ repo: demoRepos[0], nameMatch: false, textRank: 1, vectorRank: 1, metrics: [] }]
+                ? [
+                    {
+                      repo: demoRepos[0],
+                      nameMatch: false,
+                      similarName: false,
+                      textRank: 1,
+                      vectorRank: 1,
+                      metrics: [],
+                    },
+                  ]
                 : [],
             applied: [],
           } satisfies Search.SearchOutcome),
