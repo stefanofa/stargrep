@@ -54,6 +54,7 @@ const defaults = {
   search: {
     hybrid: unexpected("search.hybrid"),
     matchesAsPrefix: unexpected("search.matchesAsPrefix"),
+    nearNames: unexpected("search.nearNames"),
   },
   syncRequests: {
     get: unexpected("syncRequests.get"),

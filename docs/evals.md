@@ -19,13 +19,13 @@ This doc explains how Stargrep picks its embedding and summary models, what the 
 
 Product queries name a product that has no repo of its own, so only a model that knows what the product does can match them. Non-English queries check that English summaries still match queries in other languages.
 
-Two smaller sets check what recall@10 cannot. `evals/typos.json` holds 16 misspelled names and descriptions, such as "zustnad" for `pmndrs/zustand` and "fuzy finder" for `junegunn/fzf`, each with the repo it means. `evals/nonsense.json` holds 38 queries no repo answers: gibberish, keyboard mashes, unrelated words such as "wedding dress shopping", and nonsense or unrelated phrases in other languages. Search must find every typo's repo and answer every nonsense query with nothing. Neither set counts toward recall@10.
+Two smaller sets check what recall@10 cannot. `evals/typos.json` holds 39 misspelled names and descriptions, each with the repo it means. The 16 in the `typo` category name projects the planner knows, such as "zustnad" for `pmndrs/zustand` and "fuzy finder" for `junegunn/fzf`. The 23 in the `obscure` category name repos with 400 to 700 stars that it does not, such as "pacsek" for `moson-mo/pacseek` and "postgres extention for uuid v7" for `fboulnois/pg_uuidv7`. `evals/nonsense.json` holds 43 queries no repo answers: gibberish, keyboard mashes, unrelated words such as "wedding dress shopping", nonsense or unrelated phrases in other languages, and 5 made-up words shaped like repo names, such as "trobzik", that no repo on GitHub was named on 2026-11-14. Search must find every typo's repo and answer every nonsense query with nothing. Neither set counts toward recall@10.
 
 Every expected repo was checked against the GitHub API on 2026-11-03. Names are the current `owner/name` that GitHub returns after renames. `bun run evals/corpus.ts` repeats the check and fails with a list of any repo that is missing or renamed.
 
 ## Corpus
 
-The corpus is the 238 expected repos plus the 498 repos in `evals/distractors.json`, 736 in all. The distractors are the most-starred repos on GitHub on 2026-11-03, minus the expected ones. They stand in for the rest of a developer's star list. Without them every model scored between 0.982 and 0.995, so the eval could not tell models apart.
+The corpus is the 238 expected repos, the 23 repos the obscure typos name, and the 498 repos in `evals/distractors.json`, 759 in all. The distractors are the most-starred repos on GitHub on 2026-11-03, minus the expected ones. They stand in for the rest of a developer's star list. Without them every model scored between 0.982 and 0.995, so the eval could not tell models apart.
 
 `bun run evals/corpus.ts` fetches each repo's description, topics, language, and README through the GitHub GraphQL API, in 30 requests, and caches them in `evals/.cache/corpus.json`, which git ignores.
 
@@ -101,13 +101,13 @@ The choice of `voyage/voyage-4` does not depend on the tie rule. It follows from
 
 ## Recall bar
 
-The full recall run must reach **recall@10 of 0.97** on this query set over the 736-repo corpus, loaded as one account's stars and enriched by the production pipeline. `evals/recall.ts` enforces that bar. CI runs a smaller recorded fixture and requires its recorded score, described below.
+The full recall run must reach **recall@10 of 0.97** on this query set over the 759-repo corpus, loaded as one account's stars and enriched by the production pipeline. `evals/recall.ts` enforces that bar. CI runs a smaller recorded fixture and requires its recorded score, described below.
 
 The chosen pair measured 0.988 and 0.990 with vector search alone. Hybrid search should not score lower. Run-to-run noise is about one query, 0.008. The bar is the measured recall minus two queries of noise, rounded down to 0.97. A result below it means search lost at least two queries' worth of results, which is a real regression and not noise.
 
 ## Search recall
 
-`evals/recall.ts` runs the query set through real search. It summarizes the corpus with the summary model and embeds each repo's text, as enrichment does. It saves each answer's facts as a receipt and projects them into atoms, as enrichment does. It loads all 736 repos as the stars of one account, `recall-eval`, in a Postgres database named `stargrep_recall`. Then it sends each query through the `Search` service in `packages/core`, which calls the planner, embeds the query, and runs `search.hybrid`. It exits with an error when recall@10 is under the bar.
+`evals/recall.ts` runs the query set through real search. It summarizes the corpus with the summary model and embeds each repo's text, as enrichment does. It saves each answer's facts as a receipt and projects them into atoms, as enrichment does. It loads all 759 repos as the stars of one account, `recall-eval`, in a Postgres database named `stargrep_recall`. Then it sends each query through the `Search` service in `packages/core`, which calls the planner, embeds the query, and runs `search.hybrid`. It exits with an error when recall@10 is under the bar.
 
 Summaries, vectors, plans, and query embeddings are cached in `evals/.cache`, which git ignores. A rerun makes no model call unless the corpus, a model, the summary prompt or its thinking level, or the planner prompt changes.
 
@@ -189,22 +189,95 @@ max distance  recall@10  typos found  nonsense answered
 
 Every max distance from 0.32 to 0.40 keeps recall, finds every typo, and answers no nonsense. Search uses 0.36, the middle, which leaves 0.04 before the first loss on either side. At 0.30, "neovm" and one eval query lose a repo. At 0.42, the planner's reading of "plumber" matches `pathwaycom/pathway`. At 0.50, "typsense" finds a near repo as typed, so it is never planned and misses `typesense/typesense`.
 
-The range that works is narrow, from 0.32 to 0.40, and the same 54 typo and nonsense queries both chose the value and test it. No held-out set checks it. Two risks are known and unmeasured.
+The range that works is narrow, from 0.32 to 0.40, and the same 54 typo and nonsense queries both chose the value and test it. No held-out set checks it. Two risks were known and unmeasured. "Misspelled names and larger accounts" below measures both.
 
-- **Larger accounts.** A nonsense query's nearest repo gets closer as an account stars more repos. A fit of nearest distance against the log of the star count, over subsamples of this corpus, projects that 2 of the 23 planner rewrites of short gibberish come within 0.36 at 5,000 stars, and 9 at 20,000. Such an account could get 1 to 3 results for gibberish again, not 20. This is an extrapolation, not a measurement.
-- **Obscure typos.** All 16 typos name projects the planner knows, such as Zustand and ripgrep. A typo of a star the planner cannot identify likely finds nothing now. Before, the typed vector often ranked it first. A follow-up adds typos of niche repos and a check on a larger corpus.
+- **Larger accounts.** A nonsense query's nearest repo gets closer as an account stars more repos. A fit of nearest distance against the log of the star count, over subsamples of this corpus, projected that 2 of the 23 planner rewrites of short gibberish come within 0.36 at 5,000 stars, and 9 at 20,000. Such an account could get 1 to 3 results for gibberish again, not 20.
+- **Obscure typos.** All 16 typos then named projects the planner knows, such as Zustand and ripgrep. A typo of a star the planner cannot identify likely found nothing. Before, the typed vector often ranked it first.
 
 The value belongs to the embedding model. After a model change, rerun the sweep and set the new model's `maxMatchDistance` to the middle of its plateau.
+
+### Misspelled names and larger accounts
+
+On 2026-11-14 the 23 obscure typos, the 5 made-up names, and accounts of up to 20,000 stars measured both risks. The corpus now holds recipe 5 summaries, so its numbers differ from the sweep above.
+
+**Obscure typos.** With the meaning floor alone, search found 11 of the 23 obscure typos. All 12 misses were one or two typed words one edit from the repo's name. Some planned to nothing near. The planner read the others as the nearest thing it knew, "hlrags" as RAG, "ngrram" as n-gram, and "miasam nvim" as Neovim, and returned the wrong repos. Without the floor, the typed text's vector ranked all 23 in its top 10. No max distance finds them all and answers no nonsense.
+
+```
+max distance  recall@10  typos found  nonsense answered
+        2.00      0.995        39/39              43/43
+        0.50      0.995        33/39              17/43
+        0.45      0.995        29/39               5/43
+        0.40      0.995        27/39               2/43
+        0.38      0.995        27/39               1/43
+        0.36      0.997        27/39               0/43
+        0.34      0.991        26/39               0/43
+        0.32      0.991        26/39               0/43
+```
+
+So search now looks for a similar name before it asks the planner, as `docs/architecture.md` describes under "Query plans". Postgres matches the typed words, run together, against every repo name, every part of a name, and every owner and name run together, with one regular expression of all their spellings one edit away. It needs no extension. The same sweep with that step:
+
+```
+max distance  recall@10  typos found  nonsense answered
+        2.00      0.995        39/39              43/43
+        0.50      0.995        38/39              17/43
+        0.45      0.995        39/39               5/43
+        0.42      0.995        39/39               5/43
+        0.40      0.995        39/39               2/43
+        0.38      0.995        39/39               1/43
+        0.37      0.997        39/39               1/43
+        0.36      0.997        39/39               0/43
+        0.35      0.995        38/39               0/43
+        0.34      0.991        38/39               0/43
+        0.32      0.991        38/39               0/43
+        0.30      0.988        38/39               0/43
+```
+
+Every max distance from 0.36 to 0.45 now finds all 39 typos, and 28 of them take no planner call. At 0.37, "zxcvbnm" plans as a zxcvbn-style password library and matches `danielmiessler/SecLists` at 0.370. So 0.36 is the only value that finds every typo, answers no nonsense, and keeps the best recall. It is the top of the range that answers no nonsense, not its middle, and it stays.
+
+The first version of the step looked only among the 100 repos nearest the typed words by meaning. It found all 23 on this corpus. At 20,000 stars the repos for "jelyfin", "clidel", and "hlrags" ranked 493rd, 180th, and 298th by meaning, because a misspelled name carries little meaning. Matching letters in Postgres finds them at any size.
+
+**Larger accounts.** `--stars N` fills the eval account with GitHub's most-starred repos until it holds N stars. The 20,000 most-starred repos on 2026-11-14 run down to 3,367 stars. Summaries for the 19,241 of them outside the corpus would cost about $37 at recipe 5's $1.90 per 1,000, so each is embedded from its name, description, and topics instead, a stand-in for its summary. Over the 736 repos the corpus then held, a stand-in sat 0.005 farther from the eval's query vectors than the summary at the median, and 90% of pairs fell between 0.038 closer and 0.068 farther. Short typed text is the exception. For 14 of the 15 typed typos, the stand-in of the repo they mean sits 0.007 to 0.070 closer than its summary, because both are short and mostly name. So these runs overstate how close typed gibberish and typos get.
+
+| Stars | recall@10 | Known typos found | Obscure typos found, floor alone | Obscure typos found, with the step | Nonsense answered |
+|---|---|---|---|---|---|
+| 759 | 0.997 | 16 of 16 | 11 of 23 | 23 of 23 | 0 of 43 |
+| 5,000 | 0.975 | 15 of 16 | 11 of 23 | 23 of 23 | 3 of 43 |
+| 10,000 | 0.959 | 14 of 16 | 11 of 23 | 23 of 23 | 6 of 43 |
+| 20,000 | 0.934 | 12 of 16 | 11 of 23 | 23 of 23 | 6 of 43 |
+
+Recall, known typos, and nonsense answers are the same with and without the step at every size. At 5,000 stars the planner reads "plumber" as data plumbing and finds `PrefectHQ/prefect` and `dagster-io/dagster` by meaning.
+
+At 20,000 stars, the same six nonsense queries get an answer before and after the similar-name step. Four answers are right for an account that stars those repos. "asdf asdf asdf" finds `asdf-vm/asdf`, "plumber" finds `akavel/up`, "the Ultimate Plumber", "lawn mower" finds `ClemensElflein/OpenMower`, and "zxcvbnm" finds `dropbox/zxcvbn`, one edit from its name. The other two are meaning matches to stand-ins. "aaaaaaaa" and "zzzzzz" both reach a repo whose owner and name are only the letter e.
+
+One more run summarized the six stand-ins that decided an answer, for about $0.01. Each moved 0.065 to 0.18 farther from the typed text, to between 0.383 and 0.539, and "aaaaaaaa" then got nothing. "zzzzzz" and "lkjhgfdsa" still got the e repo, through the planner. It rewrites them as a repository "whose name or description consists of random repeated characters, with no clear purpose", and that repo's summary says its purpose cannot be determined, 0.305 and 0.311 away. Only a floor of 0.30 drops it, which costs a query of recall and a typo on the corpus. So a large account can answer gibberish with one repo that is itself gibberish, and the floor stays at 0.36. A planner that kept gibberish as typed instead of describing it would end that too.
+
+Lower floors barely help at 20,000 stars, and higher ones answer more gibberish.
+
+```
+max distance  recall@10  typos found  nonsense answered
+        2.00      0.939        21/39              43/43
+        0.45      0.943        32/39              29/43
+        0.40      0.941        35/39              10/43
+        0.38      0.932        35/39               8/43
+        0.36      0.934        35/39               6/43
+        0.34      0.930        34/39               5/43
+        0.32      0.933        34/39               5/43
+        0.30      0.942        35/39               5/43
+```
+
+Four of the 16 known typos miss at 20,000 stars, the same four before and after, because their typed search finds something and never reaches the similar-name step. Other repos' descriptions contain "pytroch" and "langchian" as typed, so full text answers with them. Stand-ins of other Elasticsearch and Kubernetes repos sit within 0.36 of "elasticsaerch" and "kubernets". The four of them that were summarized moved past the floor, and other stand-ins took their place. With real summaries these two likely reach the step, which finds both, but that is an inference, not a measurement.
+
+Recall@10 is 0.934 at 20,000 stars before and after. The expected repos compete with thousands of popular alternatives, such as tmux with every other terminal multiplexer, so the 0.97 bar does not apply there, and a `--stars` run only reports.
 
 ### In CI
 
 CI runs `bun run evals/recall.ts --fixture`. The fixture is three files in `evals/fixtures`, one entry per line, so a rewrite shows as a readable diff.
 
-- `recall.json` names 16 queries and the recall the fixture scored on the 11 from `queries.json` when it was written, 0.970. They are the first query of each category in each set: 11 from `queries.json`, all planned, the first typo, and the first nonsense query of each of the 4 kinds.
-- `recall-repos.jsonl` holds 52 repos: the expected repos and the three highest-ranked wrong results for each query in the last full run. Each repo has its public metadata, summary, keywords, the facts the summary model stated with their quotes, and vector, and no README text. So the fixture checks the query compiler and atom filters against real claims.
+- `recall.json` names 18 queries and the recall the fixture scored on the 11 from `queries.json` when it was written, 0.970. They are the first query of each category in each set: 11 from `queries.json`, all planned, the first typo of each of the 2 kinds, and the first nonsense query of each of the 5 kinds.
+- `recall-repos.jsonl` holds 48 repos: the expected repos and the three highest-ranked wrong results for each query in the last full run. Each repo has its public metadata, summary, keywords, the facts the summary model stated with their quotes, and vector, and no README text. So the fixture checks the query compiler and atom filters against real claims.
 - `recall-answers.jsonl` holds every cached plan and query embedding those searches read, under the cache namespace that names the model and the prompt version. A typo or nonsense query typed as a keyword reads two embeddings and one plan.
 
-The fixture run loads PGlite in the test process and fails any model or embedding call, so it needs no key and no Postgres. It fails when recall drops under the recorded recall, when the typo misses its repo, or when a nonsense query gets a result. It also fails when a query is missing from the cache, which happens after a change to the planner prompt or a model. After such a change, run `--write-fixture` with a key and commit the new fixture.
+The fixture run loads PGlite in the test process and fails any model or embedding call, so it needs no key and no Postgres. It fails when recall drops under the recorded recall, when a typo misses its repo, or when a nonsense query gets a result. It also fails when a query is missing from the cache, which happens after a change to the planner prompt or a model. After such a change, run `--write-fixture` with a key and commit the new fixture.
 
 A fixture of real vectors and plans tests the ranking that production runs. A run on hash embeddings would only test the plumbing.
 
@@ -212,12 +285,15 @@ A fixture of real vectors and plans tests the ranking that production runs. A ru
 
 Calibrating the meaning floor on 2026-11-05 used 222,107 input and 10,365 output tokens of `anthropic/claude-haiku-5.5` for plans and 1,286 tokens of `voyage/voyage-4`, about $0.03 at catalog prices. Every other plan and vector came from the cache.
 
+Measuring obscure typos and larger accounts on 2026-11-14 used 246,689 input and 76,091 output tokens of `anthropic/claude-haiku-5.5`, for 29 summaries and the new queries' plans, and 1.09 million tokens of `voyage/voyage-4`, almost all for the 19,241 stand-ins, about $0.13 at catalog prices. The 20,000 most-starred repos came from GitHub's GraphQL search, which is free.
+
 The AI Gateway ledger shows $1.10 for every run on 2026-11-03: a 10-query smoke run, two full runs, one run that a gateway error stopped after its first stage, and the live checks. The script's own price estimate for the same work is about four times higher. The ledger is the bill.
 
 ## Run it
 
 ```sh
 GITHUB_TOKEN=... bun run evals/corpus.ts
+GITHUB_TOKEN=... bun run evals/corpus.ts --most-starred 20000
 AI_GATEWAY_API_KEY=... bun run evals/bakeoff.ts --limit 10
 AI_GATEWAY_API_KEY=... bun run evals/bakeoff.ts
 bun run evals/bakeoff.ts --fake
@@ -231,8 +307,11 @@ The recall gate needs Postgres, from `docker compose up --detach --wait` or a `D
 AI_GATEWAY_API_KEY=... bun run evals/recall.ts
 AI_GATEWAY_API_KEY=... bun run evals/recall.ts --write-fixture
 AI_GATEWAY_API_KEY=... bun run evals/recall.ts --max-distances 0.32,0.36,0.40
+AI_GATEWAY_API_KEY=... bun run evals/recall.ts --stars 20000
 bun run evals/recall.ts --fixture
 ```
+
+`corpus.ts --most-starred N` writes GitHub's N most-starred repos to `evals/.cache/most-starred.json`, with no README, through GraphQL search. Search pages take about 7 seconds each, so 20,000 repos take about 30 minutes. `--stars N` fills the eval account up to N stars with those repos, in order of stars, embedded from their name, description, and topics. "Larger accounts" above says why.
 
 `--max-distances` scores search at each listed value of `maxMatchDistance` and prints one line per value. `--accept-floor` runs the usage floor before the queries run, which accepts every subject held by 3 repos from 2 owners, and `--bare-filters` adds bare subjects as filters, so a change to the compiler's policy can be measured before it ships.
 

@@ -77,7 +77,6 @@ export const enrich = Effect.fn("EnrichedCorpus.enrich")(function* (summaryModel
   const embeddings = yield* Embeddings.Embeddings;
   const corpus = yield* Corpus.loadCorpus;
   const summaryCache = cacheFile(`summaries/${slug(summaryModel)}.json`, Summaries);
-  const vectorCache = cacheFile(`vectors/${slug(embeddings.model.id)}.json`, Vectors);
 
   const cached = (yield* summaryCache.read) ?? {};
   const summaries: Record<string, typeof SummaryEntry.Type> = {};
@@ -102,23 +101,11 @@ export const enrich = Effect.fn("EnrichedCorpus.enrich")(function* (summaryModel
     yield* summaryCache.write(summaries);
   }
 
-  const vectors: Record<string, { readonly text: string; readonly vector: ReadonlyArray<number> }> = {
-    ...(yield* vectorCache.read),
-  };
   const texts = corpus.map((repo) => {
     const summary = summaries[repo.fullName]?.summary ?? { summary: repo.description ?? repo.fullName, keywords: [] };
     return { repo, text: Summarize.embeddingText(repo, summary) };
   });
-  const unembedded = texts.filter(({ repo, text }) => vectors[repo.fullName]?.text !== text);
-  if (unembedded.length > 0) yield* Console.log(`Embedding ${unembedded.length} repos with ${embeddings.model.id}`);
-  for (let start = 0; start < unembedded.length; start += embedBatchSize) {
-    const batch = unembedded.slice(start, start + embedBatchSize);
-    const result = yield* embeddings.embed(batch.map(({ text }) => text));
-    batch.forEach(({ repo, text }, index) => {
-      vectors[repo.fullName] = { text, vector: result[index]?.vector ?? [] };
-    });
-  }
-  yield* vectorCache.write(vectors);
+  const vectors = yield* embedCached(`vectors/${slug(embeddings.model.id)}.json`, texts);
 
   return texts.map(({ repo }): EnrichedRepo => {
     const summary = summaries[repo.fullName]?.summary;
@@ -129,8 +116,73 @@ export const enrich = Effect.fn("EnrichedCorpus.enrich")(function* (summaryModel
       language: repo.language,
       summary: summary?.summary ?? repo.description ?? repo.fullName,
       keywords: summary?.keywords ?? [],
-      facets: summary?.facets ?? decodeFacets([], { fullName: repo.fullName, description: "", topics: [], readme: "" }),
+      facets: summary?.facets ?? noFacets(repo),
       vector: vectors[repo.fullName]?.vector ?? [],
     };
   });
+});
+
+const noFacets = (repo: Summarize.RepoFacts) =>
+  decodeFacets([], { fullName: repo.fullName, description: "", topics: [], readme: "" });
+
+// Embeds each repo's text unless the cache holds a vector for that exact text.
+const embedCached = Effect.fn("EnrichedCorpus.embedCached")(function* (
+  path: string,
+  texts: ReadonlyArray<{ readonly repo: Summarize.RepoFacts; readonly text: string }>,
+) {
+  const embeddings = yield* Embeddings.Embeddings;
+  const cache = cacheFile(path, Vectors);
+  const vectors: Record<string, { readonly text: string; readonly vector: ReadonlyArray<number> }> = {
+    ...(yield* cache.read),
+  };
+  const unembedded = texts.filter(({ repo, text }) => vectors[repo.fullName]?.text !== text);
+  if (unembedded.length > 0) yield* Console.log(`Embedding ${unembedded.length} repos with ${embeddings.model.id}`);
+  for (let start = 0; start < unembedded.length; start += embedBatchSize) {
+    const batch = unembedded.slice(start, start + embedBatchSize);
+    const result = yield* embeddings.embed(batch.map(({ text }) => text));
+    batch.forEach(({ repo, text }, index) => {
+      vectors[repo.fullName] = { text, vector: result[index]?.vector ?? [] };
+    });
+  }
+  if (unembedded.length > 0) yield* cache.write(vectors);
+  return vectors;
+});
+
+class TooFewStars extends Schema.TaggedError<TooFewStars>()("TooFewStars", {
+  stars: Schema.Finite,
+  available: Schema.Finite,
+}) {
+  override get message(): string {
+    return `evals/.cache/most-starred.json fills ${this.available} stars, not ${this.stars}, so run \`bun run evals/corpus.ts --most-starred ${this.stars}\``;
+  }
+}
+
+// Fills an account of these repos up to `stars` stars with GitHub's most-starred repos. Summaries for thousands of repos
+// cost more than this check is worth, so each one is embedded from its name, description, and topics instead.
+export const fillStars = Effect.fn("EnrichedCorpus.fillStars")(function* (
+  repos: ReadonlyArray<EnrichedRepo>,
+  stars: number,
+) {
+  const embeddings = yield* Embeddings.Embeddings;
+  const have = new Set(repos.map((repo) => repo.fullName));
+  const candidates = (yield* Corpus.loadMostStarred).filter((repo) => !have.has(repo.fullName));
+  const wanted = Math.max(0, stars - repos.length);
+  if (candidates.length < wanted) return yield* new TooFewStars({ stars, available: repos.length + candidates.length });
+  const texts = candidates.slice(0, wanted).map((repo) => ({
+    repo,
+    text: Summarize.embeddingText(repo, { summary: "", keywords: repo.topics }),
+  }));
+  const vectors = yield* embedCached(`vectors/most-starred-${slug(embeddings.model.id)}.json`, texts);
+  return texts.map(
+    ({ repo }): EnrichedRepo => ({
+      fullName: repo.fullName,
+      description: repo.description,
+      topics: repo.topics,
+      language: repo.language,
+      summary: repo.description ?? repo.fullName,
+      keywords: repo.topics,
+      facets: noFacets(repo),
+      vector: vectors[repo.fullName]?.vector ?? [],
+    }),
+  );
 });

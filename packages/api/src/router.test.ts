@@ -90,7 +90,16 @@ const starredAt = DateTime.makeUnsafe("2025-03-14T10:00:00Z");
 const searchOutcome = (request: Search.SearchRequest): Search.SearchOutcome => ({
   plan: QueryPlan.asTyped(request.query, "sentence"),
   planSource: "fallback",
-  results: [{ repo, nameMatch: false, textRank: 2, vectorRank: 1, metrics: [{ metric: "stars", value: 18_000 }] }],
+  results: [
+    {
+      repo,
+      nameMatch: false,
+      similarName: false,
+      textRank: 2,
+      vectorRank: 1,
+      metrics: [{ metric: "stars", value: 18_000 }],
+    },
+  ],
   applied: [],
 });
 

@@ -226,5 +226,35 @@
     "category": "foreign",
     "query": "Fahrradreifen flicken",
     "expected": []
+  },
+  {
+    "id": "n39",
+    "category": "pseudo-name",
+    "query": "snoratch",
+    "expected": []
+  },
+  {
+    "id": "n40",
+    "category": "pseudo-name",
+    "query": "trobzik",
+    "expected": []
+  },
+  {
+    "id": "n41",
+    "category": "pseudo-name",
+    "query": "wemplix",
+    "expected": []
+  },
+  {
+    "id": "n42",
+    "category": "pseudo-name",
+    "query": "drunvale",
+    "expected": []
+  },
+  {
+    "id": "n43",
+    "category": "pseudo-name",
+    "query": "plokter",
+    "expected": []
   }
 ]

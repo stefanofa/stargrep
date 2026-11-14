@@ -1,12 +1,14 @@
 import { RepoFacts } from "@stargrep/ai/summarize";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 export const Query = Schema.Struct({
@@ -43,10 +45,14 @@ export const loadDistractors = read(
   Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.String))),
 );
 
-export const loadCorpus = read(
-  ".cache/corpus.json",
-  Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(RepoFacts))),
-);
+const decodeRepos = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(RepoFacts)));
+
+export const loadCorpus = read(".cache/corpus.json", decodeRepos);
+
+const mostStarredFile = ".cache/most-starred.json";
+
+// GitHub's most-starred repos, most stars first, with no README.
+export const loadMostStarred = read(mostStarredFile, decodeRepos);
 
 export const expectedRepos = (queries: ReadonlyArray<Query>) =>
   [...new Set(queries.flatMap((query) => query.expected))].sort();
@@ -126,6 +132,88 @@ const fetchRepos = Effect.fn("Corpus.fetchRepos")(function* (repos: ReadonlyArra
   return { corpus, problems };
 });
 
+const SearchResponse = Schema.Struct({
+  data: Schema.Struct({
+    search: Schema.Struct({
+      repositoryCount: Schema.Finite,
+      pageInfo: Schema.Struct({ endCursor: Schema.NullOr(Schema.String), hasNextPage: Schema.Boolean }),
+      nodes: Schema.Array(
+        Schema.Struct({
+          nameWithOwner: Schema.String,
+          description: Schema.NullOr(Schema.String),
+          stargazerCount: Schema.Finite,
+          primaryLanguage: Schema.NullOr(Schema.Struct({ name: Schema.String })),
+          repositoryTopics: Schema.Struct({
+            nodes: Schema.Array(Schema.Struct({ topic: Schema.Struct({ name: Schema.String }) })),
+          }),
+        }),
+      ),
+    }),
+  }),
+});
+
+const searchPageSize = 100;
+const searchLimit = 1_000;
+const firstFloor = 50_000;
+
+const searchFields = `repositoryCount pageInfo { endCursor hasNextPage } nodes { ... on Repository { nameWithOwner description stargazerCount primaryLanguage { name } repositoryTopics(first: 20) { nodes { topic { name } } } } }`;
+
+// Search answers at most 1,000 repos per query. So each query covers a star range, the next 15% of stars below the last
+// one, and a range holding more than 1,000 repos is read again from the fewest stars it reached. Repos come out most
+// stars first.
+const fetchMostStarred = Effect.fn("Corpus.fetchMostStarred")(function* (count: number) {
+  const token = yield* Config.Redacted("GITHUB_TOKEN");
+  const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
+  const page = (query: string, after: string | null) =>
+    HttpClientRequest.post("https://api.github.com/graphql").pipe(
+      HttpClientRequest.bearerToken(Redacted.value(token)),
+      HttpClientRequest.setHeader("user-agent", "stargrep-evals"),
+      HttpClientRequest.bodyJsonUnsafe({
+        query: `query ($q: String!, $after: String) { search(query: $q, type: REPOSITORY, first: ${searchPageSize}, after: $after) { ${searchFields} } }`,
+        variables: { q: `${query} sort:stars-desc`, after },
+      }),
+      client.execute,
+      Effect.flatMap(HttpClientResponse.schemaBodyJson(SearchResponse)),
+      // A page takes about 7 seconds, and now and then one never answers.
+      Effect.timeout(Duration.seconds(30)),
+      Effect.tapError((error) => Console.log(`  retrying ${query}: ${error.message}`)),
+      Effect.retry({ schedule: Schedule.spaced("10 seconds"), times: 10 }),
+      // Search allows 30 requests a minute.
+      Effect.tap(() => Effect.sleep(Duration.seconds(1))),
+      Effect.map((response) => response.data.search),
+    );
+  const repos = new Map<string, RepoFacts>();
+  let ceiling: number | null = null;
+  while (repos.size < count) {
+    const floor: number = ceiling === null ? firstFloor : Math.max(1, Math.floor(ceiling * 0.85));
+    const query = ceiling === null ? `stars:>=${floor}` : `stars:${floor}..${ceiling}`;
+    let fewest: number = ceiling ?? floor;
+    let total = 0;
+    let after: string | null = null;
+    for (let read = 0; read < searchLimit && repos.size < count; read += searchPageSize) {
+      const result: typeof SearchResponse.Type.data.search = yield* page(query, after);
+      total = result.repositoryCount;
+      for (const node of result.nodes) {
+        if (repos.size === count) break;
+        fewest = node.stargazerCount;
+        if (repos.has(node.nameWithOwner)) continue;
+        repos.set(node.nameWithOwner, {
+          fullName: node.nameWithOwner,
+          description: node.description,
+          topics: node.repositoryTopics.nodes.map((topicNode) => topicNode.topic.name),
+          language: node.primaryLanguage?.name ?? null,
+          readme: null,
+        });
+      }
+      if (!result.pageInfo.hasNextPage) break;
+      after = result.pageInfo.endCursor;
+    }
+    ceiling = total <= searchLimit ? floor - 1 : fewest === ceiling ? fewest - 1 : fewest;
+    yield* Console.log(`  ${repos.size} repos, down to ${fewest} stars`);
+  }
+  return [...repos.values()];
+});
+
 class CorpusProblems extends Schema.TaggedError<CorpusProblems>()("CorpusProblems", { count: Schema.Finite }) {
   override get message(): string {
     return `${this.count} expected repos need fixing in evals/queries.json`;
@@ -133,8 +221,8 @@ class CorpusProblems extends Schema.TaggedError<CorpusProblems>()("CorpusProblem
 }
 
 const main = Effect.gen(function* () {
-  const repos = expectedRepos(yield* loadQueries);
-  const distractors = yield* loadDistractors;
+  const repos = expectedRepos([...(yield* loadQueries), ...(yield* loadTypos)]);
+  const distractors = (yield* loadDistractors).filter((name) => !repos.includes(name));
   const expected = yield* fetchRepos(repos);
   const extra = yield* fetchRepos(distractors);
   const all = [...expected.corpus, ...extra.corpus];
@@ -147,4 +235,21 @@ const main = Effect.gen(function* () {
   if (expected.problems.length > 0) return yield* new CorpusProblems({ count: expected.problems.length });
 });
 
-if (import.meta.main) await Effect.runPromise(main.pipe(Effect.provide(FetchHttpClient.layer)));
+const writeMostStarred = Effect.fn("Corpus.writeMostStarred")(function* (count: number) {
+  const repos = yield* fetchMostStarred(count);
+  const text = yield* encodeCorpus(repos);
+  yield* Effect.promise(() => Bun.write(new URL(`./${mostStarredFile}`, import.meta.url), text));
+  yield* Console.log(`Wrote the ${repos.length} most-starred repos to evals/${mostStarredFile}`);
+});
+
+const Count = Schema.FiniteFromString.check(Schema.isInt(), Schema.isGreaterThan(0));
+
+const args = Bun.argv.slice(2);
+const mostStarredIndex = args.indexOf("--most-starred");
+
+const program = Effect.gen(function* () {
+  if (mostStarredIndex === -1) return yield* main;
+  yield* writeMostStarred(yield* Schema.decodeEffect(Count)(args[mostStarredIndex + 1] ?? ""));
+});
+
+if (import.meta.main) await Effect.runPromise(Effect.provide(program, FetchHttpClient.layer));

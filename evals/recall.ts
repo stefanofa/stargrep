@@ -22,7 +22,7 @@ import * as Schema from "effect/Schema";
 import { acceptFloor, embeddingModelId, loadAccount, scope } from "./account.ts";
 import { judgedRepos } from "./behavior.ts";
 import * as Corpus from "./corpus.ts";
-import { EnrichedRepo, enrich } from "./enriched-corpus.ts";
+import { EnrichedRepo, enrich, fillStars } from "./enriched-corpus.ts";
 
 const bar = 0.97;
 const topK = 10;
@@ -58,6 +58,8 @@ const writeLines = <A, I>(name: string, schema: Schema.Codec<A, I>, values: Read
 interface Scored {
   readonly query: Corpus.Query;
   readonly found: ReadonlyArray<string>;
+  // Why each result matched, as the search page words it.
+  readonly reasons: ReadonlyArray<string>;
   readonly source: QueryPlanner.PlanSource;
   readonly recall: number;
 }
@@ -71,7 +73,13 @@ const runQueries = Effect.fn("Recall.runQueries")(function* (queries: ReadonlyAr
         Effect.map((outcome): Scored => {
           const found = outcome.results.map((result) => `${result.repo.owner}/${result.repo.name}`);
           const hits = query.expected.filter((name) => found.includes(name)).length;
-          return { query, found, source: outcome.planSource, recall: hits / query.expected.length };
+          return {
+            query,
+            found,
+            reasons: outcome.results.map(Search.reasonLine),
+            source: outcome.planSource,
+            recall: hits / query.expected.length,
+          };
         }),
       ),
     { concurrency: 4 },
@@ -117,16 +125,29 @@ const report = Effect.fn("Recall.report")(function* (results: Sets<ReadonlyArray
     yield* Console.log(`miss ${entry.query.id} "${entry.query.query}": ${missing.join(", ")}`);
   }
   const missedTypos = typosMissed(results.typos);
-  yield* Console.log(`typos found: ${results.typos.length - missedTypos.length} of ${results.typos.length}`);
+  const byCategory = Object.entries(Object.groupBy(results.typos, (entry) => entry.query.category)).map(
+    ([category, entries = []]) => `${entries.length - typosMissed(entries).length} of ${entries.length} ${category}`,
+  );
+  yield* Console.log(`typos found: ${byCategory.join(", ")}`);
+  const bySpelling = results.typos.filter((entry) => entry.reasons.some((reason) => reason.startsWith("similar name")));
+  yield* Console.log(
+    `typos answered by a similar name: ${bySpelling.length}, by the planner: ${results.typos.filter((entry) => entry.source === "model" || entry.source === "cache").length}`,
+  );
   for (const entry of missedTypos) {
-    yield* Console.log(`miss ${entry.query.id} "${entry.query.query}": ${entry.query.expected.join(", ")}`);
+    const shown = entry.found.slice(0, 3).map((name, index) => `${name} (${entry.reasons[index]})`);
+    yield* Console.log(
+      `miss ${entry.query.id} "${entry.query.query}": ${entry.query.expected.join(", ")}, found ${shown.join(", ") || "nothing"}`,
+    );
   }
   const answered = nonsenseAnswered(results.nonsense);
   yield* Console.log(
     `nonsense answered with nothing: ${results.nonsense.length - answered.length} of ${results.nonsense.length}`,
   );
   for (const entry of answered) {
-    yield* Console.log(`answered ${entry.query.id} "${entry.query.query}": ${entry.found.slice(0, 3).join(", ")}`);
+    const shown = entry.found.slice(0, 3).map((name, index) => `${name} (${entry.reasons[index]})`);
+    yield* Console.log(
+      `answered ${entry.query.id} "${entry.query.query}" with ${entry.found.length}: ${shown.join(", ")}`,
+    );
   }
   return recall;
 });
@@ -354,15 +375,17 @@ const bareFilters: Compile.Policy = { ...Compile.policy, bare: ["filter", "filte
 
 const real = Effect.fn("Recall.real")(function* (options: {
   readonly summaryModel: string;
+  readonly stars: number | null;
   readonly writeFixture: boolean;
   readonly writeBehavior: boolean;
   readonly maxDistances: ReadonlyArray<number>;
   readonly acceptFloor: boolean;
   readonly bareFilters: boolean;
 }) {
-  const repos = yield* enrich(options.summaryModel).pipe(
+  const corpus = yield* enrich(options.summaryModel).pipe(
     Effect.provide(Gateway.layerTextGeneration(options.summaryModel).pipe(Layer.provide(Gateway.layerProviderConfig))),
   );
+  const repos = options.stars === null ? corpus : [...corpus, ...(yield* fillStars(corpus, options.stars))];
   if (options.writeBehavior) {
     const kept = repos.filter((repo) => judgedRepos.includes(repo.fullName));
     yield* writeLines("behavior-repos.jsonl", EnrichedRepo, kept);
@@ -392,7 +415,10 @@ const real = Effect.fn("Recall.real")(function* (options: {
     );
     const recall = yield* report(results, repos.length);
     yield* Console.log(`tokens: ${(yield* tokenCounts).join("; ")}`);
-    if (options.writeFixture) yield* writeFixture(repos, results);
+    if (options.writeFixture) yield* writeFixture(corpus, results);
+    // The bar and the nonsense set hold for the eval corpus. A larger account has more right answers, such as a robotic
+    // lawn mower's repo for "lawn mower", so its run only reports.
+    if (options.stars !== null) return;
     if (recall < bar) return yield* new RecallBelowBar({ recall, bar });
     yield* checkTyposAndNonsense(results);
   }).pipe(Effect.provide(db));
@@ -414,6 +440,8 @@ const fixture = Effect.gen(function* () {
   yield* checkTyposAndNonsense(results);
 });
 
+const Stars = Schema.FiniteFromString.check(Schema.isInt(), Schema.isGreaterThan(0));
+
 const MaxDistances = Schema.NonEmptyArray(
   Schema.FiniteFromString.check(Schema.isBetween({ minimum: 0, maximum: anyDistance, exclusiveMinimum: true })),
 );
@@ -421,6 +449,8 @@ const MaxDistances = Schema.NonEmptyArray(
 const args = Bun.argv.slice(2);
 const summaryIndex = args.indexOf("--summary-model");
 const maxDistancesIndex = args.indexOf("--max-distances");
+const starsIndex = args.indexOf("--stars");
+const stars = starsIndex === -1 ? Effect.succeed(null) : Schema.decodeEffect(Stars)(args[starsIndex + 1] ?? "");
 const maxDistances =
   maxDistancesIndex === -1
     ? Effect.succeed<ReadonlyArray<number>>([])
@@ -428,9 +458,10 @@ const maxDistances =
 
 const main = args.includes("--fixture")
   ? fixture
-  : Effect.flatMap(maxDistances, (distances) =>
+  : Effect.flatMap(Effect.all({ distances: maxDistances, stars }), ({ distances, stars }) =>
       real({
         summaryModel: summaryIndex === -1 ? Models.summaryModel : (args[summaryIndex + 1] ?? Models.summaryModel),
+        stars,
         writeFixture: args.includes("--write-fixture"),
         writeBehavior: args.includes("--write-behavior"),
         maxDistances: distances,
