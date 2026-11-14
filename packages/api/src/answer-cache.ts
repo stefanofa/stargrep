@@ -108,15 +108,15 @@ export const claimRefresh = (
   return true;
 };
 
-// What the cache would serve for a key: an answer fresh enough to serve as is, one past that but still inside its stale
-// window, or nothing. A read never computes or refreshes an answer.
+// What the cache would serve for a key. A hit is fresh enough to serve as is, a stale answer is past that but inside its
+// stale window, and a miss is nothing to serve. A read never computes or refreshes an answer.
 export type Cached<A> =
   | { readonly outcome: "hit" | "stale"; readonly answer: A; readonly storedAt: number }
   | { readonly outcome: "miss" };
 
-const miss: Cached<never> = { outcome: "miss" };
+export const miss: Cached<never> = { outcome: "miss" };
 
-export const reader = <A>(policy: AnswerPolicy<A>) => {
+export const reader = <A>(policy: Pick<AnswerPolicy<A>, "json" | "fresh" | "stale">) => {
   const decode = Schema.decodeEffect(policy.json);
   const keepFor = Duration.sum(policy.fresh, policy.stale);
   return Effect.fnUntraced(function* (cache: AnswerCache, key: string) {
