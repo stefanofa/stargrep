@@ -1,7 +1,17 @@
 import { RepoId } from "@stargrep/github/schemas";
 import { formatAtom } from "@stargrep/knowledge/atom";
 import { labelKey } from "@stargrep/knowledge/label-key";
-import { type ClosedDim, closed, closedKeys, closedLabel, Dim, dimPrefix, roleIds } from "@stargrep/knowledge/registry";
+import {
+  type ClosedDim,
+  closed,
+  closedKeys,
+  closedLabel,
+  Dim,
+  dimPrefix,
+  hiddenRoles,
+  roleIds,
+  roles,
+} from "@stargrep/knowledge/registry";
 import { sql } from "drizzle-orm";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -10,7 +20,8 @@ import * as Postgres from "../postgres.ts";
 import { rowsDecoder, statements } from "../rows.ts";
 
 // Reads of the atoms repos hold and match, for cards, the repo panel, library chips, and lookups. Every read goes
-// through the views, so a merge, a split, a rejection, or the self rule shows here as it does in search.
+// through the views, so a merge, a split, a rejection, or the self rule shows here as it does in search. No read returns
+// an atom of a role the registry hides.
 
 // One atom a repo holds, as a card or the panel shows it.
 export interface HeldAtom {
@@ -19,7 +30,7 @@ export interface HeldAtom {
   readonly label: string;
   // False for a subject fewer than two repos hold. True for every closed value.
   readonly listed: boolean;
-  // The repo a Link decision ties the subject to, as a "replaced by" subject names its successor's repo.
+  // The repo a Link decision ties the subject to.
   readonly repoId: RepoId | null;
 }
 
@@ -87,6 +98,8 @@ const labelOf = (atom: string, subjects: Readonly<Record<string, string>>) => {
   return dim === undefined ? atom : dim === "subject" ? (subjects[id] ?? atom) : closedLabel(dim, id);
 };
 
+const hiddenWires = hiddenRoles.map((id) => roles[id].wire);
+
 const likePrefix = (key: string) => `${key.replace(/[\\%_]/g, "\\$&")}%`;
 
 const closedDims = Dim.literals.filter((dim): dim is ClosedDim => dim !== "subject");
@@ -114,6 +127,7 @@ export const make = Effect.gen(function* () {
         join repos r on r.id = e.repo_id
         left join subjects s on s.id = case when e.dim = 'subject' then e.value::bigint end
         where e.repo_id = any(${sql.param([...ids])}::bigint[])
+          and e.role <> all(${sql.param([...hiddenRoles])}::text[])
         order by e.repo_id, array_position(${sql.param([...roleIds])}::text[], e.role),
           array_position(${sql.param([...Dim.literals])}::text[], e.dim),
           array_position(r.kinds::text[], e.value) nulls last, s.label nulls first, e.value`,
@@ -142,6 +156,7 @@ export const make = Effect.gen(function* () {
         with m as (
           select distinct repo_id, atom from matching_atoms
           where repo_id = any(${sql.param([...ids])}::bigint[]) and listed and not qualified
+            and split_part(atom, ':', -3) <> all(${sql.param(hiddenWires)}::text[])
         )
         select
           coalesce((
