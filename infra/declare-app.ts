@@ -28,3 +28,13 @@ export const declare = Effect.fn("declare")(function* (stage: string, env: Reado
 });
 
 export const previewEnv = { AI_GATEWAY_API_KEY: "test-ai-key", STARGREP_GITHUB_TOKEN: "test-pat", PULL_REQUEST: "7" };
+
+export const prodEnv = {
+  AI_GATEWAY_API_KEY: "test-ai-key",
+  STARGREP_GITHUB_SERVER_TOKEN: "app",
+  STARGREP_GITHUB_APP_PRIVATE_KEY: "test-app-key",
+  STARGREP_GITHUB_APP_CLIENT_ID: "test-client-id",
+  STARGREP_GITHUB_APP_CLIENT_SECRET: "test-client-secret",
+  BETTER_AUTH_SECRET: "test-auth-secret",
+  AUTH_PROXY_SECRET: "test-proxy-secret",
+};

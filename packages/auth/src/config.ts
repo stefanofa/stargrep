@@ -4,6 +4,9 @@ import * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
+// Better Auth serves sign-in under this path, because /api is the REST API.
+export const basePath = "/auth";
+
 export const names = {
   clientId: githubClientIdName,
   clientSecret: "STARGREP_GITHUB_APP_CLIENT_SECRET",

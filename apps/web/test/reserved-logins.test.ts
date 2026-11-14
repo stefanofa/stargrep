@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { isGitHubLogin } from "@stargrep/github/login";
 import { reservedLogin } from "../src/lib/search-params.ts";
+import { apiPrefixes } from "../src/server/api-prefixes.ts";
 
 const read = (path: string) => Bun.file(new URL(path, import.meta.url)).text();
 
@@ -8,16 +9,11 @@ const read = (path: string) => Bun.file(new URL(path, import.meta.url)).text();
 // route can't take a GitHub login's page without this test asking for it to be reserved.
 const answered = async () => {
   const sources = await Promise.all(
-    [
-      "../src/server/serve.ts",
-      "../src/server/health.ts",
-      "../../../packages/api/src/icon-host.ts",
-      "../../../packages/auth/src/auth.ts",
-    ].map(read),
+    ["../src/server/serve.ts", "../src/server/health.ts", "../../../packages/api/src/icon-host.ts"].map(read),
   );
   const matchers = sources.flatMap((source) =>
     Array.from(
-      source.matchAll(/(?:under\(|startsWith\(|pathname === |basePath = |iconsPath = )["`](\/[^"`/]+)/g),
+      source.matchAll(/(?:under\(|startsWith\(|pathname === |iconsPath = )["`](\/[^"`/]+)/g),
       ([, path]) => path,
     ),
   );
@@ -25,7 +21,7 @@ const answered = async () => {
     (await read("../src/routeTree.gen.ts")).matchAll(/path: '(\/[^'/$@{]+)'/g),
     ([, path]) => path,
   );
-  return [...new Set([...matchers, ...routes])].map((path) => path?.slice(1) ?? "");
+  return [...new Set([...Object.values(apiPrefixes), ...matchers, ...routes])].map((path) => path?.slice(1) ?? "");
 };
 
 describe("logins that share a name with a stargrep path", () => {

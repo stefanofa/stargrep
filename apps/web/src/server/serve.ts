@@ -23,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
+import { apiPrefixes } from "./api-prefixes.ts";
 
 export type RequestLayer = (request: Request) => Layer.Layer<ApiServices, { readonly _tag: string }>;
 
@@ -64,7 +65,7 @@ let spec: Promise<string> | undefined;
 const specResponse = async (): Promise<Response> => {
   spec ??= new OpenAPIGenerator({ converters })
     .generate(router, {
-      base: { info: { title: "Stargrep", version: "1.0.0" }, servers: [{ url: "/api" }], security: [] },
+      base: { info: { title: "Stargrep", version: "1.0.0" }, servers: [{ url: apiPrefixes.rest }], security: [] },
       errorStatusMap,
       filter: anyoneCanCall,
     })
@@ -157,21 +158,21 @@ const routes: ReadonlyArray<Route> = [
   },
   {
     transport: "rpc",
-    matches: under("/rpc"),
-    answer: (request, context) => rpc.handle(request, { prefix: "/rpc", context }).then(matched),
+    matches: under(apiPrefixes.rpc),
+    answer: (request, context) => rpc.handle(request, { prefix: apiPrefixes.rpc, context }).then(matched),
     fail: rpcError,
   },
   {
     transport: "rest",
-    matches: under("/api"),
-    answer: (request, context) => rest.handle(request, { prefix: "/api", context }).then(matched),
+    matches: under(apiPrefixes.rest),
+    answer: (request, context) => rest.handle(request, { prefix: apiPrefixes.rest, context }).then(matched),
     fail: restError,
   },
   {
     transport: "mcp",
-    matches: under("/mcp"),
+    matches: under(apiPrefixes.mcp),
     answer: (request, context) =>
-      new URL(request.url).pathname === "/mcp"
+      new URL(request.url).pathname === apiPrefixes.mcp
         ? answerMcp(request, context)
         : mcpNoRoute(request, context.requestTraceId),
     fail: (error) => mcpError(error),
@@ -317,7 +318,7 @@ const respondAuth = (request: Request, layerFor: AuthLayer) =>
 export const makeAuthServer =
   (layerFor: AuthLayer, tracer: Layer.Layer<never>) =>
   (request: Request): Promise<Response> | undefined =>
-    under(Auth.basePath)(new URL(request.url).pathname)
+    under(apiPrefixes.auth)(new URL(request.url).pathname)
       ? Effect.runPromise(respondAuth(request, layerFor).pipe(Effect.provide(tracer)))
       : undefined;
 
