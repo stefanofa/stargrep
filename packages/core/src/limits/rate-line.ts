@@ -34,8 +34,8 @@ export const githubNetwork = (caller: Db.CallerKey): Line => ({
   rate: { units: 150, per: Duration.hours(1), burst: 150, maxWait: Duration.zero },
 });
 
-// Planner and query embedding calls count one each. A planner call costs about $0.0004, so one network spends at most
-// about $0.73 an hour on plans, and everyone together about $2.40.
+// Planner and query embedding calls count one each, so these lines cap what one network, and everyone together, can
+// spend on plans.
 export const modelNetwork = (caller: Db.CallerKey): Line => ({
   key: Db.LineKey.make(`model/${caller}`),
   rate: { units: 30, per: Duration.minutes(1), burst: 30, maxWait: Duration.zero },

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <style>
+    @media (prefers-color-scheme: light) {
+      .bg { fill: #ffffff; }
+      .fg { fill: #000000; }
+    }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0d1117; }
+      .fg { fill: #ffffff; }
+    }
+  </style>
+  <rect class="bg" width="512" height="512"/>
+  <g class="fg">
+    <path d="M96 176h64v160H96z"/>
+    <path d="M192 176h64l64 96V176h64v160h-64l-64-96v96h-64z"/>
+  </g>
+</svg>

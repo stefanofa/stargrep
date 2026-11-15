@@ -16,13 +16,19 @@ Install dependencies, start a local stage, and configure deployed stages with th
    bun install --frozen-lockfile
    ```
 
-3. Run the checks. This includes lint, custom lint fixtures, workspace typechecks, and both web bundle budgets. Turborepo caches the tasks.
+3. Fetch the vendored dependency source into `repos/`. It is reference for people and agents, and nothing in the build reads it. The script fails if a tag no longer points at the commit `repos/VENDORED.json` pins.
+
+   ```sh
+   bun scripts/sync-repos.ts
+   ```
+
+4. Run the checks. This includes lint, custom lint fixtures, workspace typechecks, and both web bundle budgets. Turborepo caches the tasks.
 
    ```sh
    bun run check
    ```
 
-4. Run the tests. The `packages/db` tests need Postgres 17 with pgvector, so start the container from "Local stage" first. Each test file creates its own database in it, migrates it, and drops it at the end.
+5. Run the tests. The `packages/db` tests need Postgres 17 with pgvector, so start the container from "Local stage" first. Each test file creates its own database in it, migrates it, and drops it at the end.
 
    ```sh
    docker compose up --detach --wait
@@ -291,7 +297,7 @@ Opening a preview's home page still imports the demo account's real stars throug
 
 `defaultAiProvider` in `stageSettings` (`packages/runtime/src/stage.ts`) is each stage's default, and `withStageAi` in `packages/runtime/src/ai-key.ts` applies it to the config of every resource the stack declares. Prod always calls the gateway and ignores `STARGREP_AI_PROVIDER`.
 
-To call the real models on a preview, add the `preview-ai` label to its pull request. Remove the label to go back to the fakes. Each change runs the preview workflow at once, and the run reads the pull request's labels from GitHub right before it deploys, so a run queued before a label change deploys what the labels say now. An opted-in preview spends like prod, about $1.90 for every 1,000 repos it imports that no account has read yet, so remove the label as soon as the check is done. A summary costs about $0.0019 at catalog prices, about 5,300 input tokens at $0.10 per million and 2,700 output tokens, most of them thinking, at $0.50 per million.
+To call the real models on a preview, add the `preview-ai` label to its pull request. Remove the label to go back to the fakes. Each change runs the preview workflow at once, and the run reads the pull request's labels from GitHub right before it deploys, so a run queued before a label change deploys what the labels say now. An opted-in preview spends like prod on every repo it imports that no account has read yet, so remove the label as soon as the check is done.
 
 A database keeps the embedding model of its first request, so a stage never changes provider in place. The workflow compares the provider the labels ask for with the `aiProvider` in the stage's output. When they differ, it destroys the stage and then deploys it fresh, both inside the stage's deploy lock. The stage is down for those few minutes and imports its stars again. Because the old branch is gone before the new one is created, a switch needs no spare branch in the preview project. A deploy writes the output last and a destroy deletes it last, so a stage whose output names no provider, such as one deployed before stages recorded it or one cut off mid-deploy, is recreated too. That is also how every preview deployed before the fakes existed moves to them, on its next run.
 
