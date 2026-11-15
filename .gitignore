@@ -8,3 +8,4 @@ evals/.cache/
 .alchemy/
 repos/*
 !repos/VENDORED.json
+.cloudflare/
