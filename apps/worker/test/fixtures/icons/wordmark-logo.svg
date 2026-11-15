@@ -1,0 +1,11 @@
+<svg version="1.1" id="wordmark" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
+	 viewBox="0 0 460 370" xml:space="preserve">
+<path id="mark" d="M230,10l38,78l86,12l-62,60l15,85l-77-40l-77,40l15-85l-62-60l86-12L230,10z"/>
+<g id="letters">
+	<path d="M40,300h60v14h-44v10h40v14h-40v10h44v14H40V300z"/>
+	<path d="M120,300h18l22,36l22-36h18v62h-16v-36l-24,38l-24-38v36h-16V300z"/>
+	<path d="M220,300h40c14,0,22,8,22,20s-8,20-22,20h-24v22h-16V300z M236,314v12h22c4,0,8-2,8-6s-4-6-8-6H236z"/>
+	<path d="M300,300h16v48h40v14h-56V300z"/>
+	<path d="M370,300h52v14h-36v10h32v14h-32v10h36v14h-52V300z"/>
+</g>
+</svg>

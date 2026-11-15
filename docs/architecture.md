@@ -78,7 +78,7 @@ packages/
   runtime/          stage settings, secret readers, AI config, and Db on node-postgres
   config/           shared tsconfig and Biome plugins
 infra/              Alchemy stacks, providers, state store, and which Workers each stage deploys
-repos/              read-only source of effect, orpc, and alchemy at the pinned versions, for reference
+repos/              read-only source of effect, orpc, and alchemy at the pinned versions, fetched by sync-repos.ts
 scripts/            repo scripts, such as sync-repos.ts for repos/
 ```
 

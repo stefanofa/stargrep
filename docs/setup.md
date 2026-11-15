@@ -16,13 +16,19 @@ Install dependencies, start a local stage, and configure deployed stages with th
    bun install --frozen-lockfile
    ```
 
-3. Run the checks. This includes lint, custom lint fixtures, workspace typechecks, and both web bundle budgets. Turborepo caches the tasks.
+3. Fetch the vendored dependency source into `repos/`. It is reference for people and agents, and nothing in the build reads it. The script fails if a tag no longer points at the commit `repos/VENDORED.json` pins.
+
+   ```sh
+   bun scripts/sync-repos.ts
+   ```
+
+4. Run the checks. This includes lint, custom lint fixtures, workspace typechecks, and both web bundle budgets. Turborepo caches the tasks.
 
    ```sh
    bun run check
    ```
 
-4. Run the tests. The `packages/db` tests need Postgres 17 with pgvector, so start the container from "Local stage" first. Each test file creates its own database in it, migrates it, and drops it at the end.
+5. Run the tests. The `packages/db` tests need Postgres 17 with pgvector, so start the container from "Local stage" first. Each test file creates its own database in it, migrates it, and drops it at the end.
 
    ```sh
    docker compose up --detach --wait
