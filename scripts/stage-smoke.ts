@@ -17,7 +17,7 @@ if (stage === "--public") {
   process.exit(checks.every(({ ok }) => ok) ? 0 : 1);
 }
 if (!stage) throw new Error("usage: bun scripts/stage-smoke.ts <stage> [alchemy state read flags]");
-const { url: workerUrl, debugUrl, debugToken, webUrl } = await readStageOutput(stage, alchemyArgs);
+const { debugUrl, debugToken, webUrl } = await readStageOutput(stage, alchemyArgs);
 
 const Budget = Schema.Struct({ minute: Schema.Int, used: Schema.Int, cap: Schema.Int });
 const Count = Schema.Struct({ count: Schema.Int });
@@ -211,9 +211,10 @@ const web = Effect.gen(function* () {
   ];
 });
 
-// The main Worker starts its runtime on every request, so a startup failure answers 500 here before any queue message.
+// The web Worker passes /health to the main Worker, which starts its runtime on every request, so a startup failure
+// answers 500 here before any queue message.
 const worker = Effect.gen(function* () {
-  const health = yield* send(HttpClientRequest.get(new URL("/health", workerUrl)));
+  const health = yield* send(HttpClientRequest.get(new URL("/health", webUrl)));
   return [check("the main Worker starts and reads its database", health.status === 200, { status: health.status })];
 });
 

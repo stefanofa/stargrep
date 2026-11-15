@@ -19,8 +19,8 @@ export const app = Effect.gen(function* () {
   const { stage, production, debug: hasDebug } = yield* settings;
   const worker = yield* Worker;
   const web = yield* Website;
-  // In prod a zone route serves the web Worker on the main Worker's hostname, so it has no URL of its own. Previews
-  // have no zone, so only prod declares the zone's rate limit.
+  // In prod a zone route serves the web Worker on the main Worker's hostname, so it has no URL of its own. The rate
+  // limit is the zone's and counts every hostname on it, previews' too, so only prod declares it.
   if (production) {
     yield* ZoneRateLimit;
     return { url: worker.url, webUrl: worker.url };
@@ -37,17 +37,15 @@ export const app = Effect.gen(function* () {
       body: Output.interpolate`
           ## Stage \`${stage}\`
 
-          Worker: ${worker.url}
-          Health: ${worker.url}/health
-          Debug worker: ${debug.url}
           Web: ${web.url}
+          Health: ${web.url}/health
           OpenAPI: ${web.url}/openapi.json
           MCP: ${web.url}/mcp
+          Debug worker: ${debug.url}
         `,
     });
   }
   return {
-    url: worker.url,
     webUrl: web.url,
     debugUrl: debug.url,
     debugToken: yield* DebugToken,

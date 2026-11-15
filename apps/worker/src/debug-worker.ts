@@ -11,8 +11,10 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Database } from "./database.ts";
+import { stageHosting } from "./domain.ts";
 import { withClient } from "./postgres.ts";
 import { EnrichRepos, FetchIcons, queueNames, SyncStars } from "./queues.ts";
+import { settings } from "./stage.ts";
 
 const UNITS_PER_MINUTE = 300;
 
@@ -97,9 +99,9 @@ const authorized = (header: string | undefined, token: Redacted.Redacted<string>
   return difference === 0;
 };
 
-export default Cloudflare.Worker(
+export default class DebugWorker extends Cloudflare.Worker<DebugWorker>()(
   "DebugWorker",
-  { main: import.meta.url },
+  Effect.map(settings, ({ stage }) => ({ main: import.meta.url, ...stageHosting(stage).debug })),
   Effect.gen(function* () {
     const token = yield* yield* DebugToken;
     const jobs = yield* DebugJobs;
@@ -263,4 +265,4 @@ export default Cloudflare.Worker(
       ),
     ),
   ),
-);
+) {}

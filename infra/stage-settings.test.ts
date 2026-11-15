@@ -68,13 +68,14 @@ test("the deploy's preview-host allowlist survives the auth config binding", asy
     ),
   );
   const allowed = (location: string) => redirectAllowed(location, "https://stargrep.com", config.previewHost);
-  expect(allowed("https://stargrep-web-pr-1-abc.rewebdotso.workers.dev/auth/callback/github/oauth-proxy")).toBe(true);
+  expect(allowed("https://pr-1.stargrep.com/auth/callback/github/oauth-proxy")).toBe(true);
   for (const location of [
-    "https://stargrep-web-prod-abc.rewebdotso.workers.dev/",
-    "https://stargrep-web-pr-1-abc.attacker.workers.dev/",
-    "https://stargrep-web-pr-1-abc.rewebdotso.workers.dev.attacker.example/",
-    "http://stargrep-web-pr-1-abc.rewebdotso.workers.dev/",
-    "https://stargrep-web-pr-1-abc.rewebdotso.workers.dev:8443/",
+    "https://www.stargrep.com/",
+    "https://pr-1-debug.stargrep.com/",
+    "https://pr-1.attacker.example/",
+    "https://pr-1.stargrep.com.attacker.example/",
+    "http://pr-1.stargrep.com/",
+    "https://pr-1.stargrep.com:8443/",
   ])
     expect(allowed(location)).toBe(false);
 });
