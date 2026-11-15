@@ -32,7 +32,7 @@ const stage = (origin: string, database: Hyperdrive, github: GitHubSignIn) => {
   const config = {
     secret: Redacted.make(`auth-secret ${origin}`),
     github,
-    previewHost: /^stargrep-web-pr-\d+-[a-z0-9]+\.rewebdotso\.workers\.dev$/,
+    previewHost: /^pr-\d+\.stargrep\.com$/,
   };
   const stageEnv = { ...env, DATABASE: database };
   const auth = makeAuthServer(
@@ -91,11 +91,7 @@ const prod = stage(prodOrigin, databases.AUTH_PROD_DATABASE, {
 
 const proxiedThroughProd = { _tag: "proxied", clientId, productionOrigin: prodOrigin, proxySecret } as const;
 
-const preview = stage(
-  "https://stargrep-web-pr-29-abc123.rewebdotso.workers.dev",
-  databases.AUTH_PREVIEW_DATABASE,
-  proxiedThroughProd,
-);
+const preview = stage("https://pr-29.stargrep.com", databases.AUTH_PREVIEW_DATABASE, proxiedThroughProd);
 
 const startSignIn = async (from: Stage) => {
   const response = await from.send("/auth/sign-in/social", {
@@ -345,7 +341,7 @@ describe("sign-in proxied through prod", () => {
     await githubSaw();
   });
 
-  it("refuses to forward a sign-in to a host that is not a preview of this account", async () => {
+  it("refuses to forward a sign-in to a host that is not a preview's web hostname", async () => {
     const attacker = stage("https://attacker.example", databases.AUTH_PREVIEW_DATABASE, proxiedThroughProd);
     const authorize = await startSignIn(attacker);
     const forwarded = await visit(prod, githubReturn(authorize, { code: ada.code }));

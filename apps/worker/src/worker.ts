@@ -20,7 +20,7 @@ import * as Ref from "effect/Ref";
 import { tokenBindings } from "./auth.ts";
 import * as Crons from "./crons.ts";
 import { Database, DatabaseMigrations } from "./database.ts";
-import { prodWorkerHosting } from "./domain.ts";
+import { stageHosting } from "./domain.ts";
 import { tokenGate, UserGitHubGate } from "./github-gate.ts";
 import { healthResponse } from "./health.ts";
 import { Icons } from "./icons/bucket.ts";
@@ -37,7 +37,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
   // while the branch still migrates. Reading the applied migrations makes the deploy wait for them.
   // The placement region matches the Neon projects in infra/database.run.ts, so queries stay in one region.
   Effect.gen(function* () {
-    const { stage, production, placement } = yield* settings;
+    const { stage, placement } = yield* settings;
     const { kind, share } = yield* serverTokenPolicy(stage);
     yield* requireStageSecrets(stage, kind);
     return {
@@ -50,7 +50,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
       },
       placement,
       observability: { enabled: true, logs: { enabled: true, invocationLogs: true }, traces: { enabled: true } },
-      ...(production ? prodWorkerHosting : {}),
+      ...stageHosting(stage).worker,
     };
   }),
   Effect.gen(function* () {

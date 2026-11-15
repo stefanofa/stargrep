@@ -8,7 +8,7 @@ import { webResourceId } from "@stargrep/runtime/stage";
 import MainWorker from "@stargrep/worker";
 import { betterAuthSecret } from "@stargrep/worker/auth";
 import { Database, DatabaseMigrations } from "@stargrep/worker/database";
-import { prodWebHosting } from "@stargrep/worker/domain";
+import { stageHosting } from "@stargrep/worker/domain";
 import { Icons } from "@stargrep/worker/icons";
 import { SyncStars } from "@stargrep/worker/queues";
 import { previewHostBinding, settings } from "@stargrep/worker/stage";
@@ -51,7 +51,7 @@ const namespaceId = (stage: string, name: string) => {
 export class Website extends Cloudflare.Website.Vite<Website>()(
   webResourceId,
   Effect.gen(function* () {
-    const { stage, production, placement } = yield* settings;
+    const { stage, placement } = yield* settings;
     const { kind, share } = yield* serverTokenPolicy(stage);
     const key = yield* aiGatewayKey;
     const aiProvider = yield* Config.option(Config.String(aiProviderName));
@@ -62,7 +62,7 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
       placement,
       dev: { port: 1340 },
       observability: { enabled: true, logs: { enabled: true, invocationLogs: true }, traces: { enabled: true } },
-      ...(production ? prodWebHosting : {}),
+      ...stageHosting(stage).web,
       env: {
         DATABASE: Database,
         DATABASE_MIGRATIONS: yield* DatabaseMigrations,

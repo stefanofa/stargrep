@@ -20,6 +20,8 @@ export const databases = {
   },
 } as const;
 
+export const isPreviewStage = (stage: string) => /^pr-\d+$/.test(stage);
+
 export const stageSettings = (stage: string) => {
   const production = stage === "prod";
   return {
@@ -32,7 +34,7 @@ export const stageSettings = (stage: string) => {
     debug: !production,
     // A preview answers with deterministic fakes unless its deploy opts in, so opening one spends no model money. A
     // local stage shares one database with its earlier runs, so it keeps the gateway unless its deploy asks for fakes.
-    defaultAiProvider: /^pr-\d+$/.test(stage) ? ("fake" as const) : ("gateway" as const),
+    defaultAiProvider: isPreviewStage(stage) ? ("fake" as const) : ("gateway" as const),
   } as const;
 };
 export type StageSettings = ReturnType<typeof stageSettings>;
