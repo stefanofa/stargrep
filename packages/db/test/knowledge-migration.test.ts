@@ -152,7 +152,7 @@ it.layer(Layer.empty, { testTimeout: 60_000 })("kinds migration", (test) =>
 // the digest.
 const reprojection = {
   migration: "trait_list_recipe",
-  digest: "132211b9cba0e6fac514820303d805f952020d55c84f16e8ea5235ebea2ccec3",
+  digest: "a9bb0a026afc81229ee48bf7ccc2cbd308c59d5eefc9863da80788e5733d4a48",
 };
 
 it.layer(Layer.empty, { testTimeout: 60_000 })("registry reprojection", (test) =>

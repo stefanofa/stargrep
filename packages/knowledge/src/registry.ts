@@ -416,8 +416,8 @@ export const roles: Readonly<Record<RoleId, RoleSpec>> = {
   },
 };
 
-// The only traits projection keeps, each a property a filter can check. Pilot 3's judges found the open trait list
-// they replace half features, praise, and properties the repo lacks.
+// The only traits projection keeps, each a property a filter can check. An open trait list fills with features,
+// praise, and properties the repo lacks.
 export const traits = ["self-hosted", "local-first", "offline", "zero-dependency", "cross-platform"] as const;
 
 export const roleIds = RoleId.literals;

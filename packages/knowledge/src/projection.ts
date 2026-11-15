@@ -157,7 +157,7 @@ const coveringKinds: ReadonlySet<string> = new Set(["list", "learning"] satisfie
 const traitKeys: ReadonlySet<LabelKey> = new Set(traits.flatMap((trait) => labelKey(trait) ?? []));
 
 // A comparison whose quote speaks of a fork names the project the repo was forked from, not one a user could pick
-// instead. Pilot 3 wrote three, and no correct comparison quoted a fork. "based on" is no such sign: a correct
+// instead. A correct comparison does not quote a fork. "based on" is no such sign: a correct
 // comparison to Lit quoted "based on plain objects".
 const forkWord = /\bfork(s|ed|ing)?\b/;
 const namesForkOrigin = (claim: Claim) =>
