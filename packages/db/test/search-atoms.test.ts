@@ -272,7 +272,7 @@ const atomCases = (test: { readonly effect: it.Tester<Services> }) => {
 
   // A project is never built with itself or its own alternative, so the repo a subject is linked to never matches its
   // with: or alt: atom.
-  test.effect("filters by explicit atoms exactly, through merges, and reports unknown and rejected subjects", () =>
+  test.effect("filters search and similar names by explicit atoms, through merges, and reports refused subjects", () =>
     Effect.gen(function* () {
       const owner = accountId(1204);
       const react = yield* subjectNamed("React", ["react"], { status: "candidate" });
@@ -300,7 +300,20 @@ const atomCases = (test: { readonly effect: it.Tester<Services> }) => {
       yield* decide("link", {
         presented: [{ id: tauri, label: "Tauri", definition: null, status: "accepted", repoId: tauriItself }],
       });
-      const explicit = (key: string) => everyShape(owner, { explicit: selection(key) });
+      const db = yield* Db.Db;
+      const byId = (ids: ReadonlyArray<RepoId>) => [...ids].sort((left, right) => left - right);
+      // Every repo is named repo-1204n, one edit from repo-12040, so the names leave the selection to decide.
+      const explicit = Effect.fnUntraced(function* (key: string) {
+        const ids = yield* everyShape(owner, { explicit: selection(key) });
+        const near = yield* db.search.nearNames({
+          scope: stars(owner),
+          text: "repo-12040",
+          explicit: selection(key),
+          limit: 10,
+        });
+        expect(byId(near.map((repo) => repo.id))).toEqual(byId(ids));
+        return ids;
+      });
 
       expect(yield* explicit(`subject:${react}`)).toEqual([forReact, forReactjs]);
       expect(yield* explicit(`subject:${reactjs}`)).toEqual([forReact, forReactjs]);

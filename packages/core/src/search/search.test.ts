@@ -240,17 +240,25 @@ const fixture = () => {
       }),
     );
 
-    test.effect("asks the planner instead of matching names when the caller filters", () =>
+    test.effect("finds a similar name the caller's filter keeps, and asks the planner when it drops the repo", () =>
       Effect.gen(function* () {
         const scope = yield* seed(923, orms(9090));
-        respond = () => ormPlan({}, { _tag: "relevance" }, "a software project matching the unclear term drizlze");
-        const filter = yield* Schema.decodeEffect(SelectionKey)("-lang:rust");
-        const outcome = yield* search({ scope, query: "drizlze", limit: 10, filter });
-        expect([
-          outcome.planSource,
-          calls.prompts.length,
-          outcome.results.some((result) => result.similarName),
-        ]).toEqual(["model", 1, false]);
+        respond = () => ormPlan({}, { _tag: "relevance" }, "drizlze");
+        const filtered = (key: string) =>
+          search({ scope, query: "drizlze", limit: 10, filter: Schema.decodeSync(SelectionKey)(key) });
+        const kept = yield* filtered("lang:typescript");
+        expect([kept.planSource, names(kept), kept.results.map(Search.reasonLine), calls.prompts]).toEqual([
+          "keyword",
+          ["drizzle-orm"],
+          ["similar name"],
+          [],
+        ]);
+        const dropped = yield* filtered("lang:rust");
+        expect([dropped.planSource, names(dropped).includes("drizzle-orm"), calls.prompts.length]).toEqual([
+          "model",
+          false,
+          1,
+        ]);
       }),
     );
 
