@@ -62,28 +62,28 @@ Summary models: `anthropic/claude-haiku-5.5`, `openai/gpt-6-luna`, and `google/g
 
 ## Results
 
-The final gateway run on 2026-11-03, run 3, used 129 queries and 736 repos. This is its output as printed, under the ranking rule it ran with, which "History" below explains.
+The final gateway run on 2026-11-03, run 3, used 129 queries and 736 repos. This is its output as printed, without the cost column, under the ranking rule it ran with, which "History" below explains.
 
 ```
-stage      model                            recall@10  median ms       cost failures
-embedding  openai/text-embedding-3-small        0.959        500    $0.0023        0
-embedding  openai/text-embedding-3-large        0.975        503    $0.0149        0
-embedding  google/gemini-embedding-001          0.990        969    $0.0170        0
-embedding  voyage/voyage-4-lite                 0.979        382    $0.0022        0
-embedding  voyage/voyage-4                      0.988        352    $0.0067        0
-embedding  cohere/embed-v5.0-fast               0.977        291    $0.0094        0
-embedding  alibaba/qwen3-embedding-8b           0.965       3608    $0.0011        0
-summary    anthropic/claude-haiku-5.5           0.988       2138    $0.5573        0
-summary    openai/gpt-6-luna                    0.990       3676    $0.3918        0
-summary    google/gemini-3.1-flash-lite         0.986       1281    $0.9641        0
+stage      model                            recall@10  median ms failures
+embedding  openai/text-embedding-3-small        0.959        500        0
+embedding  openai/text-embedding-3-large        0.975        503        0
+embedding  google/gemini-embedding-001          0.990        969        0
+embedding  voyage/voyage-4-lite                 0.979        382        0
+embedding  voyage/voyage-4                      0.988        352        0
+embedding  cohere/embed-v5.0-fast               0.977        291        0
+embedding  alibaba/qwen3-embedding-8b           0.965       3608        0
+summary    anthropic/claude-haiku-5.5           0.988       2138        0
+summary    openai/gpt-6-luna                    0.990       3676        0
+summary    google/gemini-3.1-flash-lite         0.986       1281        0
 Embedding ranking: voyage/voyage-4 > google/gemini-embedding-001 > cohere/embed-v5.0-fast > voyage/voyage-4-lite > openai/text-embedding-3-small > openai/text-embedding-3-large > alibaba/qwen3-embedding-8b
 Summary ranking: openai/gpt-6-luna > anthropic/claude-haiku-5.5 > google/gemini-3.1-flash-lite
 Chosen: summary openai/gpt-6-luna, embedding voyage/voyage-4 at 1024 dimensions
 ```
 
-**Embeddings: `voyage/voyage-4` at 1,024 dimensions.** `google/gemini-embedding-001` has the highest recall in both full runs, 0.990, but its median query takes 954 ms and 969 ms. That fails the plan's embedding latency budget by any reading, so it cannot serve the search path. Among the models inside the budget, `voyage/voyage-4` has the highest recall in both runs, 0.986 and 0.988, with `voyage/voyage-4-lite` second both times. It costs $0.06 per million tokens. Its 352 ms median was measured from the laptop. Whether it meets the 250 ms budget from a Worker is still open, and the perf lane on the deployed stage answers it.
+**Embeddings: `voyage/voyage-4` at 1,024 dimensions.** `google/gemini-embedding-001` has the highest recall in both full runs, 0.990, but its median query takes 954 ms and 969 ms. That fails the plan's embedding latency budget by any reading, so it cannot serve the search path. Among the models inside the budget, `voyage/voyage-4` has the highest recall in both runs, 0.986 and 0.988, with `voyage/voyage-4-lite` second both times. Its 352 ms median was measured from the laptop. Whether it meets the 250 ms budget from a Worker is still open, and the perf lane on the deployed stage answers it.
 
-**Summaries: `openai/gpt-6-luna`.** All three candidates are within 0.004, half a query, in both runs. `gpt-6-luna` is the cheapest at catalog prices, $0.39 for 736 repos or about $0.53 per 1,000, and no summary failed to decode. It is the slowest, at a median 3.7 s, which does not matter for background enrichment.
+**Summaries: `openai/gpt-6-luna`.** All three candidates are within 0.004, half a query, in both runs. `gpt-6-luna` is the cheapest at catalog prices, and no summary failed to decode. It is the slowest, at a median 3.7 s, which does not matter for background enrichment.
 
 ### History
 
@@ -97,7 +97,7 @@ The choice of `voyage/voyage-4` does not depend on the tie rule. It follows from
 
 ### Model changes
 
-**2026-11-04. Summaries move to `anthropic/claude-haiku-5.5`.** The tie rule above puts all three summary models level on recall. In run 3, `claude-haiku-5.5` scored 0.988 and `gpt-6-luna` scored 0.990, which is within one query. The bakeoff broke the tie by cost and picked `gpt-6-luna`. Repo enrichment then measured what the bakeoff did not. A 2-request AI Gateway batch on `claude-haiku-5.5` finished in 3.7 minutes, while a 200-request `gpt-6-luna` batch sat at 0 of 200 for more than 79 minutes. Single summaries are faster on Haiku too, a 2.1 s median against 3.7 s in run 3. Single and batch summaries both use `claude-haiku-5.5`, so every stored summary comes from one model. At catalog prices it costs about $0.76 per 1,000 repos against $0.53. `evals/rank.ts` still breaks summary ties by cost, so a new bakeoff run prints `gpt-6-luna` on its `Chosen:` line.
+**2026-11-04. Summaries move to `anthropic/claude-haiku-5.5`.** The tie rule above puts all three summary models level on recall. In run 3, `claude-haiku-5.5` scored 0.988 and `gpt-6-luna` scored 0.990, which is within one query. The bakeoff broke the tie by cost and picked `gpt-6-luna`. Repo enrichment then measured what the bakeoff did not. A 2-request AI Gateway batch on `claude-haiku-5.5` finished in 3.7 minutes, while a 200-request `gpt-6-luna` batch sat at 0 of 200 for more than 79 minutes. Single summaries are faster on Haiku too, a 2.1 s median against 3.7 s in run 3. Single and batch summaries both use `claude-haiku-5.5`, so every stored summary comes from one model. It costs more at catalog prices. `evals/rank.ts` still breaks summary ties by cost, so a new bakeoff run prints `gpt-6-luna` on its `Chosen:` line.
 
 ## Recall bar
 
@@ -236,7 +236,7 @@ Every max distance from 0.36 to 0.45 now finds all 39 typos, and 28 of them take
 
 The first version of the step looked only among the 100 repos nearest the typed words by meaning. It found all 23 on this corpus. At 20,000 stars the repos for "jelyfin", "clidel", and "hlrags" ranked 493rd, 180th, and 298th by meaning, because a misspelled name carries little meaning. Matching letters in Postgres finds them at any size.
 
-**Larger accounts.** `--stars N` fills the eval account with GitHub's most-starred repos until it holds N stars. The 20,000 most-starred repos on 2026-11-14 run down to 3,367 stars. Summaries for the 19,241 of them outside the corpus would cost about $37 at recipe 5's $1.90 per 1,000, so each is embedded from its name, description, and topics instead, a stand-in for its summary. Over the 736 repos the corpus then held, a stand-in sat 0.005 farther from the eval's query vectors than the summary at the median, and 90% of pairs fell between 0.038 closer and 0.068 farther. Short typed text is the exception. For 14 of the 15 typed typos, the stand-in of the repo they mean sits 0.007 to 0.070 closer than its summary, because both are short and mostly name. So these runs overstate how close typed gibberish and typos get.
+**Larger accounts.** `--stars N` fills the eval account with GitHub's most-starred repos until it holds N stars. The 20,000 most-starred repos on 2026-11-14 run down to 3,367 stars. The 19,241 of them outside the corpus are not summarized. Each is embedded from its name, description, and topics instead, a stand-in for its summary. Over the 736 repos the corpus then held, a stand-in sat 0.005 farther from the eval's query vectors than the summary at the median, and 90% of pairs fell between 0.038 closer and 0.068 farther. Short typed text is the exception. For 14 of the 15 typed typos, the stand-in of the repo they mean sits 0.007 to 0.070 closer than its summary, because both are short and mostly name. So these runs overstate how close typed gibberish and typos get.
 
 | Stars | recall@10 | Known typos found | Obscure typos found, floor alone | Obscure typos found, with the step | Nonsense answered |
 |---|---|---|---|---|---|
@@ -249,7 +249,7 @@ Recall, known typos, and nonsense answers are the same with and without the step
 
 At 20,000 stars, the same six nonsense queries get an answer before and after the similar-name step. Four answers are right for an account that stars those repos. "asdf asdf asdf" finds `asdf-vm/asdf`, "plumber" finds `akavel/up`, "the Ultimate Plumber", "lawn mower" finds `ClemensElflein/OpenMower`, and "zxcvbnm" finds `dropbox/zxcvbn`, one edit from its name. The other two are meaning matches to stand-ins. "aaaaaaaa" and "zzzzzz" both reach a repo whose owner and name are only the letter e.
 
-One more run summarized the six stand-ins that decided an answer, for about $0.01. Each moved 0.065 to 0.18 farther from the typed text, to between 0.383 and 0.539, and "aaaaaaaa" then got nothing. "zzzzzz" and "lkjhgfdsa" still got the e repo, through the planner. It rewrites them as a repository "whose name or description consists of random repeated characters, with no clear purpose", and that repo's summary says its purpose cannot be determined, 0.305 and 0.311 away. Only a floor of 0.30 drops it, which costs a query of recall and a typo on the corpus. So a large account can answer gibberish with one repo that is itself gibberish, and the floor stays at 0.36. A planner that kept gibberish as typed instead of describing it would end that too.
+One more run summarized the six stand-ins that decided an answer. Each moved 0.065 to 0.18 farther from the typed text, to between 0.383 and 0.539, and "aaaaaaaa" then got nothing. "zzzzzz" and "lkjhgfdsa" still got the e repo, through the planner. It rewrites them as a repository "whose name or description consists of random repeated characters, with no clear purpose", and that repo's summary says its purpose cannot be determined, 0.305 and 0.311 away. Only a floor of 0.30 drops it, which costs a query of recall and a typo on the corpus. So a large account can answer gibberish with one repo that is itself gibberish, and the floor stays at 0.36. A planner that kept gibberish as typed instead of describing it would end that too.
 
 Lower floors barely help at 20,000 stars, and higher ones answer more gibberish.
 
@@ -281,14 +281,6 @@ The fixture run loads PGlite in the test process and fails any model or embeddin
 
 A fixture of real vectors and plans tests the ranking that production runs. A run on hash embeddings would only test the plumbing.
 
-## Spend
-
-Calibrating the meaning floor on 2026-11-05 used 222,107 input and 10,365 output tokens of `anthropic/claude-haiku-5.5` for plans and 1,286 tokens of `voyage/voyage-4`, about $0.03 at catalog prices. Every other plan and vector came from the cache.
-
-Measuring obscure typos and larger accounts on 2026-11-14 used 246,689 input and 76,091 output tokens of `anthropic/claude-haiku-5.5`, for 29 summaries and the new queries' plans, and 1.09 million tokens of `voyage/voyage-4`, almost all for the 19,241 stand-ins, about $0.13 at catalog prices. The 20,000 most-starred repos came from GitHub's GraphQL search, which is free.
-
-The AI Gateway ledger shows $1.10 for every run on 2026-11-03: a 10-query smoke run, two full runs, one run that a gateway error stopped after its first stage, and the live checks. The script's own price estimate for the same work is about four times higher. The ledger is the bill.
-
 ## Run it
 
 ```sh
@@ -315,7 +307,7 @@ bun run evals/recall.ts --fixture
 
 `--max-distances` scores search at each listed value of `maxMatchDistance` and prints one line per value. `--accept-floor` runs the usage floor before the queries run, which accepts every subject held by 3 repos from 2 owners, and `--bare-filters` adds bare subjects as filters, so a change to the compiler's policy can be measured before it ships.
 
-`--summary-model ID` summarizes with another model. A full run from an empty cache used 4.96 million input and 0.19 million output tokens of `anthropic/claude-haiku-5.5` and 0.11 million tokens of `voyage/voyage-4`, about $0.60 at catalog prices. A rerun with a new planner prompt costs about 0.44 million input tokens, for 126 plans.
+`--summary-model ID` summarizes with another model.
 
 To compare summary samples locally without the gateway, run `evals/summarize.ts` through the Claude Code CLI, as `docs/architecture.md` describes under "AI providers".
 
