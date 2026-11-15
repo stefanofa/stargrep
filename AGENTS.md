@@ -21,9 +21,9 @@ Commit messages and PR titles are lowercase conventional commits, such as `feat(
 
 ## Vendored repositories
 
-`repos/` holds the source of key dependencies at the versions this repo pins. Use it as read-only reference.
+`repos/` holds the source of key dependencies at the versions this repo pins. Git tracks only `repos/VENDORED.json`, which pins each repo's tag and commit. Run `bun scripts/sync-repos.ts` in a fresh clone to fetch the rest. Use it as read-only reference.
 
 - Prefer the patterns in `repos/` over guesses or web search. A plain `grep -rn` finds the source, docs, and tests for an API.
 - Never edit or import from `repos/`.
-- Read `repos/effect/LLMS.md` before writing Effect code.
-- Update a vendored repo in the same PR that bumps the matching dependency. Change the tag in `scripts/sync-repos.ts` and run `bun scripts/sync-repos.ts`. The effect tag comes from the catalog in the root `package.json`, so bumping `effect` there is enough.
+- Read `repos/effect/LLMS.md` before writing Effect code. If it is missing, run the sync first.
+- Bump a vendored repo in the same PR that bumps the matching dependency. Change the tag in `scripts/sync-repos.ts` and run `bun scripts/sync-repos.ts --update`, which pins the new commit in `repos/VENDORED.json`. The effect tag comes from the catalog in the root `package.json`, so bumping `effect` there is enough. A test fails while `VENDORED.json` and the script disagree.

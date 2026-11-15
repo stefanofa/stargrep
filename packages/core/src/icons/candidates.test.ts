@@ -47,57 +47,57 @@ const pick = (fullName: string) => ({
 
 const raw = (repo: string, path: string, ref = "HEAD") => `https://raw.githubusercontent.com/${repo}/${ref}/${path}`;
 
-describe("candidates from the report's sample", () => {
-  test("antirez/ds4 tries its root logo.svg first, then the same logo through the README", () => {
-    expect(pick("antirez/ds4").candidates).toEqual([
-      { source: "repo-file", url: raw("antirez/ds4", "logo.svg"), oid: expect.any(String) },
-      { source: "readme-image", url: raw("antirez/ds4", "logo.svg") },
+describe("candidates from sample repos", () => {
+  test("quill/inkwell tries its root logo.svg first, then the same logo through the README", () => {
+    expect(pick("quill/inkwell").candidates).toEqual([
+      { source: "repo-file", url: raw("quill/inkwell", "logo.svg"), oid: expect.any(String) },
+      { source: "readme-image", url: raw("quill/inkwell", "logo.svg") },
     ]);
   });
 
-  test("benjitaylor/drawesome tries its plain logo before the dark variant", () => {
-    expect(pick("benjitaylor/drawesome").candidates.map((candidate) => candidate.url)).toEqual([
-      raw("benjitaylor/drawesome", "logo.svg"),
-      raw("benjitaylor/drawesome", "logo-dark.svg"),
+  test("marlo/sketchpad tries its plain logo before the dark variant", () => {
+    expect(pick("marlo/sketchpad").candidates.map((candidate) => candidate.url)).toEqual([
+      raw("marlo/sketchpad", "logo.svg"),
+      raw("marlo/sketchpad", "logo-dark.svg"),
     ]);
   });
 
   test("README logos in nested folders replace the nested tree lookups, ahead of the homepage", () => {
-    expect(pick("shinyobjectz/raea").candidates).toEqual([
-      { source: "readme-image", url: raw("shinyobjectz/raea", "docs/logo/cat-black.svg") },
-      { source: "homepage", url: "https://raea.io/" },
+    expect(pick("tidepool/harbor").candidates).toEqual([
+      { source: "readme-image", url: raw("tidepool/harbor", "docs/logo/mark-black.svg") },
+      { source: "homepage", url: "https://harbor.example/" },
     ]);
-    expect(pick("trycua/cua").candidates[0]).toEqual({
+    expect(pick("orbitlabs/relay").candidates[0]).toEqual({
       source: "readme-image",
-      url: raw("trycua/cua", "img/logo_black.svg"),
+      url: raw("orbitlabs/relay", "img/logo_black.svg"),
     });
-    expect(pick("haydenbleasel/ghost").candidates).toEqual([
-      { source: "readme-image", url: raw("haydenbleasel/ghost", ".github/logo.svg") },
+    expect(pick("fernwood/lantern").candidates).toEqual([
+      { source: "readme-image", url: raw("fernwood/lantern", ".github/logo.svg") },
     ]);
-    expect(pick("heycupola/relic").candidates[0]).toEqual({
+    expect(pick("cobalt-co/vault").candidates[0]).toEqual({
       source: "readme-image",
-      url: raw("heycupola/relic", "apps/web/public/relic-logo-dark.svg"),
+      url: raw("cobalt-co/vault", "apps/web/public/vault-logo-dark.svg"),
     });
   });
 
   test("rewrites a github.com raw link to the same repo onto raw.githubusercontent.com at its ref", () => {
-    expect(pick("AtomicBot-ai/Atomic-Chat").candidates[0]).toEqual({
+    expect(pick("beacon-app/Beacon-Chat").candidates[0]).toEqual({
       source: "readme-image",
-      url: raw("AtomicBot-ai/Atomic-Chat", "assets/logo.png", "main"),
+      url: raw("beacon-app/Beacon-Chat", "assets/logo.png", "main"),
     });
-    expect(pick("chdb-io/chdb").candidates[0]).toEqual({
+    expect(pick("quarry-db/quarry").candidates[0]).toEqual({
       source: "readme-image",
-      url: raw("chdb-io/chdb", "docs/_static/snake-chdb.png", "main"),
+      url: raw("quarry-db/quarry", "docs/_static/quarry-logo.png", "main"),
     });
   });
 
-  test("skips a README of badges and falls back to the homepage, as for vercel-labs/wterm", () => {
-    expect(pick("vercel-labs/wterm").candidates).toEqual([{ source: "homepage", url: "https://wterm.dev/" }]);
+  test("skips a README of badges and falls back to the homepage, as for signal-labs/tty", () => {
+    expect(pick("signal-labs/tty").candidates).toEqual([{ source: "homepage", url: "https://tty.example/" }]);
   });
 
   test("a repo with no icon file, README image, or homepage has nothing to fetch", () => {
-    expect(pick("TanStack/markdown").candidates).toEqual([]);
-    expect(pick("lucataco/open-source-higgsfield").candidates).toEqual([]);
+    expect(pick("Kestrel/parser").candidates).toEqual([]);
+    expect(pick("drift/notes").candidates).toEqual([]);
   });
 });
 

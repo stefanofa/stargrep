@@ -40,20 +40,20 @@ const webpSize = (webp: Uint8Array) => {
 
 describe("icon normalization", () => {
   it.each([
-    ["ds4-logo.svg", "light", 128],
-    ["shaders-icon.svg", "dark", 128],
-    ["raea-cat-white.svg", "dark", 128],
-    ["raea-cat-black.svg", "light", 128],
-    ["atomic-chat-logo.png", "none", 128],
-    ["formisch-icon.jpg", "none", 128],
-    ["formisch.webp", "none", 64],
-    ["formisch.ico", "none", 48],
-    ["next-favicon.ico", "light", 128],
-    ["cdnjs-favicon.svg", "none", 128],
-    ["sandstorm-favicon.ico", "light", 16],
-    ["agent-device-apple-touch-icon.png", "none", 128],
-    ["stricli-logo.svg", "none", 128],
-    ["files-sdk-icon.svg", "none", 128],
+    ["wordmark-logo.svg", "light", 128],
+    ["scheme-style.svg", "dark", 128],
+    ["pixel-white.svg", "dark", 128],
+    ["pixel-black.svg", "light", 128],
+    ["palette-logo.png", "none", 128],
+    ["progressive.jpg", "none", 128],
+    ["lossy.webp", "none", 64],
+    ["bitmaps.ico", "none", 48],
+    ["png-entry.ico", "light", 128],
+    ["strokes.svg", "none", 128],
+    ["four-bit.ico", "light", 16],
+    ["touch-icon.png", "none", 128],
+    ["inkscape-logo.svg", "none", 128],
+    ["notched-square.svg", "none", 128],
   ] as const)("accepts %s as a WebP with plate %s, %i px and never upscaled", async (name, plate, size) => {
     const result = await accepted(name);
     expect({ plate: result.plate, size: result.size }).toEqual({ plate, size });
@@ -62,7 +62,7 @@ describe("icon normalization", () => {
   });
 
   it.each([
-    ["raea-banner.png", "repo-file", "not-square"],
+    ["banner.png", "repo-file", "not-square"],
     ["spinner.gif", "repo-file", "unsupported"],
     ["spinner.png", "repo-file", "animated"],
     ["spinner.webp", "repo-file", "animated"],
@@ -70,12 +70,12 @@ describe("icon normalization", () => {
     ["tiny.png", "repo-file", "too-small"],
     ["oversized.png", "readme-image", "oversized"],
     ["blank.svg", "homepage", "blank"],
-    ["partykit-emoji.svg", "homepage", "svg-text"],
-    ["agent-device-favicon.svg", "homepage", "svg-text"],
-    ["rari-icon.svg", "homepage", "blank"],
-    ["openworkflow-android-chrome.png", "homepage", "blank"],
-    ["batrachian-apple-touch-icon.png", "homepage", "blank"],
-    ["cux-og-card.png", "homepage", "not-square"],
+    ["emoji-text.svg", "homepage", "svg-text"],
+    ["letter-favicon.svg", "homepage", "svg-text"],
+    ["scheme-classes.svg", "homepage", "blank"],
+    ["flat-android-chrome.png", "homepage", "blank"],
+    ["flat-touch-icon.png", "homepage", "blank"],
+    ["social-card.png", "homepage", "not-square"],
   ] as const)("rejects %s from a %s as %s", async (name, source, reason) => {
     expect(await run(name, source)).toEqual(Normalize.Normalized.Rejected({ reason }));
   });
@@ -85,6 +85,6 @@ describe("icon normalization", () => {
   });
 
   it("accepts a 4:5 card from a repo file that it rejects as a homepage icon", async () => {
-    expect((await run("cux-og-card.png", "repo-file"))._tag).toBe("Accepted");
+    expect((await run("social-card.png", "repo-file"))._tag).toBe("Accepted");
   });
 });

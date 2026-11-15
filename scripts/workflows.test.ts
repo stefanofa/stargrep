@@ -150,3 +150,12 @@ describe("production validation", () => {
     expect(load("ci.yml").jobs.lint?.steps.some((step) => step.run === "bun run lint:fixtures")).toBe(true);
   });
 });
+
+describe("preview destroy", () => {
+  test("runs only on pull_request_target close, from the default branch's code", () => {
+    const workflow = load("preview-destroy.yml");
+    expect(workflow.on).toEqual({ pull_request_target: { types: ["closed"] } } as Workflow["on"]);
+    const checkout = workflow.jobs.destroy?.steps.find((step) => step.uses?.startsWith("actions/checkout@"));
+    expect(checkout?.with?.ref).toBeUndefined();
+  });
+});
