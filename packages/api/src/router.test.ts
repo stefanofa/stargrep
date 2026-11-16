@@ -110,7 +110,7 @@ const searchAda = (request: Search.SearchRequest) =>
       ? Effect.succeed(searchOutcome(request))
       : Effect.fail(new Search.AccountNotSynced({ login: request.scope.login }));
 
-const reading = { total: 1776, read: 412, failed: 3 };
+const reading = { total: 1776, read: 412, failed: 3, queued: 0 };
 
 const services = (fakes: Fakes): Context.Context<ApiServices> => {
   const db = makeDb({

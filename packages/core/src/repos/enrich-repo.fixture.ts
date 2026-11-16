@@ -20,6 +20,7 @@ import * as Schema from "effect/Schema";
 import * as IconQueue from "../icons/icon-queue.ts";
 import * as BlobStore from "./blob-store.ts";
 import * as EnrichRepo from "./enrich-repo.ts";
+import * as SummaryAllowance from "./summary-allowance.ts";
 
 export const embeddingModel = Schema.decodeSync(EmbeddingModelId)("fake/hash-embedding");
 export const oid = (digit: string) => Schema.decodeSync(ObjectId)(digit.repeat(40));
@@ -169,6 +170,7 @@ export const fixture = () => {
         iconQueue.layer,
         Fake.layerTextGeneration(respond),
         Fake.layerEmbeddings(),
+        SummaryAllowance.layerUnmetered,
       ),
     );
 

@@ -175,7 +175,7 @@ const db = makeDb({
       const found = accounts[login.toLowerCase()];
       const total = found?.synced === false ? 2 : (found?.repos.length ?? 0);
       const unread = found?.repos.filter((each) => each.pushedAt === null).length ?? 0;
-      return Effect.succeed({ total, read: total - unread, failed: 0 });
+      return Effect.succeed({ total, read: total - unread, failed: 0, queued: 0 });
     },
   },
 });

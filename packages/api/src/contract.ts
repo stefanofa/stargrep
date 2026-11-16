@@ -183,9 +183,13 @@ export const EnrichmentProgress = Schema.Struct({
     description:
       "How many of them Stargrep gave up reading after repeated failures of their own, such as repos GitHub no longer serves.",
   }),
+  queued: Schema.Int.annotate({
+    description:
+      "How many of the unread ones wait for the daily summary cap. Stargrep reads them later on its own, possibly days later, and search finds them by name and description meanwhile.",
+  }),
 }).annotate({
   description:
-    "How far reading the login's stars has got. Reading is finished when state is not queued and read plus failed equals total. Right after triggerSync the total is still 0, so poll while state is queued or read plus failed is less than total, and reload the library when read changes.",
+    "How far reading the login's stars has got. Reading is settled for now when state is not queued and read plus failed plus queued equals total, and finished once queued is 0 too. Right after triggerSync the total is still 0, so poll while state is queued or read plus failed plus queued is less than total, poll slowly while only queued repos remain, and reload the library when read changes.",
 });
 
 const syncFields = {

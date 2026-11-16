@@ -195,6 +195,9 @@ export const repos = pgTable(
     embeddingStale: boolean("embedding_stale").notNull().default(false),
     enrichFailures: integer("enrich_failures").notNull().default(0),
     enrichRetryAt: time("enrich_retry_at"),
+    // The daily summary cap refused this repo's summary, and the repo has not been read since. The library counts it as
+    // queued, so a page stops waiting on it, and saving the embedding clears it.
+    summaryDeferred: boolean("summary_deferred").notNull().default(false),
     iconKey: text("icon_key"),
     iconSource: iconSource("icon_source"),
     iconPlate: iconPlate("icon_plate"),

@@ -2,7 +2,7 @@ import type * as Cloudflare from "@alchemy.run/cloudflare";
 import type * as Embeddings from "@stargrep/ai/embeddings";
 import type * as TextGeneration from "@stargrep/ai/text-generation";
 import { FetchIcon, IconHttp, IconQueue, IconStore, Normalize } from "@stargrep/core/icons";
-import { BlobStore, EnrichQueue } from "@stargrep/core/repos";
+import { BlobStore, EnrichQueue, SummaryAllowance } from "@stargrep/core/repos";
 import * as GitHub from "@stargrep/github/github";
 import type * as TokenGate from "@stargrep/github/token-gate";
 import * as Ai from "@stargrep/runtime/ai-key";
@@ -127,6 +127,11 @@ export const layerIconStore = (bucket: Cloudflare.R2.ReadWriteBucketClient) =>
 
 export const aiModels = Effect.map(Ai.aiSetup, Ai.layerModels);
 
+// A stand-in summary costs nothing, so only a stage that calls the models meters its summaries.
+export const summaryAllowance = Effect.map(Ai.aiSetup, (ai) =>
+  ai.provider === "fake" ? SummaryAllowance.layerUnmetered : SummaryAllowance.layerMetered,
+);
+
 interface Bindings {
   readonly database: Effect.Effect<Redacted.Redacted<string>, never, RuntimeContext>;
   readonly readmes: Cloudflare.R2.ReadWriteBucketClient;
@@ -136,6 +141,7 @@ interface Bindings {
   readonly tokenGate: Layer.Layer<TokenGate.TokenGate, never, RuntimeContext>;
   readonly userGates: Layer.Layer<UserGates, never, RuntimeContext>;
   readonly ai: Layer.Layer<TextGeneration.TextGeneration | Embeddings.Embeddings>;
+  readonly summaryAllowance: Effect.Success<typeof summaryAllowance>;
   readonly adopted: Ref.Ref<boolean>;
 }
 
@@ -153,6 +159,7 @@ export const layerRuntime = (bindings: Bindings) =>
         layerIconStore(bindings.icons),
         IconHttp.layer.pipe(Layer.provide(FetchHttpClient.layer)),
         Normalize.layer(codecs),
+        bindings.summaryAllowance,
       ),
     ),
     Layer.provideMerge(

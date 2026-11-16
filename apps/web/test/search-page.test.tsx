@@ -148,9 +148,9 @@ const repos = (): Array<Repo> => [
   repo(6, "rhysd", "tui-textarea", "A multi-line text editor widget."),
 ];
 
-const reading = { total: 6, read: 4, failed: 0 };
-const allRead = { total: 6, read: 6, failed: 0 };
-const arriving = { total: 6, read: 0, failed: 0 };
+const reading = { total: 6, read: 4, failed: 0, queued: 0 };
+const allRead = { total: 6, read: 6, failed: 0, queued: 0 };
+const arriving = { total: 6, read: 0, failed: 0, queued: 0 };
 
 const status = (extra: Partial<Server["status"]>): Server["status"] => syncStatus({ enrichment: allRead, ...extra });
 // A sync waiting for GitHub budget, due to start in 24 minutes with 3 ahead of it.
@@ -310,7 +310,7 @@ describe("the search page in each state", () => {
       starredAt: "2026-11-05T09:00:00.000Z",
     });
     server.repos = [fresh, ...server.repos];
-    server.status = status({ state: "queued", enrichment: { total: 7, read: 6, failed: 0 } });
+    server.status = status({ state: "queued", enrichment: { total: 7, read: 6, failed: 0, queued: 0 } });
     await poll();
     await waitFor(() => expect(strip()).toContain("1 new star · reading…"));
     const card = page().getByRole("link", { name: "auto-ontology" }).closest("article");
@@ -329,7 +329,7 @@ describe("the search page in each state", () => {
           }
         : entry,
     );
-    server.status = status({ enrichment: { total: 7, read: 7, failed: 0 } });
+    server.status = status({ enrichment: { total: 7, read: 7, failed: 0, queued: 0 } });
     await poll();
     await waitFor(() => expect(page().getByText("A semantic layer.")).toBeTruthy());
     expect(strip()).toContain("7 stars");
@@ -762,7 +762,7 @@ describe("the search page in each state", () => {
       state: "unknown",
       syncedAt: null,
       requestedAt: null,
-      enrichment: { total: 0, read: 0, failed: 0 },
+      enrichment: { total: 0, read: 0, failed: 0, queued: 0 },
     });
     server.search = () => {
       if (!created.account) throw answered("ACCOUNT_NOT_SYNCED");

@@ -20,6 +20,7 @@ const settlementOf = EnrichRepo.Enrichment.$match({
   NoNodeId: done,
   Gone: done,
   Backoff: done,
+  Capped: done,
   Summarized: done,
   Embedded: done,
 });

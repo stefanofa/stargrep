@@ -14,7 +14,7 @@ export const syncStatus = (extra: Partial<typeof SyncStatus.Type>): typeof SyncS
     waiting: null,
     starredTotal: null,
     accountType: null,
-    enrichment: { total: 1776, read: 1776, failed: 0 },
+    enrichment: { total: 1776, read: 1776, failed: 0, queued: 0 },
     ...extra,
   });
 };

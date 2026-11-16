@@ -1146,6 +1146,17 @@ const make = Effect.gen(function* () {
   return Prefill.of({ run });
 });
 
+// The repos the Worker's sweep would summarize next, at most limit, for a run on a developer's machine that clears the
+// backlog the daily summary cap leaves, and how many wait in all. The run leases each repo before it asks, as every
+// attempt does, so the sweep skips the repos it holds and the run skips the ones the Worker holds.
+export const backlog = Effect.fn("Prefill.backlog")(function* (limit: number) {
+  const db = yield* Db.Db;
+  return {
+    waiting: yield* db.repos.summaryBacklog,
+    refs: yield* db.repos.pendingSummaries({ now: yield* DateTime.now, limit }),
+  };
+});
+
 // An open manifest already holds the key a chunk's request hashes to, so the chunk's lease rolls back.
 class KeyHeld extends Schema.TaggedError<KeyHeld, { readonly brand: unique symbol }>()("KeyHeld", {
   repos: Schema.Int,

@@ -3,7 +3,7 @@ import { embeddingModel } from "@stargrep/ai/models";
 import * as TextGeneration from "@stargrep/ai/text-generation";
 import { GitHubTokens } from "@stargrep/auth/tokens";
 import { IconQueue } from "@stargrep/core/icons";
-import { BlobStore, EnrichRepo } from "@stargrep/core/repos";
+import { BlobStore, EnrichRepo, SummaryAllowance } from "@stargrep/core/repos";
 import * as Db from "@stargrep/db";
 import { makeDb, repo } from "@stargrep/db/testing";
 import { TokenBudgetExhausted } from "@stargrep/github/errors";
@@ -80,6 +80,7 @@ it("shares the server token's rate-limit deferral across users who spent their o
         Layer.mock(Embeddings.Embeddings, { model: embeddingModel }),
         Layer.mock(TextGeneration.TextGeneration, { provider: "test", model: "test", batchTimeout: Option.none() }),
         Layer.mock(IconQueue.IconQueue, {}),
+        SummaryAllowance.layerUnmetered,
       ),
     ),
   );

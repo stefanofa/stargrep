@@ -649,6 +649,7 @@ describe("enrichment outcome table", () => {
     NoNodeId: [[EnrichRepo.Enrichment.NoNodeId({ id: repoId(3) }), "ack"]],
     Gone: [[EnrichRepo.Enrichment.Gone({ id: repoId(4) }), "ack"]],
     Backoff: [[EnrichRepo.Enrichment.Backoff({ id: repoId(10) }), "ack"]],
+    Capped: [[EnrichRepo.Enrichment.Capped({ id: repoId(11) }), "ack"]],
     Stale: [[EnrichRepo.Enrichment.Stale({ id: repoId(5) }), "retry"]],
     Failed: [
       [EnrichRepo.Enrichment.Failed({ id: repoId(6), error: timeout }), "retry"],
@@ -662,7 +663,8 @@ describe("enrichment outcome table", () => {
     >;
   };
 
-  // Gone, NoNodeId, and Backoff ack, because EnrichRepo counts a repo's own failure and the sweep owns the next try.
+  // Gone, NoNodeId, Backoff, and Capped ack, because EnrichRepo counts a repo's own failure, or moves a capped repo's
+  // retry time to when the cap has room, and the sweep owns the next try.
   it("settles every enrichment outcome the way its row says", async () => {
     const rows = Object.values(cases).flat();
     const { queues, deadLetters } = recordingQueues();

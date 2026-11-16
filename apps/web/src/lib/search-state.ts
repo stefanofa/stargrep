@@ -29,7 +29,14 @@ export type Stage =
     }
   | { readonly name: "refreshing"; readonly total: number; readonly arriving: number }
   | { readonly name: "reading"; readonly read: number; readonly settled: number; readonly total: number }
-  | { readonly name: "ready"; readonly total: number; readonly failed: number; readonly lastSync: LastSync };
+  | {
+      readonly name: "ready";
+      readonly total: number;
+      readonly failed: number;
+      // Repos the daily summary cap queued to read later.
+      readonly queued: number;
+      readonly lastSync: LastSync;
+    };
 
 const importPhase = (sync: SyncStatus | undefined): ImportPhase | undefined => {
   if (sync === undefined || sync.syncedAt !== null) return undefined;
@@ -66,7 +73,7 @@ export const stageOf = ({
     };
   const pending = sync?.state === "queued" || sync?.state === "waiting";
   const arriving = entries.filter(factsPending).length;
-  const backlog = enrichment === null ? 0 : enrichment.total - enrichment.read - enrichment.failed;
+  const backlog = enrichment === null ? 0 : enrichment.total - enrichment.read - enrichment.failed - enrichment.queued;
   if (pending || (arriving > 0 && backlog > 0 && backlog <= fewNewStars))
     return { name: "refreshing", total: entries.length, arriving };
   if (enrichment !== null && readingIncomplete(enrichment))
@@ -78,7 +85,13 @@ export const stageOf = ({
     };
   const lastSync: LastSync =
     sync?.state !== "failed" ? "done" : sync.syncedAt === null ? "failed-first" : "failed-refresh";
-  return { name: "ready", total: entries.length, failed: enrichment?.failed ?? 0, lastSync };
+  return {
+    name: "ready",
+    total: entries.length,
+    failed: enrichment?.failed ?? 0,
+    queued: enrichment?.queued ?? 0,
+    lastSync,
+  };
 };
 
 // Why the search by meaning gave no answer: it failed, or the network asked too often.
@@ -254,6 +267,15 @@ const browsing = (stage: Stage, synced: string | undefined, timeLeft: string | u
           detail: `${starCount(stage.total)} so far`,
           retry: "sync",
         };
+      if (stage.queued > 0) {
+        const queued = `${formatCount(stage.queued)} ${stage.queued === 1 ? "summary" : "summaries"} queued for later`;
+        return {
+          icon: "synced",
+          label: starCount(stage.total),
+          detail: synced === undefined ? queued : `${queued} · ${synced}`,
+          phoneDetail: `${formatCount(stage.queued)} queued for later`,
+        };
+      }
       return { icon: "synced", label: starCount(stage.total), ...(synced === undefined ? {} : { detail: synced }) };
   }
 };
@@ -293,8 +315,8 @@ const answered = (stage: Stage, answer: Exclude<Answer, { kind: "browsing" }>, w
         icon: "done",
         label: "nothing found",
         detail:
-          stage.name === "ready" && stage.failed > 0
-            ? `${formatCount(stage.total - stage.failed)} of ${formatCount(stage.total)} stars read`
+          stage.name === "ready" && stage.failed + stage.queued > 0
+            ? `${formatCount(stage.total - stage.failed - stage.queued)} of ${formatCount(stage.total)} stars read`
             : `all ${starCount(stage.total)} read`,
       };
     case "failed":

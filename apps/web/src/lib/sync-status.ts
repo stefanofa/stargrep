@@ -1,7 +1,9 @@
 import type { EnrichmentProgress, SyncStatus } from "./rpc.ts";
 
+// Repos the daily summary cap queued are settled for now. Stargrep reads them on its own, possibly days later, so the page
+// neither waits nor polls fast for them.
 export const readingIncomplete = (enrichment: EnrichmentProgress) =>
-  enrichment.read + enrichment.failed < enrichment.total;
+  enrichment.read + enrichment.failed + enrichment.queued < enrichment.total;
 
 export const firstImport = (status: SyncStatus) =>
   (status.state === "queued" || status.state === "waiting") && status.syncedAt === null;

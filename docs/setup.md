@@ -190,6 +190,17 @@ bun run --cwd packages/core prefill --ids prefill.txt --adapter batch --chunk 25
 
 With `AI_TEXT_PROVIDER=fake` and `AI_EMBEDDINGS_PROVIDER=fake` it pays for nothing: the stand-in answers, and its batches are files under `.cache/stand-in-batches`, so a killed run resumes as it would on the Gateway. `prefill-check` runs a kill, a resume, and a rerun beside the real sweep and consumer on a throwaway database. Never point either at a stage's branch with the stand-in models.
 
+### Clear the summary backlog
+
+The Worker pays for at most 1,000 new summaries a day, so a big import leaves a backlog that drains at that rate. `--pending <count>` asks the Claude Code CLI for up to that many of the repos the Worker's sweep would send next, against prod's database, and prints how many wait first. `--pending 0` only prints the count. Each chunk leases its repos before it asks, so the Worker skips them and the run skips the ones the Worker holds, and these summaries take nothing from the Worker's daily cap. Claude Code must be signed in with an API key, not a subscription, because these summaries serve the product (see "AI providers" in `docs/architecture.md`). Keep prod's connection string in a private file outside the repo.
+
+```sh
+DATABASE_URL=... GITHUB_TOKEN=... AI_GATEWAY_API_KEY=... AI_TEXT_PROVIDER=claude-code STARGREP_MODE=local \
+  bun run --cwd packages/core prefill --pending 500 --adapter cli
+```
+
+The Gateway key only embeds each new summary, with the model prod's embeddings use. A run stopped with Ctrl-C holds the repos it had leased for up to 26 hours, and a rerun resumes them first.
+
 ### Run pilot 2
 
 Pilot 2 (`rollout.md` in the design) asks its 300 repos through the real Gateway batch path, so it pays for about 300 summaries. It runs on a temporary Neon branch of prod, never on prod itself. Nothing runs against a branch, so no sweep or queue consumer competes with the driver.

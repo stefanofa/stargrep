@@ -1,0 +1,47 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "df9ee8a8-d891-4881-9094-f51d5c9e4587",
+  "prevIds": [
+    "3654f239-250a-4241-b81d-eac12c0c5e19"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "summary_deferred"
+      ],
+      "writes": [
+        "s|col|public.repos.summary_deferred",
+        "n|col|public.repos.summary_deferred",
+        "e|col|public.repos.summary_deferred"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "summary_deferred",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "false",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

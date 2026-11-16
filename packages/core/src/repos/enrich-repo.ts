@@ -26,6 +26,7 @@ import { IconQueue, iconRequest, needsIconCheck } from "../icons/icon-queue.ts";
 import * as RepoKnowledge from "../knowledge/repo-knowledge.ts";
 import * as BlobStore from "./blob-store.ts";
 import * as EnrichRetry from "./enrich-retry.ts";
+import * as SummaryAllowance from "./summary-allowance.ts";
 
 export interface Summary {
   readonly summary: string;
@@ -57,6 +58,8 @@ export type Enrichment = Data.TaggedEnum<{
   NoNodeId: { readonly id: RepoId };
   Gone: { readonly id: RepoId };
   Backoff: { readonly id: RepoId };
+  // The daily summary cap refused its summary. It waits, counting no failure, until the cap has room.
+  Capped: { readonly id: RepoId };
   Stale: { readonly id: RepoId };
   Failed: { readonly id: RepoId; readonly error: EnrichRepoError };
   Summarized: { readonly id: RepoId; readonly summary: Summary };
@@ -115,6 +118,7 @@ const failureOf = (outcome: Enrichment): Option.Option<Failure> =>
     Unchanged: () => Option.none(),
     NotFound: () => Option.none(),
     Backoff: () => Option.none(),
+    Capped: () => Option.none(),
     Stale: () => Option.none(),
     Summarized: () => Option.none(),
     Embedded: () => Option.none(),
@@ -251,6 +255,7 @@ const make = Effect.gen(function* () {
   const embeddings = yield* Embeddings.Embeddings;
   const textGeneration = yield* TextGeneration.TextGeneration;
   const icons = yield* IconQueue;
+  const allowance = yield* SummaryAllowance.SummaryAllowance;
 
   // One read per file, in order. A README that cannot be read fails only its own repo.
   const readmes = Effect.fn("EnrichRepo.readmes")(function* (files: ReadonlyArray<ReadmeFile>) {
@@ -402,9 +407,11 @@ const make = Effect.gen(function* () {
 
   // Each summary is saved as its answer arrives, so work cut short keeps every summary already paid for. A repo is
   // asked about only once this attempt holds its lease, so two attempts never pay for one repo, and a repo another
-  // attempt holds or whose summary is no longer due is skipped. Failed calls are settled while the attempt still holds
-  // their leases, then the saved repos are projected together, taking the vocabulary locks once for the chunk. It returns
-  // the summaries to embed, and as settled the held repos and every failed answer, which settleFailures has recorded.
+  // attempt holds or whose summary is no longer due is skipped. Each repo asked takes a unit of the summary cap first,
+  // and a repo the cap refuses keeps its lease until the cap has room, so the sweep sends it again then. Failed calls
+  // are settled while the attempt still holds their leases, then the saved repos are projected together, taking the
+  // vocabulary locks once for the chunk. It returns the summaries to embed, and as settled the held and capped repos and
+  // every failed answer, which settleFailures has recorded.
   const summarizeAll = Effect.fn("EnrichRepo.summarizeAll")(function* (
     jobs: ReadonlyArray<Job>,
     projector: RepoKnowledge.Projector,
@@ -414,8 +421,10 @@ const make = Effect.gen(function* () {
     const now = yield* DateTime.now;
     const until = DateTime.addDuration(now, EnrichRetry.leaseFor(textGeneration.batchTimeout, due.length));
     const leased = new Set<number>(yield* db.repos.lease({ ids: due.map(({ job }) => job.id), now, until }));
-    const asked = due.filter(({ job }) => leased.has(job.id));
     const held = due.filter(({ job }) => !leased.has(job.id));
+    const { allowed: asked, capped } = yield* allowance.take(due.filter(({ job }) => leased.has(job.id)));
+    const waiting = Option.match(capped, { onNone: () => [], onSome: ({ repos }) => repos.map(({ job }) => job.id) });
+    if (Option.isSome(capped)) yield* db.repos.defer({ ids: waiting, until, retryAt: capped.value.until });
     const [answered, ended] = Arr.separate(
       yield* Summarize.summarizeBatch(asked, ({ facts }) => facts).pipe(
         Stream.mapEffect(([{ job }, answer]) => keepSummary(job, answer, until), {
@@ -439,7 +448,11 @@ const make = Effect.gen(function* () {
     yield* projector.projectSaved(answered.map(({ job }) => job.id));
     return {
       embeddable: [...stored, ...answered],
-      settled: [...held.map(({ job }) => Enrichment.Backoff({ id: job.id })), ...ended],
+      settled: [
+        ...held.map(({ job }) => Enrichment.Backoff({ id: job.id })),
+        ...waiting.map((id) => Enrichment.Capped({ id })),
+        ...ended,
+      ],
     };
   });
 

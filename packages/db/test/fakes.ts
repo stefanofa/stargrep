@@ -42,6 +42,9 @@ const defaults = {
     sweepable: unexpected("repos.sweepable"),
     lease: unexpected("repos.lease"),
     settleFailures: unexpected("repos.settleFailures"),
+    defer: unexpected("repos.defer"),
+    summaryBacklog: unexpected("repos.summaryBacklog")(),
+    pendingSummaries: unexpected("repos.pendingSummaries"),
   },
   stars: {
     upsert: unexpected("stars.upsert"),

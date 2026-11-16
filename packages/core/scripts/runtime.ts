@@ -36,6 +36,7 @@ import * as IconQueue from "../src/icons/icon-queue.ts";
 import * as BlobStore from "../src/repos/blob-store.ts";
 import * as EnrichRepo from "../src/repos/enrich-repo.ts";
 import * as Prefill from "../src/repos/prefill.ts";
+import * as SummaryAllowance from "../src/repos/summary-allowance.ts";
 
 export const { spans, tracer } = collectSpans();
 
@@ -112,7 +113,9 @@ export const layerDb = (embeddingModel: string) =>
     }),
   );
 
+// A run on a developer's machine never takes from the Worker's daily summary cap, even against prod's database.
 export const layerEnrich = EnrichRepo.layer.pipe(
+  Layer.provideMerge(SummaryAllowance.layerUnmetered),
   Layer.provideMerge(Layer.unwrap(Effect.map(Embeddings.Embeddings, (embeddings) => layerDb(embeddings.model.id)))),
   Layer.provideMerge(Local.layer),
   Layer.provideMerge(layerGitHub),
@@ -373,6 +376,7 @@ const layerBatches = (summaryModel: Option.Option<string>) =>
 
 export const layerPrefill = (summaryModel: Option.Option<string> = Option.none()) =>
   Layer.mergeAll(Prefill.layer, EnrichRepo.layer).pipe(
+    Layer.provideMerge(SummaryAllowance.layerUnmetered),
     Layer.provideMerge(Layer.unwrap(Effect.map(Embeddings.Embeddings, (embeddings) => layerDb(embeddings.model.id)))),
     Layer.provideMerge(Local.layer),
     Layer.provideMerge(layerBatches(summaryModel)),

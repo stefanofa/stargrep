@@ -53,6 +53,18 @@ export const starsNetwork = (caller: Db.CallerKey): Line => ({
   rate: { units: 60, per: Duration.minutes(1), burst: 60, maxWait: Duration.zero },
 });
 
+// How many summaries the Worker may ask the model for in a day. Change it here, and the line follows.
+export const summariesPerDay = 1_000;
+
+// Every summary the Worker asks the model for takes one unit before the call, retries and the new summaries a recipe
+// change asks for included. A clear line takes a day's units at once, such as for a big import, then pays out one every
+// 86.4 seconds, so a steady backlog costs summariesPerDay a day and any 24 hours at most twice that. A repo the line
+// refuses waits until it has room. Embeddings, stand-in answers, and the prefill on a developer's machine take nothing.
+export const summaryAll: Line = {
+  key: Db.LineKey.make("summary/all"),
+  rate: { units: summariesPerDay, per: Duration.days(1), burst: summariesPerDay, maxWait: Duration.zero },
+};
+
 // How long the rate takes to pay out this many units.
 export const durationOf = (rate: Rate, units: number) =>
   Duration.millis((units * Duration.toMillis(rate.per)) / rate.units);

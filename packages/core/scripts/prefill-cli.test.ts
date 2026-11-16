@@ -30,3 +30,25 @@ it.effect("exits non-zero when --summary-model comes with --adapter cli", () =>
     expect(`${refused.stdout}${refused.stderr}`).toContain("prefill refuses to start: --summary-model");
   }),
 );
+
+// The backlog is what the Worker would pay the Gateway for once its daily cap has room, so a backlog run that would ask
+// the Gateway directly, past the cap, is refused before it opens a database.
+it.effect("exits non-zero when --pending would ask anything but the Claude Code CLI", () =>
+  Effect.promise(async () => {
+    const attempts = [
+      { args: ["--pending", "10"], provider: "claude-code" },
+      { args: ["--pending", "10", "--adapter", "cli"], provider: "gateway" },
+      { args: ["--pending", "10", "--adapter", "cli", "--ids", "missing.txt"], provider: "claude-code" },
+    ];
+    for (const { args, provider } of attempts) {
+      const refused = Bun.spawnSync(["bun", "scripts/prefill.ts", ...args], {
+        cwd: `${import.meta.dir}/..`,
+        env: { ...process.env, AI_TEXT_PROVIDER: provider },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(refused.exitCode).not.toBe(0);
+      expect(`${refused.stdout}${refused.stderr}`).toContain("prefill refuses to start");
+    }
+  }),
+);
