@@ -24,6 +24,7 @@ import * as EnrichQueue from "./enrich-queue.ts";
 import * as EnrichRepo from "./enrich-repo.ts";
 import * as EnrichRetry from "./enrich-retry.ts";
 import * as Prefill from "./prefill.ts";
+import * as SummaryAllowance from "./summary-allowance.ts";
 
 export const embeddingModel = Schema.decodeSync(EmbeddingModelId)("fake/hash-embedding");
 const oid = (n: number) => Schema.decodeSync(ObjectId)(String(n).padStart(40, "c"));
@@ -177,14 +178,17 @@ export const fixture = () => {
   const layer = <E>(database: Layer.Layer<Db.Db | Db.Transactions | TestDatabase.TestDatabase, E>) =>
     Layer.provideMerge(
       Layer.merge(Prefill.layer, EnrichRepo.layer),
-      Layer.mergeAll(
-        database,
-        github.layer,
-        BlobStore.layerMemory,
-        batches.layer,
-        IconQueue.layerMemory().layer,
-        textGeneration,
-        Fake.layerEmbeddings(),
+      Layer.provideMerge(
+        SummaryAllowance.layerMetered,
+        Layer.mergeAll(
+          database,
+          github.layer,
+          BlobStore.layerMemory,
+          batches.layer,
+          IconQueue.layerMemory().layer,
+          textGeneration,
+          Fake.layerEmbeddings(),
+        ),
       ),
     );
 
@@ -217,7 +221,8 @@ export const tally = (report: Prefill.PrefillReport) => {
 export const query = (text: string, values: ReadonlyArray<unknown> = []) =>
   Effect.flatMap(TestDatabase.TestDatabase, (test) => test.query(text, values));
 
-// The regular sweep, and the queue consumer's service on every repo it sends, as the deployed cron and queue run them.
+// The regular sweep, and the queue consumer's service on every repo it sends, as the deployed cron and queue run them,
+// summary cap included.
 // Returns the repos the sweep sent.
 export const sweepAndConsume = Effect.gen(function* () {
   const queue = EnrichQueue.layerMemory();

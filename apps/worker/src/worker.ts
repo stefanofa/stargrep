@@ -72,6 +72,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
       tokenGate: gate,
       userGates,
       ai: yield* Effect.orDie(Layers.aiModels),
+      summaryAllowance: yield* Effect.orDie(Layers.summaryAllowance),
       adopted: yield* Ref.make(false),
     });
     yield* Queues.consumeAll(runtime, yield* Effect.orDie(budgetShare));

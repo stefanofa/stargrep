@@ -2,7 +2,7 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
 import type * as Embeddings from "@stargrep/ai/embeddings";
 import type * as TextGeneration from "@stargrep/ai/text-generation";
 import { type FetchIcon, IconQueue } from "@stargrep/core/icons";
-import { type BlobStore, type EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
+import { type BlobStore, type EnrichQueue, EnrichRepo, type SummaryAllowance } from "@stargrep/core/repos";
 import { StarSync } from "@stargrep/core/stars";
 import type * as Db from "@stargrep/db";
 import * as GitHub from "@stargrep/github/github";
@@ -73,6 +73,7 @@ export const consumeAll = <E>(
     | BlobStore.BlobStore
     | TextGeneration.TextGeneration
     | Embeddings.Embeddings
+    | SummaryAllowance.SummaryAllowance
     | Db.Db,
     E,
     RuntimeContext

@@ -231,6 +231,16 @@ export interface SweepQuery {
   readonly limit: number;
 }
 
+// The repos the summary cap refused while this attempt held their lease, and when the cap has room again.
+export interface Deferral {
+  readonly ids: ReadonlyArray<RepoId>;
+  readonly until: DateTime.Utc;
+  readonly retryAt: DateTime.Utc;
+}
+
+const NamedRepo = Schema.Struct({ id: RepoId, owner: Login, name: RepoName });
+export type NamedRepo = typeof NamedRepo.Type;
+
 // An enrichment attempt's hold on repos before its paid summary call. enrich_retry_at is the time before which no paid
 // attempt may start, so a lease is a retry time in the future, and until also names the lease, so the attempt can
 // settle only its own.
@@ -318,6 +328,17 @@ export interface Queries {
   // repo between its failure and its count.
   readonly settleFailures: (settled: LeaseFailures) => Effect.Effect<void, DbQueryFailed>;
   readonly sweepable: (query: SweepQuery) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
+  // Moves this attempt's lease on repos the summary cap refused to the time the cap has room again, counting no
+  // failure, so the sweep sends them again then.
+  readonly defer: (deferral: Deferral) => Effect.Effect<void, DbQueryFailed>;
+  // How many repos under the failure cap wait for a paid summary, leased or not.
+  readonly summaryBacklog: Effect.Effect<number, DbQueryFailed | DbRowInvalid>;
+  // The repos the sweep would send next that have no summary under the current recipe and that no attempt holds, in
+  // the sweep's order, for a prefill run on a developer's machine. The prefill counts a repo summarized under the
+  // current recipe as done, so a repo due only because its README or inputs moved is left to the sweep.
+  readonly pendingSummaries: (
+    query: SweepQuery,
+  ) => Effect.Effect<ReadonlyArray<NamedRepo>, DbQueryFailed | DbRowInvalid>;
 }
 
 const batchSize = 1000;
@@ -327,10 +348,17 @@ const decodeStored = rowsDecoder(StoredRepo);
 const decodePending = rowsDecoder(Schema.Struct({ pending: Schema.Boolean }));
 const decodeDue = rowsDecoder(DueIcon);
 const decodeLeases = rowsDecoder(Schema.Struct({ id: RepoId, inputHash: InputHash, leased: Schema.Boolean }));
+const decodeNamed = rowsDecoder(NamedRepo);
+const decodeCount = rowsDecoder(Schema.Struct({ count: Schema.Int }));
 
 const needsEnrichment = pendingEnrichment(repos);
 const encodeRefs = writeEncoder(Schema.Array(RepoRef));
 const encodeFacts = writeEncoder(RepoFacts);
+
+// A repo the sweep may send now: due, under the failure cap, and held by no attempt or backoff.
+const sweepableAt = (now: DateTime.Utc) =>
+  sql`${retryableEnrichment(repos)} and (${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(now)})`;
+const sweepOrder = [sql`${repos.enrichRetryAt} nulls last`, repos.id] as const;
 
 // The retry time after one more failure. The array index past the last delay reads null, so a capped repo has none.
 const retryAt = (at: DateTime.Utc, delays: ReadonlyArray<Duration.Duration>): SQL =>
@@ -669,14 +697,41 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
         db
           .select({ id: repos.id })
           .from(repos)
-          .where(
-            sql`${retryableEnrichment(repos)} and (${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(now)})`,
-          )
-          .orderBy(sql`${repos.enrichRetryAt} nulls last`, repos.id)
+          .where(sweepableAt(now))
+          .orderBy(...sweepOrder)
           .limit(limit),
       ).pipe(
         Effect.flatMap(decodeIds("repos.sweepable")),
         Effect.map((rows) => rows.map((row) => row.id)),
       ),
+    defer: ({ ids, until, retryAt: at }) =>
+      Arr.isReadonlyArrayEmpty(ids)
+        ? Effect.void
+        : run("repos.defer", (db) =>
+            db
+              .update(repos)
+              .set({ enrichRetryAt: sql`${timeParam(at)}` })
+              .where(sql`${repos.id} in (${lockedRepoIds(ids)}) and ${repos.enrichRetryAt} = ${timeParam(until)}`),
+          ),
+    summaryBacklog: run("repos.summaryBacklog", (db) =>
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(repos)
+        .where(sql`${retryableEnrichment(repos)} and ${summaryDue(repos)}`),
+    ).pipe(
+      Effect.flatMap(decodeCount("repos.summaryBacklog")),
+      Effect.map((rows) => rows[0]?.count ?? 0),
+    ),
+    pendingSummaries: ({ now, limit }) =>
+      run("repos.pendingSummaries", (db) =>
+        db
+          .select({ id: repos.id, owner: repos.owner, name: repos.name })
+          .from(repos)
+          .where(
+            sql`${sweepableAt(now)} and (${repos.summary} is null or ${repos.summaryRecipe} is distinct from ${sql.raw(String(summaryRecipe))})`,
+          )
+          .orderBy(...sweepOrder)
+          .limit(limit),
+      ).pipe(Effect.flatMap(decodeNamed("repos.pendingSummaries"))),
   } satisfies Queries;
 });

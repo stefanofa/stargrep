@@ -22,6 +22,7 @@ import * as IconQueue from "../src/icons/icon-queue.ts";
 import * as EnrichQueue from "../src/repos/enrich-queue.ts";
 import * as EnrichRepo from "../src/repos/enrich-repo.ts";
 import * as EnrichRetry from "../src/repos/enrich-retry.ts";
+import * as SummaryAllowance from "../src/repos/summary-allowance.ts";
 import { RunReportJson } from "./prefill-files.ts";
 import * as Runtime from "./runtime.ts";
 
@@ -74,6 +75,7 @@ const check = Command.make(
             return SummarizeFake.respond(prompt);
           }, "fake/summary"),
           IconQueue.layerMemory().layer,
+          SummaryAllowance.layerUnmetered,
         ),
       ),
     );

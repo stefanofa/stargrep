@@ -481,6 +481,32 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     }),
   );
 
+  test.effect("defers only the lease the attempt holds, counting no failure, until the summary cap has room", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const [mine, theirs] = [repoId(2561), repoId(2562)];
+      yield* db.repos.upsertRefs([mine, theirs].map((id) => ref(id)));
+      const now = at("2026-05-01T00:00:00Z");
+      const until = at("2026-05-01T00:15:00Z");
+      expect(yield* db.repos.lease({ ids: [mine], now, until })).toEqual([mine]);
+      expect(yield* db.repos.lease({ ids: [theirs], now, until: at("2026-05-01T00:15:00.001Z") })).toEqual([theirs]);
+
+      yield* db.repos.defer({ ids: [mine, theirs], until, retryAt: at("2026-05-01T00:01:26.400Z") });
+      expect(
+        yield* database.query(
+          `select id::int, enrich_failures as failures, to_char(enrich_retry_at at time zone 'utc', 'HH24:MI:SS.MS') as at
+           from repos where id = any($1) order by id`,
+          [[mine, theirs]],
+        ),
+      ).toEqual([
+        { id: mine, failures: 0, at: "00:01:26.400" },
+        { id: theirs, failures: 0, at: "00:15:00.001" },
+      ]);
+      expect(yield* db.repos.sweepable({ now: at("2026-05-01T00:01:26.400Z"), limit: 1000 })).toContain(mine);
+    }),
+  );
+
   // A Worker deployed before recipes keeps running until the new one replaces it, and its queries name no recipe.
   test.effect("counts a summary saved without naming a recipe as the current recipe", () =>
     Effect.gen(function* () {
