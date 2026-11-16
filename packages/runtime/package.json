@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@stargrep/ai": "workspace:*",
+    "@stargrep/analytics": "workspace:*",
     "@stargrep/db": "workspace:*",
     "@stargrep/github": "workspace:*",
     "effect": "catalog:"
