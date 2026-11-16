@@ -1,5 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { GatewayInternalServerError, GatewayModelNotFoundError } from "@ai-sdk/gateway";
+import * as Analytics from "@stargrep/analytics/analytics";
 import { decodeFacets } from "@stargrep/knowledge/claims";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
@@ -347,6 +348,63 @@ describe("gateway text generation", () => {
       const after = yield* Port.tokensSpent("metered/model");
       expect([after.output - before.output, after.reasoning - before.reasoning]).toEqual([20, 5]);
     }).pipe(Effect.provide(textLayer(async () => reasoned, "metered/model")));
+  });
+
+  it.effect("sends each call's model, tokens, and billed cost to analytics, and never its prompt or answer", () => {
+    const memory = Analytics.layerMemory();
+    const billed: GenerateResult = {
+      ...textResult(JSON.stringify(validAnswer)),
+      providerMetadata: { gateway: { cost: "0.0045", gatewayCost: "0.0047" } },
+    };
+    return Effect.gen(function* () {
+      yield* Summarize.summarize(repo);
+      expect(memory.captured.map(({ event }) => event)).toMatchObject([
+        {
+          _tag: "ModelCall",
+          operation: "generate",
+          purpose: "summary",
+          provider: "gateway",
+          model: "test/model",
+          inputTokens: 100,
+          outputTokens: 20,
+          costUsd: 0.0047,
+          error: undefined,
+        },
+      ]);
+      const sent = JSON.stringify(memory.captured);
+      expect(sent).not.toContain("Ratatui is a crate");
+      expect(sent).not.toContain(validAnswer.summary);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          textLayer(async () => billed),
+          memory.layer,
+        ),
+      ),
+    );
+  });
+
+  it.effect("sends a failed call to analytics with its error and no tokens", () => {
+    const memory = Analytics.layerMemory();
+    return Effect.gen(function* () {
+      yield* Effect.flip(Summarize.summarize(repo));
+      expect(memory.captured.map(({ event }) => event)).toMatchObject([
+        { _tag: "ModelCall", purpose: "plan", error: "AiModelNotFound", inputTokens: undefined, costUsd: undefined },
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          textLayer(
+            async () => {
+              throw new GatewayModelNotFoundError({ message: "Model not found", modelId: "test/model" });
+            },
+            "test/model",
+            { purpose: "plan" },
+          ),
+          memory.layer,
+        ),
+      ),
+    );
   });
 });
 
@@ -841,6 +899,46 @@ describe("gateway embeddings", () => {
       Effect.provide(
         Gateway.layerEmbeddings({ ...Models.embeddingModel, id: "test/embed", dimensions: 64 }).pipe(
           Layer.provide(Layer.succeed(Gateway.AiProvider, provider)),
+        ),
+      ),
+    );
+  });
+
+  it.effect("sends each call's tokens and billed cost to analytics, named for what the vectors are for", () => {
+    const memory = Analytics.layerMemory();
+    const provider = Gateway.AiProvider.of({
+      languageModel: unused,
+      embeddingModel: () =>
+        new MockEmbeddingModelV4({
+          doEmbed: async ({ values }) => ({
+            embeddings: values.map(() => Array.from({ length: 64 }, () => 0.1)),
+            usage: { tokens: 12 },
+            providerMetadata: { gateway: { cost: "0.00002" } },
+            warnings: [],
+          }),
+        }),
+      experimental_batch: unused,
+    });
+    return Effect.gen(function* () {
+      yield* (yield* Embeddings.Embeddings).embed(["a cli for fuzzy finding files"]);
+      expect(memory.captured.map(({ event }) => event)).toMatchObject([
+        {
+          _tag: "ModelCall",
+          operation: "embed",
+          purpose: "query",
+          model: "test/embed",
+          inputTokens: 12,
+          costUsd: 0.00002,
+        },
+      ]);
+      expect(JSON.stringify(memory.captured)).not.toContain("fuzzy finding");
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Gateway.layerEmbeddings({ ...Models.embeddingModel, id: "test/embed", dimensions: 64 }, "query").pipe(
+            Layer.provide(Layer.succeed(Gateway.AiProvider, provider)),
+          ),
+          memory.layer,
         ),
       ),
     );

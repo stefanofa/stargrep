@@ -1,7 +1,10 @@
+import * as Analytics from "@stargrep/analytics/analytics";
 import { StarSync, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import type { BudgetShare } from "@stargrep/github/schemas";
 import type * as TokenGate from "@stargrep/github/token-gate";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -31,6 +34,22 @@ const bill = (share: BudgetShare, delivery: Settle.Delivery<Body>, counted: numb
     }),
   );
 
+// Untraced, because the sync's own span already covers it.
+const finished = Effect.fnUntraced(function* (body: Body, report: StarSync.SyncReport, started: number) {
+  const now = yield* Clock.currentTimeMillis;
+  yield* Analytics.capture(
+    Analytics.Event.StarsImportFinished({
+      listed: report.listed,
+      added: report.added,
+      enqueued: report.enqueued,
+      signedIn: body.userId !== undefined,
+      mode: body.mode,
+      durationMillis: now - started,
+      sinceRequestMillis: body.requestedAt === undefined ? null : now - DateTime.toEpochMillis(body.requestedAt),
+    }),
+  ).pipe(Analytics.withActor(StarSync.actorOf(body)));
+});
+
 // Each message runs on a token gate of its own that counts the requests it sends on the server's token, so the line is
 // billed for what the sync spent there, failed and retried requests included. A sync a signed-in user started runs on
 // their token first. The messages of a batch run at once, so such a sync never waits behind the server's syncs.
@@ -49,11 +68,13 @@ export const pipeline = <R>(
             const sent = yield* Ref.make(0);
             const { body } = delivery;
             const counted = Settle.onGate(syncs, yield* users.forJob({ paidBy: body.userId, sent }));
+            const started = yield* Clock.currentTimeMillis;
             const synced = yield* StarSync.StarSync.use((starSync) => starSync.syncLogin(body)).pipe(
               Effect.provide(counted),
               Effect.result,
             );
             yield* bill(share, delivery, yield* Ref.get(sent));
+            if (Result.isSuccess(synced)) yield* finished(body, synced.success, started);
             return Result.map(synced, () => Settle.Settlement.Done());
           }),
         { concurrency: "unbounded" },

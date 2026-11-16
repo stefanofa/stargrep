@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createRouterClient, ORPCError } from "@orpc/server";
+import * as Analytics from "@stargrep/analytics/analytics";
 import { QueryPlan, Search } from "@stargrep/core/search";
 import { OwnerLookup, SyncQueue, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
@@ -799,10 +800,11 @@ test("validates input without starting the services, and maps a failed start to 
   expect(starts).toBe(1);
 });
 
-const demoSearch = (planSource: Search.SearchOutcome["planSource"] = "model") => {
+const demoSearch = (planSource: Search.SearchOutcome["planSource"] = "model", signedIn?: Fakes["signedIn"]) => {
   const searched: Array<Search.SearchRequest> = [];
   let builds = 0;
   const fakes: Fakes = {
+    ...(signedIn === undefined ? {} : { signedIn }),
     search: (request) =>
       Effect.sync(() => {
         searched.push(request);
@@ -845,6 +847,53 @@ const demoSearch = (planSource: Search.SearchOutcome["planSource"] = "model") =>
 };
 
 const noServices = Effect.die("a cached answer needs no services");
+
+describe("search events", () => {
+  it.effect("sends one event per search, a cache hit included, with its plan, results, and cache, and no query", () => {
+    const events = Analytics.layerMemory();
+    return Effect.gen(function* () {
+      const demo = demoSearch();
+      const asked = { scope: { kind: "stars", login: "ada" }, q: `dashboards ${canary}` } as const;
+      yield* demo.call(asked);
+      yield* demo.call(asked, noServices);
+      expect(events.captured.map(({ actor, event }) => ({ actor, event }))).toEqual([
+        {
+          actor: Analytics.Actor.Network({ caller: Db.CallerKey.make("caller-test") }),
+          event: Analytics.Event.Search({
+            planSource: "model",
+            results: 1,
+            latencyMillis: expect.any(Number),
+            answerCache: "miss",
+            transport: "rpc",
+          }),
+        },
+        {
+          actor: Analytics.Actor.Stargrep(),
+          event: Analytics.Event.Search({
+            planSource: "model",
+            results: 1,
+            latencyMillis: expect.any(Number),
+            answerCache: "hit",
+            transport: "rpc",
+          }),
+        },
+      ]);
+      expect(JSON.stringify(events.captured)).not.toContain(canary);
+      expect(JSON.stringify(events.captured)).not.toContain("dashboards");
+    }).pipe(Effect.provide(events.layer));
+  });
+
+  it.effect("names a signed-in searcher by their user ID", () => {
+    const events = Analytics.layerMemory();
+    return Effect.gen(function* () {
+      yield* demoSearch("model", Effect.succeedSome(ada.userId)).call({
+        scope: { kind: "stars", login: "ada" },
+        q: "dashboards",
+      });
+      expect(events.captured.map(({ actor }) => actor)).toEqual([Analytics.Actor.User({ userId: ada.userId })]);
+    }).pipe(Effect.provide(events.layer));
+  });
+});
 
 describe("the demo answer cache", () => {
   it.effect("computes a demo search once, then serves it with no services, whatever the login's case and spacing", () =>

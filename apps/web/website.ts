@@ -3,6 +3,7 @@ import { apiKeyName } from "@stargrep/ai/gateway";
 import { demoLoginName } from "@stargrep/api/public-config";
 import { bindings, githubSignIn, names } from "@stargrep/auth/config";
 import { aiGatewayKey, aiProviderName } from "@stargrep/runtime/ai-key";
+import { stageName } from "@stargrep/runtime/analytics";
 import { budgetShareName, serverTokenName, serverTokenPolicy } from "@stargrep/runtime/server-token";
 import { webResourceId } from "@stargrep/runtime/stage";
 import MainWorker from "@stargrep/worker";
@@ -70,6 +71,7 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
         SYNC_STARS: SyncStars,
         WORKER: MainWorker,
         CALLER_KEY: yield* CallerKey,
+        [stageName]: stage,
         [budgetShareName]: String(share),
         [serverTokenName]: kind,
         ICONS: yield* Icons,

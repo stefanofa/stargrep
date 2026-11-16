@@ -296,6 +296,15 @@ Four workflows run the stages, and their jobs skip until the steps below are don
 
 Every stage gets its own Neon branch. Prod's branch is in the project `stargrep-us-east`, and each preview stage's branch is in `stargrep-previews-us-east`. Neon deletes a preview branch about two weeks after its last deploy, in case its destroy job never ran.
 
+## PostHog
+
+Prod sends product events, model usage, and errors to PostHog, as "Product analytics" in `docs/architecture.md` explains. The project and its public token are in `packages/analytics/src/project.ts`, and each deploy binds the Worker's stage as `STARGREP_STAGE`, so no secret needs setting.
+
+1. Turn on cookieless mode in the project's settings. The browser sends every event in cookieless mode, and PostHog drops cookieless events while the setting is off.
+2. Keep the managed reverse proxy at `tortilla.stargrep.com`. It is a CNAME on the zone that PostHog serves, and the browser sends every event through it.
+
+To check that a preview sends nothing, open it with the browser's network panel: no request goes to `tortilla.stargrep.com` or `posthog.com`, and no PostHog script loads.
+
 ## Models on previews
 
 Prod and local stages call the models. Each `pr-<number>` preview answers with deterministic fakes from `@stargrep/ai/stand-in` instead. Its deploy binds no `AI_GATEWAY_API_KEY`, even when the deploy's environment has one, and binds `STARGREP_AI_PROVIDER=fake`.

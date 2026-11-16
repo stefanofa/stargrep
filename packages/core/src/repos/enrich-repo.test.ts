@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { AiKeyMissing, AiRefused, AiRequestFailed, AiUnavailable } from "@stargrep/ai/errors";
 import * as SummarizeFake from "@stargrep/ai/summarize.fake";
 import * as TextGeneration from "@stargrep/ai/text-generation";
+import * as Analytics from "@stargrep/analytics/analytics";
 import * as Db from "@stargrep/db";
 import { DbQueryFailed } from "@stargrep/db/errors";
 import * as TestDatabase from "@stargrep/db/test-database";
@@ -170,6 +171,19 @@ import * as EnrichRetry from "./enrich-retry.ts";
           expect(after.embeddingModel).toBe(embeddingModel);
         }),
       );
+
+      it.effect("sends a summary event for each summary it saves, and none for a repo it skips", () => {
+        const events = Analytics.layerMemory();
+        return Effect.gen(function* () {
+          f.remotes.set(951, { description: "Event probe", readme: { oid: wideOid(951), text: "# Probe" } });
+          yield* f.enrich(951);
+          yield* f.enrich(951);
+          const model = (yield* TextGeneration.TextGeneration).model;
+          expect(events.captured.flatMap(({ event }) => (event._tag === "SummaryGenerated" ? [event] : []))).toEqual([
+            Analytics.Event.SummaryGenerated({ model }),
+          ]);
+        }).pipe(Effect.provide(events.layer));
+      });
 
       it.effect("skips a repo when GitHub reports the README its summary came from, whatever oid was stored", () =>
         Effect.gen(function* () {

@@ -8,6 +8,7 @@ export const testServer = (layerFor: RequestLayer, options: Partial<ServerOption
   makeServer({
     layerFor,
     tracer: Layer.empty,
+    analytics: () => Layer.empty,
     publicConfig: () => defaultPublicConfig,
     answerCache: () => AnswerCache.disabled,
     waitUntil: () => undefined,

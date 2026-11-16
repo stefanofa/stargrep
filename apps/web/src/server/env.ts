@@ -15,6 +15,7 @@ export interface WebEnv {
   readonly GITHUB_BUDGET_SHARE: string;
   readonly AI_GATEWAY_API_KEY?: string;
   readonly STARGREP_AI_PROVIDER?: string;
+  readonly STARGREP_STAGE?: string;
 }
 
 type BindsWhatTheServerReads<Env extends WebEnv> = Env;

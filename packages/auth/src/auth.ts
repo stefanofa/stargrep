@@ -129,11 +129,14 @@ export interface Options {
   readonly config: AuthConfig;
   readonly origin: string;
   readonly onSignIn: (signIn: SignIn) => Promise<void>;
+  // Runs once for each user Better Auth creates, which a first sign-in does.
+  readonly onSignUp: (userId: UserId) => Promise<void>;
 }
 
-export interface LayerOptions<R> extends Omit<Options, "onSignIn"> {
+export interface LayerOptions<R> extends Omit<Options, "onSignIn" | "onSignUp"> {
   readonly connectionString: Redacted.Redacted<string>;
   readonly onSignIn: (signIn: SignIn) => Effect.Effect<void, never, R>;
+  readonly onSignUp: (userId: UserId) => Effect.Effect<void, never, R>;
 }
 
 const signInPlugins = ({ config, origin }: Pick<Options, "config" | "origin">) => {
@@ -173,6 +176,11 @@ export const make = (pool: pg.Pool, options: Options) => {
     advanced: { ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] }, database: { validateSchema: false } },
     plugins,
     databaseHooks: {
+      user: {
+        create: {
+          after: (user): Promise<void> => options.onSignUp(UserId.make(user.id)),
+        },
+      },
       session: {
         create: {
           after: (session): Promise<void> => {
@@ -201,7 +209,11 @@ export const layer = <R>(options: LayerOptions<R>) =>
     Effect.gen(function* () {
       const run = Effect.runPromiseWith(yield* Effect.context<R>());
       const pool = yield* acquirePool(Redacted.value(options.connectionString), 2);
-      const auth = make(pool, { ...options, onSignIn: (signIn) => run(options.onSignIn(signIn)) });
+      const auth = make(pool, {
+        ...options,
+        onSignIn: (signIn) => run(options.onSignIn(signIn)),
+        onSignUp: (userId) => run(options.onSignUp(userId)),
+      });
       return Auth.of({
         handle: Effect.fn("Auth.handle")(function* (request: Request) {
           const response = yield* Effect.tryPromise({

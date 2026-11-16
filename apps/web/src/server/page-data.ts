@@ -181,7 +181,10 @@ const shielded =
   (...args: A): Promise<B> =>
     load(...args).catch(async (error: unknown) => {
       if (isRedirect(error) || isNotFound(error)) throw error;
-      await Effect.runPromise(Effect.logError("Page loader failed", { loader, error: String(error) }));
+      // A report that fails never stands between the visitor and the error that says nothing.
+      await import("./app.ts")
+        .then(({ reportFailure }) => reportFailure("Page loader failed", { loader }, error, getRequest()))
+        .catch(() => undefined);
       throw new Error("stargrep could not load this page");
     });
 

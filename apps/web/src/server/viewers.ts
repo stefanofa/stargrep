@@ -1,3 +1,4 @@
+import * as Analytics from "@stargrep/analytics/analytics";
 import { NotSignedIn, type Viewer, Viewers, ViewerUnavailable } from "@stargrep/api/viewers";
 import * as Auth from "@stargrep/auth/auth";
 import type { AuthConfig } from "@stargrep/auth/config";
@@ -33,8 +34,11 @@ const signIn = ({ userId, githubToken }: Auth.SignIn) =>
     Effect.asVoid,
   );
 
+const signUp = (userId: UserId) =>
+  Analytics.capture(Analytics.Event.SignedUp()).pipe(Analytics.withActor(Analytics.Actor.User({ userId })));
+
 export const layerAuth = (config: AuthConfig, origin: string, connectionString: Redacted.Redacted<string>) =>
-  Auth.layer<ImportServices>({ config, origin, connectionString, onSignIn: signIn });
+  Auth.layer<ImportServices>({ config, origin, connectionString, onSignIn: signIn, onSignUp: signUp });
 
 const signedIn = (headers: Headers) =>
   Layer.effect(

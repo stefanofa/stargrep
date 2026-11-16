@@ -1,3 +1,4 @@
+import * as Analytics from "@stargrep/analytics/analytics";
 import * as Db from "@stargrep/db";
 import type { UserId } from "@stargrep/db/auth-schema";
 import type { DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
@@ -19,7 +20,7 @@ import type * as Scope from "effect/Scope";
 import * as Struct from "effect/Struct";
 import * as RateLine from "../limits/rate-line.ts";
 import * as OwnerLookup from "./owner-lookup.ts";
-import type { LoginSyncRequest, Mode } from "./star-sync.ts";
+import { actorOf, type LoginSyncRequest, type Mode } from "./star-sync.ts";
 import * as SyncQueue from "./sync-queue.ts";
 
 export const SyncState = Schema.Literals(["unknown", "waiting", "queued", "failed", "done"]);
@@ -475,13 +476,25 @@ const make = Effect.fnUntraced(function* (share: BudgetShare) {
         onSome: (at) => Duration.isGreaterThanOrEqualTo(DateTime.distance(at, now), fullReadEvery),
       });
     const wait = DateTime.isGreaterThan(startsAt, now) ? DateTime.distance(now, startsAt) : Duration.zero;
-    const paidBy = policy.paidBy === undefined ? {} : { userId: policy.paidBy };
+    const requester =
+      policy.paidBy !== undefined
+        ? { userId: policy.paidBy }
+        : policy.network === undefined
+          ? {}
+          : { caller: policy.network };
     const mode: Mode = fullReadDue ? "full" : "incremental";
+    const message: LoginSyncRequest = { login, mode, requestedAt: now, ...reserved, ...requester };
     // An interruption lands before the send or after it finishes, so the flag says whether the message may be queued.
-    yield* Ref.set(sending, true).pipe(
-      Effect.andThen(queue.send({ login, mode, requestedAt: now, ...reserved, ...paidBy }, wait)),
-      Effect.uninterruptible,
-    );
+    yield* Ref.set(sending, true).pipe(Effect.andThen(queue.send(message, wait)), Effect.uninterruptible);
+    yield* Analytics.capture(
+      Analytics.Event.StarsImportStarted({
+        stars: looked.starredTotal,
+        signedIn: policy.paidBy !== undefined,
+        mode,
+        first: syncedAt === null,
+        waitSeconds: Math.ceil(Duration.toSeconds(wait)),
+      }),
+    ).pipe(Analytics.withActor(actorOf(message)));
     const cost = lookupPaidBy(policy) + (turn === undefined ? 0 : work);
     return { _tag: "Sent", startsAt, cost, fields: { ...looked, syncedAt } } satisfies Sent;
   });

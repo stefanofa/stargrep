@@ -3,6 +3,7 @@ import type { AiError } from "@stargrep/ai/errors";
 import * as Models from "@stargrep/ai/models";
 import * as Summarize from "@stargrep/ai/summarize";
 import * as TextGeneration from "@stargrep/ai/text-generation";
+import * as Analytics from "@stargrep/analytics/analytics";
 import * as Db from "@stargrep/db";
 import { Embedding, type EmbeddingModelMismatch } from "@stargrep/db/embedding";
 import type { DbQueryFailed, DbRowInvalid, RepoNotFound } from "@stargrep/db/errors";
@@ -398,6 +399,7 @@ const make = Effect.gen(function* () {
     if (Result.isFailure(captured)) return Result.fail(Enrichment.Failed({ id: job.id, error: captured.failure }));
     const outcome = Option.getOrUndefined(captured.success);
     if (outcome?._tag === "Saved") {
+      yield* Analytics.capture(Analytics.Event.SummaryGenerated({ model: textGeneration.model }));
       return Result.succeed({ job, summary: { summary: outcome.summary, keywords: outcome.keywords } });
     }
     return Result.fail(

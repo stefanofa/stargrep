@@ -7,7 +7,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { type AiError, AiOutputInvalid, AiTimeout } from "./errors.ts";
-import { annotateTokens, countCachedTokens, countReasoningTokens, countTokens } from "./port.ts";
+import { annotateTokens, countCachedTokens, countReasoningTokens, countTokens, recordCall } from "./port.ts";
 import type { AiSchema } from "./schema-bridge.ts";
 
 // Whether the model may think before it answers, and how much: the AI SDK's levels. A provider's default can be adaptive
@@ -54,13 +54,14 @@ export interface RunResult {
   readonly output: unknown;
   // inputTokens counts every input token, cached or not. cacheReadTokens and cacheWriteTokens are the shares of it the
   // provider read from or wrote to its prompt cache, and reasoningTokens the share of outputTokens the model spent
-  // thinking, when the provider reports them.
+  // thinking, when the provider reports them. costUsd is what the provider billed, when it says.
   readonly usage: {
     readonly inputTokens: number | undefined;
     readonly outputTokens: number | undefined;
     readonly reasoningTokens?: number | undefined;
     readonly cacheReadTokens?: number | undefined;
     readonly cacheWriteTokens?: number | undefined;
+    readonly costUsd?: number | undefined;
   };
 }
 
@@ -82,6 +83,8 @@ const fallbackConcurrency = 4;
 export const make = (options: {
   readonly provider: string;
   readonly model: string;
+  // What the calls are for, such as a summary or a query plan, so analytics can tell their spend apart.
+  readonly purpose?: string;
   readonly timeout: Duration.Duration;
   readonly run: (request: RunRequest) => Effect.Effect<RunResult, AiError>;
   readonly batch?: {
@@ -92,6 +95,7 @@ export const make = (options: {
   };
 }) => {
   const { provider, model, timeout, run, batch } = options;
+  const call = { operation: "generate", purpose: options.purpose ?? "generate", provider, model } as const;
   const timedOut = (after: Duration.Duration) =>
     new AiTimeout({ operation: "generate", model, timeoutMillis: Duration.toMillis(after) });
   const invalid = new AiOutputInvalid({
@@ -119,6 +123,7 @@ export const make = (options: {
       reasoning: request.reasoning,
     }).pipe(
       Effect.timeoutOrElse({ duration: timeout, orElse: () => Effect.fail(timedOut(timeout)) }),
+      recordCall(call, ({ usage }: RunResult) => usage),
       Effect.tap(({ usage }) => annotateTokens({ input: usage.inputTokens, output: usage.outputTokens })),
       Effect.flatMap(accept(request.schema)),
     );

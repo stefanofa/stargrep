@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@ai-sdk/gateway": "4.0.135",
+    "@stargrep/analytics": "workspace:*",
     "@stargrep/knowledge": "workspace:*",
     "ai": "7.0.162",
     "effect": "catalog:"
