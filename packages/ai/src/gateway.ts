@@ -112,6 +112,17 @@ const fromSdkError = (operation: Operation, model: string) => (thrown: unknown) 
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
+// The Gateway reports what it billed in each answer's provider metadata, as a decimal string. gatewayCost adds any
+// surcharge to cost, so it is what was debited.
+const Billed = Schema.Union([Schema.Finite, Schema.FiniteFromString]);
+const decodeBilling = Schema.decodeUnknownOption(
+  Schema.Struct({ gateway: Schema.Struct({ cost: Schema.optional(Billed), gatewayCost: Schema.optional(Billed) }) }),
+);
+const costOf = (metadata: unknown) =>
+  Option.getOrUndefined(
+    Option.flatMapNullishOr(decodeBilling(metadata), ({ gateway }) => gateway.gatewayCost ?? gateway.cost),
+  );
+
 // The SDK checks only a batch item's ID and status, so an answered item may come without its finish reason.
 const refusedItem = (result: { readonly finishReason?: { readonly unified?: string } | undefined }) =>
   result.finishReason?.unified === refusedFinish;
@@ -293,16 +304,18 @@ export interface TextOptions {
   readonly timeout: Duration.Duration;
   readonly maxRetries: number;
   readonly batch: boolean;
+  readonly purpose: string;
 }
 
 const defaultTextOptions: TextOptions = {
   timeout: textTimeout,
   maxRetries: retries,
   batch: true,
+  purpose: "summary",
 };
 
 export const layerTextGeneration = (model: string, options: Partial<TextOptions> = {}) => {
-  const { timeout, maxRetries, batch } = { ...defaultTextOptions, ...options };
+  const { timeout, maxRetries, batch, purpose } = { ...defaultTextOptions, ...options };
   return Layer.effect(
     TextGeneration.TextGeneration,
     Effect.andThen(
@@ -311,6 +324,7 @@ export const layerTextGeneration = (model: string, options: Partial<TextOptions>
         TextGeneration.make({
           provider: "gateway",
           model,
+          purpose,
           timeout,
           run: (request) =>
             Effect.tryPromise({
@@ -336,6 +350,7 @@ export const layerTextGeneration = (model: string, options: Partial<TextOptions>
                       inputTokens: result.usage.inputTokens,
                       outputTokens: result.usage.outputTokens,
                       reasoningTokens: result.usage.outputTokenDetails.reasoningTokens,
+                      costUsd: costOf(result.providerMetadata),
                     },
                   }),
                   catch: (cause) =>
@@ -356,7 +371,7 @@ export const layerTextGeneration = (model: string, options: Partial<TextOptions>
   );
 };
 
-export const layerEmbeddings = (model: Models.EmbeddingModel) =>
+export const layerEmbeddings = (model: Models.EmbeddingModel, purpose = "repo") =>
   Layer.effect(
     Embeddings.Embeddings,
     Effect.andThen(
@@ -365,6 +380,7 @@ export const layerEmbeddings = (model: Models.EmbeddingModel) =>
         Embeddings.make({
           provider: "gateway",
           model,
+          purpose,
           timeout: embedTimeout,
           run: (values) =>
             Effect.tryPromise({
@@ -377,7 +393,13 @@ export const layerEmbeddings = (model: Models.EmbeddingModel) =>
                   abortSignal,
                 }),
               catch: fromSdkError("embed", model.id),
-            }).pipe(Effect.map((result) => ({ vectors: result.embeddings, tokens: result.usage.tokens }))),
+            }).pipe(
+              Effect.map((result) => ({
+                vectors: result.embeddings,
+                tokens: result.usage.tokens,
+                costUsd: costOf(result.providerMetadata),
+              })),
+            ),
         }),
       ),
     ),
@@ -439,6 +461,7 @@ export const layerProviderConfig = Layer.unwrap(
 export const layerPlanner = layerTextGeneration(Models.plannerModel, {
   timeout: Duration.seconds(4),
   maxRetries: 0,
+  purpose: "plan",
 });
 
 export const layerPlannerTextGeneration = layerPlanner.pipe(Layer.provide(layerProviderConfig));
@@ -462,5 +485,7 @@ export const layerSearchForKey = (key: ApiKey) =>
   Option.match(key, {
     onNone: () => Layer.merge(keyMissingText(Models.plannerModel), keyMissingEmbeddings(Models.embeddingModel)),
     onSome: (apiKey) =>
-      Layer.merge(layerPlanner, layerEmbeddings(Models.embeddingModel)).pipe(Layer.provide(layerProvider({ apiKey }))),
+      Layer.merge(layerPlanner, layerEmbeddings(Models.embeddingModel, "query")).pipe(
+        Layer.provide(layerProvider({ apiKey })),
+      ),
   });
