@@ -112,15 +112,26 @@ const fromSdkError = (operation: Operation, model: string) => (thrown: unknown) 
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
-// The Gateway reports what it billed in each answer's provider metadata, as a decimal string. gatewayCost adds any
-// surcharge to cost, so it is what was debited.
+// The Gateway reports each answer's price in its provider metadata, as decimal strings. gatewayCost is what it debited,
+// cost plus any surcharge. A call it debits nothing for, such as one on the provider's own key or on credits, reports 0
+// there and still names the list price as marketCost, which the provider bills. So a debit above 0 is the cost, then the
+// list price, and an answer with neither has no cost to report.
 const Billed = Schema.Union([Schema.Finite, Schema.FiniteFromString]);
 const decodeBilling = Schema.decodeUnknownOption(
-  Schema.Struct({ gateway: Schema.Struct({ cost: Schema.optional(Billed), gatewayCost: Schema.optional(Billed) }) }),
+  Schema.Struct({
+    gateway: Schema.Struct({
+      cost: Schema.optional(Billed),
+      gatewayCost: Schema.optional(Billed),
+      marketCost: Schema.optional(Billed),
+    }),
+  }),
 );
 const costOf = (metadata: unknown) =>
   Option.getOrUndefined(
-    Option.flatMapNullishOr(decodeBilling(metadata), ({ gateway }) => gateway.gatewayCost ?? gateway.cost),
+    Option.flatMapNullishOr(decodeBilling(metadata), ({ gateway }) => {
+      const debited = gateway.gatewayCost ?? gateway.cost;
+      return debited !== undefined && debited > 0 ? debited : gateway.marketCost;
+    }),
   );
 
 // The SDK checks only a batch item's ID and status, so an answered item may come without its finish reason.

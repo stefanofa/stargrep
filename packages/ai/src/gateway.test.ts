@@ -350,6 +350,27 @@ describe("gateway text generation", () => {
     }).pipe(Effect.provide(textLayer(async () => reasoned, "metered/model")));
   });
 
+  it.effect("reports a call the Gateway debited nothing for at its list price", () => {
+    const memory = Analytics.layerMemory();
+    const listed: GenerateResult = {
+      ...textResult(JSON.stringify(validAnswer)),
+      providerMetadata: { gateway: { cost: "0", gatewayCost: "0", surchargeCost: "0", marketCost: "0.0000033" } },
+    };
+    return Effect.gen(function* () {
+      yield* Summarize.summarize(repo);
+      expect(memory.captured.map(({ event }) => (event._tag === "ModelCall" ? event.costUsd : null))).toEqual([
+        0.0000033,
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          textLayer(async () => listed),
+          memory.layer,
+        ),
+      ),
+    );
+  });
+
   it.effect("sends each call's model, tokens, and billed cost to analytics, and never its prompt or answer", () => {
     const memory = Analytics.layerMemory();
     const billed: GenerateResult = {
