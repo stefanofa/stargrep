@@ -179,9 +179,16 @@ export const layer = <R>(options: Options<R>) =>
           Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
           Effect.asVoid,
         );
-      yield* Effect.addFinalizer(() =>
-        pending.length === 0 ? Effect.void : options.background(send(pending.splice(0))),
-      );
+      // A send that cannot even start, such as one with no waitUntil to run under, drops its events too.
+      const flush = (batch: ReadonlyArray<Captured>) =>
+        options.background(send(batch)).pipe(
+          Effect.catchCause(() =>
+            Effect.logWarning("PostHog capture could not start, so its events were dropped", {
+              events: batch.length,
+            }),
+          ),
+        );
+      yield* Effect.addFinalizer(() => (pending.length === 0 ? Effect.void : flush(pending.splice(0))));
       return Analytics.of({
         capture: (captured) => {
           if (pending.length < maxEvents) pending.push(captured);

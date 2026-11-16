@@ -130,6 +130,20 @@ describe("PostHog", () => {
     }),
   );
 
+  it.effect("fails nothing when the send cannot start", () => {
+    const { client } = postHog();
+    const broken = PostHog.layer({ stage: "prod", background: () => Effect.die("no waitUntil here") }).pipe(
+      Layer.provide(client),
+      Layer.provide(Digest.layerWebCrypto),
+    );
+    return Effect.gen(function* () {
+      const answer = yield* Effect.scoped(
+        Analytics.capture(searched).pipe(Effect.as("answered"), Effect.provide(broken)),
+      );
+      expect(answer).toBe("answered");
+    });
+  });
+
   it.effect("sends a model call's tokens, latency, and cost under PostHog's AI names", () => {
     const { sent, client } = postHog();
     return Effect.gen(function* () {
