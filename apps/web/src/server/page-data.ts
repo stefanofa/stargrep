@@ -137,11 +137,15 @@ const sharedAnswer = async (
 const loadSession = async (): Promise<Session> => {
   const request = getRequest();
   const client = api();
-  const [viewer, config] = await Promise.all([viewerOf(client, request), client.config()]);
-  return { viewer, config };
+  const [viewer, config, repoStars] = await Promise.all([
+    viewerOf(client, request),
+    client.config(),
+    import("./app.ts").then(({ headerStars }) => headerStars(new URL(request.url).origin)).catch(() => null),
+  ]);
+  return { viewer, config, repoStars };
 };
 
-const loadPage = async ({ login }: PageRequest, { viewer, config }: Session): Promise<PageData> => {
+const loadPage = async ({ login }: PageRequest, { viewer, config, repoStars }: Session): Promise<PageData> => {
   const request = getRequest();
   const client = api();
   const cookies = request.headers.get("cookie");
@@ -171,7 +175,20 @@ const loadPage = async ({ login }: PageRequest, { viewer, config }: Session): Pr
   const remembered =
     first === null && (sync === null || sync.state === "unknown") ? rememberedRefusal(cookies, owner) : undefined;
   const view = storedView(cookies) ?? null;
-  return { viewer, owner, own, config, query, defaultQuery, first, sync, refusal: remembered ?? null, opened, view };
+  return {
+    viewer,
+    repoStars,
+    owner,
+    own,
+    config,
+    query,
+    defaultQuery,
+    first,
+    sync,
+    refusal: remembered ?? null,
+    opened,
+    view,
+  };
 };
 
 // The router sends a failed loader's error to the browser in the page's hydration data. So the server logs an unexpected

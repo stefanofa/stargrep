@@ -27,6 +27,8 @@ export interface FirstAnswer {
 export interface Session {
   readonly viewer: Viewer | null;
   readonly config: PublicConfig;
+  // Stargrep's own GitHub stars for the header, or null when the server had no count in time.
+  readonly repoStars: number | null;
 }
 
 export interface PageData extends Session {

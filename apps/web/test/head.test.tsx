@@ -11,6 +11,7 @@ mock.module("../src/styles.css?url", () => ({ default: "/styles.css" }));
 const visitor = async (): Promise<Session> => ({
   viewer: null,
   config: { demoLogin: "demo", demoQuery: "", examples: [], featured: [] } as unknown as Session["config"],
+  repoStars: null,
 });
 let loadSession = visitor;
 const loads = await import("../src/lib/load-page.ts");

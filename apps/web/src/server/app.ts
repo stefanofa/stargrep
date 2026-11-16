@@ -8,6 +8,7 @@ import { budgetShare } from "@stargrep/runtime/server-token";
 import * as Tracing from "@stargrep/telemetry/cloudflare";
 import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { layerAnalytics } from "./analytics.ts";
@@ -15,6 +16,7 @@ import { makeAnswerCache } from "./answer-cache.ts";
 import type { DeclaredEnv } from "./env.ts";
 import { workerCache } from "./icons.ts";
 import { layerAuthRequest, layerRequest, type RequestConfig } from "./layers.ts";
+import { repoStars } from "./repo-stars.ts";
 import { type AnalyticsFor, makeAuthServer, makeServer } from "./serve.ts";
 
 export const bindings = env as DeclaredEnv;
@@ -66,6 +68,17 @@ export const answers = makeAnswerCache(
 );
 
 export { waitUntil };
+
+// The header's star count waits at most 750ms for GitHub on a miss, so a slow GitHub costs one page that much at most.
+export const headerStars = (origin: string) =>
+  Effect.runPromise(
+    repoStars(origin, {
+      worker: bindings.WORKER,
+      cache: () => Promise.resolve(workerCache()),
+      waitUntil,
+      renderWait: Duration.millis(750),
+    }),
+  );
 
 export const serveApi = makeServer({
   layerFor: layerForRequest,

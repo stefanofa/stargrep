@@ -43,6 +43,9 @@ export default defineConfig({
                   { headers: { "x-answered-by": "main" } },
                 );
               }
+              stargrepStars() {
+                return 128;
+              }
               lookupOwner(login) {
                 switch (login.toLowerCase()) {
                   case "ghost-login": return { _tag: "Missing" };

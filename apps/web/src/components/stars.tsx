@@ -17,7 +17,7 @@ import { useLiveQuery } from "@tanstack/react-db";
 import { Link, useHydrated, useNavigate, useRouter, useSearch } from "@tanstack/react-router";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { keywordTerms, normalize, searchText } from "../lib/keyword.ts";
 import { getLibrary, type Library } from "../lib/library-collection.ts";
 import { type PageData, type PageRequest, pageOwner, type Session } from "../lib/page-data.ts";
@@ -37,15 +37,17 @@ import { useSemanticSearch } from "../lib/use-semantic.ts";
 import { useSync } from "../lib/use-sync.ts";
 import { theirs, whoseOf } from "../lib/whose.ts";
 import { AccountMenu } from "./account-menu.tsx";
+import { HeaderEnd } from "./github-star-link.tsx";
 import { Hero, TryChips } from "./landing-hero.tsx";
 import { LibraryPlaceholder, LibraryView } from "./library-view.tsx";
 import { OwnerPill } from "./owner-pill.tsx";
 
 // A navigation in the browser starts from the session the server loaded. The page reads the rest once it mounts.
-export const pageFor = (request: PageRequest, { viewer, config }: Session): PageData => {
+export const pageFor = (request: PageRequest, { viewer, config, repoStars }: Session): PageData => {
   const { owner, own, query, defaultQuery } = pageOwner(viewer, config, request);
   return {
     viewer,
+    repoStars,
     owner,
     own,
     config,
@@ -60,7 +62,7 @@ export const pageFor = (request: PageRequest, { viewer, config }: Session): Page
 };
 
 // Until other scopes ship, the scope switch is one link to the viewer's own stars rather than a tab list of one.
-export function HeaderControls({ viewer }: { viewer: Viewer }) {
+export function HeaderControls({ viewer, star }: { viewer: Viewer; star: ReactNode }) {
   return (
     <>
       <nav aria-label="Scope" className="flex items-center rounded-full bg-card p-1 max-sm:hidden">
@@ -73,7 +75,7 @@ export function HeaderControls({ viewer }: { viewer: Viewer }) {
           Your stars
         </Link>
       </nav>
-      <AccountMenu login={viewer.login} avatarUrl={viewer.avatarUrl} />
+      <HeaderEnd star={star} account={<AccountMenu login={viewer.login} avatarUrl={viewer.avatarUrl} />} />
     </>
   );
 }

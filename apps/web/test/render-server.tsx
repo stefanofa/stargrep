@@ -4,7 +4,8 @@
 // STARGREP_API_FAILURE set, the API's config call fails with that message, so the session loader fails. With
 // STARGREP_PAGE_FAILURE set, the page loader fails with that message after the session loaded. With
 // STARGREP_CACHED_SEARCH set to JSON such as {"q":"phone automation","minutesAgo":6}, the API's answer cache holds the
-// demo's planned answer for q, stored that long before the render.
+// demo's planned answer for q, stored that long before the render. STARGREP_HEADER_STARS sets the header's GitHub star
+// count, which is none without it.
 //   SSR=1 bun test/render-server.tsx /path [cookie]
 import { mock } from "bun:test";
 import { disabled } from "@stargrep/api/answer-cache";
@@ -26,10 +27,13 @@ const answer = (incoming: Request) =>
 const filled = process.env.STARGREP_CACHED_SEARCH;
 const { q, minutesAgo } = filled === undefined ? { q: undefined, minutesAgo: 0 } : JSON.parse(filled);
 const answerCache = q === undefined ? disabled : await cacheHolding(q, minutesAgo);
+const starsSet = process.env.STARGREP_HEADER_STARS;
+const headerStars = starsSet === undefined || starsSet === "" ? null : Number(starsSet);
 mock.module("../src/server/app.ts", () => ({
   serveApi: answer,
   answers: () => answerCache,
   waitUntil: () => {},
+  headerStars: async () => headerStars,
   reportFailure: (message: string, fields: Readonly<Record<string, unknown>>) =>
     Effect.runPromise(Effect.logError(message, fields)),
 }));
