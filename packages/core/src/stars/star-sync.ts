@@ -1,3 +1,4 @@
+import * as Analytics from "@stargrep/analytics/analytics";
 import * as Db from "@stargrep/db";
 import { UserId } from "@stargrep/db/auth-schema";
 import type { AccountNotFound, DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
@@ -37,8 +38,17 @@ export const LoginSyncRequest = Schema.Struct({
   reserved: Schema.optionalKey(Schema.Union([Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)), Reserved])),
   // The signed-in user who started the sync. Their token pays for its GitHub reads and for the enrichment it queues.
   userId: Schema.optionalKey(UserId),
+  // The network that started a signed-out sync, so analytics names the same network when the sync ends.
+  caller: Schema.optionalKey(Db.CallerKey),
 });
 export type LoginSyncRequest = typeof LoginSyncRequest.Type;
+
+export const actorOf = (request: LoginSyncRequest): Analytics.Actor =>
+  request.userId !== undefined
+    ? Analytics.Actor.User({ userId: request.userId })
+    : request.caller !== undefined
+      ? Analytics.Actor.Network({ caller: request.caller })
+      : Analytics.Actor.Stargrep();
 
 export type SyncReport = DiffPage.SyncReport;
 

@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
-import type * as Db from "@stargrep/db";
+import * as Analytics from "@stargrep/analytics/analytics";
+import * as Db from "@stargrep/db";
 import { DbQueryFailed } from "@stargrep/db/errors";
 import type { Login } from "@stargrep/github/schemas";
 import { collectSpans } from "@stargrep/telemetry/collector";
@@ -47,6 +48,39 @@ import {
 import * as SyncRequests from "./sync-requests.ts";
 
 it.layer(memory, { timeout: 30_000 })("SyncRequests admission", (it) => {
+  it.effect("sends an import-started event for each import it queues, naming the network or the user", () => {
+    const events = Analytics.layerMemory();
+    return admitting(() =>
+      Effect.gen(function* () {
+        yield* request("octocat");
+        yield* request("octocat");
+        yield* request("swarm", owner);
+        expect(events.captured.map(({ actor, event }) => ({ actor, event }))).toEqual([
+          {
+            actor: Analytics.Actor.Network({ caller: Db.CallerKey.make("caller-a") }),
+            event: Analytics.Event.StarsImportStarted({
+              stars: 42,
+              signedIn: false,
+              mode: "incremental",
+              first: true,
+              waitSeconds: 0,
+            }),
+          },
+          {
+            actor: Analytics.Actor.User({ userId: ownerId }),
+            event: Analytics.Event.StarsImportStarted({
+              stars: null,
+              signedIn: true,
+              mode: "full",
+              first: true,
+              waitSeconds: 0,
+            }),
+          },
+        ]);
+      }).pipe(Effect.provide(events.layer)),
+    );
+  });
+
   it.effect("queues an unknown login once and reports it done after a later sync", () =>
     admitting(({ sent }) =>
       Effect.gen(function* () {
@@ -70,6 +104,7 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests admission", (it) => {
             mode: "incremental",
             requestedAt: at(start),
             reserved: { units: 4, endsAt: at(start + 5 * unitMillis), generation: expect.any(Number), released: 0 },
+            caller: Db.CallerKey.make("caller-a"),
           },
         ]);
 
