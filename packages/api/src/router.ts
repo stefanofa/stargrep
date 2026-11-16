@@ -1,6 +1,7 @@
 import "@orpc/effect/extensions/effect";
 import { middlewareGen, type WithEffectContext } from "@orpc/effect";
 import { implement } from "@orpc/server";
+import * as Analytics from "@stargrep/analytics/analytics";
 import { RateLine } from "@stargrep/core/limits";
 import { MetricRegistry, QueryPlan, type QueryPlanner, Search } from "@stargrep/core/search";
 import { OwnerAccount, SyncRequests } from "@stargrep/core/stars";
@@ -9,6 +10,7 @@ import type { DbQueryFailed, DbRowInvalid, RepoNotFound } from "@stargrep/db/err
 import { loginKey } from "@stargrep/github/login";
 import type { Login } from "@stargrep/github/schemas";
 import { everything, normalize, SelectionKey } from "@stargrep/knowledge/atom";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -16,6 +18,7 @@ import type * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { type AnswerContext, type AnswerPolicy, answerCache, miss, reader, searchWindows } from "./answer-cache.ts";
 import { Caller } from "./caller.ts";
@@ -254,6 +257,52 @@ const answerKey = (input: typeof SearchInput.Type) =>
 const demoSearchKey = (input: typeof SearchInput.Type, config: PublicConfig) =>
   loginKey(input.scope.login) === loginKey(config.demoLogin) ? Option.some(answerKey(input)) : Option.none();
 
+const answerCacheOf = (headers: Headers | undefined): Analytics.AnswerCache => {
+  const outcome = headers?.get("x-answer-cache");
+  return outcome === "hit" || outcome === "stale" || outcome === "miss" ? outcome : "none";
+};
+
+type Searcher = Ref.Ref<Option.Option<Analytics.Actor>>;
+
+// Sends one search event per search, a cache hit included, with no query text. The handler names the searcher once it
+// has read the session. A cache hit reads none, so it names the request's own actor, the network.
+const searchEvent = middlewareGen<
+  Pick<ApiContext, "transport" | "resHeaders">,
+  { readonly searcher: Searcher },
+  typeof SearchInput.Type,
+  typeof SearchOutput.Encoded
+>(function* ({ context, next }) {
+  const started = yield* Clock.currentTimeMillis;
+  const searcher = yield* Ref.make(Option.none<Analytics.Actor>());
+  // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC erases downstream failures to unknown.
+  const result = yield* next({ context: { searcher } });
+  const event = Analytics.capture(
+    Analytics.Event.Search({
+      planSource: result.output.planSource,
+      results: result.output.results.length,
+      latencyMillis: (yield* Clock.currentTimeMillis) - started,
+      answerCache: answerCacheOf(context.resHeaders),
+      transport: context.transport,
+    }),
+  );
+  yield* Option.match(yield* Ref.get(searcher), {
+    onNone: () => event,
+    onSome: (actor) => Analytics.withActor(actor)(event),
+  });
+  return result;
+});
+
+// A search reads the session only to name the searcher in analytics. A signed-out visitor sends no session cookie, and a
+// signed-in visitor's cookie carries a five-minute cache of the session, so this seldom reads the database.
+const searcherOf = Effect.gen(function* () {
+  const { key } = yield* Caller;
+  const signedIn = yield* (yield* Viewers).signedIn.pipe(Effect.orElseSucceed(Option.none));
+  return Option.match(signedIn, {
+    onNone: () => Analytics.Actor.Network({ caller: key }),
+    onSome: (userId) => Analytics.Actor.User({ userId }),
+  });
+});
+
 const decodeSearchInput = Schema.decodeEffect(SearchInput);
 const readSearch = reader({ json: Schema.fromJsonString(SearchOutput), ...searchWindows });
 
@@ -394,11 +443,14 @@ const starsResponse = middlewareGen<AnswerContext, object, typeof StarsInput.Typ
 
 export const router = implementer.router({
   search: os.search
+    .use(searchEvent)
     .use(searchCache)
     .use(Services.services)
     .use(admission("search"))
-    .effect(function* ({ input }): ApiResult<"search", typeof SearchOutput.Type> {
-      return yield* searchAnswer(input);
+    .effect(function* ({ input, context }): ApiResult<"search", typeof SearchOutput.Type> {
+      const searcher = yield* searcherOf;
+      yield* Ref.set(context.searcher, Option.some(searcher));
+      return yield* searchAnswer(input).pipe(Analytics.withActor(searcher));
     }),
 
   // The owner's page asks on every open, so a star made on GitHub shows up. Their sync runs on their own token at most

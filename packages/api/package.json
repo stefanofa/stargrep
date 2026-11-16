@@ -24,6 +24,7 @@
     "@orpc/mcp": "2.0.0-beta.48",
     "@orpc/openapi": "2.0.0-beta.48",
     "@orpc/server": "2.0.0-beta.48",
+    "@stargrep/analytics": "workspace:*",
     "@stargrep/core": "workspace:*",
     "@stargrep/db": "workspace:*",
     "@stargrep/github": "workspace:*",
