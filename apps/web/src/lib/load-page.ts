@@ -27,7 +27,7 @@ const titled = (data: PageData, query: string | undefined) => {
   const title = query ? `"${query}" in ${whose} · stargrep` : `${whose} · stargrep`;
   const description = data.own
     ? []
-    : [{ name: "description", content: `Search @${data.owner}'s GitHub stars in plain words.` }];
+    : [{ name: "description", content: `Search @${data.owner}'s starred GitHub repos in plain words.` }];
   return [{ title }, ...description];
 };
 

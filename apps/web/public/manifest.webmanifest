@@ -1,7 +1,7 @@
 {
   "name": "Stargrep",
   "short_name": "Stargrep",
-  "description": "Search your GitHub stars in plain words.",
+  "description": "Search your starred GitHub repos in plain words.",
   "start_url": "/",
   "background_color": "#f5f2ff",
   "theme_color": "#f5f2ff",

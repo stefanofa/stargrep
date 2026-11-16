@@ -556,7 +556,7 @@ const heroCopy = (stage: Stage, troubled: boolean, owner: string, demoLogin: str
   return {
     subtitle: sameLogin(owner, demoLogin)
       ? `live results from @${owner}, our demo account. try any username.`
-      : `@${owner}'s stars, searched in plain words. try any username.`,
+      : `@${owner}'s starred repos, searched in plain words. try any username.`,
     butter: { kind: "join" },
   };
 };
