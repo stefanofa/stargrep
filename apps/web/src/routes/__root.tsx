@@ -1,8 +1,9 @@
 import fredoka from "@stargrep/ui/fonts/fredoka-latin-600-normal.woff2?url";
 import inter from "@stargrep/ui/fonts/inter-latin-wght-normal.woff2?url";
 import { createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
 import { Failure, NotFound } from "../components/problem-page.tsx";
+import { startAnalytics } from "../lib/analytics.ts";
 import { loadSession } from "../lib/load-page.ts";
 import styles from "../styles.css?url";
 
@@ -28,7 +29,14 @@ export const Route = createRootRoute({
     ],
   }),
   // The shell wraps the error and not-found pages too, so they keep the head, the styles and the scripts.
-  shellComponent: ({ children }: { children: ReactNode }) => (
+  shellComponent: Shell,
+  notFoundComponent: NotFound,
+  errorComponent: Failure,
+});
+
+function Shell({ children }: { children: ReactNode }) {
+  useEffect(startAnalytics, []);
+  return (
     // The demo page's reveal script marks <html> before hydration, so its attribute is expected to differ from the server's.
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -42,7 +50,5 @@ export const Route = createRootRoute({
         <Scripts />
       </body>
     </html>
-  ),
-  notFoundComponent: NotFound,
-  errorComponent: Failure,
-});
+  );
+}

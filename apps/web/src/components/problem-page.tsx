@@ -1,6 +1,7 @@
 import { Button, buttonVariants, EmptyTile, type PipPose } from "@stargrep/ui";
 import { type ErrorComponentProps, Link } from "@tanstack/react-router";
 import { type ReactNode, useEffect } from "react";
+import { reportError } from "../lib/analytics.ts";
 import { Page } from "./page.tsx";
 import { Wordmark } from "./wordmark.tsx";
 
@@ -45,8 +46,11 @@ export function NotFound() {
 
 // The error's message is for us, not the visitor, so the page logs it and never shows it.
 export function Failure({ error }: ErrorComponentProps) {
-  // @effect-diagnostics-next-line globalConsole:off - public pages load no Effect, so the browser's console logs it.
-  useEffect(() => console.error(error), [error]);
+  useEffect(() => {
+    // @effect-diagnostics-next-line globalConsole:off - public pages load no Effect, so the browser's console logs it.
+    console.error(error);
+    reportError(error);
+  }, [error]);
   return (
     <ProblemPage
       pose="scared"

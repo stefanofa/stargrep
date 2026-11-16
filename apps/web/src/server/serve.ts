@@ -89,7 +89,8 @@ const answerMcp = async (request: Request, context: WebContext) => {
   const mcp = createMcpHandler(
     async () => {
       const server = new McpServer({ name: "stargrep", version: "1.0.0" });
-      await registrar.register(server, { context });
+      // MCP has no response headers of its own, so these only carry what a procedure reports, such as the answer cache.
+      await registrar.register(server, { context: { ...context, resHeaders: new Headers() } });
       return server;
     },
     { responseMode: "json" },
@@ -222,9 +223,14 @@ const withTiming = (
   return timed;
 };
 
+// Analytics for one request, or for background work when there is none: a sink that sends once the work ends, error
+// logs as exceptions, and the request's network as the actor its events name.
+export type AnalyticsFor = (request: Request | undefined) => Layer.Layer<never>;
+
 export interface ServerOptions {
   readonly layerFor: RequestLayer;
   readonly tracer: Layer.Layer<never>;
+  readonly analytics: AnalyticsFor;
   // Read on the first request, because TanStack Start's dev server loads the entry before env is set.
   readonly publicConfig: () => PublicConfig;
   readonly answerCache: (request: Request) => AnswerCache;
@@ -245,7 +251,7 @@ const background =
               Effect.logWarning("Background work failed", { failure: Cause.hasDies(cause) ? "defect" : "failure" }),
             ),
             Effect.withSpan("Web.background"),
-            Effect.provide(options.tracer),
+            Effect.provide(Layer.merge(options.analytics(undefined), options.tracer)),
           ),
         ),
       ),
@@ -316,10 +322,10 @@ const respondAuth = (request: Request, layerFor: AuthLayer) =>
   );
 
 export const makeAuthServer =
-  (layerFor: AuthLayer, tracer: Layer.Layer<never>) =>
+  (layerFor: AuthLayer, tracer: Layer.Layer<never>, analytics: AnalyticsFor = () => Layer.empty) =>
   (request: Request): Promise<Response> | undefined =>
     under(apiPrefixes.auth)(new URL(request.url).pathname)
-      ? Effect.runPromise(respondAuth(request, layerFor).pipe(Effect.provide(tracer)))
+      ? Effect.runPromise(respondAuth(request, layerFor).pipe(Effect.provide(Layer.merge(analytics(request), tracer))))
       : undefined;
 
 export const makeServer =
@@ -328,5 +334,7 @@ export const makeServer =
     const pathname = new URL(request.url).pathname;
     const route = routes.find((candidate) => candidate.matches(pathname));
     if (route === undefined) return undefined;
-    return Effect.runPromise(respond(route, request, options).pipe(Effect.provide(options.tracer)));
+    return Effect.runPromise(
+      respond(route, request, options).pipe(Effect.provide(Layer.merge(options.analytics(request), options.tracer))),
+    );
   };

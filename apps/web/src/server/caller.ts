@@ -1,3 +1,4 @@
+import * as Analytics from "@stargrep/analytics/analytics";
 import { Caller } from "@stargrep/api/caller";
 import { CallerKey } from "@stargrep/db";
 import * as Mac from "effect/crypto/Mac";
@@ -45,13 +46,26 @@ const utf8 = new TextEncoder();
 
 // A stored key tells one network from another without naming it: the first 32 hex characters of an HMAC-SHA256 of the
 // network's address under a per-stage secret.
+// Untraced, as it was inside the layer: one HMAC per request would only add a span to every API call.
+const callerOf = Effect.fnUntraced(function* (secret: string, request: Request) {
+  const mac = yield* Mac.Mac;
+  const address = callerAddress(request);
+  const tag = yield* mac.sign(yield* Mac.key(Mac.hmacSha256, utf8.encode(secret)), utf8.encode(address));
+  return Caller.of({ key: CallerKey.make(Hex.encode(tag).slice(0, 32)), address });
+});
+
+const layerCrypto = Mac.layerWebCrypto.pipe(Layer.provide(SecureRandom.layerWebCrypto));
+
 export const layerCaller = (secret: string, request: Request) =>
+  Layer.effect(Caller, callerOf(secret, request)).pipe(Layer.provide(layerCrypto));
+
+// Analytics names a request by its network's key, which it hashes again before anything leaves the Worker. A key it
+// cannot work out names Stargrep, because analytics never fails a request.
+export const layerActor = (secret: string, request: Request) =>
   Layer.effect(
-    Caller,
-    Effect.gen(function* () {
-      const mac = yield* Mac.Mac;
-      const address = callerAddress(request);
-      const tag = yield* mac.sign(yield* Mac.key(Mac.hmacSha256, utf8.encode(secret)), utf8.encode(address));
-      return Caller.of({ key: CallerKey.make(Hex.encode(tag).slice(0, 32)), address });
-    }),
-  ).pipe(Layer.provide(Mac.layerWebCrypto), Layer.provide(SecureRandom.layerWebCrypto));
+    Analytics.CurrentActor,
+    callerOf(secret, request).pipe(
+      Effect.map(({ key }): Analytics.Actor => Analytics.Actor.Network({ caller: key })),
+      Effect.orElseSucceed(() => Analytics.Actor.Stargrep()),
+    ),
+  ).pipe(Layer.provide(layerCrypto));

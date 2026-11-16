@@ -8,6 +8,7 @@
 //   SSR=1 bun test/render-server.tsx /path [cookie]
 import { mock } from "bun:test";
 import { disabled } from "@stargrep/api/answer-cache";
+import * as Effect from "effect/Effect";
 
 const [path = "/", cookie] = process.argv.slice(2);
 const request = new Request(`http://localhost${path}`, cookie === undefined ? {} : { headers: { cookie } });
@@ -25,7 +26,13 @@ const answer = (incoming: Request) =>
 const filled = process.env.STARGREP_CACHED_SEARCH;
 const { q, minutesAgo } = filled === undefined ? { q: undefined, minutesAgo: 0 } : JSON.parse(filled);
 const answerCache = q === undefined ? disabled : await cacheHolding(q, minutesAgo);
-mock.module("../src/server/app.ts", () => ({ serveApi: answer, answers: () => answerCache, waitUntil: () => {} }));
+mock.module("../src/server/app.ts", () => ({
+  serveApi: answer,
+  answers: () => answerCache,
+  waitUntil: () => {},
+  reportFailure: (message: string, fields: Readonly<Record<string, unknown>>) =>
+    Effect.runPromise(Effect.logError(message, fields)),
+}));
 // TanStack Start hands the request to server code through its own context, which this script stands in for.
 const pageFailure = process.env.STARGREP_PAGE_FAILURE;
 let reads = 0;
