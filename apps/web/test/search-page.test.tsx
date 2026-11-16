@@ -857,7 +857,9 @@ describe("the search page in each state", () => {
     server.signedIn = false;
     server.status = status({ login: "stefanofa" });
     await open("/", "Search @stefanofa's stars");
-    expect(page().getByRole("heading", { level: 1, name: "search anyone's github stars in plain words" })).toBeTruthy();
+    expect(
+      page().getByRole("heading", { level: 1, name: "search anyone's starred github repos in plain words" }),
+    ).toBeTruthy();
     expect(page().getByRole("heading", { name: "your stars, in a minute" })).toBeTruthy();
     expect(page().getByText("live results from @stefanofa, our demo account. try any username.")).toBeTruthy();
     const chips = page().getByRole("list", { name: "Example searches" });

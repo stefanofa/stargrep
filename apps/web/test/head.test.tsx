@@ -44,7 +44,7 @@ test("a stars page is titled by whose stars it shows and what it searches", asyn
   expect(titleOf(await renderPage("/octo"))).toBe("@octo's stars · stargrep");
   expect(titleOf(await renderPage("/octo?q=rust%20tui"))).toBe(`"rust tui" in @octo's stars · stargrep`);
   expect(titleOf(await renderPage("/octo?q="))).toBe("@octo's stars · stargrep");
-  expect(await renderPage("/octo")).toContain(`content="Search @octo&#x27;s GitHub stars in plain words."`);
+  expect(await renderPage("/octo")).toContain(`content="Search @octo&#x27;s starred GitHub repos in plain words."`);
 });
 
 test("the home page a visitor lands on keeps the site's title", async () => {

@@ -43,7 +43,7 @@ export const baseFontsInstalled =
 // Width is averaged over text each family sets in the app, weighted by how often each character appears in it.
 // Fredoka sets the headings and the wordmark, Inter everything else.
 const display =
-  "search your github stars in plain words. stargrep. sign in to search your stars. languages. stars. " +
+  "search anyone's starred github repos in plain words. stargrep. sign in to search your stars. languages. stars. " +
   "stargrep couldn't load your account. stargrep couldn't load your stars. nothing matches that. " +
   "you said no to github. sign-in didn't finish.";
 const body =

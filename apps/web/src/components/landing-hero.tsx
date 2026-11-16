@@ -57,7 +57,7 @@ export function Hero({ subtitle, butter, pose }: HeroCopy & { pose: PipPose }) {
     <section className="flex flex-col gap-3.5 pt-1.5 sm:pt-5 lg:flex-row lg:gap-gap">
       <div className="flex min-w-0 flex-1 flex-col justify-end gap-3.5 lg:pb-1.5">
         <h1 className="font-display text-3xl leading-10 font-semibold tracking-tight text-balance sm:text-[64px] sm:leading-[68px]">
-          search anyone's github stars in plain words
+          search anyone's starred github repos in plain words
         </h1>
         {/* Two lines whatever the state says, so the search below never moves when the state changes. */}
         <p className="line-clamp-2 h-[2lh] font-sans text-lg text-pretty text-secondary-foreground max-sm:hidden">

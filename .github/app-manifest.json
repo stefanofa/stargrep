@@ -1,7 +1,7 @@
 {
   "name": "Stargrep",
   "url": "https://stargrep.com",
-  "description": "Search your GitHub stars in plain language.",
+  "description": "Search your starred GitHub repos in plain language.",
   "public": false,
   "callback_urls": ["https://stargrep.com/auth/callback/github", "http://localhost:1340/auth/callback/github"],
   "hook_attributes": { "url": "https://stargrep.com/github/webhook", "active": false },

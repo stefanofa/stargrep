@@ -168,7 +168,7 @@ Lowercase, short, friendly, a little cheeky. Only in strings that must exist.
 | Unknown user | no github user called junodevv · did you mean junodev? |
 | Rate limited | github needs a breather. try again in 2 minutes |
 | Unclaimed profile | is this you? · sign in to claim |
-| Landing | search anyone's github stars in plain words |
+| Landing | search anyone's starred github repos in plain words |
 
 Proper nouns keep their case inside lowercase copy (Rust, TypeScript, GitHub in buttons such as "Sign in with GitHub").
 

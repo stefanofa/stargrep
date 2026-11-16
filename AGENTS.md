@@ -1,6 +1,6 @@
 # Stargrep
 
-Stargrep searches a developer's GitHub stars in plain language.
+Stargrep searches the GitHub repos a developer starred, in plain language.
 
 Read these before changing code:
 

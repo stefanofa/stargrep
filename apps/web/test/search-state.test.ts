@@ -546,7 +546,7 @@ describe("the hero above a visitor's search", () => {
   });
 
   test("names anyone else's stars", () => {
-    expect(hero(ready)?.subtitle).toBe("@octo's stars, searched in plain words. try any username.");
+    expect(hero(ready)?.subtitle).toBe("@octo's starred repos, searched in plain words. try any username.");
   });
 
   test("asks whether the visitor is the owner while their stars import, with the import's progress", () => {

@@ -69,7 +69,7 @@ const tile = { face: true, plate: { color: colors.background, scale: 0.68 } } sa
 const manifest = {
   name: "Stargrep",
   short_name: "Stargrep",
-  description: "Search your GitHub stars in plain words.",
+  description: "Search your starred GitHub repos in plain words.",
   start_url: "/",
   background_color: colors.background,
   theme_color: colors.background,
