@@ -11,7 +11,7 @@ const posthog = {
   captureException: () => {},
 };
 mock.module("posthog-js/dist/module.no-external", () => ({ posthog }));
-const { GitHubStarLink } = await import("../src/components/github-star-link.tsx");
+const { fewestStarsShown, GitHubStarLink } = await import("../src/components/github-star-link.tsx");
 
 const setHost = (url: string) =>
   (window as unknown as { happyDOM: { setURL: (url: string) => void } }).happyDOM.setURL(url);
@@ -31,6 +31,17 @@ describe("the header's star on github link", () => {
     expect(link().getAttribute("target")).toBe("_blank");
     expect(link().getAttribute("rel")).toBe("noopener");
     expect(link().textContent).toBe("star1.2k");
+  });
+
+  test("a count shows from 10 stars, and fewer render as no count at all", () => {
+    expect(fewestStarsShown).toBe(10);
+    const { rerender } = render(<GitHubStarLink stars={9} />);
+    expect(link().textContent).toBe("star");
+    expect(link().querySelectorAll("span")).toHaveLength(1);
+    rerender(<GitHubStarLink stars={0} />);
+    expect(link().textContent).toBe("star");
+    rerender(<GitHubStarLink stars={10} />);
+    expect(link().textContent).toBe("star10");
   });
 
   test("without a count it shows the mark and the word, and nothing waits for a number", () => {

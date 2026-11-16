@@ -10,7 +10,10 @@ declare namespace Cloudflare {
     readonly SYNC_OVERALL: RateLimit;
     readonly SEARCH_PER_CALLER: RateLimit;
     readonly STARS_PER_CALLER: RateLimit;
-    readonly WORKER: Fetcher & { readonly lookupOwner: (login: string) => Promise<unknown> };
+    readonly WORKER: Fetcher & {
+      readonly lookupOwner: (login: string) => Promise<unknown>;
+      readonly stargrepStars: () => Promise<unknown>;
+    };
     readonly CALLER_KEY: string;
     readonly GITHUB_BUDGET_SHARE: string;
     readonly ICONS: R2Bucket;

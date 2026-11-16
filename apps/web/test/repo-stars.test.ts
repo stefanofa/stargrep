@@ -1,13 +1,10 @@
 import { describe, expect } from "bun:test";
-import * as GitHubFake from "@stargrep/github/github.fixture";
 import { effect } from "@stargrep/testing";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as TestClock from "effect/testing/TestClock";
-import { repoStars } from "../src/server/repo-stars.ts";
+import { repoStars, type StarsWorker } from "../src/server/repo-stars.ts";
 
 // A location's cache that keeps what is put in it and records how long each entry may stay.
 const cacheOf = (options: { readonly broken?: boolean } = {}) => {
@@ -26,84 +23,82 @@ const cacheOf = (options: { readonly broken?: boolean } = {}) => {
   return { cache: async () => cache, kept };
 };
 
-const setUp = (handler: GitHubFake.Handler, options: { readonly broken?: boolean } = {}) => {
-  const github = GitHubFake.make(handler);
+// The main Worker's RPC method, answering what the test gives it and counting the asks.
+const workerOf = (answer: () => Promise<unknown>) => {
+  const asks = { count: 0 };
+  const worker: StarsWorker = {
+    stargrepStars: () => {
+      asks.count += 1;
+      return answer();
+    },
+  };
+  return { worker, asks };
+};
+
+const setUp = (answer: () => Promise<unknown>, options: { readonly broken?: boolean } = {}) => {
+  const { worker, asks } = workerOf(answer);
   const { cache, kept } = cacheOf(options);
   const background: Array<Promise<unknown>> = [];
-  const store = {
+  const read = repoStars("https://stargrep.com", {
+    worker,
     cache,
-    waitUntil: (work: Promise<unknown>) => void background.push(work),
+    waitUntil: (work) => void background.push(work),
     renderWait: Duration.millis(750),
-  };
-  const read = repoStars("https://stargrep.com", store).pipe(Effect.provide(github.client));
-  return { github, kept, background, read };
+  });
+  return { asks, kept, background, read };
 };
 
 const settle = (background: ReadonlyArray<Promise<unknown>>) => Effect.promise(() => Promise.all(background));
 
 describe("the header's GitHub star count", () => {
-  effect("reads Stargrep's repo once, and the next page takes the count from the cache for an hour", () => {
-    const { github, kept, background, read } = setUp(() => ({ body: { stargazers_count: 128 } }));
+  effect("asks the main Worker once, and the next page takes the count from the cache for an hour", () => {
+    const { asks, kept, background, read } = setUp(async () => 128);
     return Effect.gen(function* () {
       expect(yield* read).toBe(128);
       yield* settle(background);
       expect(yield* read).toBe(128);
-      expect(github.sent.map((sent) => sent.url.pathname)).toEqual(["/repos/stefanofa/stargrep"]);
-      expect(github.sent[0]?.headers.authorization).toBeUndefined();
+      expect(yield* read).toBe(128);
+      expect(asks.count).toBe(1);
       expect([...kept.values()]).toEqual([{ body: "128", cacheControl: "s-maxage=3600" }]);
     });
   });
 
-  effect("a GitHub that fails renders no count, and the cache keeps that for 10 minutes", () => {
-    const { github, kept, background, read } = setUp(() => ({ status: 403, body: { message: "rate limited" } }));
+  effect("a main Worker without a count renders none, and the cache keeps that for 10 minutes", () => {
+    const { asks, kept, background, read } = setUp(async () => null);
     return Effect.gen(function* () {
       expect(yield* read).toBeNull();
       yield* settle(background);
       expect(yield* read).toBeNull();
-      expect(github.sent).toHaveLength(1);
+      expect(asks.count).toBe(1);
       expect([...kept.values()]).toEqual([{ body: "null", cacheControl: "s-maxage=600" }]);
     });
   });
 
-  effect("a reply without a count, or a network failure, renders no count", () =>
+  effect("a reply that is no count, or a call that throws, renders no count", () =>
     Effect.gen(function* () {
-      expect(yield* setUp(() => ({ body: { stargazers_count: "many" } })).read).toBeNull();
-      expect(yield* setUp(() => ({ transportError: "connection reset" })).read).toBeNull();
+      expect(yield* setUp(async () => "many").read).toBeNull();
+      expect(yield* setUp(async () => -3).read).toBeNull();
+      expect(yield* setUp(() => Promise.reject(new Error("rpc failed"))).read).toBeNull();
     }),
   );
 
-  effect("a slow GitHub holds the page 750ms at most, and its answer still fills the cache for the next page", () => {
-    const { cache, kept } = cacheOf();
-    const background: Array<Promise<unknown>> = [];
-    let requests = 0;
-    const slowGitHub = HttpClient.make((request) =>
-      Effect.sleep(Duration.seconds(2)).pipe(
-        Effect.tap(() => Effect.sync(() => requests++)),
-        Effect.as(HttpClientResponse.fromWeb(request, Response.json({ stargazers_count: 7 }))),
-      ),
-    );
-    const store = {
-      cache,
-      waitUntil: (work: Promise<unknown>) => void background.push(work),
-      renderWait: Duration.millis(750),
-    };
-    const read = repoStars("https://stargrep.com", store).pipe(
-      Effect.provideService(HttpClient.HttpClient, slowGitHub),
-    );
+  effect("a slow answer holds the page 750ms at most, and still fills the cache for the next page", () => {
+    const answer = Promise.withResolvers<unknown>();
+    const { asks, kept, background, read } = setUp(() => answer.promise);
     return Effect.gen(function* () {
       const rendering = yield* Effect.forkChild(read);
       yield* TestClock.adjust(Duration.millis(750));
       expect(yield* Fiber.join(rendering)).toBeNull();
-      yield* TestClock.adjust(Duration.seconds(2));
+      answer.resolve(7);
       yield* settle(background);
       expect([...kept.values()].map((entry) => entry.body)).toEqual(["7"]);
       expect(yield* read).toBe(7);
-      expect(requests).toBe(1);
+      expect(asks.count).toBe(1);
     });
   });
 
-  effect("a cache that throws still renders the page, with whatever GitHub answers", () => {
-    const { read } = setUp(() => ({ body: { stargazers_count: 42 } }), { broken: true });
+  effect("a cache that throws still renders the page, with whatever the main Worker answers", () => {
+    const { read } = setUp(async () => 42, { broken: true });
     return Effect.gen(function* () {
       expect(yield* read).toBe(42);
     });

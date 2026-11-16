@@ -1,5 +1,6 @@
 import type { WebsiteEnv } from "../../website.ts";
 import type { OwnerWorker } from "./owner-lookup.ts";
+import type { StarsWorker } from "./repo-stars.ts";
 
 export interface WebEnv {
   readonly DATABASE: Hyperdrive;
@@ -9,7 +10,7 @@ export interface WebEnv {
   readonly SYNC_OVERALL: RateLimit;
   readonly SEARCH_PER_CALLER: RateLimit;
   readonly STARS_PER_CALLER: RateLimit;
-  readonly WORKER: Fetcher & OwnerWorker;
+  readonly WORKER: Fetcher & OwnerWorker & StarsWorker;
   readonly ICONS: R2Bucket;
   readonly CALLER_KEY: string;
   readonly GITHUB_BUDGET_SHARE: string;

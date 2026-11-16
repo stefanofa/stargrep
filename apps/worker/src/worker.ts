@@ -31,6 +31,7 @@ import * as OwnerLookup from "./owner-lookup.ts";
 import * as Queues from "./queues.ts";
 import { Readmes } from "./readmes.ts";
 import { settings } from "./stage.ts";
+import { stargrepStars } from "./stargrep-stars.ts";
 import * as UserGate from "./user-gate.ts";
 
 export default class Worker extends Cloudflare.Worker<Worker>()(
@@ -90,6 +91,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
         return HttpServerResponse.empty({ status: 404 });
       }).pipe(Effect.orDie),
       lookupOwner: OwnerLookup.lookupOwner(GitHub.layer.pipe(Layer.provide(gate))),
+      stargrepStars: stargrepStars(GitHub.layer.pipe(Layer.provide(gate))),
     };
   }).pipe(
     Effect.provide(

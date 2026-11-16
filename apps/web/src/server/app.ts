@@ -10,7 +10,6 @@ import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Option from "effect/Option";
 import { layerAnalytics } from "./analytics.ts";
 import { makeAnswerCache } from "./answer-cache.ts";
@@ -74,10 +73,11 @@ export { waitUntil };
 export const headerStars = (origin: string) =>
   Effect.runPromise(
     repoStars(origin, {
+      worker: bindings.WORKER,
       cache: () => Promise.resolve(workerCache()),
       waitUntil,
       renderWait: Duration.millis(750),
-    }).pipe(Effect.provide(FetchHttpClient.layer)),
+    }),
   );
 
 export const serveApi = makeServer({
