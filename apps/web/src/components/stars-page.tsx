@@ -3,6 +3,7 @@ import { type PipPose, Skeleton, Tile } from "@stargrep/ui";
 import { Suspense, useState } from "react";
 import { HeaderControls, Stars } from "../lib/engine.ts";
 import type { PageData } from "../lib/page-data.ts";
+import { GitHubStarLink, HeaderEnd } from "./github-star-link.tsx";
 import { Page } from "./page.tsx";
 import { SignInButton } from "./sign-in-button.tsx";
 import { Wordmark } from "./wordmark.tsx";
@@ -33,15 +34,18 @@ function SignInProblem({ error }: { error: string }) {
 // fills and the browser keeps as server HTML until the engine chunk arrives.
 export function StarsPage({ data, error }: { data: PageData; error?: string | undefined }) {
   const [pose, setPose] = useState<PipPose>("idle");
+  const star = <GitHubStarLink stars={data.repoStars} />;
   return (
     <Page
       header={
         <>
           <Wordmark pose={error === undefined ? pose : "scared"} />
           {/* A visitor signs in from the butter tile in the hero, so the header doesn't ask twice. */}
-          {data.viewer !== null && (
-            <Suspense fallback={<Skeleton className="size-11 shrink-0" />}>
-              <HeaderControls viewer={data.viewer} />
+          {data.viewer === null ? (
+            star
+          ) : (
+            <Suspense fallback={<HeaderEnd star={star} account={<Skeleton className="size-11 shrink-0" />} />}>
+              <HeaderControls viewer={data.viewer} star={star} />
             </Suspense>
           )}
         </>

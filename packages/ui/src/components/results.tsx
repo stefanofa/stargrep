@@ -1,6 +1,7 @@
 import { type MouseEvent, type ReactNode, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Skeleton as Measured } from "skullet/react";
 import { cn } from "../lib/cn.ts";
+import { formatStars } from "../lib/format-stars.ts";
 import { NetworkAvatars, type Person } from "./avatar.tsx";
 import { Badge } from "./badge.tsx";
 import { StarIcon } from "./icons.tsx";
@@ -32,10 +33,6 @@ export type Result = {
   readonly language: string | null;
   readonly unread: boolean;
 };
-
-const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
-
-export const formatStars = (stars: number) => compact.format(stars).toLowerCase();
 
 export function highlight(text: string, matches: ReadonlyArray<Match>): ReactNode[] {
   const ranges = matches

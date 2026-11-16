@@ -297,6 +297,20 @@ describe("a stars page from the Worker to the browser", () => {
     expect(errors).toEqual([]);
   }, 60_000);
 
+  test("the header's star link paints its count from the server and hydrates without a change", async () => {
+    const starLink = () => document.querySelector('a[aria-label="star stargrep on github"]');
+    const page = await renderOnServer("/", undefined, { STARGREP_HEADER_STARS: "1234" });
+    await hydratePage("/", page.html);
+    expect(starLink()?.getAttribute("href")).toBe("https://github.com/stefanofa/stargrep");
+    expect(starLink()?.textContent).toBe("star1.2k");
+    expect(errors).toEqual([]);
+
+    const countless = await renderOnServer("/stefanofa?q=terminal");
+    expect(countless.status).toBe(200);
+    expect(countless.html).toContain('aria-label="star stargrep on github"');
+    expect(countless.html).not.toContain("1.2k");
+  }, 60_000);
+
   test("a cookie with a broken percent escape counts as no choice, not a failed page", async () => {
     const page = await renderOnServer("/stefanofa?q=terminal", "stargrep-view=%; stargrep-refused=%E0%A4%A");
     expect(page.status).toBe(200);

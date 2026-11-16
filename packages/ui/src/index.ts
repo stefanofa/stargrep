@@ -12,7 +12,6 @@ export { Monogram, type Plate, RepoIcon, type RepoIconSize, type RepoVisual } fr
 export { type RepoDetail, RepoPanel } from "./components/repo-panel.tsx";
 export {
   type Activity,
-  formatStars,
   GroupHeading,
   type Hero,
   highlight,
@@ -39,4 +38,5 @@ export { Tile, type TileVariant } from "./components/tile.tsx";
 export { Tooltip } from "./components/tooltip.tsx";
 export { isView, type View, ViewToggle } from "./components/view-toggle.tsx";
 export { cn } from "./lib/cn.ts";
+export { formatStars } from "./lib/format-stars.ts";
 export { Pip, type PipPose, pipPoses } from "./mark/pip.tsx";

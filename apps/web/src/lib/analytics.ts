@@ -64,6 +64,14 @@ export const reportError = (error: unknown) => {
   void started().then((posthog) => posthog?.captureException(error));
 };
 
+// The events the browser sends for a visitor's action. Autocapture is off, so each is named here and carries no text.
+export type ClientEvent = "github_star_clicked";
+
+export const capture = (event: ClientEvent) => {
+  if (!sends(location.hostname)) return;
+  void started().then((posthog) => posthog?.capture(event));
+};
+
 // Called once the page has hydrated. PostHog loads in a chunk of its own when the browser is idle, so the landing page's
 // first paint and its search engine never wait on it. PostHog's own error listeners load as a remote script, so the
 // page listens itself.

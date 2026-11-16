@@ -195,7 +195,11 @@ const open = async (path: string, label: string | RegExp = "Search your stars", 
   // The root route loads the session, as the Worker does for the first page.
   const root = createRootRoute({
     component: Outlet,
-    loader: async () => ({ viewer: server.signedIn ? server.viewer : null, config: await api().config() }),
+    loader: async () => ({
+      viewer: server.signedIn ? server.viewer : null,
+      config: await api().config(),
+      repoStars: null,
+    }),
   });
   const stars = StarsRoute.update({
     id: "/{-$login}",
