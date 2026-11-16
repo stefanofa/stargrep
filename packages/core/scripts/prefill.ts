@@ -20,7 +20,17 @@ import * as Prefill from "../src/repos/prefill.ts";
 import { RunReportJson, readRefs } from "./prefill-files.ts";
 import * as Runtime from "./runtime.ts";
 
-const ids = Flag.String("ids").pipe(Flag.withDescription("The prefill list, one '<id> <owner>/<name>' per line"));
+const ids = Flag.String("ids").pipe(
+  Flag.withDescription("The prefill list, one '<id> <owner>/<name>' per line"),
+  Flag.optional,
+);
+
+const pending = Flag.Int("pending").pipe(
+  Flag.withDescription(
+    "Instead of a list, ask at most this many of the repos the Worker's sweep would summarize next, the backlog the daily summary cap leaves. It prints how many wait first, so 0 only prints that. Needs --adapter cli and AI_TEXT_PROVIDER=claude-code",
+  ),
+  Flag.optional,
+);
 
 const adapter = Flag.Literals("adapter", ["batch", "cli"]).pipe(
   Flag.withDescription(
@@ -78,6 +88,28 @@ class PrefillRefused extends Schema.TaggedError<PrefillRefused, { readonly brand
   }
 }
 
+// Where the run's repos come from: a prefill list, or the Worker's backlog. The backlog is what the Worker would pay
+// the Gateway for once its cap has room, so a backlog run asks the Claude Code CLI only, never the Gateway past the cap.
+type Source = { readonly _tag: "Ids"; readonly path: string } | { readonly _tag: "Pending"; readonly limit: number };
+
+const sourceOf = (flags: {
+  readonly ids: Option.Option<string>;
+  readonly pending: Option.Option<number>;
+  readonly adapter: "batch" | "cli";
+  readonly provider: string;
+}): Result.Result<Source, string> => {
+  if (Option.isSome(flags.ids) && Option.isSome(flags.pending)) return Result.fail("give --ids or --pending, not both");
+  if (Option.isSome(flags.ids)) return Result.succeed({ _tag: "Ids", path: flags.ids.value });
+  if (Option.isNone(flags.pending)) return Result.fail("give --ids <file> or --pending <count>");
+  if (flags.pending.value < 0) return Result.fail("--pending takes a count of 0 or more");
+  if (flags.adapter !== "cli" || flags.provider !== "claude-code") {
+    return Result.fail(
+      "--pending asks the Claude Code CLI, so it needs --adapter cli and AI_TEXT_PROVIDER=claude-code",
+    );
+  }
+  return Result.succeed({ _tag: "Pending", limit: flags.pending.value });
+};
+
 // What an operator does about a manifest the driver keeps open.
 const remedy = (stuck: Prefill.Stuck) =>
   stuck.reason === "unknown-batch"
@@ -96,24 +128,39 @@ const waitForOwner = {
 
 const run = Command.make(
   "prefill",
-  { ids, adapter, chunk, concurrency, out, askCurrent, resendUnknown, summaryModel, summaryReasoning },
+  { ids, pending, adapter, chunk, concurrency, out, askCurrent, resendUnknown, summaryModel, summaryReasoning },
   Effect.fn("prefill.run")(function* (flags) {
     if (Option.isSome(flags.summaryModel) && flags.adapter !== "batch") {
       return yield* new PrefillRefused({ reason: "--summary-model names a batch model, and --adapter cli has none" });
     }
-    const store = Runtime.requestStore(flags.adapter, yield* textProvider, yield* r2Bucket);
+    const provider = yield* textProvider;
+    const source = sourceOf({ ...flags, provider });
+    if (Result.isFailure(source)) return yield* new PrefillRefused({ reason: source.failure });
+    const store = Runtime.requestStore(flags.adapter, provider, yield* r2Bucket);
     if (Result.isFailure(store)) return yield* new PrefillRefused({ reason: store.failure });
-    yield* runPrefill(flags, store.success).pipe(Effect.provide(Runtime.layerPrefill(flags.summaryModel)));
+    yield* runPrefill({ ...flags, source: source.success }, store.success).pipe(
+      Effect.provide(Runtime.layerPrefill(flags.summaryModel)),
+    );
   }),
 ).pipe(
   Command.withDescription(
-    "Summarize every repo in a prefill list through resumable provider batches. A rerun resumes what a stopped run sent.",
+    "Summarize every repo in a prefill list, or the Worker's summary backlog, through resumable provider batches. A rerun resumes what a stopped run sent.",
   ),
 );
 
+// The repos a run asks about. A backlog run first says how many repos wait, so --pending 0 is a cheap read of it.
+const refsOf = Effect.fn("prefill.refsOf")(function* (source: Source) {
+  if (source._tag === "Ids") return yield* readRefs(source.path);
+  const { waiting, refs } = yield* Prefill.backlog(source.limit);
+  yield* Console.log(
+    `backlog: ${waiting} repos wait for a summary, asking the ${refs.length} the sweep would send next`,
+  );
+  return refs;
+});
+
 const runPrefill = Effect.fn("prefill.runPrefill")(function* (
   flags: {
-    readonly ids: string;
+    readonly source: Source;
     readonly adapter: "batch" | "cli";
     readonly chunk: number;
     readonly concurrency: number;
@@ -124,7 +171,8 @@ const runPrefill = Effect.fn("prefill.runPrefill")(function* (
   },
   store: "r2" | "local",
 ) {
-  const refs = yield* readRefs(flags.ids);
+  const refs = yield* refsOf(flags.source);
+  if (flags.source._tag === "Pending" && flags.source.limit === 0) return;
   const prefill = yield* Prefill.Prefill;
   const fs = yield* FileSystem.FileSystem;
   const model = (yield* TextGeneration.TextGeneration).model;
