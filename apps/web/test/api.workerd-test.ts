@@ -359,11 +359,11 @@ describe("sync", () => {
   it("reports how many of a login's stars are read, and zeros for a login Stargrep does not know", async () => {
     expect((await rest("/sync/ada")).body).toMatchObject({
       state: "done",
-      enrichment: { total: 1, read: 1, failed: 0 },
+      enrichment: { total: 1, read: 1, failed: 0, queued: 0 },
     });
     expect((await rest("/sync/nobody-known")).body).toMatchObject({
       state: "unknown",
-      enrichment: { total: 0, read: 0, failed: 0 },
+      enrichment: { total: 0, read: 0, failed: 0, queued: 0 },
     });
   });
 

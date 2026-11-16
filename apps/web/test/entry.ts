@@ -119,7 +119,9 @@ const db = makeDb({
   stars: {
     page: () => Effect.succeed({ entries: [{ repo, starredAt, stars: 18_000, read: true }], next: Option.none() }),
     enrichment: (login: Login) =>
-      Effect.succeed(login === ada.login ? { total: 1, read: 1, failed: 0 } : { total: 0, read: 0, failed: 0 }),
+      Effect.succeed(
+        login === ada.login ? { total: 1, read: 1, failed: 0, queued: 0 } : { total: 0, read: 0, failed: 0, queued: 0 },
+      ),
   },
   facets: {
     lookup: ({ limit }) =>

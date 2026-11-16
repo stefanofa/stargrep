@@ -199,12 +199,12 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* db.repos.upsertRefs([shared, own, retrying, failed, unstarred, waiting].map((id) => ref(id)));
       yield* db.stars.upsert({ accountId: other, stars: [starred(shared, "2025-01-01T00:00:00Z")] });
       yield* embedSummarized(db, shared, embedding({ 0: 1 }));
-      expect(yield* db.stars.enrichment(login("reader"))).toEqual({ total: 0, read: 0, failed: 0 });
+      expect(yield* db.stars.enrichment(login("reader"))).toEqual({ total: 0, read: 0, failed: 0, queued: 0 });
 
       const kept = [shared, own, retrying, failed, waiting].map((id) => starred(id, "2025-02-01T00:00:00Z"));
       yield* db.stars.upsert({ accountId: reader, stars: [...kept, starred(unstarred, "2025-02-01T00:00:00Z")] });
       yield* db.stars.applySnapshot({ accountId: reader, stars: kept, at: at("2026-04-01T00:00:00Z") });
-      expect(yield* db.stars.enrichment(login("reader"))).toEqual({ total: 5, read: 1, failed: 0 });
+      expect(yield* db.stars.enrichment(login("reader"))).toEqual({ total: 5, read: 1, failed: 0, queued: 0 });
 
       yield* embedSummarized(db, own, embedding({ 1: 1 }));
       const fail = (ids: ReadonlyArray<RepoId>) =>
@@ -212,7 +212,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       yield* fail([retrying, failed, unstarred]);
       yield* fail([failed, unstarred]);
       yield* fail([failed, unstarred, own]);
-      expect(yield* db.stars.enrichment(login("READER"))).toEqual({ total: 5, read: 2, failed: 1 });
+      expect(yield* db.stars.enrichment(login("READER"))).toEqual({ total: 5, read: 2, failed: 1, queued: 0 });
 
       const read = new Map((yield* db.stars.library(reader)).map((entry) => [entry.repo.id, entry.read]));
       expect(Object.fromEntries(read)).toEqual({
@@ -222,7 +222,22 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         [failed]: false,
         [waiting]: false,
       });
-      expect(yield* db.stars.enrichment(login("nobody-here"))).toEqual({ total: 0, read: 0, failed: 0 });
+
+      // The daily summary cap queues an unread repo for later until it is read. A repo at the failure cap stays failed.
+      const now = at("2026-05-01T00:00:00Z");
+      const until = at("2026-05-01T00:15:00Z");
+      expect(yield* db.repos.lease({ ids: [waiting, failed], now, until })).toEqual([waiting, failed]);
+      yield* db.repos.defer({ ids: [waiting, failed], until, retryAt: at("2026-05-01T00:01:26.400Z") });
+      expect(yield* db.stars.enrichment(login("reader"))).toEqual({ total: 5, read: 2, failed: 1, queued: 1 });
+      yield* embedSummarized(db, waiting, embedding({ 2: 1 }));
+      expect(yield* db.stars.enrichment(login("reader"))).toEqual({ total: 5, read: 3, failed: 1, queued: 0 });
+      expect(
+        yield* (yield* TestDatabase.TestDatabase).query(
+          "select summary_deferred as deferred from repos where id = $1",
+          [waiting],
+        ),
+      ).toEqual([{ deferred: false }]);
+      expect(yield* db.stars.enrichment(login("nobody-here"))).toEqual({ total: 0, read: 0, failed: 0, queued: 0 });
     }),
   );
 
@@ -284,7 +299,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         stars: [current, older].map((id) => starred(id, "2025-02-01T00:00:00Z")),
       });
 
-      expect(yield* db.stars.enrichment(login("recipe-reader"))).toEqual({ total: 2, read: 2, failed: 0 });
+      expect(yield* db.stars.enrichment(login("recipe-reader"))).toEqual({ total: 2, read: 2, failed: 0, queued: 0 });
       expect(yield* db.repos.pendingEnrichment([current, older])).toEqual([older]);
       const swept = yield* db.repos.sweepable({ now: at("2026-05-01T00:00:00Z"), limit: 1000 });
       expect([swept.includes(current), swept.includes(older)]).toEqual([false, true]);
@@ -320,7 +335,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
             pending: true,
           }),
         ]);
-        expect(yield* db.stars.enrichment(login("stale-reader"))).toEqual({ total: 1, read: 1, failed: 0 });
+        expect(yield* db.stars.enrichment(login("stale-reader"))).toEqual({ total: 1, read: 1, failed: 0, queued: 0 });
         expect(yield* db.repos.pendingEnrichment([id])).toEqual([id]);
 
         yield* db.repos.saveEmbedding(
@@ -338,7 +353,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         expect(yield* db.repos.getMany([id])).toEqual([
           expect.objectContaining({ embeddingModel: null, pending: true }),
         ]);
-        expect(yield* db.stars.enrichment(login("stale-reader"))).toEqual({ total: 1, read: 0, failed: 0 });
+        expect(yield* db.stars.enrichment(login("stale-reader"))).toEqual({ total: 1, read: 0, failed: 0, queued: 0 });
       }),
   );
 

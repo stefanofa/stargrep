@@ -38,7 +38,13 @@ const LibraryEntry = Schema.Struct({
 });
 export type LibraryEntry = typeof LibraryEntry.Type;
 
-const EnrichmentProgress = Schema.Struct({ total: Schema.Int, read: Schema.Int, failed: Schema.Int });
+// queued counts the unread repos the daily summary cap deferred, which Stargrep reads later on its own.
+const EnrichmentProgress = Schema.Struct({
+  total: Schema.Int,
+  read: Schema.Int,
+  failed: Schema.Int,
+  queued: Schema.Int,
+});
 export type EnrichmentProgress = typeof EnrichmentProgress.Type;
 
 export interface StarsUpsert {
@@ -293,6 +299,7 @@ export const make = Effect.gen(function* () {
             total: sql<number>`count(*)::int`,
             read: sql<number>`(count(*) filter (where not ${unread}))::int`,
             failed: sql<number>`(count(*) filter (where ${unread} and ${repos.enrichFailures} >= ${enrichFailureCap}))::int`,
+            queued: sql<number>`(count(*) filter (where ${unread} and ${repos.summaryDeferred} and ${repos.enrichFailures} < ${enrichFailureCap} and ${repos.goneAt} is null))::int`,
           })
           .from(stars)
           .innerJoin(repos, eq(repos.id, stars.repoId))

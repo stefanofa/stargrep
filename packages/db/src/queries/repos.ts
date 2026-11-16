@@ -69,13 +69,14 @@ export const RepoIcon = Schema.Struct({
 });
 export type RepoIcon = typeof RepoIcon.Type;
 
-// Columns a Repo leaves out: the vector, the full-text column, the retry state, the recipe that made the summary, and
-// the knowledge columns, which only queries/knowledge/ reads and writes.
+// Columns a Repo leaves out: the vector, the full-text column, the retry state, the summary cap's mark, the recipe that
+// made the summary, and the knowledge columns, which only queries/knowledge/ reads and writes.
 const internalColumns = [
   "embedding",
   "search",
   "enrichFailures",
   "enrichRetryAt",
+  "summaryDeferred",
   "summaryRecipe",
   "embeddingStale",
   "inputHash",
@@ -329,7 +330,8 @@ export interface Queries {
   readonly settleFailures: (settled: LeaseFailures) => Effect.Effect<void, DbQueryFailed>;
   readonly sweepable: (query: SweepQuery) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
   // Moves this attempt's lease on repos the summary cap refused to the time the cap has room again, counting no
-  // failure, so the sweep sends them again then.
+  // failure, so the sweep sends them again then. It marks them deferred until they are read, so the library counts them
+  // as queued.
   readonly defer: (deferral: Deferral) => Effect.Effect<void, DbQueryFailed>;
   // How many repos under the failure cap wait for a paid summary, leased or not.
   readonly summaryBacklog: Effect.Effect<number, DbQueryFailed | DbRowInvalid>;
@@ -557,6 +559,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
                 embeddingStale: false,
                 enrichFailures: 0,
                 enrichRetryAt: null,
+                summaryDeferred: false,
               })
               .where(
                 and(
@@ -710,7 +713,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
         : run("repos.defer", (db) =>
             db
               .update(repos)
-              .set({ enrichRetryAt: sql`${timeParam(at)}` })
+              .set({ enrichRetryAt: sql`${timeParam(at)}`, summaryDeferred: true })
               .where(sql`${repos.id} in (${lockedRepoIds(ids)}) and ${repos.enrichRetryAt} = ${timeParam(until)}`),
           ),
     summaryBacklog: run("repos.summaryBacklog", (db) =>

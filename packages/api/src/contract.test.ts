@@ -9,7 +9,7 @@ const common = {
   login: "ada",
   accountType: "user",
   starredTotal: 42,
-  enrichment: { total: 42, read: 20, failed: 1 },
+  enrichment: { total: 42, read: 20, failed: 1, queued: 0 },
 };
 
 test("search accepts the available scope and rejects scopes that have not shipped", () => {

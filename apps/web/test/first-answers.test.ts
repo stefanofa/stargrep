@@ -111,11 +111,11 @@ describe("the landing's cached first answer", () => {
   });
 
   test("answers again once a sync or a newly read star changes the library revision", async () => {
-    const reading = { total: 3, read: 2, failed: 0 };
+    const reading = { total: 3, read: 2, failed: 0, queued: 0 };
     const revisions = [
       syncStatus({ syncedAt: "2026-11-07T00:00:00.000Z", enrichment: reading }),
       syncStatus({ syncedAt: "2026-11-07T00:01:00.000Z", enrichment: reading }),
-      syncStatus({ syncedAt: "2026-11-07T00:00:00.000Z", enrichment: { total: 3, read: 3, failed: 0 } }),
+      syncStatus({ syncedAt: "2026-11-07T00:00:00.000Z", enrichment: { total: 3, read: 3, failed: 0, queued: 0 } }),
     ].map(libraryRevision);
     expect(new Set(revisions).size).toBe(3);
     expect(libraryRevision(syncStatus({ syncedAt: "2026-11-07T00:00:00.000Z", enrichment: reading }))).toBe(

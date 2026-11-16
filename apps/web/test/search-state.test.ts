@@ -21,18 +21,23 @@ const entries = (count: number, arriving = 0) =>
 const sync = syncStatus;
 
 const importing = stageOf({
-  sync: sync({ state: "queued", syncedAt: null, enrichment: { total: 1204, read: 0, failed: 0 } }),
+  sync: sync({ state: "queued", syncedAt: null, enrichment: { total: 1204, read: 0, failed: 0, queued: 0 } }),
   entries: entries(1204),
   starred: 1776,
 });
 const reading = stageOf({
-  sync: sync({ enrichment: { total: 1776, read: 412, failed: 0 } }),
+  sync: sync({ enrichment: { total: 1776, read: 412, failed: 0, queued: 0 } }),
   entries: entries(1776),
   starred: 1776,
 });
 const ready = stageOf({ sync: sync({}), entries: entries(1776), starred: 1776 });
 const someFailed = stageOf({
-  sync: sync({ enrichment: { total: 1776, read: 1770, failed: 6 } }),
+  sync: sync({ enrichment: { total: 1776, read: 1770, failed: 6, queued: 0 } }),
+  entries: entries(1776),
+  starred: 1776,
+});
+const capped = stageOf({
+  sync: sync({ enrichment: { total: 1776, read: 1464, failed: 0, queued: 312 } }),
   entries: entries(1776),
   starred: 1776,
 });
@@ -82,7 +87,17 @@ describe("the stage", () => {
 
   test("reading lasts until every star is read or failed", () => {
     expect(reading).toEqual({ name: "reading", read: 412, settled: 412, total: 1776 });
-    expect(someFailed).toEqual({ name: "ready", total: 1776, failed: 6, lastSync: "done" });
+    expect(someFailed).toEqual({ name: "ready", total: 1776, failed: 6, queued: 0, lastSync: "done" });
+  });
+
+  test("stars the daily summary cap queued for later settle the library instead of keeping it reading", () => {
+    expect(capped).toEqual({ name: "ready", total: 1776, failed: 0, queued: 312, lastSync: "done" });
+    const stillReading = stageOf({
+      sync: sync({ enrichment: { total: 1776, read: 1464, failed: 0, queued: 300 } }),
+      entries: entries(1776),
+      starred: 1776,
+    });
+    expect(stillReading).toEqual({ name: "reading", read: 1464, settled: 1464, total: 1776 });
   });
 
   test("before the sync status arrives, the library reads as ready", () => {
@@ -90,6 +105,7 @@ describe("the stage", () => {
       name: "ready",
       total: 95,
       failed: 0,
+      queued: 0,
       lastSync: "done",
     });
   });
@@ -101,13 +117,13 @@ describe("the stage", () => {
 
   test("a few new stars being read stay a refresh, a large backlog is reading", () => {
     const few = stageOf({
-      sync: sync({ enrichment: { total: 1778, read: 1776, failed: 0 } }),
+      sync: sync({ enrichment: { total: 1778, read: 1776, failed: 0, queued: 0 } }),
       entries: entries(1778, 2),
       starred: 1778,
     });
     expect(few).toEqual({ name: "refreshing", total: 1778, arriving: 2 });
     const backlog = stageOf({
-      sync: sync({ enrichment: { total: 1776, read: 412, failed: 0 } }),
+      sync: sync({ enrichment: { total: 1776, read: 412, failed: 0, queued: 0 } }),
       entries: entries(1776, 1364),
       starred: 1776,
     });
@@ -129,6 +145,25 @@ describe("browsing", () => {
       progress: undefined,
       pose: "idle",
       body: { kind: "library", arriving: undefined },
+    });
+  });
+
+  test("a library waiting on the daily summary cap says its summaries are queued for later, with no progress bar", () => {
+    expect(view(capped, {}, "synced 2 min ago")).toEqual({
+      status: {
+        icon: "synced",
+        label: "1,776 stars",
+        detail: "312 summaries queued for later · synced 2 min ago",
+        phoneDetail: "312 queued for later",
+      },
+      progress: undefined,
+      pose: "idle",
+      body: { kind: "library", arriving: undefined },
+    });
+    expect(view(capped, query).status).toMatchObject({
+      icon: "done",
+      label: "nothing found",
+      detail: "1,464 of 1,776 stars read",
     });
   });
 
@@ -181,7 +216,7 @@ describe("browsing", () => {
   });
 
   test("a failed first sync offers a retry and scares the mark", () => {
-    const state = view({ name: "ready", total: 40, failed: 0, lastSync: "failed-first" });
+    const state = view({ name: "ready", total: 40, failed: 0, queued: 0, lastSync: "failed-first" });
     expect(state.status).toEqual({
       icon: "failed",
       label: "sync didn't finish",
@@ -192,7 +227,11 @@ describe("browsing", () => {
   });
 
   test("a failed check on a synced library says it couldn't check", () => {
-    const state = view({ name: "ready", total: 1776, failed: 0, lastSync: "failed-refresh" }, {}, "synced 2 min ago");
+    const state = view(
+      { name: "ready", total: 1776, failed: 0, queued: 0, lastSync: "failed-refresh" },
+      {},
+      "synced 2 min ago",
+    );
     expect(state.status).toEqual({
       icon: "failed",
       label: "couldn't check",
@@ -291,7 +330,7 @@ describe("searching", () => {
 
   test("before anything is read, the empty state says so instead of counting zero", () => {
     const fresh = stageOf({
-      sync: sync({ enrichment: { total: 6, read: 0, failed: 0 } }),
+      sync: sync({ enrichment: { total: 6, read: 0, failed: 0, queued: 0 } }),
       entries: entries(6),
       starred: 6,
     });

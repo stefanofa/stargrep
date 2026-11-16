@@ -56,8 +56,9 @@ const harness = Effect.fn("test.watch")(function* (initial: SyncStatus) {
 for (const [state, status, milliseconds] of [
   ["queued", syncStatus({ state: "queued" }), 2000],
   ["waiting", syncStatus({ state: "waiting", waiting: { startsAt: "2026-11-06T09:01:30.500Z", ahead: 2 } }), 10000],
-  ["reading", syncStatus({ enrichment: { total: 10, read: 4, failed: 0 } }), 5000],
+  ["reading", syncStatus({ enrichment: { total: 10, read: 4, failed: 0, queued: 0 } }), 5000],
   ["done", syncStatus({ state: "done" }), 30000],
+  ["queued for later", syncStatus({ enrichment: { total: 10, read: 4, failed: 1, queued: 5 } }), 30000],
 ] as const) {
   it.effect(`polls ${state} at its interval without reloading an unchanged library`, () =>
     Effect.gen(function* () {
@@ -89,11 +90,13 @@ it.effect("does not poll a hidden tab and reads immediately when it becomes visi
 
 it.effect("reloads for imported stars, changed enrichment and completion, while keeping unchanged polls still", () =>
   Effect.gen(function* () {
-    const watch = yield* harness(syncStatus({ state: "queued", enrichment: { total: 10, read: 10, failed: 0 } }));
-    watch.status(syncStatus({ enrichment: { total: 10, read: 10, failed: 0 } }));
+    const watch = yield* harness(
+      syncStatus({ state: "queued", enrichment: { total: 10, read: 10, failed: 0, queued: 0 } }),
+    );
+    watch.status(syncStatus({ enrichment: { total: 10, read: 10, failed: 0, queued: 0 } }));
     yield* TestClock.adjust("2 seconds");
     expect(watch.progress()).toBe(1);
-    watch.status(syncStatus({ enrichment: { total: 11, read: 10, failed: 0 } }));
+    watch.status(syncStatus({ enrichment: { total: 11, read: 10, failed: 0, queued: 0 } }));
     yield* watch.show();
     yield* TestClock.adjust(0);
     expect(watch.progress()).toBe(2);
