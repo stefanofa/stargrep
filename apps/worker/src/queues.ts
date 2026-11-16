@@ -12,6 +12,7 @@ import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import type { Observe } from "./analytics.ts";
 import * as EnrichRepoConsumer from "./consumers/enrich-repo.ts";
 import * as FetchIconConsumer from "./consumers/fetch-icon.ts";
 import * as Settle from "./consumers/settle.ts";
@@ -37,6 +38,7 @@ const consume = Effect.fn("Queues.consume")(function* <A, R, D, E>(
   settings: Omit<Cloudflare.Queues.MessagesProps, "deadLetterQueue">,
   pipeline: Settle.Pipeline<A, R, D>,
   runtime: Layer.Layer<NoInfer<R | D>, E, RuntimeContext>,
+  observe: Observe,
 ) {
   const queue = yield* queues.queue;
   const deadLetters = yield* queues.deadLetters;
@@ -46,7 +48,7 @@ const consume = Effect.fn("Queues.consume")(function* <A, R, D, E>(
     Effect.gen(function* () {
       const bound = yield* Settle.bindQueues(name, self, deadLetterQueue);
       yield* Settle.processBatch(pipeline, bound, yield* Stream.runCollect(Stream.map(stream, Settle.settleOnce)));
-    }).pipe(Effect.provide(runtime)),
+    }).pipe(Effect.provide(runtime), observe(`Queue ${name} batch`)),
   );
   yield* Cloudflare.Queues.consumeQueueMessages(
     deadLetters,
@@ -56,7 +58,7 @@ const consume = Effect.fn("Queues.consume")(function* <A, R, D, E>(
         name,
         pipeline,
         retries.maxRetries,
-      )(Stream.map(stream, Settle.settleOnce)).pipe(Effect.provide(runtime)),
+      )(Stream.map(stream, Settle.settleOnce)).pipe(Effect.provide(runtime), observe(`Queue ${name} dead letters`)),
   );
 });
 
@@ -78,6 +80,7 @@ export const consumeAll = <E>(
     RuntimeContext
   >,
   share: BudgetShare,
+  observe: Observe,
 ) =>
   Effect.all([
     consume(
@@ -86,6 +89,7 @@ export const consumeAll = <E>(
       { batchSize: 5, maxWaitTime: "1 second", ...retries },
       SyncStarsConsumer.pipeline(share, syncs),
       runtime,
+      observe,
     ),
     // A summary thinks, so a round of four direct calls takes about 15 s. Thirty messages are three chunks of at most ten
     // rounds each, about 8 minutes when every repo has its own user, inside EnrichRepoConsumer's 10-minute deadline.
@@ -95,6 +99,7 @@ export const consumeAll = <E>(
       { batchSize: 30, maxConcurrency: 1, maxWaitTime: "5 seconds", ...retries },
       EnrichRepoConsumer.pipeline(enrichers),
       runtime,
+      observe,
     ),
     consume(
       queueNames.fetchIcon,
@@ -102,5 +107,6 @@ export const consumeAll = <E>(
       { batchSize: 10, maxConcurrency: 2, maxWaitTime: "5 seconds", ...retries },
       FetchIconConsumer.pipeline,
       runtime,
+      observe,
     ),
   ]);

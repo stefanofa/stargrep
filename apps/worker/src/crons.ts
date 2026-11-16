@@ -5,6 +5,7 @@ import type * as Db from "@stargrep/db";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
+import type { Observe } from "./analytics.ts";
 import * as KnowledgeCount from "./jobs/knowledge-count.ts";
 import * as Prune from "./jobs/prune.ts";
 import * as Sweeps from "./jobs/sweeps.ts";
@@ -24,12 +25,16 @@ const knowledgeCountSchedule = "30 3 * * *";
 
 export const scheduleAll = <E>(
   runtime: Layer.Layer<Db.Db | EnrichQueue.EnrichQueue | IconQueue.IconQueue, E, RuntimeContext>,
+  observe: Observe,
 ) =>
   Effect.all([
-    Cloudflare.Workers.cron(sweepSchedule, () => Sweeps.run(runtime)),
+    Cloudflare.Workers.cron(sweepSchedule, () => Sweeps.run(runtime).pipe(observe("Sweeps"))),
     Cloudflare.Workers.cron(iconBackfillSchedule, () =>
-      IconQueue.IconQueue.use((queue) => queue.send([startIconBackfill])).pipe(Effect.provide(runtime)),
+      IconQueue.IconQueue.use((queue) => queue.send([startIconBackfill])).pipe(
+        Effect.provide(runtime),
+        observe("Icon backfill"),
+      ),
     ),
-    Cloudflare.Workers.cron(pruneSchedule, () => Prune.run(runtime)),
-    Cloudflare.Workers.cron(knowledgeCountSchedule, () => KnowledgeCount.run(runtime)),
+    Cloudflare.Workers.cron(pruneSchedule, () => Prune.run(runtime).pipe(observe("Prune"))),
+    Cloudflare.Workers.cron(knowledgeCountSchedule, () => KnowledgeCount.run(runtime).pipe(observe("Knowledge count"))),
   ]);

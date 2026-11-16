@@ -2,6 +2,7 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
 import { tokenConfig } from "@stargrep/auth/config";
 import * as Tokens from "@stargrep/auth/tokens";
 import * as GitHub from "@stargrep/github/github";
+import * as AnalyticsLayer from "@stargrep/runtime/analytics";
 import {
   budgetShare,
   budgetShareName,
@@ -17,6 +18,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
+import { observe } from "./analytics.ts";
 import { tokenBindings } from "./auth.ts";
 import * as Crons from "./crons.ts";
 import { Database, DatabaseMigrations } from "./database.ts";
@@ -46,6 +48,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
         DATABASE_MIGRATIONS: yield* DatabaseMigrations,
         [budgetShareName]: String(share),
         [serverTokenName]: kind,
+        [AnalyticsLayer.stageName]: stage,
         ...(yield* tokenBindings(stage)),
       },
       placement,
@@ -74,8 +77,9 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
       ai: yield* Effect.orDie(Layers.aiModels),
       adopted: yield* Ref.make(false),
     });
-    yield* Queues.consumeAll(runtime, yield* Effect.orDie(budgetShare));
-    yield* Crons.scheduleAll(runtime);
+    const observed = observe(yield* Effect.orDie(AnalyticsLayer.stage));
+    yield* Queues.consumeAll(runtime, yield* Effect.orDie(budgetShare), observed);
+    yield* Crons.scheduleAll(runtime, observed);
     return {
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest;

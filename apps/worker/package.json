@@ -26,6 +26,7 @@
     "@jsquash/webp": "1.5.0",
     "@resvg/resvg-wasm": "2.6.2",
     "@stargrep/ai": "workspace:*",
+    "@stargrep/analytics": "workspace:*",
     "@stargrep/auth": "workspace:*",
     "@stargrep/core": "workspace:*",
     "@stargrep/db": "workspace:*",
