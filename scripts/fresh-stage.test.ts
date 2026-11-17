@@ -24,6 +24,16 @@ const cloudflare404: Answer = {
   contentType: "text/html; charset=UTF-8",
   body: "<h1>There is nothing here yet</h1>",
 };
+// Trimmed from the page a fresh stage's debug Worker host answered in CI.
+const scriptNotFound: Answer = {
+  status: 500,
+  contentType: "text/html; charset=UTF-8",
+  body: [
+    "<title>Script not found | pr-141-debug.stargrep.com | Cloudflare</title>",
+    '<span class="cf-error-code">1104</span>',
+    '<h2 class="cf-subheadline" data-translate="error_desc">Script not found</h2>',
+  ].join("\n"),
+};
 const refused: Answer = { status: 401, contentType: "", body: "" };
 
 const runOnTestClock = <A>(body: Effect.Effect<A>) => Effect.runPromise(body.pipe(Effect.provide(TestClock.layer())));
@@ -150,6 +160,18 @@ describe("untilRouted", () => {
         expect(outcome(yield* Fiber.join(fiber))).toBe(`succeeded with ${JSON.stringify(refused)}`);
         expect(sent).toBe(3);
         expect(resends).toEqual({ cloudflare404: 2, dropped: 0 });
+      }),
+    ));
+
+  test("resends Cloudflare's Script not found page until the Worker answers", () =>
+    runOnTestClock(
+      Effect.gen(function* () {
+        let sent = 0;
+        const send = Effect.sync(() => (++sent < 3 ? scriptNotFound : refused));
+        const fiber = yield* Effect.forkChild(Effect.exit(untilRouted(what, send, noResends())));
+        yield* TestClock.adjust("3 seconds");
+        expect(outcome(yield* Fiber.join(fiber))).toBe(`succeeded with ${JSON.stringify(refused)}`);
+        expect(sent).toBe(3);
       }),
     ));
 
