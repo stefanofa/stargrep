@@ -381,6 +381,7 @@ const syncStatus =
     const common = { login, starredTotal: status.starredTotal, accountType: status.accountType, enrichment };
     switch (status.state) {
       case "unknown":
+      case "missing":
         return { ...common, state: status.state, requestedAt: null, syncedAt: null, waiting: null };
       case "done":
         return {

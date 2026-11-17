@@ -41,6 +41,7 @@ mock.module("../src/server/app.ts", () => ({
 const pageFailure = process.env.STARGREP_PAGE_FAILURE;
 let reads = 0;
 const headers: Record<string, string> = {};
+let status: number | undefined;
 mock.module("@tanstack/react-start/server", () => ({
   getRequest: () => {
     reads += 1;
@@ -49,6 +50,9 @@ mock.module("@tanstack/react-start/server", () => ({
   },
   setResponseHeader: (name: string, value: string) => {
     headers[name] = value;
+  },
+  setResponseStatus: (code: number) => {
+    status = code;
   },
 }));
 
@@ -62,7 +66,7 @@ const response = await handler(({ router, responseHeaders }) =>
 );
 process.stdout.write(
   JSON.stringify({
-    status: response.status,
+    status: status ?? response.status,
     location: response.headers.get("location"),
     html: await response.text(),
     requested,

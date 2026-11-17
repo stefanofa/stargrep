@@ -207,7 +207,7 @@ const syncFields = {
 export const SyncStatus = Schema.Union([
   Schema.Struct({
     ...syncFields,
-    state: Schema.Literal("unknown"),
+    state: Schema.Literals(["unknown", "missing"]),
     requestedAt: Schema.Null,
     syncedAt: Schema.Null,
     waiting: Schema.Null,
@@ -245,7 +245,7 @@ export const SyncStatus = Schema.Union([
   }),
 ]).annotate({
   description:
-    "unknown has never synced, waiting has a place in line, queued is about to run or running, failed could not finish, and done has a sync time.",
+    "unknown has never synced, missing is a login GitHub did not have when Stargrep looked in the last 10 minutes, so triggerSync answers LOGIN_NOT_FOUND, waiting has a place in line, queued is about to run or running, failed could not finish, and done has a sync time.",
 });
 
 export const RepoInput = Schema.Struct({ id: RepoId.annotate({ description: "The GitHub repo ID." }) });

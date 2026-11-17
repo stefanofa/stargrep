@@ -1,6 +1,6 @@
 import { loginKey } from "@stargrep/github/login";
 import { isNotFound, isRedirect } from "@tanstack/react-router";
-import { getRequest, setResponseHeader } from "@tanstack/react-start/server";
+import { getRequest, setResponseHeader, setResponseStatus } from "@tanstack/react-start/server";
 import * as Effect from "effect/Effect";
 import { starredOf, whoseOf } from "../lib/audience.ts";
 import { normalize, searchText } from "../lib/keyword.ts";
@@ -155,8 +155,9 @@ const loadPage = async ({ login }: PageRequest, { viewer, config, repoStars }: S
   const owner = audience.owner.login;
   // The server reads the sync first: it names the library revision a cached answer must match, and only a library an
   // import has written gets a first answer or a panel. Crawlers and link previews render pages too, so the server paints
-  // an import under way, a place in line, or a login ready to import, and the browser asks for the import. A refusal
-  // this browser saw for a login still unknown paints again, so a reload doesn't ask GitHub again.
+  // an import under way, a place in line, or a login ready to import, and the browser asks for the import. A login
+  // GitHub didn't have when Stargrep last looked paints as missing, with a 404. A refusal this browser saw for a login
+  // still unknown paints again, so a reload doesn't ask GitHub again.
   const sync = await client.syncStatus({ login: owner }).catch(() => null);
   const imported = sync !== null && sync.syncedAt !== null ? sync : null;
   const asking: Asking = {
@@ -176,6 +177,8 @@ const loadPage = async ({ login }: PageRequest, { viewer, config, repoStars }: S
   ]);
   const remembered =
     first === null && (sync === null || sync.state === "unknown") ? rememberedRefusal(cookies, owner) : undefined;
+  const refusal = sync?.state === "missing" ? "missing" : (remembered ?? null);
+  if (refusal === "missing") setResponseStatus(404);
   const view = storedView(cookies) ?? null;
   return {
     audience,
@@ -185,7 +188,7 @@ const loadPage = async ({ login }: PageRequest, { viewer, config, repoStars }: S
     defaultQuery,
     first,
     sync,
-    refusal: remembered ?? null,
+    refusal,
     opened,
     view,
   };
