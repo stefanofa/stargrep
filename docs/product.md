@@ -18,6 +18,8 @@ Repos, summaries, and embeddings are shared across accounts. Signing in claims y
 
 One oRPC contract serves the web client, REST under `/api`, and MCP under `/mcp`. `/openapi.json` describes the public REST procedures. Public procedures are `search`, `triggerSync`, `syncStatus`, `getRepo`, `stars`, and `config`. `viewer` and `library` require a session cookie and stay out of the public OpenAPI document and MCP tools.
 
+`/developers` shows how to add the MCP server to Claude Code, Codex, and Cursor. `/privacy` says what Stargrep stores and sends. Every page's footer links both, with the source.
+
 Search accepts only one account's stars as its scope. MCP currently exposes public tools without OAuth sign-in. API keys are not implemented.
 
 ## Data

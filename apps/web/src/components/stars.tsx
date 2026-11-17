@@ -436,8 +436,10 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   );
 }
 
-// The error pages and the sign-in problem ride in the engine chunk, so the landing entry never reaches Base UI. A
-// second lazy chunk would make the bundler move React, the router, and the UI kit out of the landing entry into a
-// shared chunk.
+// The text pages, the error pages, and the sign-in problem ride in the engine chunk, so the landing entry never reaches
+// Base UI. A second lazy chunk would make the bundler move React, the router, and the UI kit out of the landing entry
+// into a shared chunk, which costs the landing page about 2 KB gzipped.
+export { DevelopersPage } from "./developers-page.tsx";
+export { PrivacyPage } from "./privacy-page.tsx";
 export { Failure, NotFound } from "./problem-page.tsx";
 export { SignInProblem } from "./sign-in-problem.tsx";

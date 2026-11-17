@@ -131,3 +131,39 @@ test("a page that fails says so without its error, and offers a reload", async (
     loadSession = visitor;
   }
 });
+
+test("every page's footer links the source, the API, MCP, and privacy", async () => {
+  for (const path of ["/octo", "/privacy", "/not..valid"]) {
+    const footer = (await renderPage(path)).split("<footer")[1] ?? "";
+    const links = [...footer.matchAll(/<a [^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/g)].map(([, href, text]) => [
+      text,
+      href,
+    ]);
+    expect(links).toEqual([
+      ["@stefanofa", "https://x.com/stefanofa"],
+      ["source", "https://github.com/stefanofa/stargrep"],
+      ["api", "/developers#api"],
+      ["mcp", "/developers#mcp"],
+      ["privacy", "/privacy"],
+    ]);
+  }
+});
+
+test("/privacy is the privacy page, and a GitHub user called privacy keeps a page at /@privacy", async () => {
+  const privacy = await renderPage("/privacy");
+  expect(titleOf(privacy)).toBe("privacy · stargrep");
+  expect(privacy).toContain("what stargrep stores");
+  expect(titleOf(await renderPage("/@privacy"))).toBe("@privacy's stars · stargrep");
+});
+
+test("the developers page names the MCP endpoint and every tool the server lists", async () => {
+  const { anyoneCanCall, contract } = await import("@stargrep/api/contract");
+  const { mcpTools, mcpUrl } = await import("../src/lib/mcp.ts");
+  const served = Object.entries(contract)
+    .filter(([, procedure]) => anyoneCanCall(procedure))
+    .map(([name]) => name);
+  expect(mcpTools.map((tool): string => tool.name).sort()).toEqual(served.sort());
+  const html = await renderPage("/developers");
+  expect(html).toContain(`claude mcp add --transport http stargrep ${mcpUrl}`);
+  for (const tool of mcpTools) expect(html).toContain(`>${tool.name}</code>`);
+});

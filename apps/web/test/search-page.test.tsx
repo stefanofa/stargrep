@@ -887,7 +887,7 @@ describe("the search page in each state", () => {
     ]);
     const footer = page().getByRole("contentinfo");
     const maker = within(footer).getByRole("link", { name: "@stefanofa" });
-    expect(footer.textContent).toBe("made by @stefanofa");
+    expect(maker.parentElement?.textContent).toBe("made by @stefanofa");
     expect([maker.getAttribute("href"), maker.getAttribute("target")]).toEqual(["https://x.com/stefanofa", "_blank"]);
     const chips = page().getByRole("list", { name: "Example searches" });
     await user.click(within(chips).getByRole("button", { name: "terminal recorder" }));
