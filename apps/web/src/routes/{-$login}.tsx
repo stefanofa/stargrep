@@ -3,7 +3,7 @@ import { Failure } from "../components/problem-page.tsx";
 import { StarsPage } from "../components/stars-page.tsx";
 import { loadPage, pageHead } from "../lib/load-page.ts";
 import { validateParams } from "../lib/search-params.ts";
-import { guardLogin } from "../lib/stars-route.ts";
+import { guardHome, guardLogin } from "../lib/stars-route.ts";
 
 // The viewer's or the demo's stars at /, and anyone's at /{login}.
 export const Route = createFileRoute("/{-$login}")({
@@ -12,7 +12,8 @@ export const Route = createFileRoute("/{-$login}")({
   codeSplitGroupings: [],
   validateSearch: validateParams,
   beforeLoad: ({ params: { login }, search, location }) => {
-    if (login !== undefined) guardLogin(login, search, location.pathname);
+    if (login === undefined) guardHome(location.searchStr);
+    else guardLogin(login, search, location.pathname);
   },
   loader: async ({ params: { login }, parentMatchPromise }) =>
     loadPage({ login }, (await parentMatchPromise).loaderData),
