@@ -189,7 +189,10 @@ beforeEach(() => {
   );
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 const open = async (path: string, label: string | RegExp = "Search your stars", settle = true) => {
   // The root route loads the session, as the Worker does for the first page.
@@ -217,7 +220,6 @@ const open = async (path: string, label: string | RegExp = "Search your stars", 
 };
 
 const strip = () => document.querySelector("[role=status]")?.closest("p")?.textContent ?? "";
-const announced = () => page().getByRole("status").textContent;
 // What one breakpoint shows of an element: its text without the parts that breakpoint hides.
 const shownAt = (element: Element, width: "phone" | "desktop") => {
   const copy = element.cloneNode(true) as Element;
@@ -373,11 +375,13 @@ describe("the search page in each state", () => {
     server.status = status({ state: "queued", syncedAt: null, enrichment: arriving });
     await open("/", "Search your stars", false);
     await waitFor(() => expect(strip()).toContain("6 of 10"));
-    expect(announced()).toBe("importing your stars");
+    expect(shownAt(page().getByRole("status"), "desktop")).toBe("importing your stars");
+    // The owner pill says whose stars on phones, so the status there doesn't.
+    expect(shownAt(page().getByRole("status"), "phone")).toBe("importing");
     server.repos = [...server.repos, repo(7, "charmbracelet", "bubbletea", "A TUI framework.")];
     await poll();
     await waitFor(() => expect(strip()).toContain("7 of 10"));
-    expect(announced()).toBe("importing your stars");
+    expect(shownAt(page().getByRole("status"), "desktop")).toBe("importing your stars");
   });
 
   test("a failed check on a synced library says so and offers a retry", async () => {
@@ -942,5 +946,64 @@ describe("the search page in each state", () => {
     );
     expect(strip()).toContain("couldn't reach github");
     expect(page().getAllByRole("button", { name: "Try again" }).length).toBeGreaterThan(0);
+  });
+});
+
+describe("whose stars the page searches", () => {
+  const pill = () => page().getAllByRole("button", { name: /^Whose stars: / })[0] as HTMLElement;
+  const accounts = () =>
+    within(page().getByRole("list", { name: "Synced accounts" }))
+      .getAllByRole("button")
+      .map((person) => [within(person).getByText(/^@/).textContent, within(person).queryByText("you") && "you"]);
+
+  test("a signed-in viewer's own page has the pill, and it goes to anyone's stars", async () => {
+    const user = userEvent.setup();
+    const router = await open("/");
+    expect(pill().getAttribute("aria-label")).toBe("Whose stars: @junodev. Change");
+    await user.click(pill());
+    expect(accounts()).toEqual([
+      ["@junodev", "you"],
+      ["@stefanofa", null],
+    ]);
+    await user.type(page().getByRole("textbox", { name: "search anyone's stars" }), "octodone");
+    await user.click(page().getByRole("button", { name: "go" }));
+    await page().findByRole("searchbox", { name: "Search @octodone's stars" });
+    expect(router.state.location.pathname).toBe("/octodone");
+  });
+
+  test("the pill offers the logins this browser looked at, newest first, but not one GitHub doesn't know", async () => {
+    const user = userEvent.setup();
+    for (const login of ["octodone", "octosync"]) {
+      server.status = status({ login });
+      await open(`/${login}`, `Search @${login}'s stars`);
+      cleanup();
+    }
+    server.refusals["nobody-here-x"] = "LOGIN_NOT_FOUND";
+    server.status = status({ login: "nobody-here-x", state: "unknown", syncedAt: null, requestedAt: null });
+    await open("/nobody-here-x", "Search @nobody-here-x's stars");
+    await waitFor(() => expect(strip()).toContain("no such github user"));
+    cleanup();
+    server.status = status({});
+    await open("/");
+    await user.click(pill());
+    expect(accounts().map(([login]) => login)).toEqual(["@junodev", "@octosync", "@octodone", "@stefanofa"]);
+  });
+
+  test("signing in comes back to the page it started from", async () => {
+    const user = userEvent.setup();
+    server.signedIn = false;
+    server.status = status({ login: "octosync" });
+    const path = "/octosync?q=terminal&error=access_denied";
+    history.replaceState(null, "", path);
+    await open(path, "Search @octosync's stars");
+    using sent = spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ url: "https://github.com/login" }));
+    using _ = spyOn(location, "assign").mockImplementation(() => {});
+    await user.click(within(page().getByRole("alert")).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(sent).toHaveBeenCalled());
+    const [url, init] = sent.mock.calls[0] ?? [];
+    expect([url, JSON.parse(String(init?.body))]).toEqual([
+      "/auth/sign-in/social",
+      { provider: "github", callbackURL: "/octosync?q=terminal", errorCallbackURL: "/octosync?q=terminal" },
+    ]);
   });
 });

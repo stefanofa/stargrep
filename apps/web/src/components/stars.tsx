@@ -18,12 +18,14 @@ import { Link, useHydrated, useNavigate, useRouter, useSearch } from "@tanstack/
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { policyOf, starredOf, whoseOf } from "../lib/audience.ts";
 import { keywordTerms, normalize, searchText } from "../lib/keyword.ts";
 import { getLibrary, type Library } from "../lib/library-collection.ts";
-import { type PageData, type PageRequest, pageOwner, type Session } from "../lib/page-data.ts";
+import { askedPage, type PageData, type PageRequest, type Session } from "../lib/page-data.ts";
 import { hitsOf, liveView } from "../lib/page-view.ts";
 import { closesBack } from "../lib/panel-history.ts";
 import { now, startsIn, toDetail, withLinks } from "../lib/present.ts";
+import { rememberLogin } from "../lib/recent-logins.ts";
 import { withReply } from "../lib/results.ts";
 import { useReveal } from "../lib/reveal.ts";
 import { playSurprise } from "../lib/reveal-timing.ts";
@@ -35,7 +37,7 @@ import { libraryRevision, nothingSynced } from "../lib/sync-status.ts";
 import { libraryTrouble, type Trouble } from "../lib/trouble.ts";
 import { useSemanticSearch } from "../lib/use-semantic.ts";
 import { useSync } from "../lib/use-sync.ts";
-import { theirs, whoseOf } from "../lib/whose.ts";
+import { theirs } from "../lib/whose.ts";
 import { AccountMenu } from "./account-menu.tsx";
 import { HeaderEnd } from "./github-star-link.tsx";
 import { Hero, TryChips } from "./landing-hero.tsx";
@@ -44,13 +46,11 @@ import { OwnerPill } from "./owner-pill.tsx";
 
 // A navigation in the browser starts from the session the server loaded. The page reads the rest once it mounts.
 export const pageFor = (request: PageRequest, { viewer, config, repoStars, site }: Session): PageData => {
-  const { owner, own, query, defaultQuery } = pageOwner(viewer, config, request);
+  const { audience, query, defaultQuery } = askedPage(viewer, config, request);
   return {
-    viewer,
+    audience,
     repoStars,
     site,
-    owner,
-    own,
     config,
     query,
     defaultQuery,
@@ -103,17 +103,17 @@ function Waiting({
   view,
   searching,
   arriving,
-  visitor,
+  landing,
 }: {
   view: View;
   searching: boolean;
   arriving: Arriving | undefined;
-  visitor: boolean;
+  landing: boolean;
 }) {
   return searching ? (
-    <Results view={view} groups={[{ key: "all", results: [], pending: 4 }]} hero={visitor ? "card" : "butter"} />
+    <Results view={view} groups={[{ key: "all", results: [], pending: 4 }]} hero={landing ? "card" : "butter"} />
   ) : (
-    <LibraryPlaceholder view={view} arriving={arriving} butter={!visitor} />
+    <LibraryPlaceholder view={view} arriving={arriving} butter={!landing} />
   );
 }
 
@@ -175,11 +175,13 @@ function useWhole(library: Library | undefined) {
 // loads once the page is hydrated. A login with nothing synced has an empty library, so the server already paints its
 // state: ready to import, in line, or the first stars on their way.
 export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose) => void }) {
-  const { owner, first } = data;
-  const whose = whoseOf(data);
+  const { audience, first } = data;
+  const owner = audience.owner.login;
+  const policy = policyOf(audience);
+  const whose = whoseOf(audience);
   const hydrated = useHydrated();
   const empty = nothingSynced(first?.sync ?? data.sync);
-  const library = hydrated ? getLibrary(owner, data.own, empty) : undefined;
+  const library = hydrated ? getLibrary(owner, policy.library, empty) : undefined;
   const collection = library?.collection;
   const [retrying, setRetrying] = useState(false);
   const [at] = useState(() => first?.at ?? now());
@@ -206,14 +208,20 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   const whole = useWhole(library);
   const { watch, retry } = useSync(
     owner,
-    data.own,
+    policy.syncOnOpen,
     () => library?.reload(),
     first?.sync ?? data.sync ?? undefined,
     data.refusal ?? undefined,
   );
   const sync = watch.kind === "watching" ? watch.status : undefined;
+  // The owner pill offers the logins this browser looked at, once stargrep knows their stars. A login GitHub doesn't
+  // know never gets that far. The pill lists the viewer's own login anyway.
+  const known = sync !== undefined && sync.state !== "unknown";
+  useEffect(() => {
+    if (known && audience.by !== "owner") rememberLogin(owner);
+  }, [known, audience.by, owner]);
   const readAt = watch.kind === "watching" ? watch.at : undefined;
-  const starred = data.own ? (data.viewer?.starredCount ?? null) : (sync?.starredTotal ?? null);
+  const starred = starredOf(audience, sync);
   const stage = stageOf({ sync, entries, starred });
   const estimate = useTimeLeft(stage, readAt);
   const timeLeft =
@@ -240,12 +248,8 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   const trouble: Trouble | undefined =
     watch.kind !== "watching" ? watch.kind : isLoadingError ? libraryTrouble(library?.failure()) : undefined;
   const surprised = useSurprise(query, semantic.kind === "answered" && hits.length > 0);
-  const visitor = data.viewer === null;
   const page = pageView({
-    owner,
-    own: data.own,
-    visitor,
-    demoLogin: data.config.demoLogin,
+    audience,
     query,
     stage,
     live: liveView({
@@ -330,7 +334,9 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           </EmptyTile>
         );
       case "loading":
-        return <Waiting view={view} searching={current.searching} arriving={current.arriving} visitor={visitor} />;
+        return (
+          <Waiting view={view} searching={current.searching} arriving={current.arriving} landing={policy.landing} />
+        );
       case "library":
         return (
           <LibraryView
@@ -341,7 +347,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
             search={links}
             arriving={current.arriving}
             pose={page.pose}
-            butter={!visitor}
+            butter={!policy.landing}
             onOpen={open}
           />
         );
@@ -350,7 +356,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           <Results
             view={view}
             groups={withLinks(current.groups, links)}
-            hero={visitor ? "card" : "butter"}
+            hero={policy.landing ? "card" : "butter"}
             onOpen={open}
           />
         );
@@ -379,7 +385,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           label={`Search ${theirs(whose)}`}
           placeholder={page.placeholder}
           className={dock}
-          owner={data.own ? undefined : <OwnerPill owner={owner} viewer={data.viewer} config={data.config} />}
+          owner={<OwnerPill audience={audience} config={data.config} />}
           progress={page.progress}
           status={
             <StatusLine
@@ -400,9 +406,8 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           }
           controls={
             <>
-              {/* With an owner pill in the phone strip there is no room for the sort trigger, so phones sort by the
-                  default there. */}
-              <div className={data.own ? "contents" : "contents max-sm:hidden"}>
+              {/* The owner pill takes the phone strip's room for the sort trigger, so phones sort by the default. */}
+              <div className="contents max-sm:hidden">
                 <SortMenu value={sort} onValueChange={setSort} options={searching ? searchSorts : librarySorts} />
               </div>
               <ViewToggle value={view} onValueChange={setView} />
@@ -410,7 +415,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           }
         />
       </div>
-      {visitor && (
+      {policy.landing && (
         <TryChips
           examples={data.config.examples.filter((example) => normalize(example) !== normalize(query))}
           onPick={search}

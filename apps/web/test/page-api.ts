@@ -8,6 +8,7 @@ import { NotSignedIn, Viewers } from "@stargrep/api/viewers";
 import { QueryPlan, Search } from "@stargrep/core/search";
 import { SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
+import { UserId } from "@stargrep/db/auth-schema";
 import { accountRow, makeDb, repo as repoRow } from "@stargrep/db/testing";
 import { GitHubAccountId, Login, RepoId, RepoName } from "@stargrep/github/schemas";
 import * as DateTime from "effect/DateTime";
@@ -21,6 +22,7 @@ import { testServer } from "./serve.ts";
 // pages, of which mobile-mcp answers the demo query and asciinema, on the second page, is new and not read yet; octodone
 // is synced with the same three stars and no answer by meaning; octosync is importing, two stars in; every other login
 // is unknown, and ghost-login is no one on GitHub. Each process keeps its own record of the imports it was asked for.
+// With STARGREP_SIGNED_IN set to one of those logins, every request comes from that account, signed in.
 
 const at = DateTime.makeUnsafe("2026-11-01T08:00:00Z");
 
@@ -64,6 +66,21 @@ const accountOf = (login: string) => {
           starsSyncedAt: found.synced ? at : null,
         }),
       );
+};
+
+// Each request reads the variable, so a test can sign in its own process too.
+const signedIn = () => {
+  const login = process.env.STARGREP_SIGNED_IN;
+  const account = login === undefined ? Option.none() : accountOf(login);
+  return Option.map(account, (found) => ({ userId: UserId.make(`user-${found.id}`), account: found }));
+};
+
+const viewers = () => {
+  const viewer = signedIn();
+  return Viewers.of({
+    current: Effect.fromOption(viewer).pipe(Effect.mapError(() => new NotSignedIn())),
+    signedIn: Effect.succeed(Option.map(viewer, ({ userId }) => userId)),
+  });
 };
 
 export const requested: Array<string> = [];
@@ -130,6 +147,14 @@ export const holdSecondPage = () => {
   return { arrived: arrived.promise, release, [Symbol.dispose]: release };
 };
 
+const entriesOf = (id: number) =>
+  (Object.values(accounts).find((account) => account.id === id)?.repos ?? []).map((each, index) => ({
+    repo: each,
+    starredAt: DateTime.subtract(at, { days: index }),
+    stars: each.pushedAt === null ? null : 1000 * (index + 1),
+    read: each.pushedAt !== null,
+  }));
+
 const db = makeDb({
   // Page tests test pages, not limits, so every turn in a rate line starts at once.
   rateLines: {
@@ -143,18 +168,21 @@ const db = makeDb({
         released: 0,
       }),
   },
-  accounts: { byLogin: (login: Login) => Effect.succeed(accountOf(login)) },
+  accounts: {
+    byLogin: (login: Login) => Effect.succeed(accountOf(login)),
+    claimedBy: (userId) =>
+      Effect.succeed(
+        Option.map(
+          Option.filter(signedIn(), (viewer) => viewer.userId === userId),
+          (viewer) => viewer.account,
+        ),
+      ),
+  },
   stars: {
+    library: (id: number) => Effect.succeed(entriesOf(id)),
     // A hydration test can hold page two until it has checked the first page.
     page: (id: number, { after }: { after: Option.Option<unknown> }) => {
-      const entries = (Object.values(accounts).find((account) => account.id === id)?.repos ?? []).map(
-        (each, index) => ({
-          repo: each,
-          starredAt: DateTime.subtract(at, { days: index }),
-          stars: each.pushedAt === null ? null : 1000 * (index + 1),
-          read: each.pushedAt !== null,
-        }),
-      );
+      const entries = entriesOf(id);
       const last = entries[perPage - 1];
       return Option.isNone(after)
         ? Effect.succeed({
@@ -186,7 +214,7 @@ const layerWith = (search: Layer.Layer<Search.Search>) => (request: Request) =>
     syncRequests,
     Layer.succeed(Db.Db, db),
     Layer.succeed(RateLimiter, RateLimiter.of({ acquire: Effect.fn("RateLimiter.acquire")(() => Effect.void) })),
-    Layer.succeed(Viewers, Viewers.of({ current: Effect.fail(new NotSignedIn()), signedIn: Effect.succeedNone })),
+    Layer.succeed(Viewers, viewers()),
     Layer.succeed(IconHost, IconHost.of({ origin: new URL(request.url).origin })),
     Layer.succeed(Caller, Caller.of({ key: Db.CallerKey.make("caller-page"), address: "192.0.2.1" })),
   );

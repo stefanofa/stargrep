@@ -1,9 +1,10 @@
 import type { PipPose, Result, ResultGroup, StatusIcon, TileProgress } from "@stargrep/ui";
+import { type Audience, type Owner, policyOf, whoseOf } from "./audience.ts";
 import { keywordTerms, normalize } from "./keyword.ts";
 import type { LibraryRepo, SyncStatus } from "./rpc.ts";
 import { readingIncomplete } from "./sync-status.ts";
 import type { Trouble } from "./trouble.ts";
-import { formatCount, sameLogin, starCount, theirs, type Whose, whoseOf } from "./whose.ts";
+import { formatCount, starCount, theirs, type Whose } from "./whose.ts";
 
 export const factsPending = (repo: Pick<LibraryRepo, "stars" | "pushedAt">) =>
   repo.stars === null && repo.pushedAt === null;
@@ -217,7 +218,7 @@ const importingStatus = (stage: Importing, timeLeft: string | undefined, whose: 
       return {
         icon: "paused",
         label: `ready to import ${theirs(whose)}`,
-        ...(whose.own ? {} : { phoneLabel: "ready to import" }),
+        phoneLabel: "ready to import",
       };
     case "in-line":
       return {
@@ -229,7 +230,7 @@ const importingStatus = (stage: Importing, timeLeft: string | undefined, whose: 
       return {
         icon: "busy",
         label: `importing ${theirs(whose)}`,
-        ...(whose.own ? {} : { phoneLabel: "importing" }),
+        phoneLabel: "importing",
         detail:
           stage.total === null
             ? `${formatCount(stage.done)} imported so far`
@@ -254,7 +255,7 @@ const browsing = (stage: Stage, synced: string | undefined, timeLeft: string | u
       return {
         icon: "busy",
         label: `reading ${theirs(whose)}`,
-        ...(whose.own ? {} : { phoneLabel: "reading" }),
+        phoneLabel: "reading",
         detail: `${formatCount(stage.read)} of ${formatCount(stage.total)} understood · names and descriptions already searchable`,
       };
     case "ready":
@@ -545,9 +546,9 @@ export interface HeroCopy {
 
 // What the hero says above a visitor's search. While someone's stars import, the butter tile becomes the claim tile.
 // The status line under it carries the counts and times, so the subtitle stays put while they tick.
-const heroCopy = (stage: Stage, troubled: boolean, owner: string, demoLogin: string): HeroCopy => {
+const heroCopy = (stage: Stage, troubled: boolean, owner: Owner): HeroCopy => {
   if (troubled) return { subtitle: ["try any username."], butter: { kind: "join" } };
-  const mention = { login: owner };
+  const mention = { login: owner.login };
   if (stage.name === "importing") {
     const progress = stage.total === null ? 0 : stage.done / Math.max(1, stage.total);
     const rest = {
@@ -558,7 +559,7 @@ const heroCopy = (stage: Stage, troubled: boolean, owner: string, demoLogin: str
     return { subtitle: [mention, rest], butter: { kind: "claim", progress } };
   }
   return {
-    subtitle: sameLogin(owner, demoLogin)
+    subtitle: owner.demo
       ? ["live results from ", mention, ", our demo account. try any username."]
       : [mention, "'s starred repos, searched in plain words. try any username."],
     butter: { kind: "join" },
@@ -570,16 +571,13 @@ const idlePlaceholder = "the rust tui library I starred last year";
 export interface PageView extends SearchView {
   // The page still shows the answer the server painted.
   readonly painted: boolean;
-  // Only a signed-out visitor sees the hero.
+  // Only an audience with the landing sees the hero.
   readonly hero: HeroCopy | undefined;
   readonly placeholder: string;
 }
 
 export interface PageInputs {
-  readonly owner: string;
-  readonly own: boolean;
-  readonly visitor: boolean;
-  readonly demoLogin: string;
+  readonly audience: Audience;
   readonly query: string;
   readonly stage: Stage;
   // What the library shows for the query, once it has loaded.
@@ -596,10 +594,7 @@ export interface PageInputs {
 // every page, since a view of the first page alone can read differently, such as "found 20 so far" for a library still
 // reading. Then the library's own view, once it has loaded.
 export const pageView = ({
-  owner,
-  own,
-  visitor,
-  demoLogin,
+  audience,
   query,
   stage,
   live,
@@ -608,18 +603,18 @@ export const pageView = ({
   trouble,
   surprised,
 }: PageInputs): PageView => {
-  const whose = whoseOf({ owner, own });
+  const whose = whoseOf(audience);
   const painted =
     first !== undefined && !(library.ready && library.whole) && normalize(query) === normalize(first.query);
   const shown = painted ? first.view : library.ready ? live : undefined;
   const page = {
     painted,
-    hero: visitor ? heroCopy(stage, trouble !== undefined, owner, demoLogin) : undefined,
+    hero: policyOf(audience).landing ? heroCopy(stage, trouble !== undefined, audience.owner) : undefined,
     placeholder: stage.name === "importing" ? "search what has arrived" : idlePlaceholder,
     progress: shown?.progress,
   };
   if (trouble !== undefined) {
-    const { status, heading, detail, pose, retry } = troubleCopy(trouble, owner, whose);
+    const { status, heading, detail, pose, retry } = troubleCopy(trouble, audience.owner.login, whose);
     return { ...page, status, pose, body: { kind: "trouble", heading, detail, retry } };
   }
   const calm = (shown ?? live).pose;

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Result } from "@stargrep/ui";
+import type { Audience, Owner } from "../src/lib/audience.ts";
 import {
   type PageInputs,
   pageView,
@@ -172,6 +173,7 @@ describe("browsing", () => {
     expect(state.status).toEqual({
       icon: "busy",
       label: "importing your stars",
+      phoneLabel: "importing",
       detail: "1,204 of 1,776 · about 6 minutes left",
     });
     expect(state.progress).toEqual({
@@ -196,6 +198,7 @@ describe("browsing", () => {
     expect(state.status).toEqual({
       icon: "busy",
       label: "reading your stars",
+      phoneLabel: "reading",
       detail: "412 of 1,776 understood · names and descriptions already searchable",
     });
     expect(state.progress).toEqual({ value: 412, max: 1776, label: "reading your stars", text: "412 of 1,776 read" });
@@ -462,12 +465,17 @@ const importingFor = (extra: Partial<Extract<Stage, { name: "importing" }>> = {}
   ...extra,
 });
 
+const juno = { login: "juno", name: null, avatarUrl: null, starredCount: 6 };
+const anyone = (owner: Partial<Owner> = {}): Audience => ({
+  by: "anyone",
+  owner: { login: "octo", demo: false, ...owner },
+});
+const signedIn: Audience = { by: "signed-in", viewer: juno, owner: { login: "octo", demo: false } };
+const ownPage: Audience = { by: "owner", viewer: juno, owner: { login: "juno", demo: false } };
+
 const page = (extra: Partial<PageInputs> = {}) =>
   pageView({
-    owner: "octo",
-    own: false,
-    visitor: true,
-    demoLogin: "stefanofa",
+    audience: anyone(),
     query: "",
     stage: ready,
     live: view(ready),
@@ -500,7 +508,9 @@ describe("what the page shows", () => {
     expect(loading.body).toEqual({ kind: "loading", searching: true, arriving: { total: 28 } });
     expect(loading.progress).toBeUndefined();
     expect(loading.painted).toBe(false);
-    expect(page({ own: true, library: { ready: false, whole: false } }).status.label).toBe("loading your stars");
+    expect(page({ audience: ownPage, library: { ready: false, whole: false } }).status.label).toBe(
+      "loading your stars",
+    );
   });
 
   test("the server's answer holds until the library has every page, then the live view takes over", () => {
@@ -536,12 +546,13 @@ const octo = { login: "octo" };
 
 describe("the hero above a visitor's search", () => {
   test("shows to visitors only", () => {
-    expect(hero(ready, { visitor: false })).toBeUndefined();
+    expect(hero(ready, { audience: signedIn })).toBeUndefined();
+    expect(hero(ready, { audience: ownPage })).toBeUndefined();
   });
 
-  test("introduces the demo account, case aside", () => {
-    expect(hero(ready, { owner: "StefanoFA" })).toEqual({
-      subtitle: ["live results from ", { login: "StefanoFA" }, ", our demo account. try any username."],
+  test("introduces the demo account", () => {
+    expect(hero(ready, { audience: anyone({ login: "stefanofa", demo: true }) })).toEqual({
+      subtitle: ["live results from ", { login: "stefanofa" }, ", our demo account. try any username."],
       butter: { kind: "join" },
     });
   });
@@ -614,7 +625,9 @@ describe("a page in trouble", () => {
 
   test("says whose stars, and your stars on the viewer's own page", () => {
     expect(troubleBody("load-failed").heading).toBe("stargrep couldn't load @octo's stars");
-    expect(troubleBody("load-failed", { owner: "juno", own: true }).heading).toBe("stargrep couldn't load your stars");
-    expect(troubleBody("missing", { owner: "nobody-x" }).heading).toBe("github has no one called @nobody-x");
+    expect(troubleBody("load-failed", { audience: ownPage }).heading).toBe("stargrep couldn't load your stars");
+    expect(troubleBody("missing", { audience: anyone({ login: "nobody-x" }) }).heading).toBe(
+      "github has no one called @nobody-x",
+    );
   });
 });

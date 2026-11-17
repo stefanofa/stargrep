@@ -41,11 +41,11 @@ export function StarsPage({ data, error }: { data: PageData; error?: string | un
         <>
           <Wordmark pose={error === undefined ? pose : "scared"} />
           {/* A visitor signs in from the butter tile in the hero, so the header doesn't ask twice. */}
-          {data.viewer === null ? (
+          {data.audience.by === "anyone" ? (
             star
           ) : (
             <Suspense fallback={<HeaderEnd star={star} account={<Skeleton className="size-11 shrink-0" />} />}>
-              <HeaderControls viewer={data.viewer} star={star} />
+              <HeaderControls viewer={data.audience.viewer} star={star} />
             </Suspense>
           )}
         </>
@@ -53,7 +53,7 @@ export function StarsPage({ data, error }: { data: PageData; error?: string | un
     >
       {error !== undefined && <SignInProblem error={error} />}
       <Suspense fallback={null}>
-        <Stars key={loginKey(data.owner)} data={data} onPose={setPose} />
+        <Stars key={loginKey(data.audience.owner.login)} data={data} onPose={setPose} />
       </Suspense>
     </Page>
   );
