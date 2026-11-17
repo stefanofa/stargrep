@@ -16,7 +16,8 @@ export const Route = createFileRoute("/{-$login}")({
   },
   loader: async ({ params: { login }, parentMatchPromise }) =>
     loadPage({ login }, (await parentMatchPromise).loaderData),
-  head: ({ loaderData, params, match }) => pageHead(loaderData, params.login === undefined, match.search.q),
+  head: ({ loaderData, params, match }) =>
+    pageHead(loaderData, params.login === undefined, { pathname: match.pathname, query: match.search.q }),
   component: function Stars() {
     return <StarsPage data={Route.useLoaderData()} error={Route.useSearch().error} />;
   },
