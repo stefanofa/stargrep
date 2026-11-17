@@ -68,6 +68,7 @@ export class GitHub extends Context.Service<
     readonly viewer: Effect.Effect<Viewer.SignedInViewer, GitHubError>;
     // None when GitHub has no user or org with the login.
     readonly owner: (login: Login) => Effect.Effect<Option.Option<Owner.Owner>, GitHubError>;
+    // Newest first, and never past the last page GitHub serves, so a list longer than that ends early.
     readonly starPages: (login: Login) => Stream.Stream<ReadonlyArray<Star>, GitHubError>;
     readonly stars: (login: Login) => Stream.Stream<Star, GitHubError>;
     readonly repoFacts: (ids: ReadonlyArray<RepoNodeId>) => Effect.Effect<ReadonlyArray<RepoFacts>, GitHubError>;
@@ -218,7 +219,10 @@ const make = Effect.gen(function* () {
 
   const starPages = (login: Login) =>
     Stream.paginate(1, (page: number) =>
-      Effect.map(starPage(login, page), ([stars, next]) => [[stars], next] as const),
+      Effect.map(
+        starPage(login, page),
+        ([stars, next]) => [[stars], Option.filter(next, (number) => number <= StarList.lastPage)] as const,
+      ),
     );
 
   const stars = (login: Login) => Stream.flattenIterable(starPages(login));

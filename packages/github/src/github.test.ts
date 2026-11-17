@@ -20,6 +20,7 @@ import { blobOid } from "./blob-oid.ts";
 import * as Fake from "./github.fixture.ts";
 import * as GitHub from "./github.ts";
 import { type BudgetShare, Login, ObjectId, RepoId, RepoName, type RepoNodeId } from "./schemas.ts";
+import * as StarList from "./star-list.ts";
 
 const login = "octocat" as Login;
 
@@ -104,6 +105,26 @@ describe("stars", () => {
       expect(first?.url.searchParams.get("direction")).toBe("desc");
       expect(first?.headers.accept).toBe("application/vnd.github.star+json");
       expect(first?.headers.authorization).toBe(`Bearer ${Fake.token}`);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("stops at the last page GitHub serves even when that page links to another", () => {
+    const fake = Fake.layer((sent) => {
+      const page = Number(sent.url.searchParams.get("page"));
+      return page > StarList.lastPage
+        ? { status: 422, headers: Fake.rateLimitHeaders(4000) }
+        : {
+            body: [starItem(page)],
+            headers: {
+              ...Fake.rateLimitHeaders(4000),
+              link: `<https://api.github.com/user/1/starred?per_page=100&page=${page + 1}>; rel="next"`,
+            },
+          };
+    });
+    return Effect.gen(function* () {
+      const pages = yield* Stream.runCollect((yield* GitHub.GitHub).starPages(login));
+      expect(pages).toHaveLength(StarList.lastPage);
+      expect(fake.sent.at(-1)?.url.searchParams.get("page")).toBe(String(StarList.lastPage));
     }).pipe(Effect.provide(fake.layer));
   });
 

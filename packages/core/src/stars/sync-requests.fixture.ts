@@ -175,7 +175,9 @@ export const synced = Effect.fn("synced")(function* (login: string, syncedAt: nu
 });
 
 export const fullSynced = (syncedAt: number) =>
-  Db.Db.use((db) => db.stars.applySnapshot({ accountId: 583231 as GitHubAccountId, stars: [], at: at(syncedAt) }));
+  Db.Db.use((db) =>
+    db.stars.applySnapshot({ accountId: 583231 as GitHubAccountId, stars: [], at: at(syncedAt), complete: true }),
+  );
 
 export const finished = (login: string) =>
   Effect.flatMap(DateTime.now, (now) =>

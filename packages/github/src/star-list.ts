@@ -40,6 +40,9 @@ export const request = (login: Login, page: number) =>
     HttpClientRequest.accept("application/vnd.github.star+json"),
   );
 
+// GitHub answers any page past this one with 422, "pagination is limited for this resource", whatever the list holds.
+export const lastPage = 400;
+
 const nextLink = /<([^>]*)>;\s*rel="next"/;
 const pageNumber = /^[1-9]\d*$/;
 

@@ -683,7 +683,7 @@ const syncedAccount = Effect.gen(function* () {
     userId: ada.userId,
     starredCount: 2431,
   });
-  yield* db.stars.applySnapshot({ accountId: id, stars: [], at: lastSync });
+  yield* db.stars.applySnapshot({ accountId: id, stars: [], at: lastSync, complete: true });
   yield* db.accounts.recordStarSync({ accountId: id, at: lastSync });
 });
 

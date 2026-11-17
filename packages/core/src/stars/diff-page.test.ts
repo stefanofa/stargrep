@@ -90,13 +90,15 @@ describe("report", () => {
     const stored = DiffPage.stored([row(1, 1), row(2, 2), row(3, 3)], Option.none());
     const [, page] = diff(stored, [listed(9, 20), listed(1, 15), listed(2, 2)]);
     const written = { ...page, starred: [9 as RepoId], enqueued: 4 };
-    expect(DiffPage.report(stored, [written], { starred: [], unstarred: [3 as RepoId] }, false)).toEqual({
+    const check = { shifted: false, partial: false };
+    expect(DiffPage.report(stored, [written], { starred: [], unstarred: [3 as RepoId] }, check)).toEqual({
       listed: 3,
       added: 1,
       unchanged: 2,
       unstarred: 1,
       enqueued: 4,
       shifted: false,
+      partial: false,
     });
   });
 });
