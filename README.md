@@ -4,6 +4,8 @@
 
 Search the public repos any GitHub account starred, in plain language.
 
+[![Stargrep searching @stefanofa's starred repos for "let an ai agent control my iphone"](design/assets/screenshot.png)](https://stargrep.com)
+
 - [Product spec](docs/product.md)
 - [Architecture](docs/architecture.md)
 - [Effect conventions](docs/effect.md)
