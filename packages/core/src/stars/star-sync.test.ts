@@ -1,4 +1,6 @@
 import { expect } from "bun:test";
+import * as Embeddings from "@stargrep/ai/embeddings";
+import * as AiFake from "@stargrep/ai/fake";
 import * as Db from "@stargrep/db";
 import { UserId } from "@stargrep/db/auth-schema";
 import type { EmbeddingModelId } from "@stargrep/db/embedding";
@@ -9,10 +11,13 @@ import * as it from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
 import * as RateLine from "../limits/rate-line.ts";
 import * as EnrichQueue from "../repos/enrich-queue.ts";
+import * as MetadataEmbeddings from "../repos/metadata-embeddings.ts";
 import * as OwnerLookup from "./owner-lookup.ts";
 import * as StarSync from "./star-sync.ts";
 import * as SyncQueue from "./sync-queue.ts";
@@ -26,6 +31,8 @@ const syncTime = Date.parse("2026-11-04T00:00:00Z");
 interface Starred {
   readonly repo: number;
   readonly at: number;
+  readonly description?: string;
+  readonly topics?: ReadonlyArray<string>;
 }
 
 type BeforePage = (page: number, list: Array<Starred>) => Fake.Reply | undefined;
@@ -36,7 +43,30 @@ const fixture = () => {
   const orgs = new Set<string>();
   const queue = EnrichQueue.layerMemory();
   const sent = queue.sent;
-  const hooks: { beforePage: BeforePage } = { beforePage: () => undefined };
+  const hooks: { beforePage: BeforePage; beforeEmbed: Effect.Effect<void> } = {
+    beforePage: () => undefined,
+    beforeEmbed: Effect.void,
+  };
+  const embedded: Array<string> = [];
+  const embeddings = Layer.succeed(
+    Embeddings.Embeddings,
+    Embeddings.make({
+      provider: "test",
+      model: { ...AiFake.hashEmbeddingModel, id: embeddingModel },
+      timeout: Duration.seconds(30),
+      run: (values) =>
+        Effect.andThen(
+          hooks.beforeEmbed,
+          Effect.sync(() => {
+            embedded.push(...values);
+            return {
+              vectors: values.map(() => Array.from({ length: 1024 }, (_, at) => (at === 0 ? 1 : 0))),
+              tokens: 1,
+            };
+          }),
+        ),
+    }),
+  );
 
   const github = Fake.layer((request) => {
     if (request.url.pathname === "/graphql") {
@@ -63,7 +93,7 @@ const fixture = () => {
     return (
       hooks.beforePage(page, stars) ??
       Fake.starPage(
-        stars.map((star) => ({ repo: star.repo, starredAt: DateTime.formatIso(DateTime.makeUnsafe(star.at)) })),
+        stars.map(({ at, ...star }) => ({ ...star, starredAt: DateTime.formatIso(DateTime.makeUnsafe(at)) })),
         request,
       )
     );
@@ -74,6 +104,7 @@ const fixture = () => {
       Layer.provideMerge(database),
       Layer.provideMerge(github.layer),
       Layer.provideMerge(queue.layer),
+      Layer.provideMerge(embeddings),
     );
 
   const query = (text: string, values: ReadonlyArray<unknown> = []) =>
@@ -85,8 +116,10 @@ const fixture = () => {
       users.clear();
       orgs.clear();
       sent.length = 0;
+      embedded.length = 0;
       github.sent.length = 0;
       hooks.beforePage = beforePage;
+      hooks.beforeEmbed = Effect.void;
       yield* query("truncate github_accounts, repos, stars cascade");
       yield* TestClock.setTime(syncTime);
     });
@@ -559,6 +592,102 @@ const fixture = () => {
         lists.set("ada", newestFirst(2));
         yield* starSync.syncLogin({ login: "ada" as Login, mode: "incremental" });
         expect(sent.map((message) => "userId" in message)).toEqual([false, false]);
+      }),
+    );
+
+    test.effect("embeds a new repo from the listed metadata, unless it lists only a name", () =>
+      Effect.gen(function* () {
+        yield* reset();
+        const id = yield* account(21, "meta", [
+          { repo: 1, at: syncTime - minute, description: "A command-line fuzzy finder", topics: ["cli", "fzf"] },
+          { repo: 2, at: syncTime - 2 * minute },
+        ]);
+        yield* sync(id);
+        expect(embedded).toEqual(["owner/repo-1\nA command-line fuzzy finder\ncli, fzf"]);
+        expect(
+          yield* query(
+            "select id::int, description, topics, embedding_source, embedding is not null as embedded from repos order by id",
+          ),
+        ).toEqual([
+          {
+            id: 1,
+            description: "A command-line fuzzy finder",
+            topics: ["cli", "fzf"],
+            embedding_source: "metadata",
+            embedded: true,
+          },
+          { id: 2, description: null, topics: [], embedding_source: "summary", embedded: false },
+        ]);
+        expect(sentRepos().toSorted(byNumber)).toEqual([1, 2]);
+      }),
+    );
+
+    test.effect("keeps a read repo's facts, and embeds a listed repo again only when its metadata moves", () =>
+      Effect.gen(function* () {
+        yield* reset();
+        const list: Array<Starred> = [
+          { repo: 1, at: syncTime - minute, description: "Old words", topics: ["b", "a"] },
+          { repo: 2, at: syncTime - 2 * minute, description: "Listed words" },
+        ];
+        const id = yield* account(22, "refill", list);
+        yield* query(
+          "insert into repos (id, owner, name, description, input_hash) values (2, 'owner', 'repo-2', 'Read words', repeat('a', 64))",
+        );
+        yield* sync(id);
+        expect(embedded.toSorted()).toEqual(["owner/repo-1\nOld words\nb, a", "owner/repo-2\nRead words"]);
+
+        embedded.length = 0;
+        list[0] = { repo: 1, at: syncTime - minute, description: "Old words", topics: ["a", "b"] };
+        yield* TestClock.adjust("2 minutes");
+        yield* sync(id, "full");
+        expect(embedded).toEqual([]);
+
+        list[0] = { repo: 1, at: syncTime - minute, description: "New words", topics: ["a", "b"] };
+        yield* TestClock.adjust("2 minutes");
+        yield* sync(id, "full");
+        expect(embedded).toEqual(["owner/repo-1\nNew words\na, b"]);
+        expect(yield* query("select id::int, description, embedding_stale from repos order by id")).toEqual([
+          { id: 1, description: "New words", embedding_stale: false },
+          { id: 2, description: "Read words", embedding_stale: false },
+        ]);
+      }),
+    );
+
+    test.effect("records and queues a big sync before a slow model embeds it, newest first for 30 seconds", () =>
+      Effect.gen(function* () {
+        yield* reset();
+        const calls = yield* Queue.unbounded<void>();
+        hooks.beforeEmbed = Effect.andThen(Queue.offer(calls, undefined), Effect.sleep("20 seconds"));
+        // The newest star has the highest ID, so the list's order, not the IDs', decides which repos go first.
+        const list = newestFirst(200).map((star) => ({
+          ...star,
+          repo: 201 - star.repo,
+          description: `Repo ${201 - star.repo}`,
+        }));
+        const text = (repo: number) => `owner/repo-${repo}\nRepo ${repo}`;
+        const id = yield* account(23, "bulk", list);
+        const running = yield* Effect.forkChild(sync(id));
+
+        yield* Queue.take(calls);
+        const recorded = yield* Db.Db.use((db) => db.accounts.require(id));
+        expect(recorded.starsSyncedAt === null ? null : DateTime.toEpochMillis(recorded.starsSyncedAt)).toBe(syncTime);
+        expect(yield* activeRepos(id)).toEqual(range(1, 200));
+        expect(sentRepos().toSorted(byNumber)).toEqual(range(1, 200));
+        yield* TestClock.adjust("20 seconds");
+        yield* Queue.take(calls);
+        yield* TestClock.adjust("10 seconds");
+        expect(yield* Fiber.join(running)).toEqual(report({ listed: 200, added: 200, enqueued: 200 }));
+        expect(embedded).toEqual(range(73, 200).toReversed().map(text));
+
+        hooks.beforeEmbed = Effect.void;
+        embedded.length = 0;
+        yield* MetadataEmbeddings.embed(sent.map((message) => message.repoId)).pipe(Effect.provide(embeddings));
+        expect(embedded).toEqual(range(1, 72).toReversed().map(text));
+        expect(
+          yield* query(
+            "select count(*)::int as count from repos where embedding_source = 'metadata' and embedding is not null",
+          ),
+        ).toEqual([{ count: 200 }]);
       }),
     );
 

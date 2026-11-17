@@ -231,7 +231,7 @@ import * as EnrichRetry from "./enrich-retry.ts";
         }),
       );
 
-      it.effect("keeps facts and leaves the repo pending when the model output is invalid", () =>
+      it.effect("keeps facts, embeds the metadata, and leaves the repo pending when the model output is invalid", () =>
         Effect.gen(function* () {
           const db = yield* Db.Db;
           f.remotes.set(5, { description: "Image viewer", readme: { oid: oid("e"), text: "# Viewer" } });
@@ -244,7 +244,7 @@ import * as EnrichRetry from "./enrich-retry.ts";
             license: "MIT",
             readmeOid: oid("e"),
             summary: null,
-            embeddingModel: null,
+            embeddingModel,
           });
           expect(yield* db.repos.pendingEnrichment([id(5)])).toEqual([id(5)]);
           expect(yield* f.failuresOf(5)).toEqual([{ enrich_failures: 1 }]);

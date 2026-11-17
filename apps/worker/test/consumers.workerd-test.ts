@@ -9,6 +9,7 @@ import {
   AiTimeout,
   AiUnavailable,
 } from "@stargrep/ai/errors";
+import * as AiFake from "@stargrep/ai/fake";
 import { FetchIcon, IconQueue, IconStore } from "@stargrep/core/icons";
 import { BlobStore, EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
 import { StarSync } from "@stargrep/core/stars";
@@ -194,6 +195,7 @@ describe("sync-stars consumer", () => {
       Layer.provide(GitHub.layer),
       Layer.provide(unusedDb),
       Layer.provide(EnrichQueue.layerMemory().layer),
+      Layer.provide(AiFake.layerEmbeddings()),
     );
     const ctx = createExecutionContext();
     await Effect.runPromise(
@@ -219,6 +221,7 @@ describe("sync-stars consumer", () => {
       Layer.provide(GitHub.layer),
       Layer.provide(unusedDb),
       Layer.provide(EnrichQueue.layerMemory().layer),
+      Layer.provide(AiFake.layerEmbeddings()),
     );
     const line = recordingLine();
     const ctx = createExecutionContext();

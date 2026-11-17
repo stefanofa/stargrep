@@ -1,5 +1,13 @@
 import { summaryRecipe } from "@stargrep/ai/models";
-import { Repo as GitHubRepo, Login, ObjectId, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
+import {
+  Repo as GitHubRepo,
+  ListedRepo,
+  Login,
+  ObjectId,
+  RepoId,
+  RepoName,
+  RepoNodeId,
+} from "@stargrep/github/schemas";
 import { InputHash } from "@stargrep/knowledge/ids";
 import { inputHash } from "@stargrep/knowledge/input-hash";
 import { KindId } from "@stargrep/knowledge/registry";
@@ -18,12 +26,13 @@ import { type Embedding, EmbeddingModelId, type EmbeddingModelMismatch, requireM
 import { type DbQueryFailed, type DbRowInvalid, RepoNotFound } from "../errors.ts";
 import { inIdOrder, lockedRepoIds } from "../lock-order.ts";
 import * as Postgres from "../postgres.ts";
-import { excluded, NullableTime, requireRow, rowsDecoder, timeParam, writeEncoder } from "../rows.ts";
+import { excluded, json, NullableTime, requireRow, rowsDecoder, timeParam, writeEncoder } from "../rows.ts";
 import {
   accountType,
   enrichFailureCap,
   iconPlate,
   iconSource,
+  metadataEmbeddingDue,
   pendingEnrichment,
   repoMetrics,
   repos,
@@ -69,10 +78,11 @@ export const RepoIcon = Schema.Struct({
 });
 export type RepoIcon = typeof RepoIcon.Type;
 
-// Columns a Repo leaves out: the vector, the full-text column, the retry state, the summary cap's mark, the recipe that
-// made the summary, and the knowledge columns, which only queries/knowledge/ reads and writes.
+// Columns a Repo leaves out: the vector and the text it was made from, the full-text column, the retry state, the summary
+// cap's mark, the recipe that made the summary, and the knowledge columns, which only queries/knowledge/ reads and writes.
 const internalColumns = [
   "embedding",
+  "embeddingSource",
   "search",
   "enrichFailures",
   "enrichRetryAt",
@@ -146,6 +156,7 @@ export const repoColumns = {
 
 const RepoRef = GitHubRepo;
 export type RepoRef = typeof RepoRef.Type;
+export type { ListedRepo };
 
 // The facts saveFacts writes. An insert into repos names its columns, because a bare insert(repos) names every column
 // the schema has and fails while a migration that drops one runs ahead of the Workers deploy.
@@ -183,6 +194,21 @@ export interface RepoEmbedding {
   readonly keywords: ReadonlyArray<string>;
   readonly description: string | null;
   readonly readmeOid: ObjectId | null;
+}
+
+// The metadata a repo waiting for its summary is embedded from, as the row held it when read.
+const RepoMetadata = Schema.Struct({
+  id: RepoId,
+  owner: Login,
+  name: RepoName,
+  description: Schema.NullOr(Schema.String),
+  topics: Schema.Array(Schema.String),
+});
+export type RepoMetadata = typeof RepoMetadata.Type;
+
+export interface MetadataEmbedding {
+  readonly metadata: RepoMetadata;
+  readonly embedding: Embedding;
 }
 
 export interface IconCheck {
@@ -288,6 +314,9 @@ export interface SavedFacts {
 
 export interface Queries {
   readonly upsertRefs: (refs: ReadonlyArray<RepoRef>) => Effect.Effect<void, DbQueryFailed>;
+  // Saves the repos a star list shows. It inserts a new one with the list's metadata, follows a rename, and fills in the
+  // metadata of a repo enrichment has not read yet, so a repo can be embedded from its metadata before its summary.
+  readonly saveListed: (listed: ReadonlyArray<ListedRepo>) => Effect.Effect<void, DbQueryFailed>;
   readonly pendingEnrichment: (
     ids: ReadonlyArray<RepoId>,
   ) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
@@ -308,6 +337,16 @@ export interface Queries {
   readonly saveEmbedding: (
     input: RepoEmbedding,
   ) => Effect.Effect<boolean, DbQueryFailed | RepoNotFound | EmbeddingModelMismatch>;
+  // The metadata of each of these repos that is due an embedding of it, once each, in the order given.
+  readonly metadataDue: (
+    ids: ReadonlyArray<RepoId>,
+  ) => Effect.Effect<ReadonlyArray<RepoMetadata>, DbQueryFailed | DbRowInvalid>;
+  // Saves each embedding whose repo still waits for its summary, holds no summary embedding, and has the metadata it was
+  // made from, and returns the repos it saved. It leaves the lease, the failures, and the summary cap's mark alone,
+  // since the repo still waits for its summary.
+  readonly saveMetadataEmbeddings: (
+    embeddings: ReadonlyArray<MetadataEmbedding>,
+  ) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid | EmbeddingModelMismatch>;
   readonly saveIcon: (check: IconCheck) => Effect.Effect<void, DbQueryFailed>;
   readonly saveOwners: (owners: ReadonlyArray<RepoOwner>) => Effect.Effect<void, DbQueryFailed>;
   readonly dueIcons: (page: {
@@ -352,9 +391,11 @@ const decodeDue = rowsDecoder(DueIcon);
 const decodeLeases = rowsDecoder(Schema.Struct({ id: RepoId, inputHash: InputHash, leased: Schema.Boolean }));
 const decodeNamed = rowsDecoder(NamedRepo);
 const decodeCount = rowsDecoder(Schema.Struct({ count: Schema.Int }));
+const decodeMetadata = rowsDecoder(RepoMetadata);
 
 const needsEnrichment = pendingEnrichment(repos);
 const encodeRefs = writeEncoder(Schema.Array(RepoRef));
+const encodeListed = writeEncoder(Schema.Array(ListedRepo));
 const encodeFacts = writeEncoder(RepoFacts);
 
 // A repo the sweep may send now: due, under the failure cap, and held by no attempt or backoff.
@@ -367,6 +408,25 @@ const retryAt = (at: DateTime.Utc, delays: ReadonlyArray<Duration.Duration>): SQ
   sql`${timeParam(at)} + (${sql.param(delays.map(Duration.toMillis))}::float8[])[${repos.enrichFailures} + 1] * interval '1 millisecond'`;
 
 const repoFound = (id: RepoId) => requireRow(() => new RepoNotFound({ repoId: id }));
+
+const topicSet = (topics: SQL) =>
+  sql`(select coalesce(array_agg(topic order by topic), '{}'::text[]) from jsonb_array_elements_text(${topics}) topic)`;
+
+// A write of a repo's metadata marks an embedding of it stale when the name, description, or topics it was made from
+// change. The star list sorts a repo's topics and GraphQL does not, so their order alone changes nothing.
+const metadataMoved = (written: { owner: SQL; name: SQL; description: SQL; topics: SQL }) =>
+  sql`${repos.embeddingStale} or (${repos.embeddingSource} = 'metadata' and (${repos.owner}, ${repos.name}, ${repos.description}, ${topicSet(sql`${repos.topics}`)}) is distinct from (${written.owner}, ${written.name}, ${written.description}, ${topicSet(written.topics)}))`;
+
+const factsMoved = metadataMoved({
+  owner: excluded(repos.owner),
+  name: excluded(repos.name),
+  description: excluded(repos.description),
+  topics: excluded(repos.topics),
+});
+
+// A star list's metadata fills in only a repo enrichment has not read, which saveFacts has never given an input hash.
+const unlessRead = (column: typeof repos.description | typeof repos.topics | typeof repos.language) =>
+  sql`case when ${repos.inputHash} is null then ${excluded(column)} else ${column} end`;
 
 export const make = Effect.fn("Db.repos.make")(function* (configuredModel: EmbeddingModelId) {
   const { run, withTransaction } = yield* Postgres.Postgres;
@@ -414,6 +474,41 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           { discard: true },
         ),
       ),
+    saveListed: (listed) =>
+      withTransaction(
+        Effect.forEach(
+          Arr.chunksOf(inIdOrder(listed), batchSize),
+          (chunk) =>
+            encodeListed(chunk).pipe(
+              Effect.flatMap((values) =>
+                run("repos.saveListed", (db) =>
+                  db
+                    .insert(repos, "id", "nodeId", "owner", "name", "description", "topics", "language")
+                    .values([...values])
+                    .onConflictDoUpdate({
+                      target: repos.id,
+                      set: {
+                        owner: excluded(repos.owner),
+                        name: excluded(repos.name),
+                        nodeId: excluded(repos.nodeId),
+                        description: unlessRead(repos.description),
+                        topics: unlessRead(repos.topics),
+                        language: unlessRead(repos.language),
+                        embeddingStale: metadataMoved({
+                          owner: excluded(repos.owner),
+                          name: excluded(repos.name),
+                          description: unlessRead(repos.description),
+                          topics: unlessRead(repos.topics),
+                        }),
+                      },
+                      setWhere: sql`(${repos.owner}, ${repos.name}, ${repos.nodeId}) is distinct from (${excluded(repos.owner)}, ${excluded(repos.name)}, ${excluded(repos.nodeId)}) or (${repos.inputHash} is null and (${repos.description}, ${repos.topics}, ${repos.language}) is distinct from (${excluded(repos.description)}, ${excluded(repos.topics)}, ${excluded(repos.language)}))`,
+                    }),
+                ),
+              ),
+            ),
+          { discard: true },
+        ),
+      ),
     pendingEnrichment: (ids) =>
       run("repos.pendingEnrichment", (db) =>
         db
@@ -437,7 +532,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
             db
               .insert(repos, ...factColumns, "inputHash")
               .values(values)
-              .onConflictDoUpdate({ target: repos.id, set: changes })
+              .onConflictDoUpdate({ target: repos.id, set: { ...changes, embeddingStale: factsMoved } })
               .returning({ pending: needsEnrichment }),
           ).pipe(
             Effect.flatMap(decodePending("repos.saveFacts")),
@@ -499,6 +594,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
                 ownerType: excluded(repos.ownerType),
                 ownerAvatarUrl: excluded(repos.ownerAvatarUrl),
                 inputHash: excluded(repos.inputHash),
+                embeddingStale: factsMoved,
                 enrichRetryAt: sql`case when ${askCurrent ? askable : dueOnSave} and ${free} then ${excluded(repos.enrichRetryAt)} else ${repos.enrichRetryAt} end`,
               },
             })
@@ -556,6 +652,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
               .set({
                 embedding: [...vector],
                 embeddingModel: configuredModel,
+                embeddingSource: "summary",
                 embeddingStale: false,
                 enrichFailures: 0,
                 enrichRetryAt: null,
@@ -577,6 +674,59 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           ),
         ),
         Effect.flatMap(applied("repos.saveEmbedding", input.id)),
+      ),
+    metadataDue: (ids) =>
+      Arr.isReadonlyArrayEmpty(ids)
+        ? Effect.succeed([])
+        : run("repos.metadataDue", (db) =>
+            db
+              .select({
+                id: repos.id,
+                owner: repos.owner,
+                name: repos.name,
+                description: repos.description,
+                topics: repos.topics,
+              })
+              .from(repos)
+              .where(sql`${repos.id} = any(${sql.param([...ids])}::bigint[]) and ${metadataEmbeddingDue(repos)}`),
+          ).pipe(
+            Effect.flatMap(decodeMetadata("repos.metadataDue")),
+            Effect.map((rows) => {
+              const due = new Map<number, RepoMetadata>(rows.map((row) => [row.id, row]));
+              return Arr.dedupe(ids).flatMap((id) => due.get(id) ?? []);
+            }),
+          ),
+    saveMetadataEmbeddings: (embeddings) =>
+      Effect.forEach(inIdOrder(embeddings.map((entry) => ({ ...entry, id: entry.metadata.id }))), (entry) =>
+        Effect.map(requireModel(configuredModel, entry.embedding), (vector) => ({
+          ...entry.metadata,
+          embedding: `[${vector.join(",")}]`,
+        })),
+      ).pipe(
+        Effect.flatMap((rows) =>
+          Arr.isReadonlyArrayEmpty(rows)
+            ? Effect.succeed([])
+            : run("repos.saveMetadataEmbeddings", (db) =>
+                db
+                  .update(repos)
+                  .set({
+                    embedding: sql`saved.embedding::halfvec`,
+                    embeddingModel: configuredModel,
+                    embeddingSource: "metadata",
+                    embeddingStale: false,
+                  })
+                  .from(
+                    sql`jsonb_to_recordset(${json(rows)}) as saved (id bigint, owner text, name text, description text, topics jsonb, embedding text)`,
+                  )
+                  .where(
+                    sql`${repos.id} = saved.id and ${repos.id} in (${lockedRepoIds(rows.map((row) => row.id))}) and ${summaryDue(repos)} and (${repos.embedding} is null or ${repos.embeddingSource} = 'metadata') and (${repos.owner}, ${repos.name}, ${repos.description}, ${repos.topics}) is not distinct from (saved.owner, saved.name, saved.description, saved.topics)`,
+                  )
+                  .returning({ id: repos.id }),
+              ).pipe(
+                Effect.flatMap(decodeIds("repos.saveMetadataEmbeddings")),
+                Effect.map((saved) => saved.map((row) => row.id)),
+              ),
+        ),
       ),
     saveIcon: ({ id, icon }) =>
       run("repos.saveIcon", (db) =>

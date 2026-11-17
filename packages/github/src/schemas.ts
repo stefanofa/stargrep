@@ -50,9 +50,18 @@ export const Account = Schema.Struct({
 });
 export type Account = typeof Account.Type;
 
+// A starred repo as the star list shows it, with the metadata the list carries for free.
+export const ListedRepo = Schema.Struct({
+  ...Repo.fields,
+  description: Schema.NullOr(Schema.String),
+  topics: Schema.Array(Schema.String),
+  language: Schema.NullOr(Schema.String),
+});
+export type ListedRepo = typeof ListedRepo.Type;
+
 export const Star = Schema.Struct({
   starredAt: Schema.DateTimeUtcFromString,
-  repo: Repo,
+  repo: ListedRepo,
 });
 export type Star = typeof Star.Type;
 

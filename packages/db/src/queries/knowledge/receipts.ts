@@ -67,7 +67,9 @@ const decodeCaptured = rowsDecoder(
   }),
 );
 
-const keepsEmbedding = sql`not ${unreadEnrichment(repos)}`;
+// A read repo keeps its embedding until the new summary's replaces it, and so does a repo whose embedding was made from
+// its metadata while the summary waited.
+const keepsEmbedding = sql`(not ${unreadEnrichment(repos)} or ${repos.embeddingSource} = 'metadata')`;
 
 const withLeaseText = (answer: Answer) => ({
   ...answer,
@@ -127,7 +129,8 @@ export const make = Effect.gen(function* () {
                 on (r.repo_id, r.source, r.input_hash, r.recipe) = (a."repoId", a.source, a."inputHash", a.recipe)
             ),
             -- A new summary of the README a read repo's summary describes keeps the old embedding, marked stale, so the
-            -- repo stays read and searchable until the new embedding replaces it.
+            -- repo stays read and searchable until the new embedding replaces it. A metadata embedding is kept the same
+            -- way, so a repo found by its metadata stays found while its summary is embedded.
             saved as (
               update repos set
                 summary = w.summary,

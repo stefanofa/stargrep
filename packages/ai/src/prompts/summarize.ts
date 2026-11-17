@@ -266,3 +266,9 @@ export const embeddingText = (
   summary: Pick<RepoSummary, "summary" | "keywords">,
 ): string =>
   [repo.fullName, repo.description ?? "", summary.summary, summary.keywords.join(", ")].filter(Boolean).join("\n");
+
+// What search embeds for a repo whose summary waits: its name, description, and topics. GitHub's language is left out,
+// because adding it moved the eval's queries farther from the repos they expect. A change here makes every metadata
+// embedding stale, so it ships with a migration that marks them stale.
+export const metadataText = (repo: Pick<RepoFacts, "fullName" | "description" | "topics">): string =>
+  [repo.fullName, repo.description ?? "", repo.topics.join(", ")].filter(Boolean).join("\n");

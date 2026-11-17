@@ -1,3 +1,4 @@
+import * as Embeddings from "@stargrep/ai/embeddings";
 import * as Analytics from "@stargrep/analytics/analytics";
 import * as Db from "@stargrep/db";
 import { UserId } from "@stargrep/db/auth-schema";
@@ -8,12 +9,14 @@ import { type GitHubAccountId, Login, type Star } from "@stargrep/github/schemas
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as EnrichQueue from "../repos/enrich-queue.ts";
+import * as MetadataEmbeddings from "../repos/metadata-embeddings.ts";
 import * as DiffPage from "./diff-page.ts";
 
 export const Mode = Schema.Literals(["incremental", "full"]);
@@ -70,10 +73,16 @@ const toStarred = (star: Star): Db.StarredRepo => ({ repoId: star.repo.id, starr
 
 const noChanges: Db.SnapshotChanges = { starred: [], unstarred: [] };
 
+// How long a sync spends embedding its new repos' metadata. A repo it does not reach waits for enrichment, which embeds
+// it from its metadata when the summary cap defers it or its summary fails, and the sweep sends it again if its message
+// is lost.
+const metadataBudget = Duration.seconds(30);
+
 const make = Effect.gen(function* () {
   const db = yield* Db.Db;
   const github = yield* GitHub.GitHub;
   const queue = yield* EnrichQueue.EnrichQueue;
+  const embeddings = yield* Embeddings.Embeddings;
 
   const writePage = Effect.fn("StarSync.writePage")(function* (
     accountId: GitHubAccountId,
@@ -81,7 +90,7 @@ const make = Effect.gen(function* () {
     page: DiffPage.PageDiff,
   ) {
     if (!Arr.isReadonlyArrayNonEmpty(page.listed)) return { page: { ...page, starred: [], enqueued: 0 }, pending: [] };
-    yield* db.repos.upsertRefs(page.listed.map((star) => star.repo));
+    yield* db.repos.saveListed(page.listed.map((star) => star.repo));
     const starred = yield* db.stars.upsert({
       accountId,
       stars: page.fresh.map((star) => ({ ...toStarred(star), observedAt: at })),
@@ -150,6 +159,19 @@ const make = Effect.gen(function* () {
           })
         : noChanges;
     if (!shifted) yield* db.accounts.recordStarSync({ accountId: account.id, at });
+    // A new repo can wait in the enrichment queue for a long time, so it is embedded from the list's metadata now, newest
+    // star first. This runs after the sync's own writes and stops at metadataBudget, so a big import never holds them.
+    yield* MetadataEmbeddings.embed(pending).pipe(
+      Effect.timeoutOrElse({
+        duration: metadataBudget,
+        orElse: () =>
+          Effect.logInfo("Metadata embedding reached its budget, the rest wait for enrichment", {
+            queued: pending.length,
+          }),
+      }),
+      Effect.provideService(Db.Db, db),
+      Effect.provideService(Embeddings.Embeddings, embeddings),
+    );
     return DiffPage.report(stored, pages, snapshot, shifted);
   });
 

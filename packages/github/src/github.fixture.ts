@@ -39,6 +39,8 @@ export const rateLimitHeaders = (remaining: number, resetSeconds = 3600, resourc
 export interface FakeStar {
   readonly repo: number;
   readonly starredAt: string;
+  readonly description?: string;
+  readonly topics?: ReadonlyArray<string>;
 }
 
 export const starItem = (star: FakeStar) => ({
@@ -49,6 +51,9 @@ export const starItem = (star: FakeStar) => ({
     name: `repo-${star.repo}`,
     owner: { login: "owner" },
     private: false,
+    description: star.description ?? null,
+    topics: star.topics ?? [],
+    language: null,
   },
 });
 
