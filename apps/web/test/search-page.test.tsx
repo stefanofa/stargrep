@@ -865,7 +865,16 @@ describe("the search page in each state", () => {
       page().getByRole("heading", { level: 1, name: "search anyone's starred github repos in plain words" }),
     ).toBeTruthy();
     expect(page().getByRole("heading", { name: "your stars, in a minute" })).toBeTruthy();
-    expect(page().getByText("live results from @stefanofa, our demo account. try any username.")).toBeTruthy();
+    const owner = within(page().getByRole("main")).getByRole("link", { name: "@stefanofa" });
+    expect(owner.closest("p")?.textContent).toBe("live results from @stefanofa, our demo account. try any username.");
+    expect([owner.getAttribute("href"), owner.getAttribute("target")]).toEqual([
+      "https://github.com/stefanofa",
+      "_blank",
+    ]);
+    const footer = page().getByRole("contentinfo");
+    const maker = within(footer).getByRole("link", { name: "@stefanofa" });
+    expect(footer.textContent).toBe("made by @stefanofa");
+    expect([maker.getAttribute("href"), maker.getAttribute("target")]).toEqual(["https://x.com/stefanofa", "_blank"]);
     const chips = page().getByRole("list", { name: "Example searches" });
     await user.click(within(chips).getByRole("button", { name: "terminal recorder" }));
     expect((page().getByRole("searchbox") as HTMLInputElement).value).toBe("terminal recorder");

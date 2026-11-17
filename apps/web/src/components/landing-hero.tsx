@@ -1,5 +1,6 @@
 import { Chip, cn, Pip, type PipPose, ProgressRing, Tile } from "@stargrep/ui";
 import type { Butter, HeroCopy } from "../lib/search-state.ts";
+import { ExternalTextLink } from "./external-text-link.tsx";
 import { SignInButton } from "./sign-in-button.tsx";
 
 function ButterTile({ butter, pose }: { butter: Butter; pose: PipPose }) {
@@ -61,7 +62,15 @@ export function Hero({ subtitle, butter, pose }: HeroCopy & { pose: PipPose }) {
         </h1>
         {/* Two lines whatever the state says, so the search below never moves when the state changes. */}
         <p className="line-clamp-2 h-[2lh] font-sans text-lg text-pretty text-secondary-foreground max-sm:hidden">
-          {subtitle}
+          {subtitle.map((segment) =>
+            typeof segment === "string" ? (
+              segment
+            ) : (
+              <ExternalTextLink key={segment.login} href={`https://github.com/${segment.login}`}>
+                {`@${segment.login}`}
+              </ExternalTextLink>
+            ),
+          )}
         </p>
       </div>
       <ButterTile butter={butter} pose={pose} />

@@ -532,6 +532,7 @@ describe("what the page shows", () => {
 });
 
 const hero = (stage: Stage, extra: Partial<PageInputs> = {}) => page({ stage, ...extra }).hero;
+const octo = { login: "octo" };
 
 describe("the hero above a visitor's search", () => {
   test("shows to visitors only", () => {
@@ -540,39 +541,43 @@ describe("the hero above a visitor's search", () => {
 
   test("introduces the demo account, case aside", () => {
     expect(hero(ready, { owner: "StefanoFA" })).toEqual({
-      subtitle: "live results from @StefanoFA, our demo account. try any username.",
+      subtitle: ["live results from ", { login: "StefanoFA" }, ", our demo account. try any username."],
       butter: { kind: "join" },
     });
   });
 
   test("names anyone else's stars", () => {
-    expect(hero(ready)?.subtitle).toBe("@octo's starred repos, searched in plain words. try any username.");
+    expect(hero(ready)?.subtitle).toEqual([octo, "'s starred repos, searched in plain words. try any username."]);
   });
 
   test("asks whether the visitor is the owner while their stars import, with the import's progress", () => {
     expect(hero(importingFor())).toEqual({
-      subtitle: "@octo is new here. their stars are on the way from github, and search covers the ones that landed.",
+      subtitle: [octo, " is new here. their stars are on the way from github, and search covers the ones that landed."],
       butter: { kind: "claim", progress: 0.5 },
     });
   });
 
   test("says a login nobody asked for yet is ready to import, as the status line does", () => {
     expect(hero(importingFor({ done: 0, total: null, phase: { kind: "not-asked" } }))).toEqual({
-      subtitle: "@octo is new here. their stars are ready to import from github, and search covers them as they land.",
+      subtitle: [
+        octo,
+        " is new here. their stars are ready to import from github, and search covers them as they land.",
+      ],
       butter: { kind: "claim", progress: 0 },
     });
   });
 
   test("says an import waits in line, and leaves its start time to the status line", () => {
     const waiting = importingFor({ done: 0, phase: { kind: "in-line", ahead: 3, startsAt: "2026-11-06T12:00:00Z" } });
-    expect(hero(waiting)?.subtitle).toBe(
-      "@octo is new here and waits in line for github. search covers their stars as they land.",
-    );
+    expect(hero(waiting)?.subtitle).toEqual([
+      octo,
+      " is new here and waits in line for github. search covers their stars as they land.",
+    ]);
   });
 
   test("points to another username when the page is in trouble", () => {
     expect(hero(importingFor({ phase: { kind: "not-asked" } }), { trouble: "missing" })).toEqual({
-      subtitle: "try any username.",
+      subtitle: ["try any username."],
       butter: { kind: "join" },
     });
   });
