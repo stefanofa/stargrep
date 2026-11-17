@@ -19,12 +19,23 @@ import {
 
 const url = "https://stage.example";
 const notReady = new NotSettled({ answer: "GET /budget 500" });
-const cloudflare404: Answer = {
-  status: 404,
-  contentType: "text/html; charset=UTF-8",
-  body: "<h1>There is nothing here yet</h1>",
+// The answers below come from new stages: the HTML page from CI, trimmed, and the others from a probe.
+const scriptNotFound: Answer = {
+  status: 500,
+  placement: undefined,
+  body: [
+    "<title>Script not found | pr-141-debug.stargrep.com | Cloudflare</title>",
+    '<span class="cf-error-code">1104</span>',
+    '<h2 class="cf-subheadline" data-translate="error_desc">Script not found</h2>',
+  ].join("\n"),
 };
-const refused: Answer = { status: 401, contentType: "", body: "" };
+const scriptNotFoundText: Answer = {
+  status: 500,
+  placement: undefined,
+  body: "error code: 1104\n",
+};
+const placementNotReady: Answer = { status: 500, placement: "remote-IAD", body: "" };
+const refused: Answer = { status: 401, placement: undefined, body: "" };
 
 const runOnTestClock = <A>(body: Effect.Effect<A>) => Effect.runPromise(body.pipe(Effect.provide(TestClock.layer())));
 
@@ -107,30 +118,30 @@ describe("waitUntilConsumed", () => {
 
 describe("untilRouted", () => {
   const what = `GET ${url}/budget`;
-  const noResends = (): Resends => ({ cloudflare404: 0, dropped: 0 });
+  const noResends = (): Resends => ({ scriptNotFound: 0, placement: 0, dropped: 0 });
   const failure = (reason: HttpClientError.HttpClientErrorReason) => new HttpClientError.HttpClientError({ reason });
   const request = HttpClientRequest.get(`${url}/budget`);
   const connectionReset = failure(
     new HttpClientError.TransportError({ request, cause: new Error("read ECONNRESET"), description: "fetch failed" }),
   );
 
-  test("gives up 60 s after it starts when 404 pages turn into a request that never answers", () =>
+  test("gives up 60 s after it starts when Script not found pages turn into a request that never answers", () =>
     runOnTestClock(
       Effect.gen(function* () {
         const send = Effect.flatMap(Clock.currentTimeMillis, (now) =>
-          now < 58_000 ? Effect.succeed(cloudflare404) : Effect.never,
+          now < 58_000 ? Effect.succeed(scriptNotFound) : Effect.never,
         );
         const fiber = yield* Effect.forkChild(Effect.exit(untilRouted(what, send, noResends())));
         yield* TestClock.adjust("59 seconds");
         expect(fiber.pollUnsafe()).toBeUndefined();
         yield* TestClock.adjust("1 second");
         expect(outcome(yield* Fiber.join(fiber))).toBe(
-          `Error: ${what} did not reach the Worker within 60 s, last answer: Cloudflare's 404 page`,
+          `Error: ${what} did not reach the Worker within 60 s, last answer: Cloudflare's Script not found page`,
         );
       }),
     ));
 
-  test("blames the request, not a 404, when the first request never answers", () =>
+  test("blames the request, not a Cloudflare page, when the first request never answers", () =>
     runOnTestClock(
       Effect.gen(function* () {
         const fiber = yield* Effect.forkChild(Effect.exit(untilRouted(what, Effect.never, noResends())));
@@ -139,41 +150,45 @@ describe("untilRouted", () => {
       }),
     ));
 
-  test("resends Cloudflare's 404 page until the Worker answers", () =>
+  test.each([
+    ["Script not found page", scriptNotFound, "scriptNotFound"],
+    ["Script not found page as plain text", scriptNotFoundText, "scriptNotFound"],
+    ["empty 500 from the placement region", placementNotReady, "placement"],
+  ] as const)("resends Cloudflare's %s until the Worker answers", (_, unrouted, kind) =>
     runOnTestClock(
       Effect.gen(function* () {
         let sent = 0;
         const resends = noResends();
-        const send = Effect.sync(() => (++sent < 3 ? cloudflare404 : refused));
+        const send = Effect.sync(() => (++sent < 3 ? unrouted : refused));
         const fiber = yield* Effect.forkChild(Effect.exit(untilRouted(what, send, resends)));
         yield* TestClock.adjust("3 seconds");
         expect(outcome(yield* Fiber.join(fiber))).toBe(`succeeded with ${JSON.stringify(refused)}`);
         expect(sent).toBe(3);
-        expect(resends).toEqual({ cloudflare404: 2, dropped: 0 });
+        expect(resends).toEqual({ ...noResends(), [kind]: 2 });
       }),
-    ));
+    ),
+  );
 
-  test("returns the Worker's own 404 without resending it", () =>
+  test.each<[string, Answer]>([
+    ["the debug Worker's empty 500", { status: 500, placement: undefined, body: "" }],
+    ["a placed Worker's 500 with a body", { status: 500, placement: "remote-IAD", body: "{}" }],
+    ["Cloudflare's page for a Worker that threw", { ...scriptNotFoundText, body: "error code: 1101\n" }],
+    ["an HTML 404", { status: 404, placement: undefined, body: "<h1>Not found</h1>" }],
+  ])("returns %s without resending it", (_, answer) =>
     runOnTestClock(
       Effect.gen(function* () {
         let sent = 0;
-        const workerNotFound: Answer = { status: 404, contentType: "application/json", body: "{}" };
-        const fiber = yield* Effect.forkChild(
-          Effect.exit(
-            untilRouted(
-              what,
-              Effect.sync(() => {
-                sent++;
-                return workerNotFound;
-              }),
-              noResends(),
-            ),
-          ),
+        const send = Effect.sync(() => {
+          sent++;
+          return answer;
+        });
+        expect(outcome(yield* Effect.exit(untilRouted(what, send, noResends())))).toBe(
+          `succeeded with ${JSON.stringify(answer)}`,
         );
-        expect(outcome(yield* Fiber.join(fiber))).toBe(`succeeded with ${JSON.stringify(workerNotFound)}`);
         expect(sent).toBe(1);
       }),
-    ));
+    ),
+  );
 
   test("sends once more after a connection drops before any answer", () =>
     runOnTestClock(
@@ -185,7 +200,7 @@ describe("untilRouted", () => {
         yield* TestClock.adjust("1 second");
         expect(outcome(yield* Fiber.join(fiber))).toBe(`succeeded with ${JSON.stringify(refused)}`);
         expect(sent).toBe(2);
-        expect(resends).toEqual({ cloudflare404: 0, dropped: 1 });
+        expect(resends).toEqual({ scriptNotFound: 0, placement: 0, dropped: 1 });
       }),
     ));
 
@@ -203,7 +218,7 @@ describe("untilRouted", () => {
         expect(outcome(yield* Fiber.join(fiber))).toBe(`HttpClientError: ${connectionReset.message}`);
         expect(connectionReset.message).toBe(`Transport: fetch failed (GET ${url}/budget)`);
         expect(sent).toBe(2);
-        expect(resends).toEqual({ cloudflare404: 0, dropped: 1 });
+        expect(resends).toEqual({ scriptNotFound: 0, placement: 0, dropped: 1 });
       }),
     ));
 

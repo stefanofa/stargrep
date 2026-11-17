@@ -101,7 +101,11 @@ const authorized = (header: string | undefined, token: Redacted.Redacted<string>
 
 export default class DebugWorker extends Cloudflare.Worker<DebugWorker>()(
   "DebugWorker",
-  Effect.map(settings, ({ stage }) => ({ main: import.meta.url, ...stageHosting(stage).debug })),
+  Effect.map(settings, ({ stage }) => ({
+    main: import.meta.url,
+    observability: { enabled: true, logs: { enabled: true, invocationLogs: true }, traces: { enabled: true } },
+    ...stageHosting(stage).debug,
+  })),
   Effect.gen(function* () {
     const token = yield* yield* DebugToken;
     const jobs = yield* DebugJobs;

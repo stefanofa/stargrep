@@ -1,10 +1,9 @@
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schema from "effect/Schema";
-import { NotSettled, untilRouted, waitUntilConsumed, waitUntilReady } from "./fresh-stage.ts";
+import { NotSettled, type Resends, readAnswer, untilRouted, waitUntilConsumed, waitUntilReady } from "./fresh-stage.ts";
 import { publicSmoke } from "./public-smoke.ts";
 import { readStageOutput } from "./stage-output.ts";
 
@@ -12,7 +11,9 @@ const [stage, ...alchemyArgs] = process.argv.slice(2);
 if (stage === "--public") {
   const origin = alchemyArgs[0];
   if (!origin) throw new Error("usage: bun scripts/stage-smoke.ts --public <origin>");
-  const checks = await Effect.runPromise(publicSmoke(origin).pipe(Effect.provide(FetchHttpClient.layer)));
+  const checks = await Effect.runPromise(
+    publicSmoke(origin).pipe(Effect.timeout("30 seconds"), Effect.provide(FetchHttpClient.layer)),
+  );
   for (const result of checks) console.log(JSON.stringify(result));
   process.exit(checks.every(({ ok }) => ok) ? 0 : 1);
 }
@@ -29,19 +30,10 @@ const Transaction = Schema.Struct({ pid: Schema.Int, sum: Schema.Int });
 type Check = { readonly check: string; readonly ok: boolean; readonly detail: unknown };
 const check = (name: string, ok: boolean, detail: unknown): Check => ({ check: name, ok, detail });
 
-const resends = { cloudflare404: 0, dropped: 0 };
+const resends: Resends = { scriptNotFound: 0, placement: 0, dropped: 0 };
 
-const send = Effect.fn("StageSmoke.send")(function* (request: HttpClientRequest.HttpClientRequest) {
-  const attempt = Effect.gen(function* () {
-    const response = yield* HttpClient.execute(request);
-    return {
-      status: response.status,
-      contentType: response.headers["content-type"] ?? "",
-      body: yield* response.text,
-    };
-  });
-  return yield* untilRouted(`${request.method} ${request.url}`, attempt, resends);
-});
+const send = (request: HttpClientRequest.HttpClientRequest) =>
+  untilRouted(`${request.method} ${request.url}`, readAnswer(request), resends);
 
 const call = (method: "GET" | "POST", path: string, authorization: string | null = `Bearer ${debugToken}`) => {
   const request = HttpClientRequest.make(method)(new URL(path, debugUrl));
@@ -243,11 +235,11 @@ const checks = await Effect.runPromise(
   Effect.gen(function* () {
     yield* ready;
     const authorization = yield* unauthenticated;
-    const services = yield* Effect.all([publicSmoke(webUrl), web, worker, traffic]);
+    const services = yield* Effect.all([publicSmoke(webUrl, send), web, worker, traffic]);
     const cap = yield* flood;
     return [...services.flat(), ...authorization, ...cap];
   }).pipe(Effect.provide(FetchHttpClient.layer)),
 );
 for (const result of checks) console.log(JSON.stringify(result));
-console.log(JSON.stringify({ resentAfterCloudflare404: resends.cloudflare404, resentAfterDrop: resends.dropped }));
+console.log(JSON.stringify({ resent: resends }));
 if (checks.some(({ ok }) => !ok)) process.exit(1);
