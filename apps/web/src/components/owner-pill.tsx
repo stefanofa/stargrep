@@ -3,7 +3,9 @@ import { isGitHubLogin } from "@stargrep/github/login";
 import { Avatar, cn, popupSurface } from "@stargrep/ui";
 import { useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
-import type { PublicConfig, Viewer } from "../lib/rpc.ts";
+import type { Audience } from "../lib/audience.ts";
+import { recentLogins } from "../lib/recent-logins.ts";
+import type { PublicConfig } from "../lib/rpc.ts";
 import { reservedLogin } from "../lib/search-params.ts";
 import { sameLogin } from "../lib/whose.ts";
 
@@ -23,15 +25,20 @@ function Chevron() {
   );
 }
 
-export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Viewer | null; config: PublicConfig }) {
+export function OwnerPill({ audience, config }: { audience: Audience; config: PublicConfig }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
+  const [recent, setRecent] = useState<ReadonlyArray<string>>([]);
   const field = useId();
 
+  const owner = audience.owner.login;
+  const you = audience.by === "anyone" ? undefined : audience.viewer.login;
+  // The login that / shows this audience.
+  const home = you ?? config.demoLogin;
   const login = typed.trim().replace(/^@/, "");
   const valid = isGitHubLogin(login);
-  const people = [...(viewer === null ? [] : [viewer.login]), ...config.featured].filter(
+  const people = [...(you === undefined ? [] : [you]), ...recent, ...config.featured].filter(
     (person, index, all) => all.findIndex((other) => sameLogin(other, person)) === index,
   );
 
@@ -39,14 +46,12 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
     setOpen(false);
     setTyped("");
     if (sameLogin(next, owner)) return;
-    const home = viewer === null ? sameLogin(next, config.demoLogin) : sameLogin(next, viewer.login);
-    const moved = home
+    const moved = sameLogin(next, home)
       ? navigate({ to: "/{-$login}", params: { login: undefined } })
       : reservedLogin(next)
         ? navigate({ to: "/@{$login}", params: { login: next } })
         : navigate({ to: "/{-$login}", params: { login: next } });
-    // The switch remounts the page with a new pill, which takes focus where the old one had it. A page without a pill,
-    // such as the viewer's own, leaves focus alone.
+    // The switch remounts the page with a new pill, which takes focus where the old one had it.
     moved.then(() => document.querySelector<HTMLElement>("[data-owner-pill]")?.focus());
   };
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -55,7 +60,14 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
   };
 
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
+    <Popover.Root
+      open={open}
+      onOpenChange={(next) => {
+        // Storage is the browser's, so the list reads it as it opens, never while the server renders.
+        if (next) setRecent(recentLogins());
+        setOpen(next);
+      }}
+    >
       <Popover.Trigger
         data-owner-pill
         aria-label={`Whose stars: @${owner}. Change`}
@@ -114,7 +126,7 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
                       className="size-7 border-0"
                     />
                     <span className="flex-1 truncate">@{person}</span>
-                    {viewer !== null && sameLogin(person, viewer.login) && (
+                    {you !== undefined && sameLogin(person, you) && (
                       <span className="text-sm text-muted-foreground">you</span>
                     )}
                   </button>

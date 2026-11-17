@@ -1,5 +1,6 @@
 import { loginKey } from "@stargrep/github/login";
 import { createCollection } from "@tanstack/db";
+import type { Policy } from "./audience.ts";
 import { searchText } from "./keyword.ts";
 import { api, type LibraryRepo } from "./rpc.ts";
 import { starsPages } from "./stars-pages.ts";
@@ -103,8 +104,8 @@ export type Library = ReturnType<typeof makeLibrary>;
 
 const libraries = new Map<string, Library>();
 
-export const getLibrary = (login: string, own: boolean, empty: boolean) => {
-  const key = `${own ? "own" : "public"}:${loginKey(login)}`;
+export const getLibrary = (login: string, source: Policy["library"], empty: boolean) => {
+  const key = `${source}:${loginKey(login)}`;
   const known = libraries.get(key);
   if (known !== undefined) return known;
   const client = api();
@@ -114,7 +115,7 @@ export const getLibrary = (login: string, own: boolean, empty: boolean) => {
       skip = false;
       return onePage(Promise.resolve([]));
     }
-    return own ? onePage(client.library().then(({ repos }) => repos)) : starsPages(client, login);
+    return source === "session" ? onePage(client.library().then(({ repos }) => repos)) : starsPages(client, login);
   };
   const library = makeLibrary(load, `library:${key}`);
   libraries.set(key, library);

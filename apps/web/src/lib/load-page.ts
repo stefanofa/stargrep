@@ -1,10 +1,11 @@
 import { createIsomorphicFn, createServerOnlyFn } from "@tanstack/react-start";
 import { serverLoads } from "../server/page-data.ts";
+import { whoseOf } from "./audience.ts";
 import { loadEngine } from "./engine.ts";
 import type { PageData, PageRequest, Session } from "./page-data.ts";
 import { canonicalLinks, pagePath, previewMeta, siteDescription, siteTitle } from "./preview.ts";
 import { revealScript } from "./reveal-script.ts";
-import { theirs, whoseOf } from "./whose.ts";
+import { theirs } from "./whose.ts";
 
 // The root route loads the session once, on the server, and never reloads it. Signing in or out reloads the whole page.
 export const loadSession = createServerOnlyFn(serverLoads.session);
@@ -34,15 +35,17 @@ export const pageHead = (
 ) => {
   if (loaderData === undefined) return {};
   const path = pagePath(pathname, query);
-  const landing = home && !loaderData.own;
-  const whose = theirs(whoseOf(loaderData));
+  const landing = home && loaderData.audience.by !== "owner";
+  const whose = whoseOf(loaderData.audience);
   return {
     meta: previewMeta(loaderData.site, {
-      title: landing ? siteTitle : query ? `"${query}" in ${whose} · ${siteTitle}` : `${whose} · ${siteTitle}`,
+      title: landing
+        ? siteTitle
+        : query
+          ? `"${query}" in ${theirs(whose)} · ${siteTitle}`
+          : `${theirs(whose)} · ${siteTitle}`,
       description:
-        landing || loaderData.own
-          ? siteDescription
-          : `Search @${loaderData.owner}'s starred GitHub repos in plain words.`,
+        landing || whose.own ? siteDescription : `Search @${whose.login}'s starred GitHub repos in plain words.`,
       path,
     }),
     links: canonicalLinks(loaderData.site, path),

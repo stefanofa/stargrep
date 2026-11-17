@@ -1,9 +1,9 @@
 import type { Sort, View } from "@stargrep/ui";
+import { type Audience, audienceOf } from "./audience.ts";
 import type { Site } from "./preview.ts";
 import type { LibraryRepo, PublicConfig, SearchResult, SyncStatus, Viewer } from "./rpc.ts";
 import type { SearchView } from "./search-state.ts";
 import type { Refusal } from "./trouble.ts";
-import { sameLogin } from "./whose.ts";
 
 // An answer by meaning the server painted. A stale one is a search answer the server read from the API's answer cache
 // past its fresh window, so the browser asks for it again and keeps it on screen until the new answer lands. The demo
@@ -33,9 +33,9 @@ export interface Session {
   readonly site: Site;
 }
 
-export interface PageData extends Session {
-  readonly owner: string;
-  readonly own: boolean;
+// The page's audience carries the session's viewer.
+export interface PageData extends Omit<Session, "viewer"> {
+  readonly audience: Audience;
   readonly query: string;
   // What the page searches when its address has no q.
   readonly defaultQuery: string;
@@ -60,13 +60,9 @@ export interface Asked extends PageRequest {
   readonly sort?: Sort | undefined;
 }
 
-// A visitor lands on the demo account with its example query. A signed-in viewer lands on their own stars. The demo
-// account keeps its own spelling whatever case the address uses.
-export const pageOwner = (viewer: Viewer | null, config: PublicConfig, { login, q }: Asked) => {
-  const asked = login ?? viewer?.login ?? config.demoLogin;
-  const own = viewer !== null && sameLogin(viewer.login, asked);
-  const showcase = !own && sameLogin(asked, config.demoLogin);
-  const owner = showcase ? config.demoLogin : asked;
-  const defaultQuery = showcase ? config.demoQuery : "";
-  return { owner, own, query: q ?? defaultQuery, defaultQuery, showcase };
+// Who looks at whose stars, and what the page searches. The demo account opens on its example query.
+export const askedPage = (viewer: Viewer | null, config: PublicConfig, { login, q }: Asked) => {
+  const audience = audienceOf(viewer, config, login);
+  const defaultQuery = audience.owner.demo ? config.demoQuery : "";
+  return { audience, query: q ?? defaultQuery, defaultQuery };
 };
