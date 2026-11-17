@@ -25,6 +25,7 @@ export function PrivacyPage() {
             only to read your email addresses. your token is used only for work you start, such as syncing your own
             stars.
           </li>
+          <li>if you turn on monthly picks, that you opted in and when. nothing is sent yet.</li>
           <li>rate limit counters for each network, under a keyed hash of its address, never the address itself.</li>
         </Bullets>
       </Section>

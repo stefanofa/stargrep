@@ -16,7 +16,7 @@ Coding agents can search too. One API serves the web app, REST under `/api`, and
 claude mcp add --transport http stargrep https://stargrep.com/mcp
 ```
 
-The [API section of the setup guide](docs/setup.md#api) has REST examples.
+[stargrep.com/developers](https://stargrep.com/developers) shows the setup for Claude Code, Codex, and Cursor, and the [API section of the setup guide](docs/setup.md#api) has REST examples.
 
 ## How it works
 
