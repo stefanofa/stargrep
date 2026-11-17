@@ -3,7 +3,8 @@ import { isGitHubLogin } from "@stargrep/github/login";
 import { Avatar, cn, popupSurface } from "@stargrep/ui";
 import { useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
-import type { PublicConfig, Viewer } from "../lib/rpc.ts";
+import type { Audience } from "../lib/audience.ts";
+import type { PublicConfig } from "../lib/rpc.ts";
 import { reservedLogin } from "../lib/search-params.ts";
 import { sameLogin } from "../lib/whose.ts";
 
@@ -23,15 +24,19 @@ function Chevron() {
   );
 }
 
-export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Viewer | null; config: PublicConfig }) {
+export function OwnerPill({ audience, config }: { audience: Audience; config: PublicConfig }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
   const field = useId();
 
+  const owner = audience.owner.login;
+  const you = audience.by === "anyone" ? undefined : audience.viewer.login;
+  // The login that / shows this audience.
+  const home = you ?? config.demoLogin;
   const login = typed.trim().replace(/^@/, "");
   const valid = isGitHubLogin(login);
-  const people = [...(viewer === null ? [] : [viewer.login]), ...config.featured].filter(
+  const people = [...(you === undefined ? [] : [you]), ...config.featured].filter(
     (person, index, all) => all.findIndex((other) => sameLogin(other, person)) === index,
   );
 
@@ -39,8 +44,7 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
     setOpen(false);
     setTyped("");
     if (sameLogin(next, owner)) return;
-    const home = viewer === null ? sameLogin(next, config.demoLogin) : sameLogin(next, viewer.login);
-    const moved = home
+    const moved = sameLogin(next, home)
       ? navigate({ to: "/{-$login}", params: { login: undefined } })
       : reservedLogin(next)
         ? navigate({ to: "/@{$login}", params: { login: next } })
@@ -114,7 +118,7 @@ export function OwnerPill({ owner, viewer, config }: { owner: string; viewer: Vi
                       className="size-7 border-0"
                     />
                     <span className="flex-1 truncate">@{person}</span>
-                    {viewer !== null && sameLogin(person, viewer.login) && (
+                    {you !== undefined && sameLogin(person, you) && (
                       <span className="text-sm text-muted-foreground">you</span>
                     )}
                   </button>
