@@ -236,7 +236,7 @@ Every max distance from 0.36 to 0.45 now finds all 39 typos, and 28 of them take
 
 The first version of the step looked only among the 100 repos nearest the typed words by meaning. It found all 23 on this corpus. At 20,000 stars the repos for "jelyfin", "clidel", and "hlrags" ranked 493rd, 180th, and 298th by meaning, because a misspelled name carries little meaning. Matching letters in Postgres finds them at any size.
 
-**Larger accounts.** `--stars N` fills the eval account with GitHub's most-starred repos until it holds N stars. The 20,000 most-starred repos on 2026-11-14 run down to 3,367 stars. The 19,241 of them outside the corpus are not summarized. Each is embedded from its name, description, and topics instead, a stand-in for its summary. Over the 736 repos the corpus then held, a stand-in sat 0.005 farther from the eval's query vectors than the summary at the median, and 90% of pairs fell between 0.038 closer and 0.068 farther. Short typed text is the exception. For 14 of the 15 typed typos, the stand-in of the repo they mean sits 0.007 to 0.070 closer than its summary, because both are short and mostly name. So these runs overstate how close typed gibberish and typos get.
+**Larger accounts.** `--stars N` fills the eval account with GitHub's most-starred repos until it holds N stars. The 20,000 most-starred repos on 2026-11-14 run down to 3,367 stars. The 19,241 of them outside the corpus are not summarized. Each is embedded from its name, description, and topics instead, a stand-in for its summary, which is the text `metadataText` gives production's metadata embeddings, described under "Metadata embeddings" below. Over the 736 repos the corpus then held, a stand-in sat 0.005 farther from the eval's query vectors than the summary at the median, and 90% of pairs fell between 0.038 closer and 0.068 farther. Short typed text is the exception. For 14 of the 15 typed typos, the stand-in of the repo they mean sits 0.007 to 0.070 closer than its summary, because both are short and mostly name. So these runs overstate how close typed gibberish and typos get.
 
 | Stars | recall@10 | Known typos found | Obscure typos found, floor alone | Obscure typos found, with the step | Nonsense answered |
 |---|---|---|---|---|---|
@@ -286,15 +286,45 @@ The wording took four tries on the 82 typo and nonsense queries. Without the exa
 
 The 20,000 most-starred repos were fetched again for these runs, down to the same 3,367 stars, so the stand-in runs score 0.932 before against 0.934 above. With stand-ins alone, the same six nonsense queries get an answer before and after, because none of them reaches the planner: "aaaaaaaa" and "zzzzzz" reach the e repo's stand-in as typed. With the six stand-ins that decided answers summarized, as in the run above, the old plans of "zzzzzz", "lkjhgfdsa", and "aaaaaaaa" reach the e repo. This run's summary of it differs from the earlier one, so "aaaaaaaa" still answers here. The new plans answer none of them, and the four answers left are `asdf-vm/asdf`, `dropbox/zxcvbn`, `akavel/up`, and `ClemensElflein/OpenMower`. At 20,000 stars the new plans also find `laurent22/joplin`, `reduxjs/redux-toolkit`, `oven-sh/bun`, and `jax-ml/jax` for their queries and lose no expected repo. Plans vary from run to run, so that gain is not credited to the prompt.
 
+### Metadata embeddings
+
+On 2026-11-17 production began to embed a repo's metadata while its summary waits, as `docs/knowledge.md` explains under "Metadata embeddings". Two questions decided the text: what it holds, and whether such an embedding needs its own floor. Each run below compares `voyage/voyage-4` vectors over the 736 repos of an earlier corpus cache that also holds each repo's summary vector. The queries are the typed text of the 129 queries, 39 typos, and 43 nonsense queries. These runs called no planner, so a real query here reads as a keyword search. Each row embeds every repo the same way, as an account whose stars all wait for their summaries would hold them. A real pair is a query and one repo it expects, 246 in all.
+
+| Text | Real pairs within 0.36 | Nonsense within 0.36 | Typos nearest a wrong repo within 0.36 |
+|---|---|---|---|
+| Summary | 190 of 246 | 0 of 43 | 0 of 39 |
+| Name, description, topics | 182 of 246 | 0 of 43 | 2 of 39 |
+| Name, description, topics, language | 174 of 246 | 0 of 43 | 1 of 39 |
+| Name alone | 37 of 246 | 2 of 43 | 3 of 39 |
+
+- For real queries, metadata sits about as close as a summary. An expected repo's metadata vector sat 0.009 closer to the query than its summary vector at the median, and 90% of pairs fell between 0.071 closer and 0.076 farther. "Larger accounts" above measured 0.005 farther with the planner's descriptions.
+- GitHub's language moved the queries farther away. With it, the median was 0.002 closer instead of 0.009, and 8 fewer pairs stayed inside the floor, so `metadataText` leaves it out.
+- A name alone kept only 37 pairs and answered 2 nonsense queries, "vbnvbnvbn" with `nvbn/thefuck` at 0.303 and "kvorbna plintuska" with `plankanban/planka` at 0.325. So a repo with neither a description nor topics waits for its summary.
+- Metadata sits closer to gibberish than summaries do, and still past the floor. The nearest repo to a nonsense query was 0.583 away at the median with metadata and 0.626 with summaries. The closest of all was 0.376 against 0.450.
+- Two typed typos had a wrong repo's metadata nearest and within the floor. "lacklustre.nvim" reached `LazyVim/LazyVim` at 0.322, and "pdf reader for the termnial with kitty graphics" reached `mozilla/pdf.js` at 0.350. Neither expected repo was in this cache, so neither is a miss here. On a full account, such a match ends a keyword search before the similar-name step.
+
+A floor for metadata embeddings alone would trade those two typos for real matches.
+
+```
+metadata floor  real pairs kept  nonsense within  typos nearest a wrong repo
+          0.30       124 of 246          0 of 43                     0 of 39
+          0.32       150 of 246          0 of 43                     0 of 39
+          0.34       163 of 246          0 of 43                     1 of 39
+          0.36       182 of 246          0 of 43                     2 of 39
+```
+
+A metadata embedding exists so search can find a repo whose summary waits, so it keeps the one floor of 0.36. The recall fixture checks both kinds, as "In CI" below describes. With each of its 49 repos waiting for its summary and embedded from its metadata, it kept its recall of 0.970, found both typos by a similar name, and answered none of its 5 nonsense queries.
+
 ### In CI
 
-CI runs `bun run evals/recall.ts --fixture`. The fixture is three files in `evals/fixtures`, one entry per line, so a rewrite shows as a readable diff.
+CI runs `bun run evals/recall.ts --fixture`. The fixture is four files in `evals/fixtures`, one entry per line, so a rewrite shows as a readable diff.
 
-- `recall.json` names 18 queries and the recall the fixture scored on the 11 from `queries.json` when it was written, 0.970. They are the first query of each category in each set: 11 from `queries.json`, all planned, the first typo of each of the 2 kinds, and the first nonsense query of each of the 5 kinds.
+- `recall.json` names 18 queries and the recall the fixture scored on the 11 from `queries.json` when it was written, 0.970. Its `metadataRecall` is what the same queries scored with every repo waiting for its summary, also 0.970. They are the first query of each category in each set: 11 from `queries.json`, all planned, the first typo of each of the 2 kinds, and the first nonsense query of each of the 5 kinds.
 - `recall-repos.jsonl` holds 49 repos: the expected repos and the three highest-ranked wrong results for each query in the last full run. Each repo has its public metadata, summary, keywords, the facts the summary model stated with their quotes, and vector, and no README text. So the fixture checks the query compiler and atom filters against real claims.
 - `recall-answers.jsonl` holds every cached plan and query embedding those searches read, under the cache namespace that names the model and the prompt version. A typo or nonsense query typed as a keyword reads two embeddings and one plan.
+- `recall-metadata.jsonl` holds each repo's `metadataText` and its vector. The fixture searches a second time with every repo loaded as one that waits for its summary. Each repo has its facts and no receipt, is projected from its facts, and is embedded from its metadata through `saveMetadataEmbeddings`.
 
-The fixture run loads PGlite in the test process and fails any model or embedding call, so it needs no key and no Postgres. It fails when recall drops under the recorded recall, when a typo misses its repo, or when a nonsense query gets a result. It also fails when a query is missing from the cache, which happens after a change to the planner prompt or a model. After such a change, run `--write-fixture` with a key and commit the new fixture.
+The fixture run loads PGlite in the test process and fails any model or embedding call, so it needs no key and no Postgres. Each of its two searches fails when recall drops under its recorded recall, when a typo misses its repo, or when a nonsense query gets a result. It also fails when a query is missing from the cache, which happens after a change to the planner prompt or a model. After such a change, run `--write-fixture` with a key and commit the new fixture. It fails as well when a repo's recorded text is not what `metadataText` makes now. After a change to that recipe, run `--write-metadata-fixture`, which embeds the 49 texts again and records their recall.
 
 A fixture of real vectors and plans tests the ranking that production runs. A run on hash embeddings would only test the plumbing.
 
@@ -317,10 +347,11 @@ AI_GATEWAY_API_KEY=... bun run evals/recall.ts
 AI_GATEWAY_API_KEY=... bun run evals/recall.ts --write-fixture
 AI_GATEWAY_API_KEY=... bun run evals/recall.ts --max-distances 0.32,0.36,0.40
 AI_GATEWAY_API_KEY=... bun run evals/recall.ts --stars 20000
+AI_GATEWAY_API_KEY=... bun run evals/recall.ts --write-metadata-fixture
 bun run evals/recall.ts --fixture
 ```
 
-`corpus.ts --most-starred N` writes GitHub's N most-starred repos to `evals/.cache/most-starred.json`, with no README, through GraphQL search. Search pages take about 7 seconds each, so 20,000 repos take about 30 minutes. `--stars N` fills the eval account up to N stars with those repos, in order of stars, embedded from their name, description, and topics. "Larger accounts" above says why.
+`corpus.ts --most-starred N` writes GitHub's N most-starred repos to `evals/.cache/most-starred.json`, with no README, through GraphQL search. Search pages take about 7 seconds each, so 20,000 repos take about 30 minutes. `--stars N` fills the eval account up to N stars with those repos, in order of stars, embedded from their `metadataText`. "Larger accounts" above says why.
 
 `--max-distances` scores search at each listed value of `maxMatchDistance` and prints one line per value. `--accept-floor` runs the usage floor before the queries run, which accepts every subject held by 3 repos from 2 owners, and `--bare-filters` adds bare subjects as filters, so a change to the compiler's policy can be measured before it ships.
 
