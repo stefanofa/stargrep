@@ -1,6 +1,8 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientError from "effect/http/HttpClientError";
+import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
@@ -58,12 +60,50 @@ export const waitUntilConsumed = <E extends { readonly _tag: string }, R>(
       `Queue consumption did not finish within ${Duration.toSeconds(freshStageWait)} s, last answer: ${lastAnswer}`,
   );
 
-export type Answer = { readonly status: number; readonly contentType: string; readonly body: string };
-export type Resends = { cloudflare404: number; dropped: number };
+export type Answer = {
+  readonly status: number;
+  readonly placement: string | undefined;
+  readonly body: string;
+};
 
-// Until a new workers.dev URL reaches every edge machine, some requests get Cloudflare's own HTML 404 page instead of
-// the Worker, for over a minute under load. The Worker never answers with HTML, so those requests are sent again.
-const isCloudflare404 = (answer: Answer) => answer.status === 404 && answer.contentType.startsWith("text/html");
+export const readAnswer = (request: HttpClientRequest.HttpClientRequest) =>
+  HttpClient.execute(request).pipe(
+    Effect.flatMap((response) =>
+      Effect.map(
+        response.text,
+        (body): Answer => ({
+          status: response.status,
+          placement: response.headers["cf-placement"],
+          body,
+        }),
+      ),
+    ),
+  );
+
+// A new Worker reaches Cloudflare's machines one by one. For about a minute after a deploy creates it, a call can reach
+// a machine that answers for the Worker without running it, and the next call can reach one that runs it. New stages
+// got these answers that way, in CI and from a probe. They say nothing about the Worker, so the call is sent again.
+const unrouted = [
+  // The machine has not loaded the Worker behind the custom domain. Cloudflare sends the page as HTML or as plain text,
+  // depending on the client.
+  {
+    kind: "scriptNotFound",
+    answer: "Cloudflare's Script not found page",
+    matches: ({ status, body }: Answer) =>
+      status === 500 &&
+      (body.includes('<span class="cf-error-code">1104</span>') || body.trim() === "error code: 1104"),
+  },
+  // Placement sent the call on to the region near the database, which had not loaded the Worker. The web Worker
+  // answers its own errors with a body. The main Worker answers a defect with an empty 500, but a defect repeats on
+  // every resend, so the call still fails.
+  {
+    kind: "placement",
+    answer: "an empty 500 from the placement region",
+    matches: ({ status, body, placement }: Answer) => status === 500 && body === "" && placement !== undefined,
+  },
+] as const;
+
+export type Resends = Record<(typeof unrouted)[number]["kind"] | "dropped", number>;
 
 // In CI, a run of the old 1000-call smoke burst lost a single call to ECONNRESET between the runner and Cloudflare,
 // before any answer arrived. A reset carries no status to judge and each run lost only one call, so the call is sent
@@ -90,13 +130,12 @@ export const untilRouted = <R>(
             Effect.andThen(Effect.fail(new NotSettled({ answer: `dropped before any answer: ${error.message}` }))),
           ),
       ),
-      Effect.filterOrFail(
-        (answer) => !isCloudflare404(answer),
-        () => {
-          resends.cloudflare404++;
-          return new NotSettled({ answer: "Cloudflare's 404 page" });
-        },
-      ),
+      Effect.flatMap((answer) => {
+        const found = unrouted.find(({ matches }) => matches(answer));
+        if (found === undefined) return Effect.succeed(answer);
+        resends[found.kind]++;
+        return Effect.fail(new NotSettled({ answer: found.answer }));
+      }),
     );
     return untilSettled(
       attempt,
