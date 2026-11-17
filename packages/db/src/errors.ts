@@ -37,6 +37,7 @@ export const Operation = Schema.Literals([
   "repos.defer",
   "repos.summaryBacklog",
   "repos.pendingSummaries",
+  "repos.summaryCandidates",
   "stars.upsert",
   "stars.applySnapshot",
   "stars.list",
@@ -94,6 +95,9 @@ export const Operation = Schema.Literals([
   "facets.lookup",
   "monthlyPicks.optedIn",
   "monthlyPicks.set",
+  "starImports.claim",
+  "starImports.heartbeat",
+  "starImports.release",
 ]);
 export type Operation = typeof Operation.Type;
 

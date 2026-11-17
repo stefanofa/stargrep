@@ -268,6 +268,9 @@ export interface Deferral {
 const NamedRepo = Schema.Struct({ id: RepoId, owner: Login, name: RepoName });
 export type NamedRepo = typeof NamedRepo.Type;
 
+const SummaryCandidate = Schema.Struct({ ...NamedRepo.fields, stars: Schema.Int });
+export type SummaryCandidate = typeof SummaryCandidate.Type;
+
 // An enrichment attempt's hold on repos before its paid summary call. enrich_retry_at is the time before which no paid
 // attempt may start, so a lease is a retry time in the future, and until also names the lease, so the attempt can
 // settle only its own.
@@ -315,7 +318,8 @@ export interface SavedFacts {
 export interface Queries {
   readonly upsertRefs: (refs: ReadonlyArray<RepoRef>) => Effect.Effect<void, DbQueryFailed>;
   // Saves the repos a star list shows. It inserts a new one with the list's metadata, follows a rename, and fills in the
-  // metadata of a repo enrichment has not read yet, so a repo can be embedded from its metadata before its summary.
+  // metadata of a repo enrichment has not read yet, so a repo can be embedded from its metadata before its summary. It
+  // also stores the list's star count for a repo with no metrics yet, which enrichment's facts later replace.
   readonly saveListed: (listed: ReadonlyArray<ListedRepo>) => Effect.Effect<void, DbQueryFailed>;
   readonly pendingEnrichment: (
     ids: ReadonlyArray<RepoId>,
@@ -380,6 +384,12 @@ export interface Queries {
   readonly pendingSummaries: (
     query: SweepQuery,
   ) => Effect.Effect<ReadonlyArray<NamedRepo>, DbQueryFailed | DbRowInvalid>;
+  // The repos among these that have no summary under the current recipe, are under the failure cap, and have at least
+  // minStars GitHub stars by their metrics, for a prefill list. The prefill takes the rest from there.
+  readonly summaryCandidates: (input: {
+    readonly ids: ReadonlyArray<RepoId>;
+    readonly minStars: number;
+  }) => Effect.Effect<ReadonlyArray<SummaryCandidate>, DbQueryFailed | DbRowInvalid>;
 }
 
 const batchSize = 1000;
@@ -390,6 +400,7 @@ const decodePending = rowsDecoder(Schema.Struct({ pending: Schema.Boolean }));
 const decodeDue = rowsDecoder(DueIcon);
 const decodeLeases = rowsDecoder(Schema.Struct({ id: RepoId, inputHash: InputHash, leased: Schema.Boolean }));
 const decodeNamed = rowsDecoder(NamedRepo);
+const decodeCandidates = rowsDecoder(SummaryCandidate);
 const decodeCount = rowsDecoder(Schema.Struct({ count: Schema.Int }));
 const decodeMetadata = rowsDecoder(RepoMetadata);
 
@@ -484,7 +495,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
                 run("repos.saveListed", (db) =>
                   db
                     .insert(repos, "id", "nodeId", "owner", "name", "description", "topics", "language")
-                    .values([...values])
+                    .values(values.map(({ stars: _, ...repo }) => repo))
                     .onConflictDoUpdate({
                       target: repos.id,
                       set: {
@@ -505,6 +516,14 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
                     }),
                 ),
               ),
+              Effect.andThen(() => {
+                const counted = chunk.flatMap((repo) =>
+                  repo.stars === null ? [] : [{ repoId: repo.id, stars: repo.stars, refreshedAt: sql`now()` }],
+                );
+                return Arr.isReadonlyArrayNonEmpty(counted)
+                  ? run("repos.saveListed", (db) => db.insert(repoMetrics).values(counted).onConflictDoNothing())
+                  : Effect.void;
+              }),
             ),
           { discard: true },
         ),
@@ -886,5 +905,15 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           .orderBy(...sweepOrder)
           .limit(limit),
       ).pipe(Effect.flatMap(decodeNamed("repos.pendingSummaries"))),
+    summaryCandidates: ({ ids, minStars }) =>
+      run("repos.summaryCandidates", (db) =>
+        db
+          .select({ id: repos.id, owner: repos.owner, name: repos.name, stars: sql<number>`${repoMetrics.stars}` })
+          .from(repos)
+          .innerJoin(repoMetrics, eq(repoMetrics.repoId, repos.id))
+          .where(
+            sql`${repos.id} = any(${sql.param([...ids])}::bigint[]) and ${repoMetrics.stars} >= ${minStars} and ${retryableEnrichment(repos)} and (${repos.summary} is null or ${repos.summaryRecipe} is distinct from ${sql.raw(String(summaryRecipe))})`,
+          ),
+      ).pipe(Effect.flatMap(decodeCandidates("repos.summaryCandidates"))),
   } satisfies Queries;
 });

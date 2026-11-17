@@ -5,6 +5,7 @@ import { UserId } from "@stargrep/db/auth-schema";
 import type { AccountNotFound, DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
 import { type GitHubError, NotFound } from "@stargrep/github/errors";
 import * as GitHub from "@stargrep/github/github";
+import type * as Owner from "@stargrep/github/owner";
 import { type GitHubAccountId, Login, type Star } from "@stargrep/github/schemas";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
@@ -46,6 +47,9 @@ export const LoginSyncRequest = Schema.Struct({
 });
 export type LoginSyncRequest = typeof LoginSyncRequest.Type;
 
+// A sync of an account the caller already looked up.
+export type OwnerSyncRequest = Omit<LoginSyncRequest, "login">;
+
 export const actorOf = (request: LoginSyncRequest): Analytics.Actor =>
   request.userId !== undefined
     ? Analytics.Actor.User({ userId: request.userId })
@@ -66,6 +70,8 @@ export class StarSync extends Context.Service<
   StarSync,
   {
     readonly syncLogin: (request: LoginSyncRequest) => Effect.Effect<SyncReport, StarSyncError>;
+    // Syncs an account its caller already looked up, so the sync spends no second lookup on it.
+    readonly syncOwner: (owner: Owner.Owner, request: OwnerSyncRequest) => Effect.Effect<SyncReport, StarSyncError>;
   }
 >()("@stargrep/core/stars/star-sync/StarSync") {}
 
@@ -78,7 +84,7 @@ const noChanges: Db.SnapshotChanges = { starred: [], unstarred: [] };
 // is lost.
 const metadataBudget = Duration.seconds(30);
 
-const make = Effect.gen(function* () {
+const make = Effect.fnUntraced(function* (embedsMetadata: boolean) {
   const db = yield* Db.Db;
   const github = yield* GitHub.GitHub;
   const queue = yield* EnrichQueue.EnrichQueue;
@@ -101,7 +107,7 @@ const make = Effect.gen(function* () {
 
   const sync = Effect.fn("StarSync.sync")(function* (
     accountId: GitHubAccountId,
-    request: LoginSyncRequest,
+    request: OwnerSyncRequest,
     initialCount: number,
   ) {
     const account = yield* db.accounts.require(accountId);
@@ -160,29 +166,38 @@ const make = Effect.gen(function* () {
     if (!shifted) yield* db.accounts.recordStarSync({ accountId: account.id, at });
     // A new repo can wait in the enrichment queue for a long time, so it is embedded from the list's metadata now, newest
     // star first. This runs after the sync's own writes and stops at metadataBudget, so a big import never holds them.
-    yield* MetadataEmbeddings.embed(pending).pipe(
-      Effect.timeoutOrElse({
-        duration: metadataBudget,
-        orElse: () =>
-          Effect.logInfo("Metadata embedding reached its budget, the rest wait for enrichment", {
-            queued: pending.length,
-          }),
-      }),
-      Effect.provideService(Db.Db, db),
-      Effect.provideService(Embeddings.Embeddings, embeddings),
-    );
+    if (embedsMetadata) {
+      yield* MetadataEmbeddings.embed(pending).pipe(
+        Effect.timeoutOrElse({
+          duration: metadataBudget,
+          orElse: () =>
+            Effect.logInfo("Metadata embedding reached its budget, the rest wait for enrichment", {
+              queued: pending.length,
+            }),
+        }),
+        Effect.provideService(Db.Db, db),
+        Effect.provideService(Embeddings.Embeddings, embeddings),
+      );
+    }
     return DiffPage.report(stored, pages, snapshot, { shifted, partial });
+  });
+
+  const syncOwner = Effect.fn("StarSync.syncOwner")(function* (owner: Owner.Owner, request: OwnerSyncRequest) {
+    yield* db.accounts.upsert(owner.account);
+    return yield* sync(owner.account.id, request, owner.starredTotal);
   });
 
   const syncLogin = Effect.fn("StarSync.syncLogin")(function* (request: LoginSyncRequest) {
     const found = yield* github.owner(request.login);
     if (Option.isNone(found)) return yield* new NotFound({ operation: "owner", path: `/users/${request.login}` });
-    const { account, starredTotal } = found.value;
-    yield* db.accounts.upsert(account);
-    return yield* sync(account.id, request, starredTotal);
+    return yield* syncOwner(found.value, request);
   });
 
-  return StarSync.of({ syncLogin });
+  return StarSync.of({ syncLogin, syncOwner });
 });
 
-export const layer = Layer.effect(StarSync, make);
+export const layer = Layer.effect(StarSync, make(true));
+
+// A bulk import on a developer's machine embeds an account's repos itself once the sync returns, so a rerun can finish
+// the embeddings a crash or a failed call left after the sync recorded its time.
+export const layerWithoutEmbedding = Layer.effect(StarSync, make(false));

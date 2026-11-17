@@ -172,6 +172,31 @@ bun run --cwd packages/core enrich stars <login> --limit 200
 
 The first command prints the summary, kind, and embedding size, and prints `unchanged` when you run it again. The second batch-enriches an account's newest stars through one AI Gateway batch job, which can take many minutes. A rerun inside the batch's 24-hour lease skips the repos the first run holds, so use `prefill` for a bulk run that must survive being stopped. `bun run --cwd packages/core bench <login>` times 20 single enrichments, each followed by an unchanged run, and splits each enrichment into model, embedding, GitHub, and local time.
 
+## Import a list of logins' stars
+
+`bun run --cwd packages/core import-stars run --logins <file>` syncs the stars of every login in a list, in the list's order, one account at a time. The list holds one login per line. Only a line's first tab-separated column is read, so a table with the login first works as it is. Blank lines and lines that start with `#` are skipped. A line whose first column is not a login stops the command before it reads anything.
+
+The import runs the same `StarSync` as the Worker, on your machine, with three differences.
+
+- It reads GitHub with `GITHUB_TOKEN`, one request at a time. Use a personal token, so the import never waits behind live syncs on the app's token. The client waits out a short `retry-after`, and the import waits until a longer rate limit, or the token's budget share, resets.
+- It appends each repo that needs enrichment to `pending.txt` instead of sending it to the enrichment queue.
+- It embeds the metadata of every repo the account stars that waits for such an embedding before it moves to the next account, with no time budget, and takes no unit of the Worker's metadata embedding line. Imported repos become searchable by meaning as they land.
+
+An account is done once the database records its star sync and none of its repos waits for a metadata embedding. The import does not read again an account the database already records a star sync for, but it embeds whatever that account's repos still lack. It skips an account GitHub does not have, and an account that starred more repos than `--max-stars`, 20,000 by default. GitHub stops listing a very long star list before its end. Stop the import at any point and run it again. A rerun reads again the account a stop cut short, whose writes are idempotent, and embeds the repos a stop or a failed call left. An account that fails, including one whose star count moved while its list was read and one whose embedding call failed, is appended to `failures.jsonl` with its reason and tried again after the rest of the list, at most three more times. A token GitHub refuses, a missing `AI_GATEWAY_API_KEY`, or a pending file the import cannot write stops the run with a non-zero exit. One driver at a time holds the `star_import_owner` row and renews it every 15 seconds. A driver that cannot renew it for 45 seconds, because the database is out of reach, stops with a non-zero exit before its claim goes stale at one minute, so two drivers never read GitHub on one token. A rerun right after a crash waits up to a minute for the crashed driver's claim to go stale.
+
+It prints a line per account with its stars, star list pages, new repos, which counts the repos that wait for enrichment, the repos it embedded, and time, followed by the run's totals and pages per hour. `--out report.json` writes every attempt, also when you stop the run with Ctrl-C. `--state <dir>` names the directory that keeps `pending.txt` and `failures.jsonl`, `.cache/star-import` by default.
+
+`import-stars summaries` prints `<numeric id> <owner>/<name>` for every repo in `pending.txt` that has no summary under the current recipe and has at least `--min-stars` GitHub stars, 200 by default, most starred first. The star count comes from the star list the import read. Its output is a list `prefill --ids` reads. Run the prefill after the import, not beside it, so the token never has two readers at once.
+
+```sh
+export DATABASE_URL=... GITHUB_TOKEN=... AI_GATEWAY_API_KEY=... STARGREP_MODE=local
+bun run --cwd packages/core import-stars run --logins logins.txt --out import.json
+bun run --cwd packages/core import-stars summaries --min-stars 200 > prefill.txt
+bun run --cwd packages/core prefill --ids prefill.txt --adapter batch
+```
+
+Keep a stage's connection string in a private file outside the repo. With `AI_TEXT_PROVIDER=fake` and `AI_EMBEDDINGS_PROVIDER=fake` both commands pay for nothing, which suits a throwaway database. A database that holds another model's embeddings refuses them.
+
 ## Prefill repos
 
 `bun run --cwd packages/core prefill --ids <file>` summarizes every repo in a list through resumable provider batches, as "The prefill" in `docs/knowledge.md` explains. The list holds one `<numeric id> <owner>/<name>` per line. Stop it at any point and run it again, and it resumes the batches the first run sent without paying for them twice. A rerun right after a crash waits up to a minute for the crashed run's claim to go stale. `--out report.json` writes the run's outcomes, tokens, and statement counts, also when you stop the run with Ctrl-C. A SIGKILL writes none.

@@ -97,6 +97,7 @@ describe("stars", () => {
         description: null,
         topics: [],
         language: null,
+        stars: null,
       } as never);
       expect(fake.sent.map((sent) => sent.url.searchParams.get("page"))).toEqual(["1", "2", "3"]);
       const first = fake.sent[0];

@@ -48,6 +48,7 @@ const defaults = {
     defer: unexpected("repos.defer"),
     summaryBacklog: unexpected("repos.summaryBacklog")(),
     pendingSummaries: unexpected("repos.pendingSummaries"),
+    summaryCandidates: unexpected("repos.summaryCandidates"),
   },
   stars: {
     upsert: unexpected("stars.upsert"),
@@ -121,6 +122,11 @@ const defaults = {
     optedIn: unexpected("monthlyPicks.optedIn"),
     set: unexpected("monthlyPicks.set"),
   },
+  starImports: {
+    claim: unexpected("starImports.claim"),
+    heartbeat: unexpected("starImports.heartbeat"),
+    release: unexpected("starImports.release"),
+  },
 } satisfies Db.Db["Service"];
 
 export const makeDb = (overrides: Overrides = {}): Db.Db["Service"] =>
@@ -135,6 +141,7 @@ export const makeDb = (overrides: Overrides = {}): Db.Db["Service"] =>
     knowledge: { ...defaults.knowledge, ...overrides.knowledge },
     facets: { ...defaults.facets, ...overrides.facets },
     monthlyPicks: { ...defaults.monthlyPicks, ...overrides.monthlyPicks },
+    starImports: { ...defaults.starImports, ...overrides.starImports },
   });
 
 // The reservation rule of the rate_lines upsert, kept in a map, for a fake database behind procedures that meter.

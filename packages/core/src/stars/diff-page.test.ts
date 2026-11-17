@@ -18,6 +18,7 @@ const listed = (repo: number, hours: number): Star => ({
     description: null,
     topics: [],
     language: null,
+    stars: null,
   },
 });
 

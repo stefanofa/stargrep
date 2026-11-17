@@ -33,6 +33,7 @@ interface Starred {
   readonly at: number;
   readonly description?: string;
   readonly topics?: ReadonlyArray<string>;
+  readonly stars?: number;
 }
 
 type BeforePage = (page: number, list: Array<Starred>) => Fake.Reply | undefined;
@@ -655,6 +656,24 @@ const fixture = () => {
           { id: 2, description: null, topics: [], embedding_source: "summary", embedded: false },
         ]);
         expect(sentRepos().toSorted(byNumber)).toEqual([1, 2]);
+      }),
+    );
+
+    test.effect("stores the star count the list gives a repo with no metrics, and leaves enrichment's alone", () =>
+      Effect.gen(function* () {
+        yield* reset();
+        const id = yield* account(23, "counts", [
+          { repo: 1, at: syncTime - minute, stars: 250 },
+          { repo: 2, at: syncTime - 2 * minute, stars: 40 },
+          { repo: 3, at: syncTime - 3 * minute },
+        ]);
+        yield* query("insert into repos (id, owner, name) values (2, 'owner', 'repo-2')");
+        yield* query("insert into repo_metrics (repo_id, stars, refreshed_at) values (2, 41, now())");
+        yield* sync(id);
+        expect(yield* query("select repo_id::int as repo, stars from repo_metrics order by repo_id")).toEqual([
+          { repo: 1, stars: 250 },
+          { repo: 2, stars: 41 },
+        ]);
       }),
     );
 

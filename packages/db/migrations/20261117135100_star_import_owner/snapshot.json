@@ -1,0 +1,113 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "89ba6a6d-fbe5-4fdb-b199-2d72cc2cd886",
+  "prevIds": [
+    "f21c5b98-37eb-484a-aa66-bdd884113758",
+    "6ae900f3-5de7-4985-a010-1ce7e0b4f8cc"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "star_import_owner"
+      ],
+      "writes": [
+        "s|tbl|public.star_import_owner",
+        "n|tbl|public.star_import_owner",
+        "e|tbl|public.star_import_owner",
+        "n|rel|public.star_import_owner",
+        "n|type|public.star_import_owner",
+        "n|rel|public.star_import_owner_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "star_import_owner",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "star_import_owner",
+        "name": "singleton",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "true",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "star_import_owner",
+        "name": "owner",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "star_import_owner",
+        "name": "heartbeat_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "star_import_owner",
+        "name": "star_import_owner_pkey",
+        "columns": [
+          "singleton"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "star_import_owner",
+        "name": "star_import_owner_one_row",
+        "value": "singleton",
+        "entityType": "checks"
+      }
+    }
+  ]
+}

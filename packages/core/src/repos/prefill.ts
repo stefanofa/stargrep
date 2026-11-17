@@ -31,6 +31,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as RepoKnowledge from "../knowledge/repo-knowledge.ts";
+import { waitForGitHub } from "../limits/github-wait.ts";
 import * as BlobStore from "./blob-store.ts";
 import { AnswerNotSaved, ownError, settlement } from "./enrich-repo.ts";
 import * as EnrichRetry from "./enrich-retry.ts";
@@ -295,30 +296,7 @@ const newId = SecureRandom.SecureRandom.use((random) => random.uuidV4()).pipe(
   Effect.provide(SecureRandom.layerWebCrypto),
 );
 
-// GitHub names when a spent budget or a rate limit lifts, and the prefill waits for it rather than give up a chunk.
-const budgetRetry = {
-  schedule: Schedule.spaced(Duration.seconds(1)).pipe(
-    Schedule.setInputType<GitHubError>(),
-    Schedule.modifyDelay(({ duration, input }) =>
-      Effect.map(Clock.currentTimeMillis, (now) => {
-        if (input._tag === "TokenBudgetExhausted") return Duration.millis(Math.max(input.resetAt - now, 1_000));
-        if (input._tag === "RateLimited") return Duration.millis(Math.max(input.retryAfterMillis, 1_000));
-        return duration;
-      }).pipe(
-        Effect.tap((delay) =>
-          input._tag === "TokenBudgetExhausted" || input._tag === "RateLimited"
-            ? Effect.logInfo("Prefill waits for GitHub's limit to lift", {
-                resource: input.resource,
-                seconds: Math.ceil(Duration.toSeconds(delay)),
-              })
-            : Effect.void,
-        ),
-      ),
-    ),
-  ),
-  times: 12,
-  while: (error: GitHubError) => error._tag === "TokenBudgetExhausted" || error._tag === "RateLimited",
-};
+const budgetRetry = waitForGitHub<GitHubError>("Prefill");
 
 // A README GitHub will not serve for reasons of this repo alone skips the repo. Anything every repo would hit stops
 // the run, so a rerun can resume.

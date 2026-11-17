@@ -15,6 +15,7 @@ const StarItem = Schema.Struct({
     description: Schema.optionalKey(Schema.NullOr(Schema.String)),
     topics: Schema.optionalKey(Schema.Array(Schema.String)),
     language: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    stargazers_count: Schema.optionalKey(Schema.Int),
   }),
 });
 type StarItem = typeof StarItem.Type;
@@ -31,6 +32,7 @@ export const toStar = ({ starred_at, repo }: StarItem): Star => ({
     description: repo.description ?? null,
     topics: repo.topics ?? [],
     language: repo.language ?? null,
+    stars: repo.stargazers_count ?? null,
   },
 });
 

@@ -37,14 +37,15 @@ it.effect("keeps the metadata a star page carries, and decodes a page without it
             description: "A command-line fuzzy finder",
             topics: ["cli", "fzf"],
             language: "Go",
+            stargazers_count: 79000,
           },
         },
         { starred_at: "2026-11-01T00:00:00Z", repo: { id: 43, node_id: "R_43", name: "bare", owner: { login: "x" } } },
       ]),
     );
     expect(page.map((item) => toStar(item).repo)).toMatchObject([
-      { description: "A command-line fuzzy finder", topics: ["cli", "fzf"], language: "Go" },
-      { description: null, topics: [], language: null },
+      { description: "A command-line fuzzy finder", topics: ["cli", "fzf"], language: "Go", stars: 79000 },
+      { description: null, topics: [], language: null, stars: null },
     ]);
   }),
 );
