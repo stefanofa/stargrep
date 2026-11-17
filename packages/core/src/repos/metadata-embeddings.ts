@@ -45,9 +45,10 @@ const embedBatch = Effect.fnUntraced(function* (batch: ReadonlyArray<Db.RepoMeta
 });
 
 // Embeds the metadata of each of these repos that waits for its summary and has nothing current to be searched by, so
-// search finds it by meaning until its summary's embedding replaces this one. Each repo takes a unit of metadataAll, not
-// of the summary cap. A batch the line refuses, a failed call, or a failed write only logs, and the repos wait for the
-// next attempt that reaches them, so this never fails its caller.
+// search finds it by meaning until its summary's embedding replaces this one. It embeds them in the order given, so a
+// caller that stops it early leaves the last ones waiting. Each repo takes a unit of metadataAll, not of the summary
+// cap. A batch the line refuses, a failed call, or a failed write only logs, and the repos wait for the next attempt
+// that reaches them, so this never fails its caller.
 export const embed = Effect.fn("MetadataEmbeddings.embed")(
   function* (ids: ReadonlyArray<RepoId>) {
     const db = yield* Db.Db;

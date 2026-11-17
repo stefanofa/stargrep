@@ -9,6 +9,7 @@ import { type GitHubAccountId, Login, type Star } from "@stargrep/github/schemas
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -72,6 +73,11 @@ const toStarred = (star: Star): Db.StarredRepo => ({ repoId: star.repo.id, starr
 
 const noChanges: Db.SnapshotChanges = { starred: [], unstarred: [] };
 
+// How long a sync spends embedding its new repos' metadata. A repo it does not reach waits for enrichment, which embeds
+// it from its metadata when the summary cap defers it or its summary fails, and the sweep sends it again if its message
+// is lost.
+const metadataBudget = Duration.seconds(30);
+
 const make = Effect.gen(function* () {
   const db = yield* Db.Db;
   const github = yield* GitHub.GitHub;
@@ -132,11 +138,6 @@ const make = Effect.gen(function* () {
     const pages = written.map(({ page }) => page);
     // Enrichment shares the token gate, so repos enqueued mid-read would hold it between pages.
     const pending = written.flatMap((entry) => entry.pending);
-    // A new repo can wait in the enrichment queue for a long time, so it is embedded from the list's metadata now.
-    yield* MetadataEmbeddings.embed(pending).pipe(
-      Effect.provideService(Db.Db, db),
-      Effect.provideService(Embeddings.Embeddings, embeddings),
-    );
     if (Arr.isReadonlyArrayNonEmpty(pending)) {
       const paidBy = request.userId === undefined ? {} : { userId: request.userId };
       yield* queue.send(pending.map((repoId) => ({ repoId, ...paidBy })));
@@ -158,6 +159,19 @@ const make = Effect.gen(function* () {
           })
         : noChanges;
     if (!shifted) yield* db.accounts.recordStarSync({ accountId: account.id, at });
+    // A new repo can wait in the enrichment queue for a long time, so it is embedded from the list's metadata now, newest
+    // star first. This runs after the sync's own writes and stops at metadataBudget, so a big import never holds them.
+    yield* MetadataEmbeddings.embed(pending).pipe(
+      Effect.timeoutOrElse({
+        duration: metadataBudget,
+        orElse: () =>
+          Effect.logInfo("Metadata embedding reached its budget, the rest wait for enrichment", {
+            queued: pending.length,
+          }),
+      }),
+      Effect.provideService(Db.Db, db),
+      Effect.provideService(Embeddings.Embeddings, embeddings),
+    );
     return DiffPage.report(stored, pages, snapshot, shifted);
   });
 

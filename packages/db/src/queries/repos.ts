@@ -337,7 +337,7 @@ export interface Queries {
   readonly saveEmbedding: (
     input: RepoEmbedding,
   ) => Effect.Effect<boolean, DbQueryFailed | RepoNotFound | EmbeddingModelMismatch>;
-  // The metadata of each of these repos that is due an embedding of it, in ID order.
+  // The metadata of each of these repos that is due an embedding of it, once each, in the order given.
   readonly metadataDue: (
     ids: ReadonlyArray<RepoId>,
   ) => Effect.Effect<ReadonlyArray<RepoMetadata>, DbQueryFailed | DbRowInvalid>;
@@ -688,9 +688,14 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
                 topics: repos.topics,
               })
               .from(repos)
-              .where(sql`${repos.id} = any(${sql.param([...ids])}::bigint[]) and ${metadataEmbeddingDue(repos)}`)
-              .orderBy(asc(repos.id)),
-          ).pipe(Effect.flatMap(decodeMetadata("repos.metadataDue"))),
+              .where(sql`${repos.id} = any(${sql.param([...ids])}::bigint[]) and ${metadataEmbeddingDue(repos)}`),
+          ).pipe(
+            Effect.flatMap(decodeMetadata("repos.metadataDue")),
+            Effect.map((rows) => {
+              const due = new Map<number, RepoMetadata>(rows.map((row) => [row.id, row]));
+              return Arr.dedupe(ids).flatMap((id) => due.get(id) ?? []);
+            }),
+          ),
     saveMetadataEmbeddings: (embeddings) =>
       Effect.forEach(inIdOrder(embeddings.map((entry) => ({ ...entry, id: entry.metadata.id }))), (entry) =>
         Effect.map(requireModel(configuredModel, entry.embedding), (vector) => ({
