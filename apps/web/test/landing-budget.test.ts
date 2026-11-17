@@ -51,6 +51,7 @@ describe("the landing budget", () => {
         "/repo/node_modules/.bun/@tanstack+db@1.0.0/node_modules/@tanstack/db/dist/index.js",
         "/repo/node_modules/.bun/skullet@0.0.3/node_modules/skullet/dist/react/index.mjs",
         "/repo/node_modules/.bun/@orpc+client@2.0.0/node_modules/@orpc/client/dist/index.mjs",
+        "/repo/node_modules/.bun/@base-ui+react@1.9.0/node_modules/@base-ui/react/button/Button.mjs",
       ]),
       chunk("routes.js", [`${app}/routes/{-$login}.tsx`]),
     ]);
@@ -59,6 +60,7 @@ describe("the landing budget", () => {
       ["TanStack DB", "helper.js"],
       ["skullet", "helper.js"],
       ["oRPC client", "helper.js"],
+      ["Base UI", "helper.js"],
     ]);
   });
 

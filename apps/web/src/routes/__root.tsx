@@ -1,9 +1,9 @@
 import fredoka from "@stargrep/ui/fonts/fredoka-latin-600-normal.woff2?url";
 import inter from "@stargrep/ui/fonts/inter-latin-wght-normal.woff2?url";
-import { createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
+import { createRootRoute, HeadContent, lazyRouteComponent, Scripts } from "@tanstack/react-router";
 import { type ReactNode, useEffect } from "react";
-import { Failure, NotFound } from "../components/problem-page.tsx";
 import { startAnalytics } from "../lib/analytics.ts";
+import { loadEngine } from "../lib/engine.ts";
 import { loadSession } from "../lib/load-page.ts";
 import { previewMeta, siteDescription, siteTitle } from "../lib/preview.ts";
 import styles from "../styles.css?url";
@@ -30,8 +30,8 @@ export const Route = createRootRoute({
   }),
   // The shell wraps the error and not-found pages too, so they keep the head, the styles and the scripts.
   shellComponent: Shell,
-  notFoundComponent: NotFound,
-  errorComponent: Failure,
+  notFoundComponent: lazyRouteComponent(loadEngine, "NotFound"),
+  errorComponent: lazyRouteComponent(loadEngine, "Failure"),
 });
 
 function Shell({ children }: { children: ReactNode }) {

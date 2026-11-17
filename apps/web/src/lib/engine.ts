@@ -28,3 +28,5 @@ const part = <P extends object>(pick: (engine: Engine) => ComponentType<P>) => {
 export const Stars = part((engine) => engine.Stars);
 
 export const HeaderControls = part((engine) => engine.HeaderControls);
+
+export const SignInProblem = part((engine) => engine.SignInProblem);

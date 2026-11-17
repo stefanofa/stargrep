@@ -403,6 +403,15 @@ describe("a stars page from the Worker to the browser", () => {
     expect(errors).toEqual([]);
   }, 60_000);
 
+  test("a sign-in github refused paints its problem tile from the server and keeps it once hydrated", async () => {
+    const page = await renderOnServer("/?error=access_denied");
+    expect(page.html).toContain("you said no to github");
+    await hydratePage("/?error=access_denied", page.html);
+    await waitFor(() => expect(document.querySelector("[role=alert] button")?.textContent).toContain("Try again"));
+    expect(document.querySelector("[role=alert] h2")?.textContent).toBe("you said no to github");
+    expect(errors).toEqual([]);
+  }, 60_000);
+
   test("an import under way paints the claim tile from the server's status read, and its progress once hydrated", async () => {
     const page = await renderOnServer("/octosync");
     expect(page.html).toContain("is this you? skip the wait");
