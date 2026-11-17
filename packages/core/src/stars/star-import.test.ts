@@ -1,14 +1,17 @@
 import { expect } from "bun:test";
 import * as Embeddings from "@stargrep/ai/embeddings";
+import { type AiError, AiUnavailable } from "@stargrep/ai/errors";
 import * as AiFake from "@stargrep/ai/fake";
 import * as Db from "@stargrep/db";
 import type { EmbeddingModelId } from "@stargrep/db/embedding";
+import { DbQueryFailed } from "@stargrep/db/errors";
 import * as TestDatabase from "@stargrep/db/test-database";
 import type * as GitHub from "@stargrep/github/github";
 import * as Fake from "@stargrep/github/github.fixture";
 import type { Login } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -26,7 +29,10 @@ const other = "00000000-0000-4000-8000-000000000b0b";
 
 const fixture = () => {
   const users = new Map<string, { readonly id: number; readonly stars: number }>();
-  const hooks: { reply: (login: string, page: number) => Fake.Reply | undefined } = { reply: () => undefined };
+  const hooks: {
+    reply: (login: string, page: number) => Fake.Reply | undefined;
+    embed: () => Effect.Effect<void, AiError>;
+  } = { reply: () => undefined, embed: () => Effect.void };
   const queue = EnrichQueue.layerMemory();
   const embedded: Array<string> = [];
 
@@ -72,10 +78,16 @@ const fixture = () => {
       model: { ...AiFake.hashEmbeddingModel, id: embeddingModel },
       timeout: Duration.seconds(30),
       run: (values) =>
-        Effect.sync(() => {
-          embedded.push(...values);
-          return { vectors: values.map(() => Array.from({ length: 1024 }, (_, at) => (at === 0 ? 1 : 0))), tokens: 1 };
-        }),
+        Effect.andThen(
+          Effect.suspend(() => hooks.embed()),
+          Effect.sync(() => {
+            embedded.push(...values);
+            return {
+              vectors: values.map(() => Array.from({ length: 1024 }, (_, at) => (at === 0 ? 1 : 0))),
+              tokens: 1,
+            };
+          }),
+        ),
     }),
   );
 
@@ -84,7 +96,7 @@ const fixture = () => {
       Layer.provideMerge(database),
       Layer.provideMerge(github.layer),
       Layer.provide(queue.layer),
-      Layer.provide(embeddings),
+      Layer.provideMerge(embeddings),
     );
 
   const query = (text: string, values: ReadonlyArray<unknown> = []) =>
@@ -93,6 +105,7 @@ const fixture = () => {
   const reset = Effect.gen(function* () {
     users.clear();
     hooks.reply = () => undefined;
+    hooks.embed = () => Effect.void;
     queue.sent.length = 0;
     embedded.length = 0;
     github.sent.length = 0;
@@ -127,8 +140,15 @@ const fixture = () => {
       Effect.map((rows) => (rows as ReadonlyArray<{ readonly stars_synced_at: Date | null }>)[0]?.stars_synced_at),
     );
 
+  const metadataEmbedded = () =>
+    query("select count(*)::int as count from repos where embedding_source = 'metadata'").pipe(
+      Effect.map((rows) => (rows as ReadonlyArray<{ readonly count: number }>)[0]?.count),
+    );
+
   const cases = (test: {
-    readonly effect: it.Tester<Db.Db | TestDatabase.TestDatabase | StarSync.StarSync | GitHub.GitHub>;
+    readonly effect: it.Tester<
+      Db.Db | TestDatabase.TestDatabase | StarSync.StarSync | GitHub.GitHub | Embeddings.Embeddings
+    >;
   }) => {
     test.effect(
       "imports each login once in order, and skips one too large, one GitHub lacks, and one already done",
@@ -256,10 +276,97 @@ const fixture = () => {
 
         yield* importStars(["ada"]);
         expect(embedded).toHaveLength(300);
-        expect(yield* query("select count(*)::int as count from repos where embedding_source = 'metadata'")).toEqual([
-          { count: 300 },
-        ]);
+        expect(yield* metadataEmbedded()).toBe(300);
         expect(yield* db.rateLines.wait(RateLine.metadataAll.key, now, Duration.zero)).toEqual(wait);
+      }),
+    );
+
+    test.effect("reads an account again when its star count moves while the list is read", () =>
+      Effect.gen(function* () {
+        yield* reset;
+        users.set("ada", { id: 1, stars: 3 });
+        hooks.reply = (login, page) => {
+          if (login === "ada" && page === 1 && users.get("ada")?.stars === 3) users.set("ada", { id: 1, stars: 4 });
+          return undefined;
+        };
+
+        expect(yield* importStars(["ada"])).toEqual({ failed: [] });
+        expect(tags()).toEqual(["ada Failed 1", "ada Imported"]);
+        expect(outcomes[0]).toMatchObject({ reason: expect.stringContaining("star count") });
+        expect(yield* stored(1)).toBe(4);
+        expect(yield* syncedAt(1)).not.toBeNull();
+      }),
+    );
+
+    test.effect("embeds on a rerun the repos a crash after the sync left without a metadata embedding", () =>
+      Effect.gen(function* () {
+        yield* reset;
+        users.set("ada", { id: 1, stars: 150 });
+        const second = yield* Deferred.make<void>();
+        let calls = 0;
+        hooks.embed = () =>
+          ++calls === 2 ? Effect.andThen(Deferred.succeed(second, undefined), Effect.never) : Effect.void;
+        const crashed = yield* Effect.forkChild(importStars(["ada"]));
+        yield* Deferred.await(second);
+        yield* Fiber.interrupt(crashed);
+        expect(yield* syncedAt(1)).not.toBeNull();
+        expect(yield* metadataEmbedded()).toBe(128);
+
+        hooks.embed = () => Effect.void;
+        expect(yield* importStars(["ada"])).toEqual({ failed: [] });
+        expect(yield* metadataEmbedded()).toBe(150);
+        expect(outcomes).toEqual([expect.objectContaining({ _tag: "AlreadySynced", embedded: 22 })]);
+      }),
+    );
+
+    test.effect("tries an account again while its repos' embeddings fail, and a rerun embeds them", () =>
+      Effect.gen(function* () {
+        yield* reset;
+        users.set("ada", { id: 1, stars: 2 });
+        hooks.embed = () =>
+          Effect.fail(new AiUnavailable({ operation: "embed", model: embeddingModel, detail: "down" }));
+
+        expect(yield* importStars(["ada"])).toEqual({ failed: ["ada" as Login] });
+        expect(tags()).toEqual(["ada Failed 1", "ada Failed 2", "ada Failed 3", "ada Failed 4"]);
+        expect(outcomes[0]).toMatchObject({ reason: expect.stringContaining("AiUnavailable") });
+        expect([yield* stored(1), yield* metadataEmbedded()]).toEqual([2, 0]);
+
+        hooks.embed = () => Effect.void;
+        expect(yield* importStars(["ada"])).toEqual({ failed: [] });
+        expect(yield* metadataEmbedded()).toBe(2);
+        expect(outcomes).toEqual([expect.objectContaining({ _tag: "AlreadySynced", embedded: 2 })]);
+      }),
+    );
+
+    test.effect("stops before its claim goes stale when it cannot renew it, and reads GitHub no more", () =>
+      Effect.gen(function* () {
+        yield* reset;
+        users.set("ada", { id: 1, stars: 150 });
+        let limited = false;
+        hooks.reply = (login, page) => {
+          if (login !== "ada" || page !== 2 || limited) return undefined;
+          limited = true;
+          return { status: 429, headers: { "retry-after": "600" } };
+        };
+        const db = yield* Db.Db;
+        const unreachable = () =>
+          Effect.fail(new DbQueryFailed({ operation: "starImports.heartbeat", reason: "transport", sqlState: null }));
+        const cutOff = Db.Db.of({
+          ...db,
+          starImports: { ...db.starImports, heartbeat: unreachable, release: unreachable },
+        });
+        const secondPages = () =>
+          github.sent.filter(
+            (sent) => sent.url.pathname === "/users/ada/starred" && sent.url.searchParams.get("page") === "2",
+          ).length;
+
+        const running = yield* Effect.forkChild(importStars(["ada"]).pipe(Effect.provideService(Db.Db, cutOff)));
+        yield* Effect.yieldNow.pipe(Effect.repeat({ until: () => limited }));
+        yield* TestClock.adjust(Duration.toMillis(StarImport.ownerStale) - 1_000);
+        expect(running.pollUnsafe()).toBeDefined();
+        yield* TestClock.adjust("10 minutes");
+        expect(yield* Effect.flip(Fiber.join(running))).toMatchObject({ _tag: "StarImportRenewalFailed" });
+        expect(secondPages()).toBe(1);
       }),
     );
   };
