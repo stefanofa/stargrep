@@ -50,6 +50,7 @@ export const starItem = (star: FakeStar) => ({
     id: star.repo,
     node_id: `R_${star.repo}`,
     name: `repo-${star.repo}`,
+    full_name: `owner/repo-${star.repo}`,
     owner: { login: "owner" },
     private: false,
     description: star.description ?? null,

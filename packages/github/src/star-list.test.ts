@@ -14,7 +14,7 @@ it.effect("decodes star pages owned by existing GitHub accounts outside the sign
         JSON.stringify([
           {
             starred_at: "2026-11-01T00:00:00Z",
-            repo: { id: 42, node_id: "R_42", name: "repo", owner: { login: owner } },
+            repo: { id: 42, node_id: "R_42", name: "repo", full_name: `${owner}/repo`, owner: { login: owner } },
           },
         ]),
       );
@@ -33,6 +33,7 @@ it.effect("keeps the metadata a star page carries, and decodes a page without it
             id: 42,
             node_id: "R_42",
             name: "fzf",
+            full_name: "junegunn/fzf",
             owner: { login: "junegunn" },
             description: "A command-line fuzzy finder",
             topics: ["cli", "fzf"],
@@ -40,7 +41,10 @@ it.effect("keeps the metadata a star page carries, and decodes a page without it
             stargazers_count: 79000,
           },
         },
-        { starred_at: "2026-11-01T00:00:00Z", repo: { id: 43, node_id: "R_43", name: "bare", owner: { login: "x" } } },
+        {
+          starred_at: "2026-11-01T00:00:00Z",
+          repo: { id: 43, node_id: "R_43", name: "bare", full_name: "x/bare", owner: { login: "x" } },
+        },
       ]),
     );
     expect(page.map((item) => toStar(item).repo)).toMatchObject([

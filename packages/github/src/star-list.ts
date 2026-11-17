@@ -11,7 +11,9 @@ const StarItem = Schema.Struct({
     id: RepoId,
     node_id: RepoNodeId,
     name: RepoName,
-    owner: Schema.Struct({ login: Login }),
+    full_name: Schema.TemplateLiteralParser([Login, "/", RepoName]),
+    // Null when GitHub no longer shows the owner's account. full_name still names the owner.
+    owner: Schema.NullOr(Schema.Struct({ login: Login })),
     description: Schema.optionalKey(Schema.NullOr(Schema.String)),
     topics: Schema.optionalKey(Schema.Array(Schema.String)),
     language: Schema.optionalKey(Schema.NullOr(Schema.String)),
@@ -27,7 +29,7 @@ export const toStar = ({ starred_at, repo }: StarItem): Star => ({
   repo: {
     id: repo.id,
     nodeId: repo.node_id,
-    owner: repo.owner.login,
+    owner: repo.owner?.login ?? repo.full_name[0],
     name: repo.name,
     description: repo.description ?? null,
     topics: repo.topics ?? [],
