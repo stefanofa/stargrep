@@ -62,6 +62,9 @@ export type Enrichment = Data.TaggedEnum<{
   Backoff: { readonly id: RepoId };
   // The daily summary cap refused its summary. It waits, counting no failure, until the cap has room.
   Capped: { readonly id: RepoId };
+  // The summary policy holds its summary back. It waits on its metadata embedding, off the sweep, until it gains stars
+  // or a signed-in user stars it.
+  Unwanted: { readonly id: RepoId };
   Stale: { readonly id: RepoId };
   Failed: { readonly id: RepoId; readonly error: EnrichRepoError };
   Summarized: { readonly id: RepoId; readonly summary: Summary };
@@ -121,6 +124,7 @@ const failureOf = (outcome: Enrichment): Option.Option<Failure> =>
     NotFound: () => Option.none(),
     Backoff: () => Option.none(),
     Capped: () => Option.none(),
+    Unwanted: () => Option.none(),
     Stale: () => Option.none(),
     Summarized: () => Option.none(),
     Embedded: () => Option.none(),
@@ -128,8 +132,10 @@ const failureOf = (outcome: Enrichment): Option.Option<Failure> =>
 
 const repoFailed = (outcome: Enrichment): boolean => Option.exists(failureOf(outcome), (failure) => failure.counts);
 
-// A repo the cap deferred or whose attempt failed still waits for its summary, so it is embedded from its metadata.
-const waitsForSummary = (outcome: Enrichment): boolean => outcome._tag === "Capped" || outcome._tag === "Failed";
+// A repo the cap deferred, the policy holds back, or whose attempt failed still waits for its summary, so it is embedded
+// from its metadata.
+const waitsForSummary = (outcome: Enrichment): boolean =>
+  outcome._tag === "Capped" || outcome._tag === "Unwanted" || outcome._tag === "Failed";
 
 const logFailures = (outcomes: ReadonlyArray<Enrichment>) =>
   Effect.forEach(
@@ -157,6 +163,8 @@ type Work =
 
 interface Job {
   readonly id: RepoId;
+  // The repo's place in the order the summary cap spends in, among the repos this attempt read.
+  readonly rank: number;
   readonly facts: RepoFacts;
   // The prompt inputs these facts make, as saveFacts saved them, which an answer must carry to be saved.
   readonly inputHash: InputHash;
@@ -166,6 +174,7 @@ interface Job {
 // A pending repo's saved facts, with its saved summary when that is current, before any README is read.
 interface Planned {
   readonly id: RepoId;
+  readonly rank: number;
   readonly facts: RepoFacts;
   readonly inputHash: InputHash;
   readonly summary: Option.Option<Summary>;
@@ -305,11 +314,19 @@ const make = Effect.gen(function* () {
   ): Effect.fn.Return<Step<Planned>, DbQueryFailed | DbRowInvalid> {
     const id = row.id;
     if (facts === undefined) return Result.fail(Enrichment.Gone({ id }));
-    // saveFacts can clear pending, and nothing fetches a repo that is not pending, so the counts go first.
+    // saveFacts can clear pending, and nothing fetches a repo that is not pending, so the counts go first. They also
+    // give a repo whose star count was unknown the count the summary policy reads.
     yield* db.repos.saveCounts({ id: facts.id, stars: facts.stars, forks: facts.forks });
-    const { pending, inputHash } = yield* db.repos.saveFacts(storedFacts(facts));
+    const { pending, unwanted, inputHash } = yield* db.repos.saveFacts(storedFacts(facts));
     if (!pending) return Result.fail(Enrichment.Unchanged({ id }));
-    return Result.succeed({ id, facts, inputHash, summary: summaryOf(row, readmeOidOf(facts), inputHash) });
+    if (unwanted) return Result.fail(Enrichment.Unwanted({ id }));
+    return Result.succeed({
+      id,
+      rank: row.rank,
+      facts,
+      inputHash,
+      summary: summaryOf(row, readmeOidOf(facts), inputHash),
+    });
   });
 
   const plan = Effect.fn("EnrichRepo.plan")(function* (ids: ReadonlyArray<RepoId>) {
@@ -320,6 +337,7 @@ const make = Effect.gen(function* () {
       if (row === undefined) return Result.fail(Enrichment.NotFound({ id }));
       if (!row.pending) return Result.fail(Enrichment.Unchanged({ id }));
       if (EnrichRetry.inBackoff(row, now)) return Result.fail(Enrichment.Backoff({ id }));
+      if (row.unwanted) return Result.fail(Enrichment.Unwanted({ id }));
       if (row.nodeId === null) return Result.fail(Enrichment.NoNodeId({ id }));
       return Result.succeed({ ...row, nodeId: row.nodeId });
     });
@@ -423,7 +441,11 @@ const make = Effect.gen(function* () {
     projector: RepoKnowledge.Projector,
   ) {
     const stored = jobs.flatMap((job) => (job.work._tag === "Embed" ? [{ job, summary: job.work.summary }] : []));
-    const due = jobs.flatMap((job) => (job.work._tag === "Summarize" ? [{ job, facts: job.work.prompt }] : []));
+    // The cap allows repos in the order given, so the ones it should spend on first go first.
+    const due = Arr.sort(
+      jobs.flatMap((job) => (job.work._tag === "Summarize" ? [{ job, facts: job.work.prompt }] : [])),
+      Order.mapInput(Order.Number, ({ job }: { readonly job: Job }) => job.rank),
+    );
     const now = yield* DateTime.now;
     const until = DateTime.addDuration(now, EnrichRetry.leaseFor(textGeneration.batchTimeout, due.length));
     const leased = new Set<number>(yield* db.repos.lease({ ids: due.map(({ job }) => job.id), now, until }));

@@ -92,7 +92,7 @@ export const fixture = () => {
     isArchived: false,
     isFork: false,
     isPrivate: remote.isPrivate ?? false,
-    stargazerCount: 100,
+    stargazerCount: 500,
     forkCount: 5,
     root: {
       entries: remote.readme === undefined ? [] : [{ name: "README.md", type: "blob", oid: readmeOid(n, remote) }],

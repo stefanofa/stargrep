@@ -77,6 +77,19 @@ const embedSummarized = (db: Db.Db["Service"], id: RepoId, vector: Embedding) =>
     );
   });
 
+const listed = (
+  id: RepoId,
+  stars: number | null,
+  overrides: Partial<Omit<Db.ListedRepo, "id" | "stars">> = {},
+): Db.ListedRepo => ({
+  ...ref(id),
+  description: `Repo ${id}`,
+  topics: [],
+  language: null,
+  stars,
+  ...overrides,
+});
+
 const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | TestDatabase.TestDatabase> }) => {
   test.effect("reads stored account logins and repo owners without applying signup syntax", () =>
     Effect.gen(function* () {
@@ -357,8 +370,8 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       }),
   );
 
-  // A recipe bump needs a migration that rebuilds this index, or the sweep can no longer use it.
-  test.effect("migrates the column default and the partial enrichment index to the current summary recipe", () =>
+  // A recipe bump or a policy change needs a migration that rebuilds this index, or the sweep can no longer use it.
+  test.effect("migrates the column default and the sweep's partial index to the current recipe and policy", () =>
     Effect.gen(function* () {
       const database = yield* TestDatabase.TestDatabase;
       expect(
@@ -367,7 +380,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         ),
       ).toEqual([{ column_default: String(summaryRecipe) }]);
       const indexes = yield* database.query(
-        "select pg_get_expr(indpred, indrelid) as predicate from pg_index where indexrelid = 'repos_retryable_enrichment_idx'::regclass",
+        "select pg_get_expr(indpred, indrelid) as predicate from pg_index where indexrelid = 'repos_sweep_idx'::regclass",
       );
       expect(indexes).toEqual([
         { predicate: expect.stringContaining(`summary_recipe IS DISTINCT FROM ${summaryRecipe}`) },
@@ -376,6 +389,13 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         predicate: expect.stringContaining("summary_input_hash IS DISTINCT FROM input_hash"),
       });
       expect(indexes[0]).toEqual({ predicate: expect.stringContaining("gone_at IS NULL") });
+      expect(indexes[0]).toEqual({ predicate: expect.stringContaining(`stars >= ${Db.summaryPolicy.stars}`) });
+      expect(indexes[0]).toEqual({ predicate: expect.stringContaining(`stars >= ${Db.summaryPolicy.bareStars}`) });
+      expect(
+        yield* database.query(
+          "select count(*)::int as old from pg_class where relname = 'repos_retryable_enrichment_idx'",
+        ),
+      ).toEqual([{ old: 0 }]);
     }),
   );
 
@@ -394,6 +414,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
 
       expect(yield* db.repos.saveFacts({ ...facts(topics), topics: ["cli", "tui"] })).toEqual({
         pending: true,
+        unwanted: false,
         inputHash: expect.stringMatching(/^[0-9a-f]{64}$/),
       });
       expect(yield* db.repos.pendingEnrichment([topics])).toEqual([topics]);
@@ -541,44 +562,186 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     }),
   );
 
-  test.effect(
-    "sweeps pending repos under the cap whose retry time passed, earliest first, then never-failed ones",
-    () =>
-      Effect.gen(function* () {
-        const db = yield* Db.Db;
-        const database = yield* TestDatabase.TestDatabase;
-        yield* database.query("truncate repos cascade");
-        const [fresh, due, dueEarlier, waiting, capped, read, freshLater] = [
-          repoId(2531),
-          repoId(2532),
-          repoId(2533),
-          repoId(2534),
-          repoId(2535),
-          repoId(2536),
-          repoId(2537),
-        ];
-        yield* db.repos.upsertRefs([fresh, due, dueEarlier, waiting, capped, read, freshLater].map((id) => ref(id)));
-        yield* embedSummarized(db, read, embedding({ 0: 1 }));
-        const fail = (ids: ReadonlyArray<RepoId>, time: string) =>
-          db.repos.recordEnrichFailures({ ids, at: at(time), retryDelays: [Duration.hours(1), Duration.hours(1)] });
-        yield* fail([capped], "2026-05-01T00:00:00Z");
-        yield* fail([capped], "2026-05-01T01:00:00Z");
-        yield* fail([capped], "2026-05-01T02:00:00Z");
-        yield* fail([dueEarlier], "2026-05-01T02:30:00Z");
-        yield* fail([due], "2026-05-01T02:45:00Z");
-        yield* fail([waiting], "2026-05-01T03:30:00Z");
+  test.effect("sweeps retryable repos in the order the summary cap spends in, and none the policy holds back", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      yield* database.query("truncate repos cascade");
+      const ada = UserId.make("user-sweep-ada");
+      yield* database.query("insert into \"user\" (id, name, email) values ($1, $1, $1 || '@example.com')", [ada]);
+      const [owner, first, second] = [accountId(120), accountId(121), accountId(122)];
+      yield* db.accounts.claim({
+        facts: account(owner, { login: login("sweep-owner") }),
+        userId: ada,
+        starredCount: 1,
+      });
+      yield* db.accounts.upsert(account(first));
+      yield* db.accounts.upsert(account(second));
+      const [embedOnly, owned, twoStargazers, popular, oneLeft, noStargazers, bare, unknown] = [
+        repoId(2531),
+        repoId(2532),
+        repoId(2533),
+        repoId(2534),
+        repoId(2535),
+        repoId(2536),
+        repoId(2537),
+        repoId(2538),
+      ];
+      const [tail, bareTail, capped, waiting] = [repoId(2539), repoId(2540), repoId(2541), repoId(2542)];
+      yield* db.repos.saveListed([
+        listed(embedOnly, 10),
+        listed(owned, 10),
+        listed(twoStargazers, 300),
+        listed(popular, 5000),
+        listed(oneLeft, 400),
+        listed(noStargazers, 250),
+        listed(bare, 60, { description: null }),
+        listed(unknown, null),
+        listed(tail, 199),
+        listed(bareTail, 49, { description: null }),
+        listed(capped, 300),
+        listed(waiting, 300),
+      ]);
+      yield* summarize({ id: embedOnly, readmeOid: null, summary: "summarized", keywords: [] });
+      const star = (account: typeof owner, ids: ReadonlyArray<RepoId>) =>
+        db.stars.upsert({ accountId: account, stars: ids.map((id) => starred(id, "2026-04-01T00:00:00Z")) });
+      yield* star(owner, [owned]);
+      yield* star(first, [twoStargazers, popular, oneLeft, tail]);
+      yield* star(second, [twoStargazers, oneLeft, tail]);
+      yield* db.stars.applySnapshot({
+        accountId: second,
+        stars: [twoStargazers, tail].map((id) => ({
+          repoId: id,
+          starredAt: at("2026-04-01T00:00:00Z"),
+          source: "api",
+        })),
+        at: at("2026-04-02T00:00:00Z"),
+        complete: true,
+      });
+      yield* db.repos.markUserStarred(owner);
+      const fail = (ids: ReadonlyArray<RepoId>, time: string) =>
+        db.repos.recordEnrichFailures({ ids, at: at(time), retryDelays: [Duration.hours(1), Duration.hours(1)] });
+      for (const time of ["2026-05-01T00:00:00Z", "2026-05-01T01:00:00Z", "2026-05-01T02:00:00Z"]) {
+        yield* fail([capped], time);
+      }
+      yield* fail([waiting], "2026-05-01T03:30:00Z");
 
-        const now = at("2026-05-01T04:00:00Z");
-        expect(yield* db.repos.sweepable({ now, limit: 10 })).toEqual([dueEarlier, due, fresh, freshLater]);
-        expect(yield* db.repos.sweepable({ now, limit: 2 })).toEqual([dueEarlier, due]);
-        expect(yield* db.repos.sweepable({ now: at("2026-05-01T05:00:00Z"), limit: 10 })).toEqual([
-          dueEarlier,
-          due,
-          waiting,
-          fresh,
-          freshLater,
-        ]);
-      }),
+      const now = at("2026-05-01T04:00:00Z");
+      const order = [embedOnly, owned, twoStargazers, popular, oneLeft, noStargazers, bare, unknown];
+      expect(yield* db.repos.sweepable({ now, limit: 20 })).toEqual(order);
+      expect(yield* db.repos.sweepable({ now, limit: 3 })).toEqual(order.slice(0, 3));
+      expect(yield* db.repos.sweepable({ now: at("2026-05-01T05:00:00Z"), limit: 20 })).toEqual([
+        ...order.slice(0, 2),
+        twoStargazers,
+        popular,
+        oneLeft,
+        waiting,
+        noStargazers,
+        bare,
+        unknown,
+      ]);
+      expect(yield* db.repos.summaryBacklog).toBe(order.length);
+      expect(yield* db.repos.pendingEnrichment([tail, bareTail])).toEqual([tail, bareTail]);
+      const planned = yield* db.repos.getMany([unknown, tail, popular, owned]);
+      expect(
+        Object.fromEntries(planned.map((row) => [Number(row.id), { unwanted: row.unwanted, rank: row.rank }])),
+      ).toEqual({
+        [owned]: { unwanted: false, rank: 1 },
+        [tail]: { unwanted: true, rank: 2 },
+        [popular]: { unwanted: false, rank: 3 },
+        [unknown]: { unwanted: false, rank: 4 },
+      });
+    }),
+  );
+
+  test.effect("wants a held-back summary again once a list or a facts read moves its stars past a floor", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const reader = accountId(123);
+      const [listedUp, readUp, bareUp] = [repoId(2551), repoId(2552), repoId(2553)];
+      yield* db.accounts.upsert(account(reader, { login: login("floor-reader") }));
+      yield* db.repos.saveListed([
+        listed(listedUp, 120),
+        listed(readUp, 150),
+        listed(bareUp, 30, { description: null }),
+      ]);
+      yield* db.stars.upsert({
+        accountId: reader,
+        stars: [listedUp, readUp, bareUp].map((id) => starred(id, "2026-04-01T00:00:00Z")),
+      });
+      const swept = db.repos
+        .sweepable({ now: at("2026-05-01T00:00:00Z"), limit: 100 })
+        .pipe(Effect.map((ids) => ids.filter((id) => [listedUp, readUp, bareUp].includes(id))));
+      const storedStars = (id: RepoId) =>
+        database.query("select stars from repos where id = $1", [id]).pipe(Effect.map((rows) => rows[0]));
+      expect(yield* swept).toEqual([]);
+      expect(yield* db.stars.enrichment(login("floor-reader"))).toEqual({ total: 3, read: 0, failed: 0, queued: 3 });
+
+      yield* db.repos.saveListed([listed(listedUp, 199), listed(bareUp, 49, { description: null })]);
+      expect(yield* storedStars(listedUp)).toEqual({ stars: 120 });
+      expect(yield* swept).toEqual([]);
+
+      yield* db.repos.saveListed([listed(listedUp, 201), listed(bareUp, 50, { description: null })]);
+      expect(yield* storedStars(listedUp)).toEqual({ stars: 201 });
+      expect(yield* swept).toEqual([listedUp, bareUp]);
+
+      yield* db.repos.saveCounts({ id: readUp, stars: 180, forks: 1 });
+      expect(yield* storedStars(readUp)).toEqual({ stars: 180 });
+      expect(yield* swept).toEqual([listedUp, bareUp]);
+      yield* db.repos.saveCounts({ id: readUp, stars: 200, forks: 1 });
+      expect(yield* swept).toEqual([listedUp, readUp, bareUp]);
+      expect(yield* db.stars.enrichment(login("floor-reader"))).toEqual({ total: 3, read: 0, failed: 0, queued: 0 });
+
+      yield* db.repos.saveListed([listed(listedUp, null)]);
+      expect(yield* storedStars(listedUp)).toEqual({ stars: 201 });
+    }),
+  );
+
+  test.effect("marks every repo a claimed account stars now, and none of an unclaimed account's", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const grace = UserId.make("user-mark-grace");
+      yield* database.query("insert into \"user\" (id, name, email) values ($1, $1, $1 || '@example.com')", [grace]);
+      const [claimed, visitor] = [accountId(124), accountId(125)];
+      const [kept, dropped, others] = [repoId(2561), repoId(2562), repoId(2563)];
+      yield* db.accounts.upsert(account(claimed, { login: login("mark-claimed") }));
+      yield* db.accounts.upsert(account(visitor, { login: login("mark-visitor") }));
+      yield* db.repos.saveListed([listed(kept, 3), listed(dropped, 3), listed(others, 3)]);
+      yield* db.stars.upsert({
+        accountId: claimed,
+        stars: [kept, dropped].map((id) => starred(id, "2026-04-01T00:00:00Z")),
+      });
+      yield* db.stars.upsert({ accountId: visitor, stars: [starred(others, "2026-04-01T00:00:00Z")] });
+      yield* db.stars.applySnapshot({
+        accountId: claimed,
+        stars: [{ repoId: kept, starredAt: at("2026-04-01T00:00:00Z"), source: "api" }],
+        at: at("2026-04-02T00:00:00Z"),
+        complete: true,
+      });
+      const marked = database.query(
+        "select id::int from repos where id = any($1::bigint[]) and user_starred order by id",
+        [[kept, dropped, others]],
+      );
+      const swept = db.repos
+        .sweepable({ now: at("2026-05-01T00:00:00Z"), limit: 100 })
+        .pipe(Effect.map((ids) => ids.filter((id) => [kept, dropped, others].includes(id))));
+
+      yield* db.repos.markUserStarred(claimed);
+      expect(yield* marked).toEqual([]);
+      expect(yield* swept).toEqual([]);
+
+      yield* db.accounts.claim({
+        facts: account(claimed, { login: login("mark-claimed") }),
+        userId: grace,
+        starredCount: 1,
+      });
+      yield* db.repos.markUserStarred(claimed);
+      yield* db.repos.markUserStarred(visitor);
+      expect(yield* marked).toEqual([{ id: kept }]);
+      expect(yield* swept).toEqual([kept]);
+    }),
   );
 
   test.effect("finds an account by login in any case", () =>

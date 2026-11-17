@@ -1,5 +1,6 @@
 import { summaryRecipe } from "@stargrep/ai/models";
 import {
+  type GitHubAccountId,
   Repo as GitHubRepo,
   ListedRepo,
   Login,
@@ -37,7 +38,11 @@ import {
   repoMetrics,
   repos,
   retryableEnrichment,
+  stars,
   summaryDue,
+  summaryPolicy,
+  summaryUnwanted,
+  sweepableEnrichment,
 } from "../schema.ts";
 import { sharedLock } from "./knowledge/lock.ts";
 
@@ -87,6 +92,8 @@ const internalColumns = [
   "enrichFailures",
   "enrichRetryAt",
   "summaryDeferred",
+  "stars",
+  "userStarred",
   "summaryRecipe",
   "embeddingStale",
   "inputHash",
@@ -232,9 +239,13 @@ const enrichFields = Struct.pick(RepoRow.fields, [
   "summaryInputHash",
 ]);
 
-const StoredRepo = Schema.Struct({ ...rowFields, ...enrichFields, pending: Schema.Boolean }).pipe(
+// unwanted says the summary policy holds back the repo's due summary. rank is the repo's place among the repos read
+// with it in the order the summary cap spends in, from 1.
+const plannedFields = { ...enrichFields, pending: Schema.Boolean, unwanted: Schema.Boolean, rank: Schema.Int };
+
+const StoredRepo = Schema.Struct({ ...rowFields, ...plannedFields }).pipe(
   Schema.decodeTo(
-    Schema.toType(Schema.Struct({ ...RepoFields.fields, ...enrichFields, pending: Schema.Boolean })),
+    Schema.toType(Schema.Struct({ ...RepoFields.fields, ...plannedFields })),
     SchemaTransformation.transform({
       decode: ({ iconKey, iconSource, iconPlate, iconSize, ...rest }) => ({
         ...rest,
@@ -311,6 +322,8 @@ export interface FactsLease {
 
 export interface SavedFacts {
   readonly pending: boolean;
+  // The summary policy holds back the summary these facts make due.
+  readonly unwanted: boolean;
   // The hash of the prompt inputs these facts make, which an answer to that prompt must carry to be saved.
   readonly inputHash: InputHash;
 }
@@ -321,6 +334,8 @@ export interface Queries {
   // metadata of a repo enrichment has not read yet, so a repo can be embedded from its metadata before its summary. It
   // also stores the list's star count for a repo with no metrics yet, which enrichment's facts later replace.
   readonly saveListed: (listed: ReadonlyArray<ListedRepo>) => Effect.Effect<void, DbQueryFailed>;
+  // Marks every repo the account stars now as starred by a signed-in user, when a user claimed the account.
+  readonly markUserStarred: (accountId: GitHubAccountId) => Effect.Effect<void, DbQueryFailed>;
   readonly pendingEnrichment: (
     ids: ReadonlyArray<RepoId>,
   ) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
@@ -371,12 +386,13 @@ export interface Queries {
   // Settles failed paid calls on the repos this lease still holds, in one statement, so no other attempt can lease a
   // repo between its failure and its count.
   readonly settleFailures: (settled: LeaseFailures) => Effect.Effect<void, DbQueryFailed>;
+  // The repos the sweep sends, in the order the summary cap spends in.
   readonly sweepable: (query: SweepQuery) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
   // Moves this attempt's lease on repos the summary cap refused to the time the cap has room again, counting no
   // failure, so the sweep sends them again then. It marks them deferred until they are read, so the library counts them
   // as queued.
   readonly defer: (deferral: Deferral) => Effect.Effect<void, DbQueryFailed>;
-  // How many repos under the failure cap wait for a paid summary, leased or not.
+  // How many repos under the failure cap wait for a paid summary the policy wants, leased or not.
   readonly summaryBacklog: Effect.Effect<number, DbQueryFailed | DbRowInvalid>;
   // The repos the sweep would send next that have no summary under the current recipe and that no attempt holds, in
   // the sweep's order, for a prefill run on a developer's machine. The prefill counts a repo summarized under the
@@ -396,7 +412,7 @@ const batchSize = 1000;
 const decodeRepos = rowsDecoder(Repo);
 const decodeIds = rowsDecoder(Schema.Struct({ id: RepoId }));
 const decodeStored = rowsDecoder(StoredRepo);
-const decodePending = rowsDecoder(Schema.Struct({ pending: Schema.Boolean }));
+const decodePending = rowsDecoder(Schema.Struct({ pending: Schema.Boolean, unwanted: Schema.Boolean }));
 const decodeDue = rowsDecoder(DueIcon);
 const decodeLeases = rowsDecoder(Schema.Struct({ id: RepoId, inputHash: InputHash, leased: Schema.Boolean }));
 const decodeNamed = rowsDecoder(NamedRepo);
@@ -405,14 +421,30 @@ const decodeCount = rowsDecoder(Schema.Struct({ count: Schema.Int }));
 const decodeMetadata = rowsDecoder(RepoMetadata);
 
 const needsEnrichment = pendingEnrichment(repos);
+const unwanted = summaryUnwanted(repos);
 const encodeRefs = writeEncoder(Schema.Array(RepoRef));
 const encodeListed = writeEncoder(Schema.Array(ListedRepo));
 const encodeFacts = writeEncoder(RepoFacts);
 
-// A repo the sweep may send now: due, under the failure cap, and held by no attempt or backoff.
+// A repo the sweep may send now: due, under the failure cap, wanted by the summary policy when a summary is due, and
+// held by no attempt or backoff.
 const sweepableAt = (now: DateTime.Utc) =>
-  sql`${retryableEnrichment(repos)} and (${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(now)})`;
-const sweepOrder = [sql`${repos.enrichRetryAt} nulls last`, repos.id] as const;
+  sql`${sweepableEnrichment(repos)} and (${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(now)})`;
+
+// The order the summary cap spends in. Work that needs no summary goes first, since it costs the cap nothing. Then
+// repos a signed-in user starred, then repos more synced accounts star now, then repos with more GitHub stars.
+const summaryOrder = [
+  sql`(${summaryDue(repos)})`,
+  sql`${repos.userStarred} desc`,
+  sql`(select count(*) from ${stars} where ${stars.repoId} = ${repos.id} and ${stars.unstarredAt} is null) desc`,
+  sql`${repos.stars} desc nulls last`,
+  sql`${repos.id}`,
+];
+
+// A star list's count is written whenever the row is, and otherwise only when it moves the repo across a threshold of
+// the summary policy, so syncs that list a popular repo many times a day do not rewrite its row for each new star.
+const starBand = (count: SQL) =>
+  sql`case when ${count} >= ${sql.raw(String(summaryPolicy.stars))} then 2 when ${count} >= ${sql.raw(String(summaryPolicy.bareStars))} then 1 when ${count} is not null then 0 end`;
 
 // The retry time after one more failure. The array index past the last delay reads null, so a capped repo has none.
 const retryAt = (at: DateTime.Utc, delays: ReadonlyArray<Duration.Duration>): SQL =>
@@ -494,8 +526,8 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
               Effect.flatMap((values) =>
                 run("repos.saveListed", (db) =>
                   db
-                    .insert(repos, "id", "nodeId", "owner", "name", "description", "topics", "language")
-                    .values(values.map(({ stars: _, ...repo }) => repo))
+                    .insert(repos, "id", "nodeId", "owner", "name", "description", "topics", "language", "stars")
+                    .values([...values])
                     .onConflictDoUpdate({
                       target: repos.id,
                       set: {
@@ -505,6 +537,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
                         description: unlessRead(repos.description),
                         topics: unlessRead(repos.topics),
                         language: unlessRead(repos.language),
+                        stars: sql`coalesce(${excluded(repos.stars)}, ${repos.stars})`,
                         embeddingStale: metadataMoved({
                           owner: excluded(repos.owner),
                           name: excluded(repos.name),
@@ -512,7 +545,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
                           topics: unlessRead(repos.topics),
                         }),
                       },
-                      setWhere: sql`(${repos.owner}, ${repos.name}, ${repos.nodeId}) is distinct from (${excluded(repos.owner)}, ${excluded(repos.name)}, ${excluded(repos.nodeId)}) or (${repos.inputHash} is null and (${repos.description}, ${repos.topics}, ${repos.language}) is distinct from (${excluded(repos.description)}, ${excluded(repos.topics)}, ${excluded(repos.language)}))`,
+                      setWhere: sql`(${repos.owner}, ${repos.name}, ${repos.nodeId}) is distinct from (${excluded(repos.owner)}, ${excluded(repos.name)}, ${excluded(repos.nodeId)}) or (${repos.inputHash} is null and (${repos.description}, ${repos.topics}, ${repos.language}) is distinct from (${excluded(repos.description)}, ${excluded(repos.topics)}, ${excluded(repos.language)})) or (${excluded(repos.stars)} is not null and ${starBand(excluded(repos.stars))} is distinct from ${starBand(sql`${repos.stars}`)})`,
                     }),
                 ),
               ),
@@ -527,6 +560,15 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
             ),
           { discard: true },
         ),
+      ),
+    markUserStarred: (accountId) =>
+      run("repos.markUserStarred", (db) =>
+        db
+          .update(repos)
+          .set({ userStarred: true })
+          .where(
+            sql`${repos.id} in (select id from repos where not user_starred and id in (select s.repo_id from stars s join github_accounts a on a.id = s.account_id where s.account_id = ${accountId} and s.unstarred_at is null and a.claimed_by is not null) order by id for no key update)`,
+          ),
       ),
     pendingEnrichment: (ids) =>
       run("repos.pendingEnrichment", (db) =>
@@ -552,10 +594,14 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
               .insert(repos, ...factColumns, "inputHash")
               .values(values)
               .onConflictDoUpdate({ target: repos.id, set: { ...changes, embeddingStale: factsMoved } })
-              .returning({ pending: needsEnrichment }),
+              .returning({ pending: needsEnrichment, unwanted }),
           ).pipe(
             Effect.flatMap(decodePending("repos.saveFacts")),
-            Effect.map((rows) => ({ pending: rows.some((row) => row.pending), inputHash: hash })),
+            Effect.map((rows) => ({
+              pending: rows.some((row) => row.pending),
+              unwanted: rows.some((row) => row.unwanted),
+              inputHash: hash,
+            })),
           );
         }),
       ),
@@ -583,6 +629,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
             Effect.map(([encoded, hash]) => ({
               ...encoded,
               nodeId: repo.nodeId,
+              stars: repo.stars,
               inputHash: hash,
               enrichRetryAt: DateTime.toDateUtc(until),
             })),
@@ -593,7 +640,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
         yield* run("repos.saveFactsAndLease", (db) => db.execute(sharedLock));
         const leases = yield* run("repos.saveFactsAndLease", (db) =>
           db
-            .insert(repos, ...factColumns, "nodeId", "inputHash", "enrichRetryAt")
+            .insert(repos, ...factColumns, "nodeId", "stars", "inputHash", "enrichRetryAt")
             .values(rows)
             .onConflictDoUpdate({
               target: repos.id,
@@ -612,6 +659,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
                 readmeOid: excluded(repos.readmeOid),
                 ownerType: excluded(repos.ownerType),
                 ownerAvatarUrl: excluded(repos.ownerAvatarUrl),
+                stars: excluded(repos.stars),
                 inputHash: excluded(repos.inputHash),
                 embeddingStale: factsMoved,
                 enrichRetryAt: sql`case when ${askCurrent ? askable : dueOnSave} and ${free} then ${excluded(repos.enrichRetryAt)} else ${repos.enrichRetryAt} end`,
@@ -653,13 +701,22 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
         Effect.flatMap(decodeIds("repos.summarized")),
         Effect.map((rows) => rows.map((row) => row.id)),
       ),
-    saveCounts: ({ id, stars, forks }) => {
-      const counts = { stars, forks, refreshedAt: sql`now()` };
+    saveCounts: ({ id, stars: starCount, forks }) => {
+      const counts = { stars: starCount, forks, refreshedAt: sql`now()` };
       return run("repos.saveCounts", (db) =>
         db
           .insert(repoMetrics)
           .values({ repoId: id, ...counts })
           .onConflictDoUpdate({ target: repoMetrics.repoId, set: counts }),
+      ).pipe(
+        Effect.andThen(
+          run("repos.saveCounts", (db) =>
+            db
+              .update(repos)
+              .set({ stars: starCount })
+              .where(and(eq(repos.id, id), sql`${repos.stars} is distinct from ${starCount}`)),
+          ),
+        ),
       );
     },
     saveEmbedding: (input) =>
@@ -801,6 +858,8 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           .select({
             ...repoColumns,
             pending: needsEnrichment,
+            unwanted,
+            rank: sql<number>`(row_number() over (order by ${sql.join(summaryOrder, sql`, `)}))::int`,
             enrichFailures: repos.enrichFailures,
             enrichRetryAt: repos.enrichRetryAt,
             summaryRecipe: repos.summaryRecipe,
@@ -870,7 +929,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           .select({ id: repos.id })
           .from(repos)
           .where(sweepableAt(now))
-          .orderBy(...sweepOrder)
+          .orderBy(...summaryOrder)
           .limit(limit),
       ).pipe(
         Effect.flatMap(decodeIds("repos.sweepable")),
@@ -889,7 +948,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
       db
         .select({ count: sql<number>`count(*)::int` })
         .from(repos)
-        .where(sql`${retryableEnrichment(repos)} and ${summaryDue(repos)}`),
+        .where(sql`${sweepableEnrichment(repos)} and ${summaryDue(repos)}`),
     ).pipe(
       Effect.flatMap(decodeCount("repos.summaryBacklog")),
       Effect.map((rows) => rows[0]?.count ?? 0),
@@ -902,7 +961,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           .where(
             sql`${sweepableAt(now)} and (${repos.summary} is null or ${repos.summaryRecipe} is distinct from ${sql.raw(String(summaryRecipe))})`,
           )
-          .orderBy(...sweepOrder)
+          .orderBy(...summaryOrder)
           .limit(limit),
       ).pipe(Effect.flatMap(decodeNamed("repos.pendingSummaries"))),
     summaryCandidates: ({ ids, minStars }) =>

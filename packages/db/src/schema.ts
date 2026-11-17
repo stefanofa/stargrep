@@ -150,11 +150,19 @@ interface EnrichmentColumns {
   readonly goneAt: AnyPgColumn;
 }
 
-interface MetadataColumns extends EnrichmentColumns {
-  readonly embedding: AnyPgColumn;
-  readonly embeddingSource: AnyPgColumn;
+interface ListedColumns {
   readonly description: AnyPgColumn;
   readonly topics: AnyPgColumn;
+}
+
+interface MetadataColumns extends EnrichmentColumns, ListedColumns {
+  readonly embedding: AnyPgColumn;
+  readonly embeddingSource: AnyPgColumn;
+}
+
+interface PolicyColumns extends EnrichmentColumns, ListedColumns {
+  readonly stars: AnyPgColumn;
+  readonly userStarred: AnyPgColumn;
 }
 
 // A repo is read once it has a summary of its current README and an embedding of that summary.
@@ -173,16 +181,38 @@ export const pendingEnrichment = (table: EnrichmentColumns) =>
 export const summaryDue = (table: EnrichmentColumns) =>
   sql<boolean>`(${table.summary} is null or ${table.summaryReadmeOid} is distinct from ${table.readmeOid} or ${table.summaryRecipe} is distinct from ${sql.raw(String(summaryRecipe))} or ${table.summaryInputHash} is distinct from ${table.inputHash}) and ${table.goneAt} is null`;
 
+// A description or a topic, the text a metadata embedding is made from besides the name.
+const hasMetadata = (table: ListedColumns) =>
+  sql<boolean>`(coalesce(${table.description}, '') <> '' or ${table.topics} <> '[]'::jsonb)`;
+
 // A repo waiting for its summary gets an embedding of its metadata, so search can find it by meaning meanwhile. It is due
 // when the repo has no embedding, or a metadata one its metadata has since moved past. A summary embedding, even a stale
 // one, describes the repo better and is kept. A repo with neither a description nor topics is left to its summary,
 // because its name alone sits near gibberish and full text already matches the name.
 export const metadataEmbeddingDue = (table: MetadataColumns) =>
-  sql<boolean>`${summaryDue(table)} and (${table.embedding} is null or (${table.embeddingSource} = 'metadata' and ${table.embeddingStale})) and (coalesce(${table.description}, '') <> '' or ${table.topics} <> '[]'::jsonb)`;
+  sql<boolean>`${summaryDue(table)} and (${table.embedding} is null or (${table.embeddingSource} = 'metadata' and ${table.embeddingStale})) and ${hasMetadata(table)}`;
+
+// Which repos get a paid summary. One with at least `stars` GitHub stars, one a signed-in user starred, or one with
+// neither a description nor topics and at least `bareStars`, since only a summary lets search find that one by meaning.
+// The sweep's partial index names both numbers, so a change to either ships with a migration that rebuilds it.
+export const summaryPolicy = { stars: 200, bareStars: 50 } as const;
+
+// A repo whose star count is unknown is wanted, so its first facts read can learn the count.
+export const summaryWanted = (table: PolicyColumns) =>
+  sql<boolean>`(${table.userStarred} or ${table.stars} is null or ${table.stars} >= ${sql.raw(String(summaryPolicy.stars))} or (${table.stars} >= ${sql.raw(String(summaryPolicy.bareStars))} and not ${hasMetadata(table)}))`;
+
+// A summary is due but the policy does not want it, so the repo waits on its metadata embedding and the sweep leaves
+// it alone until it gains stars or a signed-in user stars it.
+export const summaryUnwanted = (table: PolicyColumns) =>
+  sql<boolean>`${summaryDue(table)} and not ${summaryWanted(table)}`;
 
 // The cap is a literal, not a parameter, so Postgres can match a query to the partial index on this predicate.
 export const retryableEnrichment = (table: EnrichmentColumns) =>
   sql<boolean>`${pendingEnrichment(table)} and ${table.enrichFailures} < ${sql.raw(String(enrichFailureCap))}`;
+
+// What the sweep may send: retryable enrichment that needs no summary, or whose summary the policy wants.
+export const sweepableEnrichment = (table: PolicyColumns) =>
+  sql<boolean>`${retryableEnrichment(table)} and (not (${summaryDue(table)}) or ${summaryWanted(table)})`;
 
 export const repos = pgTable(
   "repos",
@@ -217,6 +247,11 @@ export const repos = pgTable(
     // The daily summary cap refused this repo's summary, and the repo has not been read since. The library counts it as
     // queued, so a page stops waiting on it, and saving the embedding clears it.
     summaryDeferred: boolean("summary_deferred").notNull().default(false),
+    // GitHub's star count as a star list or a facts read last reported it, null until one has. repo_metrics keeps the
+    // facts read's count for search. The summary policy reads this copy, because a partial index sees only this table.
+    stars: integer("stars"),
+    // A signed-in user starred the repo, so the summary policy wants it. An unstar leaves it set.
+    userStarred: boolean("user_starred").notNull().default(false),
     iconKey: text("icon_key"),
     iconSource: iconSource("icon_source"),
     iconPlate: iconPlate("icon_plate"),
@@ -258,7 +293,7 @@ export const repos = pgTable(
   },
   (table) => [
     index("repos_search_idx").using("gin", table.search),
-    index("repos_retryable_enrichment_idx").on(table.enrichRetryAt, table.id).where(retryableEnrichment(table)),
+    index("repos_sweep_idx").on(table.enrichRetryAt, table.id).where(sweepableEnrichment(table)),
     check(
       "repos_icon_complete",
       sql`(${table.iconKey} is null) = (${table.iconSource} is null) and (${table.iconKey} is null) = (${table.iconPlate} is null) and (${table.iconKey} is null) = (${table.iconSize} is null)`,
@@ -329,6 +364,8 @@ export const stars = pgTable(
     index("stars_page_idx")
       .on(table.accountId, table.starredAt.desc().nullsFirst(), table.repoId)
       .where(sql`${table.unstarredAt} is null`),
+    // A repo's current stargazers, which the summary order counts.
+    index("stars_repo_idx").on(table.repoId).where(sql`${table.unstarredAt} is null`),
   ],
 );
 

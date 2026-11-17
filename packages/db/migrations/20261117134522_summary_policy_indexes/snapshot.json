@@ -1,0 +1,135 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "84a37168-4608-4cf1-9c83-77af9a2dab11",
+  "prevIds": [
+    "d7fc1c35-0177-4464-91b2-cc9bdb18e077"
+  ],
+  "footprints": [
+    {
+      "statementType": "drop_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repos",
+        "repos_retryable_enrichment_idx"
+      ],
+      "writes": [
+        "s|idx|public.repos_retryable_enrichment_idx",
+        "n|idx|public.repos_retryable_enrichment_idx",
+        "e|idx|public.repos_retryable_enrichment_idx",
+        "n|rel|public.repos_retryable_enrichment_idx"
+      ],
+      "reads": [
+        "e|tbl|public.repos",
+        "n|sch|public",
+        "e|col|public.repos.enrich_retry_at",
+        "e|col|public.repos.id"
+      ],
+      "sharedWrites": []
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repos",
+        "repos_sweep_idx"
+      ],
+      "writes": [
+        "s|idx|public.repos_sweep_idx",
+        "n|idx|public.repos_sweep_idx",
+        "e|idx|public.repos_sweep_idx",
+        "n|rel|public.repos_sweep_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.repos.enrich_retry_at",
+        "n|col|public.repos.id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "stars",
+        "stars_repo_idx"
+      ],
+      "writes": [
+        "s|idx|public.stars_repo_idx",
+        "n|idx|public.stars_repo_idx",
+        "e|idx|public.stars_repo_idx",
+        "n|rel|public.stars_repo_idx"
+      ],
+      "reads": [
+        "n|tbl|public.stars",
+        "n|sch|public",
+        "n|col|public.stars.repo_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "repos_sweep_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "enrich_retry_at",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": "((\"summary\" is null or \"summary_readme_oid\" is distinct from \"readme_oid\" or \"embedding_model\" is null) or \"embedding_stale\" or \"summary_recipe\" is distinct from 5 or \"summary_input_hash\" is distinct from \"input_hash\") and \"gone_at\" is null and \"enrich_failures\" < 3 and (not ((\"summary\" is null or \"summary_readme_oid\" is distinct from \"readme_oid\" or \"summary_recipe\" is distinct from 5 or \"summary_input_hash\" is distinct from \"input_hash\") and \"gone_at\" is null) or (\"user_starred\" or \"stars\" is null or \"stars\" >= 200 or (\"stars\" >= 50 and not (coalesce(\"description\", '') <> '' or \"topics\" <> '[]'::jsonb))))",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "stars",
+        "name": "stars_repo_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "repo_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": "\"unstarred_at\" is null",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "drop",
+      "key": "indexes\u0000[\"public\",\"repos_retryable_enrichment_idx\"]"
+    }
+  ]
+}

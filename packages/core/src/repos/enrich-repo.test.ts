@@ -120,12 +120,12 @@ import * as EnrichRetry from "./enrich-retry.ts";
       it.effect("keeps the star and fork counts and refreshes them on a retry after their write failed", () =>
         Effect.gen(function* () {
           const db = yield* Db.Db;
-          f.remotes.set(40, { description: "Counter", stars: 100, forks: 2, readme: { oid: oid("a"), text: "# A" } });
+          f.remotes.set(40, { description: "Counter", stars: 300, forks: 2, readme: { oid: oid("a"), text: "# A" } });
           yield* f.enrich(40);
-          expect(yield* f.countsOf(40)).toEqual([{ stars: 100, forks: 2 }]);
+          expect(yield* f.countsOf(40)).toEqual([{ stars: 300, forks: 2 }]);
 
           yield* db.repos.saveFacts({ ...(yield* f.get(40)), readmeOid: oid("b") });
-          f.remotes.set(40, { description: "Counter", stars: 200, forks: 3, readme: { oid: oid("a"), text: "# A" } });
+          f.remotes.set(40, { description: "Counter", stars: 400, forks: 3, readme: { oid: oid("a"), text: "# A" } });
           const failing = Db.Db.of({
             ...db,
             repos: {
@@ -142,7 +142,7 @@ import * as EnrichRetry from "./enrich-retry.ts";
           expect(yield* db.repos.pendingEnrichment([id(40)])).toEqual([id(40)]);
 
           expect(yield* f.enrich(40)).toEqual({ _tag: "Unchanged", id: id(40) });
-          expect(yield* f.countsOf(40)).toEqual([{ stars: 200, forks: 3 }]);
+          expect(yield* f.countsOf(40)).toEqual([{ stars: 400, forks: 3 }]);
         }),
       );
 

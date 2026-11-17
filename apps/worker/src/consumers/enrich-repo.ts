@@ -21,6 +21,7 @@ const settlementOf = EnrichRepo.Enrichment.$match({
   Gone: done,
   Backoff: done,
   Capped: done,
+  Unwanted: done,
   Summarized: done,
   Embedded: done,
 });

@@ -16,6 +16,7 @@ export const Operation = Schema.Literals([
   "accounts.setStarredCount",
   "repos.upsertRefs",
   "repos.saveListed",
+  "repos.markUserStarred",
   "repos.pendingEnrichment",
   "repos.saveFacts",
   "repos.saveFactsAndLease",

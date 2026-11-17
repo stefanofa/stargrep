@@ -746,6 +746,54 @@ const fixture = () => {
       }),
     );
 
+    test.effect("stores each repo's star count, and marks every repo a claimed account stars before enrichment", () =>
+      Effect.gen(function* () {
+        yield* reset();
+        const list: Array<Starred> = [
+          { repo: 1, at: syncTime - minute, stars: 40 },
+          { repo: 2, at: syncTime - 2 * minute, stars: 900 },
+        ];
+        const id = yield* account(24, "claimer", list);
+        yield* sync(id);
+        const repos = query("select id::int, stars, user_starred from repos order by id");
+        expect(yield* repos).toEqual([
+          { id: 1, stars: 40, user_starred: false },
+          { id: 2, stars: 900, user_starred: false },
+        ]);
+
+        const userId = UserId.make("user-claimer");
+        yield* query(
+          "insert into \"user\" (id, name, email) values ($1, $1, 'claimer@example.com') on conflict do nothing",
+          [userId],
+        );
+        yield* Db.Db.use((db) =>
+          db.accounts.claim({
+            facts: {
+              id,
+              type: "user",
+              login: "claimer" as Login,
+              name: null,
+              avatarUrl: null,
+              followers: null,
+              publicRepos: null,
+            },
+            userId,
+            starredCount: 2,
+          }),
+        );
+        list.unshift({ repo: 3, at: syncTime + minute, stars: 5 });
+        yield* TestClock.adjust("2 minutes");
+        sent.length = 0;
+        yield* sync(id);
+        expect(sentRepos()).toEqual([3]);
+        expect(yield* repos).toEqual([
+          { id: 1, stars: 40, user_starred: true },
+          { id: 2, stars: 900, user_starred: true },
+          { id: 3, stars: 5, user_starred: true },
+        ]);
+      }),
+    );
+
     test.effect("keeps rows and owned repo stars under the same account ID after a rename", () =>
       Effect.gen(function* () {
         yield* reset();

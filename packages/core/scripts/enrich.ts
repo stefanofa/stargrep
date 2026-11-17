@@ -35,6 +35,8 @@ const describe = (name: string, outcome: EnrichRepo.Enrichment, dimensions: numb
       return `${name}: no stored node id, run star sync first`;
     case "Stale":
       return `${name}: README or other prompt inputs changed while enriching, left for the next run`;
+    case "Unwanted":
+      return `${name}: left on its metadata embedding by the summary policy, prefill --ids summarizes it anyway`;
   }
 };
 

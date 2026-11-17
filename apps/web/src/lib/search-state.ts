@@ -34,7 +34,7 @@ export type Stage =
       readonly name: "ready";
       readonly total: number;
       readonly failed: number;
-      // Repos the daily summary cap queued to read later.
+      // Repos whose summary waits for the daily summary cap or for the summary policy.
       readonly queued: number;
       readonly lastSync: LastSync;
     };
