@@ -1,0 +1,77 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "6ae900f3-5de7-4985-a010-1ce7e0b4f8cc",
+  "prevIds": [
+    "df9ee8a8-d891-4881-9094-f51d5c9e4587"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "embedding_source"
+      ],
+      "writes": [
+        "s|enum|public.embedding_source",
+        "n|enum|public.embedding_source",
+        "e|enum|public.embedding_source",
+        "n|type|public.embedding_source"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "embedding_source"
+      ],
+      "writes": [
+        "s|col|public.repos.embedding_source",
+        "n|col|public.repos.embedding_source",
+        "e|col|public.repos.embedding_source"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|enum|public.embedding_source"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "embedding_source",
+        "values": [
+          "summary",
+          "metadata"
+        ],
+        "entityType": "enums"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "embedding_source",
+        "type": "embedding_source",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 0,
+        "default": "'summary'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

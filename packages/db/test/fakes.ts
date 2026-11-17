@@ -32,6 +32,8 @@ const defaults = {
     saveFactsAndLease: unexpected("repos.saveFactsAndLease"),
     summarized: unexpected("repos.summarized"),
     saveEmbedding: unexpected("repos.saveEmbedding"),
+    metadataDue: unexpected("repos.metadataDue"),
+    saveMetadataEmbeddings: unexpected("repos.saveMetadataEmbeddings"),
     saveIcon: unexpected("repos.saveIcon"),
     saveOwners: unexpected("repos.saveOwners"),
     dueIcons: unexpected("repos.dueIcons"),

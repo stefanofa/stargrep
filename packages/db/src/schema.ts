@@ -96,6 +96,8 @@ export const searchScope = pgEnum("search_scope", ["stars", "network", "global"]
 export const syncRequestOutcome = pgEnum("sync_request_outcome", ["pending", "failed", "missing", "claimed"]);
 export const iconSource = pgEnum("icon_source", ["repo-file", "readme-image", "homepage"]);
 export const iconPlate = pgEnum("icon_plate", ["none", "light", "dark"]);
+// A repo's embedding is made from its saved summary, or from its metadata while the summary waits.
+export const embeddingSource = pgEnum("embedding_source", ["summary", "metadata"]);
 
 export const embeddingSettings = pgTable(
   "embedding_settings",
@@ -148,6 +150,13 @@ interface EnrichmentColumns {
   readonly goneAt: AnyPgColumn;
 }
 
+interface MetadataColumns extends EnrichmentColumns {
+  readonly embedding: AnyPgColumn;
+  readonly embeddingSource: AnyPgColumn;
+  readonly description: AnyPgColumn;
+  readonly topics: AnyPgColumn;
+}
+
 // A repo is read once it has a summary of its current README and an embedding of that summary.
 export const unreadEnrichment = (table: EnrichmentColumns) =>
   sql<boolean>`(${table.summary} is null or ${table.summaryReadmeOid} is distinct from ${table.readmeOid} or ${table.embeddingModel} is null)`;
@@ -163,6 +172,13 @@ export const pendingEnrichment = (table: EnrichmentColumns) =>
 // gone repo never is. Only this makes a repo worth a paid summary call.
 export const summaryDue = (table: EnrichmentColumns) =>
   sql<boolean>`(${table.summary} is null or ${table.summaryReadmeOid} is distinct from ${table.readmeOid} or ${table.summaryRecipe} is distinct from ${sql.raw(String(summaryRecipe))} or ${table.summaryInputHash} is distinct from ${table.inputHash}) and ${table.goneAt} is null`;
+
+// A repo waiting for its summary gets an embedding of its metadata, so search can find it by meaning meanwhile. It is due
+// when the repo has no embedding, or a metadata one its metadata has since moved past. A summary embedding, even a stale
+// one, describes the repo better and is kept. A repo with neither a description nor topics is left to its summary,
+// because its name alone sits near gibberish and full text already matches the name.
+export const metadataEmbeddingDue = (table: MetadataColumns) =>
+  sql<boolean>`${summaryDue(table)} and (${table.embedding} is null or (${table.embeddingSource} = 'metadata' and ${table.embeddingStale})) and (coalesce(${table.description}, '') <> '' or ${table.topics} <> '[]'::jsonb)`;
 
 // The cap is a literal, not a parameter, so Postgres can match a query to the partial index on this predicate.
 export const retryableEnrichment = (table: EnrichmentColumns) =>
@@ -192,6 +208,9 @@ export const repos = pgTable(
     keywords: jsonb("keywords").notNull().default([]),
     embedding: halfvec("embedding", { dimensions: embeddingDimensions }),
     embeddingModel: text("embedding_model"),
+    // Which text the embedding was made from, when there is one.
+    embeddingSource: embeddingSource("embedding_source").notNull().default("summary"),
+    // A newer summary, or newer metadata for a metadata embedding, has replaced the text the embedding was made from.
     embeddingStale: boolean("embedding_stale").notNull().default(false),
     enrichFailures: integer("enrich_failures").notNull().default(0),
     enrichRetryAt: time("enrich_retry_at"),

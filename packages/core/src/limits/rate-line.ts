@@ -65,6 +65,22 @@ export const summaryAll: Line = {
   rate: { units: summariesPerDay, per: Duration.days(1), burst: summariesPerDay, maxWait: Duration.zero },
 };
 
+// How many repos the Worker may embed from their metadata in a day, while their summaries wait. Change it here, and the
+// line follows.
+export const metadataEmbeddingsPerDay = 100_000;
+
+// Every repo embedded from its metadata takes one unit, apart from the summary cap. A repo is embedded this way once,
+// and again only when its metadata changes, so the line holds back a flood of new repos and nothing else.
+export const metadataAll: Line = {
+  key: Db.LineKey.make("metadata/all"),
+  rate: {
+    units: metadataEmbeddingsPerDay,
+    per: Duration.days(1),
+    burst: metadataEmbeddingsPerDay,
+    maxWait: Duration.zero,
+  },
+};
+
 // How long the rate takes to pay out this many units.
 export const durationOf = (rate: Rate, units: number) =>
   Duration.millis((units * Duration.toMillis(rate.per)) / rate.units);

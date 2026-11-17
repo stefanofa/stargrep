@@ -27,6 +27,7 @@ import { IconQueue, iconRequest, needsIconCheck } from "../icons/icon-queue.ts";
 import * as RepoKnowledge from "../knowledge/repo-knowledge.ts";
 import * as BlobStore from "./blob-store.ts";
 import * as EnrichRetry from "./enrich-retry.ts";
+import * as MetadataEmbeddings from "./metadata-embeddings.ts";
 import * as SummaryAllowance from "./summary-allowance.ts";
 
 export interface Summary {
@@ -126,6 +127,9 @@ const failureOf = (outcome: Enrichment): Option.Option<Failure> =>
   });
 
 const repoFailed = (outcome: Enrichment): boolean => Option.exists(failureOf(outcome), (failure) => failure.counts);
+
+// A repo the cap deferred or whose attempt failed still waits for its summary, so it is embedded from its metadata.
+const waitsForSummary = (outcome: Enrichment): boolean => outcome._tag === "Capped" || outcome._tag === "Failed";
 
 const logFailures = (outcomes: ReadonlyArray<Enrichment>) =>
   Effect.forEach(
@@ -516,6 +520,10 @@ const make = Effect.gen(function* () {
       at: yield* DateTime.now,
       retryDelays: EnrichRetry.retryDelays,
     });
+    yield* MetadataEmbeddings.embed(outcomes.filter(waitsForSummary).map((outcome) => outcome.id)).pipe(
+      Effect.provideService(Db.Db, db),
+      Effect.provideService(Embeddings.Embeddings, embeddings),
+    );
     return outcomes;
   });
 
