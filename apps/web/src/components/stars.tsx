@@ -45,11 +45,12 @@ import { LibraryPlaceholder, LibraryView } from "./library-view.tsx";
 import { OwnerPill } from "./owner-pill.tsx";
 
 // A navigation in the browser starts from the session the server loaded. The page reads the rest once it mounts.
-export const pageFor = (request: PageRequest, { viewer, config, repoStars }: Session): PageData => {
+export const pageFor = (request: PageRequest, { viewer, config, repoStars, site }: Session): PageData => {
   const { audience, query, defaultQuery } = askedPage(viewer, config, request);
   return {
     audience,
     repoStars,
+    site,
     config,
     query,
     defaultQuery,

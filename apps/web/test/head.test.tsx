@@ -12,6 +12,7 @@ const visitor = async (): Promise<Session> => ({
   viewer: null,
   config: { demoLogin: "demo", demoQuery: "", examples: [], featured: [] } as unknown as Session["config"],
   repoStars: null,
+  site: { origin: "https://stargrep.com", indexable: true },
 });
 let loadSession = visitor;
 const loads = await import("../src/lib/load-page.ts");
@@ -46,6 +47,63 @@ test("a stars page is titled by whose stars it shows and what it searches", asyn
   expect(titleOf(await renderPage("/octo?q=rust%20tui"))).toBe(`"rust tui" in @octo's stars · stargrep`);
   expect(titleOf(await renderPage("/octo?q="))).toBe("@octo's stars · stargrep");
   expect(await renderPage("/octo")).toContain(`content="Search @octo&#x27;s starred GitHub repos in plain words."`);
+});
+
+const previewOf = (html: string) => {
+  const head = html.split("</head>")[0] ?? "";
+  const tags = [...head.matchAll(/<meta (?:property|name)="((?:og|twitter):[^"]*)" content="([^"]*)"\/>/g)];
+  const canonical = head.match(/<link rel="canonical" href="([^"]*)"\/>/)?.[1];
+  return {
+    tags: Object.fromEntries(
+      tags.map(([, key, content]) => [key, content?.replace(/&[^;]+;/g, (entity) => entities[entity] ?? entity)]),
+    ),
+    canonical,
+    count: tags.length,
+  };
+};
+
+test("a shared stars page previews with its own title, description, address and image", async () => {
+  const { tags, canonical, count } = previewOf(await renderPage("/octo?q=rust%20tui&sort=stars"));
+  expect(tags).toEqual({
+    "og:type": "website",
+    "og:site_name": "stargrep",
+    "og:title": `"rust tui" in @octo's stars · stargrep`,
+    "og:description": "Search @octo's starred GitHub repos in plain words.",
+    "og:url": "https://stargrep.com/octo?q=rust+tui",
+    "og:image": "https://stargrep.com/og.png",
+    "og:image:type": "image/png",
+    "og:image:width": "1200",
+    "og:image:height": "630",
+    "og:image:alt": "stargrep: search anyone's starred GitHub repos in plain words",
+    "twitter:card": "summary_large_image",
+    "twitter:title": `"rust tui" in @octo's stars · stargrep`,
+    "twitter:description": "Search @octo's starred GitHub repos in plain words.",
+    "twitter:image": "https://stargrep.com/og.png",
+  });
+  expect(count).toBe(Object.keys(tags).length);
+  expect(canonical).toBe("https://stargrep.com/octo?q=rust+tui");
+});
+
+test("the home page previews as the site, and a page on a preview host names no canonical address", async () => {
+  loadSession = async () => ({ ...(await visitor()), site: { origin: "https://pr-7.stargrep.com", indexable: false } });
+  try {
+    const { tags, canonical } = previewOf(await renderPage("/"));
+    expect(tags["og:title"]).toBe("stargrep");
+    expect(tags["og:description"]).toBe("Search your starred GitHub repos in plain words.");
+    expect(tags["og:url"]).toBe("https://pr-7.stargrep.com/");
+    expect(tags["og:image"]).toBe("https://pr-7.stargrep.com/og.png");
+    expect(canonical).toBeUndefined();
+  } finally {
+    loadSession = visitor;
+  }
+});
+
+test("a page that is no stars page still previews as the site", async () => {
+  const { tags, canonical } = previewOf(await renderPage("/not.a.login"));
+  expect(tags["og:title"]).toBe("stargrep");
+  expect(tags["og:image"]).toBe("https://stargrep.com/og.png");
+  expect(tags["og:url"]).toBeUndefined();
+  expect(canonical).toBeUndefined();
 });
 
 test("the home page a visitor lands on keeps the site's title", async () => {

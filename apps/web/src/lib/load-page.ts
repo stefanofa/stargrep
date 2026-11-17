@@ -3,6 +3,7 @@ import { serverLoads } from "../server/page-data.ts";
 import { whoseOf } from "./audience.ts";
 import { loadEngine } from "./engine.ts";
 import type { PageData, PageRequest, Session } from "./page-data.ts";
+import { canonicalLinks, pagePath, previewMeta, siteDescription, siteTitle } from "./preview.ts";
 import { revealScript } from "./reveal-script.ts";
 import { theirs } from "./whose.ts";
 
@@ -23,21 +24,34 @@ export const loadPage = (request: PageRequest, session: Session | undefined): Pr
   return readPage(request, session);
 };
 
-const titled = (data: PageData, query: string | undefined) => {
-  const whose = whoseOf(data.audience);
-  const title = query ? `"${query}" in ${theirs(whose)} · stargrep` : `${theirs(whose)} · stargrep`;
-  const description = whose.own
-    ? []
-    : [{ name: "description", content: `Search @${whose.login}'s starred GitHub repos in plain words.` }];
-  return [{ title }, ...description];
+// A stars page is titled by whose stars it shows and what it searches, so tabs, history and link previews tell pages
+// apart. The home page a visitor lands on keeps the site's own title. The reveal types the demo query once per visit, on a
+// page the server painted with its first answer for that query, and never over a shared link's own query. Its script
+// runs in the head before the first paint, so it renders on that page alone.
+export const pageHead = (
+  loaderData: PageData | undefined,
+  home: boolean,
+  { pathname, query }: { readonly pathname: string; readonly query: string | undefined },
+) => {
+  if (loaderData === undefined) return {};
+  const path = pagePath(pathname, query);
+  const landing = home && loaderData.audience.by !== "owner";
+  const whose = whoseOf(loaderData.audience);
+  return {
+    meta: previewMeta(loaderData.site, {
+      title: landing
+        ? siteTitle
+        : query
+          ? `"${query}" in ${theirs(whose)} · ${siteTitle}`
+          : `${theirs(whose)} · ${siteTitle}`,
+      description:
+        landing || whose.own ? siteDescription : `Search @${whose.login}'s starred GitHub repos in plain words.`,
+      path,
+    }),
+    links: canonicalLinks(loaderData.site, path),
+    scripts:
+      loaderData.first != null && loaderData.first.query === loaderData.defaultQuery
+        ? [{ children: revealScript }]
+        : [],
+  };
 };
-
-// A stars page is titled by whose stars it shows and what it searches, so tabs and history tell pages apart. The home
-// page a visitor lands on keeps the site's own title. The reveal types the demo query once per visit, on a page the
-// server painted with its first answer for that query, and never over a shared link's own query. Its script runs in the
-// head before the first paint, so it renders on that page alone.
-export const pageHead = (loaderData: PageData | undefined, home: boolean, query: string | undefined) => ({
-  meta: loaderData === undefined || (home && loaderData.audience.by !== "owner") ? [] : titled(loaderData, query),
-  scripts:
-    loaderData?.first != null && loaderData.first.query === loaderData.defaultQuery ? [{ children: revealScript }] : [],
-});

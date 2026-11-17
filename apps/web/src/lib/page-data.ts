@@ -1,5 +1,6 @@
 import type { Sort, View } from "@stargrep/ui";
 import { type Audience, audienceOf } from "./audience.ts";
+import type { Site } from "./preview.ts";
 import type { LibraryRepo, PublicConfig, SearchResult, SyncStatus, Viewer } from "./rpc.ts";
 import type { SearchView } from "./search-state.ts";
 import type { Refusal } from "./trouble.ts";
@@ -29,6 +30,7 @@ export interface Session {
   readonly config: PublicConfig;
   // Stargrep's own GitHub stars for the header, or null when the server had no count in time.
   readonly repoStars: number | null;
+  readonly site: Site;
 }
 
 // The page's audience carries the session's viewer.

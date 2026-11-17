@@ -5,18 +5,18 @@ import { type ReactNode, useEffect } from "react";
 import { Failure, NotFound } from "../components/problem-page.tsx";
 import { startAnalytics } from "../lib/analytics.ts";
 import { loadSession } from "../lib/load-page.ts";
+import { previewMeta, siteDescription, siteTitle } from "../lib/preview.ts";
 import styles from "../styles.css?url";
 
 export const Route = createRootRoute({
   loader: loadSession,
   staleTime: Number.POSITIVE_INFINITY,
   shouldReload: false,
-  head: () => ({
+  head: ({ loaderData }) => ({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1, viewport-fit=cover" },
-      { title: "stargrep" },
-      { name: "description", content: "Search your starred GitHub repos in plain words." },
+      ...previewMeta(loaderData?.site, { title: siteTitle, description: siteDescription }),
     ],
     links: [
       { rel: "preload", href: fredoka, as: "font", type: "font/woff2", crossOrigin: "anonymous" },

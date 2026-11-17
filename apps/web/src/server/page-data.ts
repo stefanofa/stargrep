@@ -26,6 +26,7 @@ import { rememberedRefusal } from "../lib/trouble.ts";
 import type { Whose } from "../lib/whose.ts";
 import { type Computed, cachedFirstAnswer, firstAnswerKey } from "./first-answers.ts";
 import { inProcess } from "./in-process.ts";
+import { indexable } from "./robots.ts";
 
 const hasSession = (request: Request) =>
   /(^|;\s*)(__Secure-)?better-auth\.session_token=/.test(request.headers.get("cookie") ?? "");
@@ -143,10 +144,15 @@ const loadSession = async (): Promise<Session> => {
     client.config(),
     import("./app.ts").then(({ headerStars }) => headerStars(new URL(request.url).origin)).catch(() => null),
   ]);
-  return { viewer, config, repoStars };
+  return {
+    viewer,
+    config,
+    repoStars,
+    site: { origin: new URL(request.url).origin, indexable: indexable(request.url) },
+  };
 };
 
-const loadPage = async ({ login }: PageRequest, { viewer, config, repoStars }: Session): Promise<PageData> => {
+const loadPage = async ({ login }: PageRequest, { viewer, config, repoStars, site }: Session): Promise<PageData> => {
   const request = getRequest();
   const client = api();
   const cookies = request.headers.get("cookie");
@@ -183,6 +189,7 @@ const loadPage = async ({ login }: PageRequest, { viewer, config, repoStars }: S
   return {
     audience,
     repoStars,
+    site,
     config,
     query,
     defaultQuery,
