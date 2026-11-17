@@ -94,6 +94,9 @@ export const Operation = Schema.Literals([
   "facets.lookup",
   "monthlyPicks.optedIn",
   "monthlyPicks.set",
+  "starImports.claim",
+  "starImports.heartbeat",
+  "starImports.release",
 ]);
 export type Operation = typeof Operation.Type;
 

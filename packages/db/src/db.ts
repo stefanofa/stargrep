@@ -17,6 +17,7 @@ import * as RateLines from "./queries/rate-lines.ts";
 import * as Repos from "./queries/repos.ts";
 import * as Search from "./queries/search.ts";
 import * as Settings from "./queries/settings.ts";
+import * as StarImports from "./queries/star-imports.ts";
 import * as Stars from "./queries/stars.ts";
 import * as SyncRequests from "./queries/sync-requests.ts";
 import * as Usage from "./queries/usage.ts";
@@ -124,6 +125,7 @@ export class Db extends Context.Service<
     readonly knowledge: Knowledge.Queries;
     readonly facets: Facets.Queries;
     readonly monthlyPicks: MonthlyPicks.Queries;
+    readonly starImports: StarImports.Queries;
   }
 >()("@stargrep/db/db") {}
 
@@ -176,6 +178,7 @@ export const layer = (options: Options) =>
           knowledge: yield* Knowledge.make,
           facets: yield* Facets.make,
           monthlyPicks: yield* MonthlyPicks.make,
+          starImports: yield* StarImports.make,
         });
       }),
     ).pipe(Layer.provide(Digest.layerWebCrypto)),

@@ -512,6 +512,18 @@ export const prefillOwner = pgTable(
   () => [check("prefill_owner_one_row", sql`singleton`)],
 );
 
+// The one star import driver that may run against this database, claimed and renewed the way prefill_owner is, so two
+// drivers never read the same accounts on one token at once.
+export const starImportOwner = pgTable(
+  "star_import_owner",
+  {
+    singleton: boolean("singleton").primaryKey().default(true),
+    owner: uuid("owner").notNull(),
+    heartbeatAt: time("heartbeat_at").notNull(),
+  },
+  () => [check("star_import_owner_one_row", sql`singleton`)],
+);
+
 // What one source said about one repo for one input, kept as it was. A trigger refuses edits except to the projection
 // markers, and to batch_id and carried_from going null when the row they name expires.
 export const receipts = pgTable(
