@@ -89,6 +89,8 @@ export const Operation = Schema.Literals([
   "facets.held",
   "facets.matching",
   "facets.lookup",
+  "monthlyPicks.optedIn",
+  "monthlyPicks.set",
 ]);
 export type Operation = typeof Operation.Type;
 

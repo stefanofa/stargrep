@@ -114,6 +114,10 @@ const defaults = {
     matching: () => Effect.succeed({ atoms: new Map(), labels: {} }),
     lookup: unexpected("facets.lookup"),
   },
+  monthlyPicks: {
+    optedIn: unexpected("monthlyPicks.optedIn"),
+    set: unexpected("monthlyPicks.set"),
+  },
 } satisfies Db.Db["Service"];
 
 export const makeDb = (overrides: Overrides = {}): Db.Db["Service"] =>
@@ -127,6 +131,7 @@ export const makeDb = (overrides: Overrides = {}): Db.Db["Service"] =>
     usage: { ...defaults.usage, ...overrides.usage },
     knowledge: { ...defaults.knowledge, ...overrides.knowledge },
     facets: { ...defaults.facets, ...overrides.facets },
+    monthlyPicks: { ...defaults.monthlyPicks, ...overrides.monthlyPicks },
   });
 
 // The reservation rule of the rate_lines upsert, kept in a map, for a fake database behind procedures that meter.

@@ -369,6 +369,14 @@ export const syncRequests = pgTable(
   (table) => [index("sync_requests_requested_at_idx").on(table.requestedAt)],
 );
 
+// One row per user who asked for the monthly picks email. Nothing sends it yet, so the row count is the waitlist.
+export const monthlyPicks = pgTable("monthly_picks", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  optedInAt: time("opted_in_at").notNull().defaultNow(),
+});
+
 // One row per rate line that core meters. A line is clear once the clock passes busy_until, the same as a line with no
 // row.
 export const rateLines = pgTable("rate_lines", {
