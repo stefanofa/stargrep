@@ -74,6 +74,10 @@ export function PrivacyPage() {
             <Code>stargrep-refused</Code> remembers a refused import for up to ten minutes, so a reload says so again.
           </li>
           <li>the home page's typing intro sets one flag in session storage, so it plays once per tab.</li>
+          <li>
+            the account picker keeps the last five accounts you opened in your browser's local storage. they never leave
+            your browser.
+          </li>
         </Bullets>
         <p>no tracking or ad cookies.</p>
       </Section>
