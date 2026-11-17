@@ -126,6 +126,9 @@ const cachedSearch = (minutesAgo: number) => ({
   STARGREP_CACHED_SEARCH: JSON.stringify({ q: "phone automation", minutesAgo }),
 });
 
+// The server asks the API for a viewer only when the request carries a session cookie.
+const session = "better-auth.session_token=signed";
+
 describe("a stars page from the Worker to the browser", () => {
   test("the home page paints the demo answer on the server and keeps it once the live library takes over", async () => {
     const page = await renderOnServer("/");
@@ -161,7 +164,7 @@ describe("a stars page from the Worker to the browser", () => {
     expect({ status: statusText(), results: resultNames(), query: searchValue() }).toEqual(painted);
     await act(async () => {
       secondPage.release();
-      await getLibrary("stefanofa", false, false).whole;
+      await getLibrary("stefanofa", "public", false).whole;
     });
     // The browser loads the library from the same API and derives the view live. Nothing on screen changes.
     await waitFor(() =>
@@ -309,6 +312,36 @@ describe("a stars page from the Worker to the browser", () => {
     expect(countless.status).toBe(200);
     expect(countless.html).toContain('aria-label="star stargrep on github"');
     expect(countless.html).not.toContain("1.2k");
+  }, 60_000);
+
+  test("a signed-in viewer's own page paints their stars from the server and hydrates without a change", async () => {
+    const page = await renderOnServer("/", session, { STARGREP_SIGNED_IN: "octodone" });
+    expect(page.status).toBe(200);
+    expect(page.html).toContain('aria-label="Search your stars"');
+    expect(page.html).toContain('aria-label="Account menu for octodone"');
+    expect(page.html).not.toContain("<h1");
+    expect(page.requested).toEqual([]);
+
+    process.env.STARGREP_SIGNED_IN = "octodone";
+    try {
+      await hydratePage("/", page.html);
+      // The owner's page asks for a sync on every open, and lists the stars of the session's own library.
+      await waitFor(() => expect(requested).toEqual(["octodone"]));
+      await waitFor(() => expect(resultNames()).toEqual(["mobile-mcp", "fzf", "asciinema"]));
+      expect(statusText()).toContain("your stars");
+      expect(document.querySelector('[aria-label="Account menu for octodone"]')).not.toBeNull();
+      expect(errors).toEqual([]);
+    } finally {
+      delete process.env.STARGREP_SIGNED_IN;
+    }
+  }, 60_000);
+
+  test("a signed-in viewer on someone else's page gets no landing, and a way to switch whose stars", async () => {
+    const page = await renderOnServer("/stefanofa?q=terminal", session, { STARGREP_SIGNED_IN: "octodone" });
+    expect(page.html).toContain('aria-label="Search @stefanofa&#x27;s stars"');
+    expect(page.html).toContain('aria-label="Whose stars: @stefanofa. Change"');
+    expect(page.html).toContain('aria-label="Account menu for octodone"');
+    expect(page.html).not.toContain("<h1");
   }, 60_000);
 
   test("a cookie with a broken percent escape counts as no choice, not a failed page", async () => {

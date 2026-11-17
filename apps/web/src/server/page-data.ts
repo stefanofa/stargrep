@@ -2,14 +2,15 @@ import { loginKey } from "@stargrep/github/login";
 import { isNotFound, isRedirect } from "@tanstack/react-router";
 import { getRequest, setResponseHeader } from "@tanstack/react-start/server";
 import * as Effect from "effect/Effect";
+import { starredOf, whoseOf } from "../lib/audience.ts";
 import { normalize, searchText } from "../lib/keyword.ts";
 import {
   type Asked,
+  askedPage,
   type FirstAnswer,
   type Hits,
   type PageData,
   type PageRequest,
-  pageOwner,
   type Session,
 } from "../lib/page-data.ts";
 import { liveView, type Semantic } from "../lib/page-view.ts";
@@ -22,7 +23,7 @@ import { allStars, findStar } from "../lib/stars-pages.ts";
 import { storedView } from "../lib/stored-view.ts";
 import { libraryRevision } from "../lib/sync-status.ts";
 import { rememberedRefusal } from "../lib/trouble.ts";
-import { type Whose, whoseOf } from "../lib/whose.ts";
+import type { Whose } from "../lib/whose.ts";
 import { type Computed, cachedFirstAnswer, firstAnswerKey } from "./first-answers.ts";
 import { inProcess } from "./in-process.ts";
 
@@ -150,7 +151,8 @@ const loadPage = async ({ login }: PageRequest, { viewer, config, repoStars }: S
   const client = api();
   const cookies = request.headers.get("cookie");
   const { q, sort, repo } = validateParams(Object.fromEntries(new URL(request.url).searchParams));
-  const { owner, own, query, defaultQuery, showcase } = pageOwner(viewer, config, { login, q });
+  const { audience, query, defaultQuery } = askedPage(viewer, config, { login, q });
+  const owner = audience.owner.login;
   // The server reads the sync first: it names the library revision a cached answer must match, and only a library an
   // import has written gets a first answer or a panel. Crawlers and link previews render pages too, so the server paints
   // an import under way, a place in line, or a login ready to import, and the browser asks for the import. A refusal
@@ -161,11 +163,11 @@ const loadPage = async ({ login }: PageRequest, { viewer, config, repoStars }: S
     login: owner,
     query,
     sort,
-    whose: whoseOf({ owner, own }),
-    starred: (status) => (own ? (viewer?.starredCount ?? null) : status.starredTotal),
+    whose: whoseOf(audience),
+    starred: (status) => starredOf(audience, status),
   };
   const answer = (library: SyncStatus) =>
-    showcase && query === config.demoQuery
+    audience.owner.demo && query === config.demoQuery
       ? demoAnswer(request, client, library, asking)
       : sharedAnswer(request, config, client, library, asking);
   const [first, opened] = await Promise.all([
@@ -176,10 +178,8 @@ const loadPage = async ({ login }: PageRequest, { viewer, config, repoStars }: S
     first === null && (sync === null || sync.state === "unknown") ? rememberedRefusal(cookies, owner) : undefined;
   const view = storedView(cookies) ?? null;
   return {
-    viewer,
+    audience,
     repoStars,
-    owner,
-    own,
     config,
     query,
     defaultQuery,
