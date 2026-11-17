@@ -15,8 +15,8 @@ export type Audience =
   | { readonly by: "owner"; readonly viewer: Viewer; readonly owner: Owner };
 
 export interface Policy {
-  // The hero with its butter sign-in tile, and the example searches. The hero owns the page's one butter tile, so the
-  // count tile and the first result stay white.
+  // The hero with its butter sign-in tile. The hero owns the page's one butter tile, so the count tile and the first
+  // result stay white.
   readonly landing: boolean;
   // The owner's library comes from the session-only library, anyone else's from the public stars pages.
   readonly library: "session" | "public";
