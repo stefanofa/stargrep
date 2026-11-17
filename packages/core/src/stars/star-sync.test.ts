@@ -11,10 +11,13 @@ import * as it from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
 import * as RateLine from "../limits/rate-line.ts";
 import * as EnrichQueue from "../repos/enrich-queue.ts";
+import * as MetadataEmbeddings from "../repos/metadata-embeddings.ts";
 import * as OwnerLookup from "./owner-lookup.ts";
 import * as StarSync from "./star-sync.ts";
 import * as SyncQueue from "./sync-queue.ts";
@@ -40,19 +43,28 @@ const fixture = () => {
   const orgs = new Set<string>();
   const queue = EnrichQueue.layerMemory();
   const sent = queue.sent;
-  const hooks: { beforePage: BeforePage } = { beforePage: () => undefined };
+  const hooks: { beforePage: BeforePage; beforeEmbed: Effect.Effect<void> } = {
+    beforePage: () => undefined,
+    beforeEmbed: Effect.void,
+  };
   const embedded: Array<string> = [];
   const embeddings = Layer.succeed(
     Embeddings.Embeddings,
     Embeddings.make({
       provider: "test",
       model: { ...AiFake.hashEmbeddingModel, id: embeddingModel },
-      timeout: Duration.seconds(5),
+      timeout: Duration.seconds(30),
       run: (values) =>
-        Effect.sync(() => {
-          embedded.push(...values);
-          return { vectors: values.map(() => Array.from({ length: 1024 }, (_, at) => (at === 0 ? 1 : 0))), tokens: 1 };
-        }),
+        Effect.andThen(
+          hooks.beforeEmbed,
+          Effect.sync(() => {
+            embedded.push(...values);
+            return {
+              vectors: values.map(() => Array.from({ length: 1024 }, (_, at) => (at === 0 ? 1 : 0))),
+              tokens: 1,
+            };
+          }),
+        ),
     }),
   );
 
@@ -107,6 +119,7 @@ const fixture = () => {
       embedded.length = 0;
       github.sent.length = 0;
       hooks.beforePage = beforePage;
+      hooks.beforeEmbed = Effect.void;
       yield* query("truncate github_accounts, repos, stars cascade");
       yield* TestClock.setTime(syncTime);
     });
@@ -582,7 +595,7 @@ const fixture = () => {
       }),
     );
 
-    test.effect("embeds a new repo from the listed metadata before queuing it, unless it lists only a name", () =>
+    test.effect("embeds a new repo from the listed metadata, unless it lists only a name", () =>
       Effect.gen(function* () {
         yield* reset();
         const id = yield* account(21, "meta", [
@@ -637,6 +650,44 @@ const fixture = () => {
           { id: 1, description: "New words", embedding_stale: false },
           { id: 2, description: "Read words", embedding_stale: false },
         ]);
+      }),
+    );
+
+    test.effect("records and queues a big sync before a slow model embeds it, newest first for 30 seconds", () =>
+      Effect.gen(function* () {
+        yield* reset();
+        const calls = yield* Queue.unbounded<void>();
+        hooks.beforeEmbed = Effect.andThen(Queue.offer(calls, undefined), Effect.sleep("20 seconds"));
+        // The newest star has the highest ID, so the list's order, not the IDs', decides which repos go first.
+        const list = newestFirst(200).map((star) => ({
+          ...star,
+          repo: 201 - star.repo,
+          description: `Repo ${201 - star.repo}`,
+        }));
+        const text = (repo: number) => `owner/repo-${repo}\nRepo ${repo}`;
+        const id = yield* account(23, "bulk", list);
+        const running = yield* Effect.forkChild(sync(id));
+
+        yield* Queue.take(calls);
+        const recorded = yield* Db.Db.use((db) => db.accounts.require(id));
+        expect(recorded.starsSyncedAt === null ? null : DateTime.toEpochMillis(recorded.starsSyncedAt)).toBe(syncTime);
+        expect(yield* activeRepos(id)).toEqual(range(1, 200));
+        expect(sentRepos().toSorted(byNumber)).toEqual(range(1, 200));
+        yield* TestClock.adjust("20 seconds");
+        yield* Queue.take(calls);
+        yield* TestClock.adjust("10 seconds");
+        expect(yield* Fiber.join(running)).toEqual(report({ listed: 200, added: 200, enqueued: 200 }));
+        expect(embedded).toEqual(range(73, 200).toReversed().map(text));
+
+        hooks.beforeEmbed = Effect.void;
+        embedded.length = 0;
+        yield* MetadataEmbeddings.embed(sent.map((message) => message.repoId)).pipe(Effect.provide(embeddings));
+        expect(embedded).toEqual(range(1, 72).toReversed().map(text));
+        expect(
+          yield* query(
+            "select count(*)::int as count from repos where embedding_source = 'metadata' and embedding is not null",
+          ),
+        ).toEqual([{ count: 200 }]);
       }),
     );
 
