@@ -425,6 +425,23 @@ describe("a stars page from the Worker to the browser", () => {
     expect(page.html).not.toContain(secret);
   }, 60_000);
 
+  test("the hero's username field goes to that login's stars before the page hydrates", async () => {
+    const landing = await renderOnServer("/");
+    const form = landing.html.match(/<form[^>]*aria-label="Whose stars"[^>]*>.*?<\/form>/s)?.[0] ?? "";
+    expect(form).toMatch(/action="\/"/);
+    expect(form).toMatch(/method="get"/);
+    expect(form).toMatch(/<input[^>]*name="user"/);
+    for (const [typed, location] of [
+      ["+%40octosync+", "/octosync"],
+      ["api", "/@api"],
+    ] as const) {
+      const sent = await renderOnServer(`/?user=${typed}`);
+      expect([sent.status >= 300 && sent.status < 400, sent.location]).toEqual([true, location]);
+    }
+    const nonsense = await renderOnServer("/?user=not+a+login");
+    expect(nonsense.status).toBe(200);
+  }, 60_000);
+
   test("a login named like a stargrep path lives at /@login, which any login can use", async () => {
     const redirected = await renderOnServer("/api?q=rust");
     expect(redirected.status).toBeGreaterThanOrEqual(300);

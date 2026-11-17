@@ -1,12 +1,11 @@
 import { Popover } from "@base-ui/react/popover";
-import { isGitHubLogin } from "@stargrep/github/login";
 import { Avatar, cn, popupSurface } from "@stargrep/ui";
 import { useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
 import type { Audience } from "../lib/audience.ts";
 import { recentLogins } from "../lib/recent-logins.ts";
 import type { PublicConfig } from "../lib/rpc.ts";
-import { reservedLogin } from "../lib/search-params.ts";
+import { loginPage, typedLogin } from "../lib/stars-route.ts";
 import { sameLogin } from "../lib/whose.ts";
 
 const avatarOf = (login: string) => `https://github.com/${login}.png?size=64`;
@@ -36,8 +35,7 @@ export function OwnerPill({ audience, config }: { audience: Audience; config: Pu
   const you = audience.by === "anyone" ? undefined : audience.viewer.login;
   // The login that / shows this audience.
   const home = you ?? config.demoLogin;
-  const login = typed.trim().replace(/^@/, "");
-  const valid = isGitHubLogin(login);
+  const login = typedLogin(typed);
   const people = [...(you === undefined ? [] : [you]), ...recent, ...config.featured].filter(
     (person, index, all) => all.findIndex((other) => sameLogin(other, person)) === index,
   );
@@ -48,15 +46,13 @@ export function OwnerPill({ audience, config }: { audience: Audience; config: Pu
     if (sameLogin(next, owner)) return;
     const moved = sameLogin(next, home)
       ? navigate({ to: "/{-$login}", params: { login: undefined } })
-      : reservedLogin(next)
-        ? navigate({ to: "/@{$login}", params: { login: next } })
-        : navigate({ to: "/{-$login}", params: { login: next } });
+      : navigate(loginPage(next));
     // The switch remounts the page with a new pill, which takes focus where the old one had it.
     moved.then(() => document.querySelector<HTMLElement>("[data-owner-pill]")?.focus());
   };
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (valid) go(login);
+    if (login !== undefined) go(login);
   };
 
   return (
@@ -104,7 +100,7 @@ export function OwnerPill({ audience, config }: { audience: Audience; config: Pu
                 />
                 <button
                   type="submit"
-                  disabled={!valid}
+                  disabled={login === undefined}
                   className="relative h-8 rounded-full bg-accent px-3 font-semibold text-ink transition-[opacity,scale] duration-120 after:absolute after:-inset-1 disabled:opacity-40 motion-safe:active:scale-[0.96]"
                 >
                   go
