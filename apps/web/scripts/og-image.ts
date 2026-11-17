@@ -10,7 +10,7 @@ export const siteCardPath = new URL("../public/og.png", import.meta.url);
 
 export const siteCard = async () => {
   const render = cardRenderer({
-    layoutWasm: await file("satori/layout.wasm").bytes(),
+    layoutWasm: await file("satori/yoga.wasm").bytes(),
     resvgWasm: await file("@resvg/resvg-wasm/index_bg.wasm").bytes(),
     fonts: {
       fredoka600: await file("@fontsource/fredoka/files/fredoka-latin-600-normal.woff").arrayBuffer(),

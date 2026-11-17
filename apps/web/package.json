@@ -44,7 +44,7 @@
     "posthog-js": "1.450.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "satori": "0.63.2"
+    "satori": "0.32.0"
   },
   "devDependencies": {
     "@alchemy.run/cloudflare": "2.0.0-beta.85",
