@@ -174,11 +174,11 @@ The first command prints the summary, kind, and embedding size, and prints `unch
 
 ## Import a list of logins' stars
 
-`bun run --cwd packages/core import-stars run --logins <file>` syncs the stars of every login in a list, in the list's order, one account at a time. The list holds one login per line. Only a line's first tab-separated column is read, so a table with the login first works as it is. Blank lines and lines that start with `#` are skipped. A line whose first column is not a login stops the command before it reads anything.
+`bun run --cwd packages/core import-stars run --logins <file>` syncs the stars of every login in a list, in the list's order, `--concurrency` accounts at a time, 1 by default and at most 8. The list holds one login per line. Only a line's first tab-separated column is read, so a table with the login first works as it is. Blank lines and lines that start with `#` are skipped. A line whose first column is not a login stops the command before it reads anything.
 
 The import runs the same `StarSync` as the Worker, on your machine, with three differences.
 
-- It reads GitHub with `GITHUB_TOKEN`, one request at a time. Use a personal token, so the import never waits behind live syncs on the app's token. The client waits out a short `retry-after`, and the import waits until a longer rate limit, or the token's budget share, resets.
+- It reads GitHub with `GITHUB_TOKEN`. Each account's sync sends one request at a time, so at most `--concurrency` requests are in flight. Use a personal token, so the import never waits behind live syncs on the app's token. The import sends no request that would leave less than 1 minus `--share` of a window's limit, as GitHub reports it in the `x-ratelimit-*` headers. `--share` is 0.5 by default. So the import spends at most that share of each hourly limit, less when other tools spent part of the window, and a rerun within the same hour spends no more. Once the share is spent, every account waits for the window to reset and then reads on from where it stopped. A secondary rate limit pauses every account for the `retry-after` GitHub names, a minute when it names none, and takes one reader away for the rest of the run. The client waits out a short `retry-after` on the request itself, and the import reads an account again after a longer rate limit.
 - It appends each repo that needs enrichment to `pending.txt` instead of sending it to the enrichment queue.
 - It embeds the metadata of every repo the account stars that waits for such an embedding before it moves to the next account, with no time budget, and takes no unit of the Worker's metadata embedding line. Imported repos become searchable by meaning as they land.
 
@@ -186,11 +186,11 @@ An account is done once the database records its star sync and none of its repos
 
 It prints a line per account with its stars, star list pages, new repos, which counts the repos that wait for enrichment, the repos it embedded, and time, followed by the run's totals and pages per hour. `--out report.json` writes every attempt, also when you stop the run with Ctrl-C. `--state <dir>` names the directory that keeps `pending.txt` and `failures.jsonl`, `.cache/star-import` by default.
 
-`import-stars summaries` prints `<numeric id> <owner>/<name>` for every repo in `pending.txt` that has no summary under the current recipe and has at least `--min-stars` GitHub stars, 200 by default, most starred first. The star count comes from the star list the import read. Its output is a list `prefill --ids` reads. Run the prefill after the import, not beside it, so the token never has two readers at once.
+`import-stars summaries` prints `<numeric id> <owner>/<name>` for every repo in `pending.txt` that has no summary under the current recipe and has at least `--min-stars` GitHub stars, 200 by default, most starred first. The star count comes from the star list the import read. Its output is a list `prefill --ids` reads. Run the prefill after the import, not beside it, so the two never spend the token's budget at once.
 
 ```sh
 export DATABASE_URL=... GITHUB_TOKEN=... AI_GATEWAY_API_KEY=... STARGREP_MODE=local
-bun run --cwd packages/core import-stars run --logins logins.txt --out import.json
+bun run --cwd packages/core import-stars run --logins logins.txt --concurrency 3 --share 0.5 --out import.json
 bun run --cwd packages/core import-stars summaries --min-stars 200 > prefill.txt
 bun run --cwd packages/core prefill --ids prefill.txt --adapter batch
 ```

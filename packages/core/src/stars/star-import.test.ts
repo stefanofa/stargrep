@@ -6,9 +6,10 @@ import * as Db from "@stargrep/db";
 import type { EmbeddingModelId } from "@stargrep/db/embedding";
 import { DbQueryFailed } from "@stargrep/db/errors";
 import * as TestDatabase from "@stargrep/db/test-database";
-import type * as GitHub from "@stargrep/github/github";
+import * as BulkGate from "@stargrep/github/bulk-gate";
+import * as GitHub from "@stargrep/github/github";
 import * as Fake from "@stargrep/github/github.fixture";
-import type { Login } from "@stargrep/github/schemas";
+import type { BudgetShare, Login } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -16,6 +17,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
 import * as RateLine from "../limits/rate-line.ts";
 import * as EnrichQueue from "../repos/enrich-queue.ts";
@@ -31,8 +34,10 @@ const fixture = () => {
   const users = new Map<string, { readonly id: number; readonly stars: number }>();
   const hooks: {
     reply: (login: string, page: number) => Fake.Reply | undefined;
+    // Rate-limit headers a star page carries, in place of the fixture's stale ones.
+    window: (sent: Fake.Sent) => Record<string, string>;
     embed: () => Effect.Effect<void, AiError>;
-  } = { reply: () => undefined, embed: () => Effect.void };
+  } = { reply: () => undefined, window: () => ({}), embed: () => Effect.void };
   const queue = EnrichQueue.layerMemory();
   const embedded: Array<string> = [];
 
@@ -43,7 +48,7 @@ const fixture = () => {
       description: `Repo ${i + 1}`,
     }));
 
-  const github = Fake.layer((sent) => {
+  const fake = Fake.make((sent) => {
     if (sent.url.pathname === "/graphql") {
       const login: string = JSON.parse(sent.body ?? "{}").variables.login;
       const user = users.get(login);
@@ -68,8 +73,19 @@ const fixture = () => {
       });
     }
     const [, , login = ""] = sent.url.pathname.split("/");
-    return hooks.reply(login, Number(sent.url.searchParams.get("page"))) ?? Fake.starPage(starsOf(login), sent);
+    const reply = hooks.reply(login, Number(sent.url.searchParams.get("page"))) ?? Fake.starPage(starsOf(login), sent);
+    return { ...reply, headers: { ...reply.headers, ...hooks.window(sent) } };
   });
+  // Each run builds its own gate, as each run of the CLI does, with the CLI's default share and room for three accounts
+  // at once.
+  const github = {
+    sent: fake.sent,
+    layer: GitHub.layer.pipe(
+      Layer.provideMerge(BulkGate.layer({ token: Redacted.make(Fake.token), share: 0.5 as BudgetShare, readers: 3 })),
+      Layer.provide(fake.client),
+    ),
+  };
+  const layerRun = StarSync.layerWithoutEmbedding.pipe(Layer.provideMerge(github.layer), Layer.provide(queue.layer));
 
   const embeddings = Layer.succeed(
     Embeddings.Embeddings,
@@ -92,12 +108,7 @@ const fixture = () => {
   );
 
   const layerOn = <E>(database: Layer.Layer<Db.Db | Db.Transactions | TestDatabase.TestDatabase, E>) =>
-    StarSync.layerWithoutEmbedding.pipe(
-      Layer.provideMerge(database),
-      Layer.provideMerge(github.layer),
-      Layer.provide(queue.layer),
-      Layer.provideMerge(embeddings),
-    );
+    Layer.merge(database, embeddings);
 
   const query = (text: string, values: ReadonlyArray<unknown> = []) =>
     Effect.flatMap(TestDatabase.TestDatabase, (database) => database.query(text, values));
@@ -105,25 +116,33 @@ const fixture = () => {
   const reset = Effect.gen(function* () {
     users.clear();
     hooks.reply = () => undefined;
+    hooks.window = () => ({});
     hooks.embed = () => Effect.void;
     queue.sent.length = 0;
     embedded.length = 0;
+    logs.length = 0;
     github.sent.length = 0;
     yield* query("truncate github_accounts, repos, stars, star_import_owner, rate_lines cascade");
     yield* TestClock.setTime(syncTime);
   });
 
   const outcomes: Array<StarImport.Outcome> = [];
-  const importStars = (logins: ReadonlyArray<string>, maxStars = 1_000) =>
+  const importStars = (logins: ReadonlyArray<string>, maxStars = 1_000, concurrency = 1) =>
     Effect.suspend(() => {
       outcomes.length = 0;
       return StarImport.run({
         logins: logins as ReadonlyArray<Login>,
         maxStars,
         retries: 3,
+        concurrency,
         onOutcome: (outcome) => Effect.sync(() => outcomes.push(outcome)),
-      });
+      }).pipe(Effect.provide(layerRun));
     });
+
+  const logs: Array<unknown> = [];
+  const capture = Logger.layer([Logger.make(({ message }) => logs.push(message))]);
+  const logged = (text: string) => logs.filter((message) => Array.isArray(message) && message[0] === text).length;
+  const starPages = (login: string) => (sent: Fake.Sent) => sent.url.pathname === `/users/${login}/starred`;
 
   const tags = () =>
     outcomes.map((outcome) =>
@@ -145,11 +164,7 @@ const fixture = () => {
       Effect.map((rows) => (rows as ReadonlyArray<{ readonly count: number }>)[0]?.count),
     );
 
-  const cases = (test: {
-    readonly effect: it.Tester<
-      Db.Db | TestDatabase.TestDatabase | StarSync.StarSync | GitHub.GitHub | Embeddings.Embeddings
-    >;
-  }) => {
+  const cases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatabase | Embeddings.Embeddings> }) => {
     test.effect(
       "imports each login once in order, and skips one too large, one GitHub lacks, and one already done",
       () =>
@@ -381,6 +396,103 @@ const fixture = () => {
         expect(secondPages()).toBe(1);
       }),
     );
+
+    const trio = () => {
+      for (const [index, login] of ["ada", "bob", "cy"].entries()) users.set(login, { id: index + 1, stars: 300 });
+    };
+
+    test.effect("reads several accounts at once, and a rerun after a crash mid-read converges on every list", () =>
+      Effect.gen(function* () {
+        yield* reset;
+        trio();
+        users.set("dan", { id: 4, stars: 5 });
+        hooks.reply = (login, page) => (login !== "dan" && page === 2 ? { stream: "hang" } : undefined);
+        const crashed = yield* Effect.forkChild(importStars(["ada", "bob", "cy", "dan"], 1_000, 3));
+        const reading = () =>
+          ["ada", "bob", "cy"].every((login) =>
+            github.sent.some((sent) => starPages(login)(sent) && sent.url.searchParams.get("page") === "2"),
+          );
+        yield* Effect.yieldNow.pipe(Effect.repeat({ until: reading }));
+        expect(github.sent.filter(starPages("dan"))).toEqual([]);
+        yield* Fiber.interrupt(crashed);
+        expect([yield* stored(1), yield* stored(2), yield* stored(3)]).toEqual([100, 100, 100]);
+        expect([yield* syncedAt(1), yield* syncedAt(2), yield* syncedAt(3)]).toEqual([null, null, null]);
+
+        hooks.reply = () => undefined;
+        expect(yield* importStars(["ada", "bob", "cy", "dan"], 1_000, 3)).toEqual({ failed: [] });
+        expect(tags().toSorted()).toEqual(["ada Imported", "bob Imported", "cy Imported", "dan Imported"]);
+        expect([yield* stored(1), yield* stored(2), yield* stored(3), yield* stored(4)]).toEqual([300, 300, 300, 5]);
+        expect(
+          yield* query("select count(*)::int as count from github_accounts where stars_synced_at is null"),
+        ).toEqual([{ count: 0 }]);
+      }),
+    );
+
+    test.effect(
+      "pauses every account once the token's share of the window is spent, and reads on after the reset",
+      () =>
+        Effect.gen(function* () {
+          yield* reset;
+          trio();
+          // The import's share is half of the limit, so four requests are left in this window.
+          const window = { remaining: 2_504, resetAt: syncTime / 1000 + 20 };
+          const firstReset = window.resetAt;
+          const sentIn = new Map<number, number>();
+          hooks.window = (sent) => {
+            if (sent.startedAt >= window.resetAt * 1000)
+              Object.assign(window, { remaining: 5_000, resetAt: window.resetAt + 3_600 });
+            window.remaining--;
+            sentIn.set(window.resetAt, (sentIn.get(window.resetAt) ?? 0) + 1);
+            return {
+              "x-ratelimit-resource": "core",
+              "x-ratelimit-limit": "5000",
+              "x-ratelimit-remaining": String(window.remaining),
+              "x-ratelimit-reset": String(window.resetAt),
+            };
+          };
+
+          const running = yield* Effect.forkChild(importStars(["ada", "bob", "cy"], 1_000, 3));
+          const waiting = () => logged("GitHub token share spent, waiting for the window to reset") >= 3;
+          yield* Effect.yieldNow.pipe(Effect.repeat({ until: waiting }));
+          expect([sentIn.get(firstReset), window.remaining]).toEqual([4, 2_500]);
+
+          yield* TestClock.adjust("25 seconds");
+          expect(yield* Fiber.join(running)).toEqual({ failed: [] });
+          expect(tags().toSorted()).toEqual(["ada Imported", "bob Imported", "cy Imported"]);
+          expect([...sentIn.values()]).toEqual([4, 5]);
+          expect([yield* stored(1), yield* stored(2), yield* stored(3)]).toEqual([300, 300, 300]);
+        }).pipe(Effect.provide(capture)),
+    );
+
+    test.effect("holds every account while a secondary rate limit lasts, then reads on with one reader fewer", () =>
+      Effect.gen(function* () {
+        yield* reset;
+        trio();
+        let limited = false;
+        hooks.reply = (_login, page) => {
+          if (page === 0 || limited) return undefined;
+          limited = true;
+          return {
+            status: 403,
+            headers: { ...Fake.rateLimitHeaders(4000), "retry-after": "30" },
+            body: { message: "You have exceeded a secondary rate limit." },
+          };
+        };
+
+        const running = yield* Effect.forkChild(importStars(["ada", "bob", "cy"], 1_000, 3));
+        yield* Effect.yieldNow.pipe(Effect.repeat({ until: () => logged("GitHub asked to slow down, waiting") >= 2 }));
+        const beforeResume = github.sent.length;
+        yield* TestClock.adjust("30 seconds");
+        expect(yield* Fiber.join(running)).toEqual({ failed: [] });
+        expect(tags().toSorted()).toEqual(["ada Imported", "bob Imported", "cy Imported"]);
+        expect(logs).toContainEqual([
+          "GitHub sent a secondary rate limit, so every request pauses",
+          { seconds: 30, readers: 2 },
+        ]);
+        expect(github.sent.slice(beforeResume).every((sent) => sent.startedAt >= syncTime + 30_000)).toBe(true);
+        expect([yield* stored(1), yield* stored(2), yield* stored(3)]).toEqual([300, 300, 300]);
+      }).pipe(Effect.provide(capture)),
+    );
   };
 
   return { layerOn, cases };
@@ -391,5 +503,5 @@ for (const [label, database] of [
   ["StarImport on Postgres", TestDatabase.layerNodePostgres({ embeddingModel })],
 ] as const) {
   const f = fixture();
-  it.layer(f.layerOn(database), { timeout: 30_000 })(label, f.cases);
+  it.layer(f.layerOn(database), { timeout: 30_000, testTimeout: 60_000 })(label, f.cases);
 }

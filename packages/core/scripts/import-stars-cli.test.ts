@@ -61,3 +61,32 @@ it.effect("exits non-zero when a login list line is not a login", () =>
     expect(`${refused.stdout}${refused.stderr}`).toContain("not a login: 2");
   }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
 );
+
+it.effect("exits non-zero when --concurrency or --share is out of range", () =>
+  Effect.gen(function* () {
+    const { fs, file, dir } = yield* scratch;
+    yield* fs.writeFileString(file("logins.txt"), "ada\n");
+    const { DATABASE_URL: _, GITHUB_TOKEN: __, ...env } = process.env;
+    for (const [flag, value, reason] of [
+      ["--concurrency", "0", "--concurrency takes 1 to 8"],
+      ["--share", "1.5", "--share takes more than 0 and at most 1"],
+    ] as const) {
+      const refused = Bun.spawnSync(
+        [
+          "bun",
+          "scripts/import-stars.ts",
+          "run",
+          "--logins",
+          file("logins.txt"),
+          "--state",
+          dir,
+          `${flag}`,
+          `${value}`,
+        ],
+        { cwd: `${import.meta.dir}/..`, env, stdout: "pipe", stderr: "pipe" },
+      );
+      expect(refused.exitCode).not.toBe(0);
+      expect(`${refused.stdout}${refused.stderr}`).toContain(reason);
+    }
+  }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+);
