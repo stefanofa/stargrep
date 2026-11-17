@@ -158,7 +158,8 @@ class TooFewStars extends Schema.TaggedError<TooFewStars>()("TooFewStars", {
 }
 
 // Fills an account of these repos up to `stars` stars with GitHub's most-starred repos. Summaries for thousands of repos
-// cost more than this check is worth, so each one is embedded from its name, description, and topics instead.
+// cost more than this check is worth, so each one is embedded from its metadata instead, as production embeds a repo
+// whose summary waits.
 export const fillStars = Effect.fn("EnrichedCorpus.fillStars")(function* (
   repos: ReadonlyArray<EnrichedRepo>,
   stars: number,
@@ -170,7 +171,7 @@ export const fillStars = Effect.fn("EnrichedCorpus.fillStars")(function* (
   if (candidates.length < wanted) return yield* new TooFewStars({ stars, available: repos.length + candidates.length });
   const texts = candidates.slice(0, wanted).map((repo) => ({
     repo,
-    text: Summarize.embeddingText(repo, { summary: "", keywords: repo.topics }),
+    text: Summarize.metadataText(repo),
   }));
   const vectors = yield* embedCached(`vectors/most-starred-${slug(embeddings.model.id)}.json`, texts);
   return texts.map(

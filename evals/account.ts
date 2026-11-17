@@ -19,8 +19,15 @@ export const embeddingModelId = Schema.decodeSync(EmbeddingModelId)(Models.embed
 const starredAt = (index: number) =>
   DateTime.add(DateTime.makeUnsafe("2024-01-01T00:00:00Z"), { days: (index * 37) % 1030 });
 
+// Which text each repo's vector was made from. A summary's loads the repo as enrichment saves a summarized one. A
+// metadata vector loads it as a repo still waiting for its summary, with no receipt, projected from its facts alone.
+export type Embedded = "summary" | "metadata";
+
 // Saves each repo as enrichment does, captures its recorded facts and projects them, and stars it for the account.
-export const loadAccount = Effect.fn("Evals.loadAccount")(function* (repos: ReadonlyArray<EnrichedRepo>) {
+export const loadAccount = Effect.fn("Evals.loadAccount")(function* (
+  repos: ReadonlyArray<EnrichedRepo>,
+  embedded: Embedded = "summary",
+) {
   const db = yield* Db.Db;
   const rows = [...repos]
     .sort((left, right) => left.fullName.localeCompare(right.fullName))
@@ -60,6 +67,14 @@ export const loadAccount = Effect.fn("Evals.loadAccount")(function* (repos: Read
           ownerType: null,
           ownerAvatarUrl: null,
         });
+        const embedding = yield* decodeEmbedding({ model: embeddingModelId, vector: repo.vector }).pipe(Effect.orDie);
+        if (embedded === "metadata") {
+          const { id, owner, name } = ref;
+          const metadata = { id, owner, name, description: repo.description, topics: repo.topics };
+          const saved = yield* db.repos.saveMetadataEmbeddings([{ metadata, embedding }]);
+          if (saved.length === 0) return yield* Effect.die(`${repo.fullName} kept no metadata embedding`);
+          return;
+        }
         yield* RepoKnowledge.accept([
           {
             repoId: ref.id,
@@ -75,7 +90,6 @@ export const loadAccount = Effect.fn("Evals.loadAccount")(function* (repos: Read
             lease: null,
           },
         ]);
-        const embedding = yield* decodeEmbedding({ model: embeddingModelId, vector: repo.vector }).pipe(Effect.orDie);
         yield* db.repos.saveEmbedding({
           id: ref.id,
           owner: ref.owner,
@@ -89,6 +103,7 @@ export const loadAccount = Effect.fn("Evals.loadAccount")(function* (repos: Read
       }),
     { concurrency: 8, discard: true },
   );
+  if (embedded === "metadata") yield* RepoKnowledge.projectRepos(rows.map(({ ref }) => ref.id));
   yield* db.stars.upsert({
     accountId,
     stars: rows.map(({ ref }, index) => ({

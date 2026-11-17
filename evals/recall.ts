@@ -4,10 +4,11 @@ import { AiRequestFailed } from "@stargrep/ai/errors";
 import * as Gateway from "@stargrep/ai/gateway";
 import * as Models from "@stargrep/ai/models";
 import { tokensSpent } from "@stargrep/ai/port";
+import * as Summarize from "@stargrep/ai/summarize";
 import * as TextGeneration from "@stargrep/ai/text-generation";
 import { Compile, ModelAllowance, QueryPlanner, Search, SearchCache } from "@stargrep/core/search";
 import * as Db from "@stargrep/db";
-import { anyDistance } from "@stargrep/db/embedding";
+import { anyDistance, Float32Vector } from "@stargrep/db/embedding";
 import { createMigratedDatabase, databaseUrl, dropDatabase } from "@stargrep/db/local-database";
 import * as Memory from "@stargrep/db/memory";
 import * as Cause from "effect/Cause";
@@ -19,7 +20,7 @@ import * as Option from "effect/Option";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { acceptFloor, embeddingModelId, loadAccount, scope } from "./account.ts";
+import { acceptFloor, type Embedded, embeddingModelId, loadAccount, scope } from "./account.ts";
 import { judgedRepos } from "./behavior.ts";
 import * as Corpus from "./corpus.ts";
 import { EnrichedRepo, enrich, fillStars } from "./enriched-corpus.ts";
@@ -28,12 +29,22 @@ const bar = 0.97;
 const topK = 10;
 const negativesPerQuery = 3;
 
-const FixtureMeta = Schema.Struct({ recall: Schema.Finite, queries: Schema.Array(Schema.String) });
+// recall is what the fixture scored with every repo summarized, and metadataRecall with every repo waiting for its
+// summary, embedded from its metadata.
+const FixtureMeta = Schema.Struct({
+  recall: Schema.Finite,
+  metadataRecall: Schema.Finite,
+  queries: Schema.Array(Schema.String),
+});
+// A fixture repo's metadata text and its vector, as a repo waiting for its summary is embedded.
+const MetadataVector = Schema.Struct({ fullName: Schema.String, text: Schema.String, vector: Float32Vector });
+type MetadataVector = typeof MetadataVector.Type;
 const Answer = Schema.Struct({ namespace: Schema.String, text: Schema.String, value: Schema.Unknown });
 type Answer = typeof Answer.Type;
 
 interface Fixture {
   readonly recall: number;
+  readonly metadataRecall: number;
   readonly queries: ReadonlyArray<string>;
   readonly repos: ReadonlyArray<EnrichedRepo>;
   readonly answers: ReadonlyArray<Answer>;
@@ -257,7 +268,7 @@ class FixtureStale extends Schema.TaggedError<FixtureStale>()("FixtureStale", {
   }
 }
 
-const runFixture = Effect.fn("Recall.runFixture")(function* (fixture: Fixture) {
+const runFixture = Effect.fn("Recall.runFixture")(function* (fixture: Fixture, embedded: Embedded = "summary") {
   const sets = yield* loadSets;
   const inFixture = (queries: ReadonlyArray<Corpus.Query>) =>
     queries.filter((query) => fixture.queries.includes(query.id));
@@ -266,7 +277,7 @@ const runFixture = Effect.fn("Recall.runFixture")(function* (fixture: Fixture) {
     Layer.provideMerge(Memory.layerMemory({ embeddingModel: embeddingModelId })),
   );
   return yield* Effect.gen(function* () {
-    yield* loadAccount(fixture.repos);
+    yield* loadAccount(fixture.repos, embedded);
     const results = yield* runSets({
       queries: inFixture(sets.queries),
       typos: inFixture(sets.typos),
@@ -317,12 +328,18 @@ const writeFixture = Effect.fn("Recall.writeFixture")(function* (
   );
   const draft: Fixture = {
     recall: 0,
+    metadataRecall: 0,
     queries: ids,
     repos: repos.filter((repo) => names.has(repo.fullName)),
     answers,
   };
   const recall = mean((yield* runFixture(draft)).queries.map((entry) => entry.recall));
-  const meta = yield* Schema.encodeEffect(Schema.fromJsonString(FixtureMeta))({ recall, queries: draft.queries });
+  const metadataRecall = yield* writeMetadata(draft.repos, { ...draft, recall });
+  const meta = yield* Schema.encodeEffect(Schema.fromJsonString(FixtureMeta))({
+    recall,
+    metadataRecall,
+    queries: draft.queries,
+  });
   yield* Effect.promise(() => Bun.write(fixtureFile("recall.json"), `${meta}\n`));
   yield* writeLines("recall-repos.jsonl", EnrichedRepo, draft.repos);
   yield* writeLines("recall-answers.jsonl", Answer, draft.answers);
@@ -332,6 +349,45 @@ const writeFixture = Effect.fn("Recall.writeFixture")(function* (
   yield* Console.log(
     `Wrote evals/fixtures: ${draft.queries.length} queries (${planned} planned), ${draft.repos.length} repos, ${answers.length} answers, recall ${recall.toFixed(3)}`,
   );
+});
+
+// Each fixture repo as a repo waiting for its summary: its vector is the one recorded for its metadata text. A text that
+// metadataText no longer makes means the recipe moved, so the vectors are stale.
+const waitingRepos = (repos: ReadonlyArray<EnrichedRepo>, vectors: ReadonlyArray<MetadataVector>) =>
+  Effect.forEach(repos, (repo) => {
+    const recorded = vectors.find((entry) => entry.fullName === repo.fullName);
+    return recorded === undefined || recorded.text !== Summarize.metadataText(repo)
+      ? Effect.fail(new MetadataFixtureStale({ repo: repo.fullName }))
+      : Effect.succeed({ ...repo, vector: recorded.vector });
+  });
+
+class MetadataFixtureStale extends Schema.TaggedError<MetadataFixtureStale>()("MetadataFixtureStale", {
+  repo: Schema.String,
+}) {
+  override get message(): string {
+    return `the recall fixture has no vector for ${this.repo}'s metadata text, so rerun \`bun run evals/recall.ts --write-metadata-fixture\``;
+  }
+}
+
+// Embeds each fixture repo's metadata text, writes the vectors, and returns the recall of the fixture's queries with every
+// repo waiting for its summary.
+const writeMetadata = Effect.fn("Recall.writeMetadata")(function* (
+  repos: ReadonlyArray<EnrichedRepo>,
+  fixture: Fixture,
+) {
+  const embeddings = yield* Embeddings.Embeddings;
+  const texts = repos.map((repo) => Summarize.metadataText(repo));
+  const vectors = yield* embeddings.embed(texts);
+  const written = repos.map(
+    (repo, index): MetadataVector => ({
+      fullName: repo.fullName,
+      text: texts[index] ?? "",
+      vector: vectors[index]?.vector ?? [],
+    }),
+  );
+  yield* writeLines("recall-metadata.jsonl", MetadataVector, written);
+  const results = yield* runFixture({ ...fixture, repos: yield* waitingRepos(repos, written) }, "metadata");
+  return mean(results.queries.map((entry) => entry.recall));
 });
 
 class RecallBelowBar extends Schema.TaggedError<RecallBelowBar>()("RecallBelowBar", {
@@ -424,20 +480,50 @@ const real = Effect.fn("Recall.real")(function* (options: {
   }).pipe(Effect.provide(db));
 });
 
-const fixture = Effect.gen(function* () {
+const loadFixture = Effect.gen(function* () {
   const meta = yield* Effect.promise(() => fixtureFile("recall.json").text()).pipe(
     Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(FixtureMeta))),
   );
-  const loaded: Fixture = {
+  return {
     ...meta,
     repos: yield* readLines("recall-repos.jsonl", EnrichedRepo),
     answers: yield* readLines("recall-answers.jsonl", Answer),
-  };
+  } satisfies Fixture;
+});
+
+// The fixture's searches twice: once with every repo summarized, and once with every repo waiting for its summary and
+// embedded from its metadata, as an account whose stars all wait behind the summary cap. Each run must keep its recorded
+// recall, find every typo, and answer no nonsense, so the meaning floor and the similar-name step hold for both.
+const fixture = Effect.gen(function* () {
+  const loaded = yield* loadFixture;
   const results = yield* runFixture(loaded);
   const recall = yield* report(results, loaded.repos.length);
   yield* Console.log(`recorded fixture recall: ${loaded.recall.toFixed(3)}`);
   if (recall < loaded.recall) return yield* new RecallBelowBar({ recall, bar: loaded.recall });
   yield* checkTyposAndNonsense(results);
+
+  const waiting = yield* waitingRepos(loaded.repos, yield* readLines("recall-metadata.jsonl", MetadataVector));
+  yield* Console.log("\nwith every repo waiting for its summary, embedded from its metadata:");
+  const waitingResults = yield* runFixture({ ...loaded, repos: waiting }, "metadata");
+  const metadataRecall = yield* report(waitingResults, waiting.length);
+  yield* Console.log(`recorded fixture recall: ${loaded.metadataRecall.toFixed(3)}`);
+  if (metadataRecall < loaded.metadataRecall) {
+    return yield* new RecallBelowBar({ recall: metadataRecall, bar: loaded.metadataRecall });
+  }
+  yield* checkTyposAndNonsense(waitingResults);
+});
+
+// Embeds the fixture repos' metadata again and records the recall it scores, leaving the rest of the fixture as it is.
+const writeMetadataFixture = Effect.gen(function* () {
+  const loaded = yield* loadFixture;
+  const metadataRecall = yield* writeMetadata(loaded.repos, loaded);
+  const meta = yield* Schema.encodeEffect(Schema.fromJsonString(FixtureMeta))({
+    recall: loaded.recall,
+    metadataRecall,
+    queries: loaded.queries,
+  });
+  yield* Effect.promise(() => Bun.write(fixtureFile("recall.json"), `${meta}\n`));
+  yield* Console.log(`Wrote evals/fixtures/recall-metadata.jsonl: recall ${metadataRecall.toFixed(3)}`);
 });
 
 const Stars = Schema.FiniteFromString.check(Schema.isInt(), Schema.isGreaterThan(0));
@@ -458,19 +544,23 @@ const maxDistances =
 
 const main = args.includes("--fixture")
   ? fixture
-  : Effect.flatMap(Effect.all({ distances: maxDistances, stars }), ({ distances, stars }) =>
-      real({
-        summaryModel: summaryIndex === -1 ? Models.summaryModel : (args[summaryIndex + 1] ?? Models.summaryModel),
-        stars,
-        writeFixture: args.includes("--write-fixture"),
-        writeBehavior: args.includes("--write-behavior"),
-        maxDistances: distances,
-        acceptFloor: args.includes("--accept-floor"),
-        bareFilters: args.includes("--bare-filters"),
-      }),
-    ).pipe(
-      Effect.provide(Gateway.layerEmbeddings(Models.embeddingModel).pipe(Layer.provide(Gateway.layerProviderConfig))),
-    );
+  : args.includes("--write-metadata-fixture")
+    ? writeMetadataFixture.pipe(
+        Effect.provide(Gateway.layerEmbeddings(Models.embeddingModel).pipe(Layer.provide(Gateway.layerProviderConfig))),
+      )
+    : Effect.flatMap(Effect.all({ distances: maxDistances, stars }), ({ distances, stars }) =>
+        real({
+          summaryModel: summaryIndex === -1 ? Models.summaryModel : (args[summaryIndex + 1] ?? Models.summaryModel),
+          stars,
+          writeFixture: args.includes("--write-fixture"),
+          writeBehavior: args.includes("--write-behavior"),
+          maxDistances: distances,
+          acceptFloor: args.includes("--accept-floor"),
+          bareFilters: args.includes("--bare-filters"),
+        }),
+      ).pipe(
+        Effect.provide(Gateway.layerEmbeddings(Models.embeddingModel).pipe(Layer.provide(Gateway.layerProviderConfig))),
+      );
 
 if (import.meta.main) {
   const exit = await Effect.runPromiseExit(
