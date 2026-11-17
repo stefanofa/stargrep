@@ -535,28 +535,32 @@ const troubleCopy = (trouble: Trouble, owner: string, whose: Whose): TroubleCopy
 // owners skip the line, and rings Pip with the import's progress.
 export type Butter = { readonly kind: "join" } | { readonly kind: "claim"; readonly progress: number };
 
+// A login the subtitle names, which the hero links to its GitHub profile.
+export type Mention = { readonly login: string };
+
 export interface HeroCopy {
-  readonly subtitle: string;
+  readonly subtitle: ReadonlyArray<string | Mention>;
   readonly butter: Butter;
 }
 
 // What the hero says above a visitor's search. While someone's stars import, the butter tile becomes the claim tile.
 // The status line under it carries the counts and times, so the subtitle stays put while they tick.
 const heroCopy = (stage: Stage, troubled: boolean, owner: string, demoLogin: string): HeroCopy => {
-  if (troubled) return { subtitle: "try any username.", butter: { kind: "join" } };
+  if (troubled) return { subtitle: ["try any username."], butter: { kind: "join" } };
+  const mention = { login: owner };
   if (stage.name === "importing") {
     const progress = stage.total === null ? 0 : stage.done / Math.max(1, stage.total);
-    const subtitle = {
-      "not-asked": `@${owner} is new here. their stars are ready to import from github, and search covers them as they land.`,
-      "in-line": `@${owner} is new here and waits in line for github. search covers their stars as they land.`,
-      running: `@${owner} is new here. their stars are on the way from github, and search covers the ones that landed.`,
+    const rest = {
+      "not-asked": " is new here. their stars are ready to import from github, and search covers them as they land.",
+      "in-line": " is new here and waits in line for github. search covers their stars as they land.",
+      running: " is new here. their stars are on the way from github, and search covers the ones that landed.",
     }[stage.phase.kind];
-    return { subtitle, butter: { kind: "claim", progress } };
+    return { subtitle: [mention, rest], butter: { kind: "claim", progress } };
   }
   return {
     subtitle: sameLogin(owner, demoLogin)
-      ? `live results from @${owner}, our demo account. try any username.`
-      : `@${owner}'s starred repos, searched in plain words. try any username.`,
+      ? ["live results from ", mention, ", our demo account. try any username."]
+      : [mention, "'s starred repos, searched in plain words. try any username."],
     butter: { kind: "join" },
   };
 };

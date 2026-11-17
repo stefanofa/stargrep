@@ -273,7 +273,7 @@ describe("a stars page from the Worker to the browser", () => {
 
   test("a login no import has written gets no first answer for a shared query, only its import state", async () => {
     const page = await renderOnServer("/octosync?q=fuzzy");
-    expect(page.html).toContain("@octosync is new here.");
+    expect(page.html).toMatch(/<a href="https:\/\/github.com\/octosync"[^>]*>@octosync<\/a> is new here\./);
     expect(page.html).not.toContain(">fzf</a>");
     expect(page.searched).toEqual([]);
   }, 60_000);
@@ -359,7 +359,7 @@ describe("a stars page from the Worker to the browser", () => {
   test("an import under way paints the claim tile from the server's status read, and its progress once hydrated", async () => {
     const page = await renderOnServer("/octosync");
     expect(page.html).toContain("is this you? skip the wait");
-    expect(page.html).toContain("@octosync is new here.");
+    expect(page.html).toMatch(/<a href="https:\/\/github.com\/octosync"[^>]*>@octosync<\/a> is new here\./);
     expect(page.requested).toEqual([]);
     await hydratePage("/octosync", page.html);
     await waitFor(() => expect(statusText()).toContain("importing @octosync's stars"));
@@ -399,6 +399,6 @@ describe("a stars page from the Worker to the browser", () => {
     const reserved = await renderOnServer("/@api");
     expect(reserved.html).toContain("ready to import @api");
     const anyone = await renderOnServer("/@octosync");
-    expect(anyone.html).toContain("@octosync is new here.");
+    expect(anyone.html).toMatch(/<a href="https:\/\/github.com\/octosync"[^>]*>@octosync<\/a> is new here\./);
   }, 60_000);
 });
