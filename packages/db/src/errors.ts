@@ -37,6 +37,7 @@ export const Operation = Schema.Literals([
   "repos.defer",
   "repos.summaryBacklog",
   "repos.pendingSummaries",
+  "repos.summaryCandidates",
   "stars.upsert",
   "stars.applySnapshot",
   "stars.list",

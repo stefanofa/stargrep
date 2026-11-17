@@ -48,6 +48,7 @@ const defaults = {
     defer: unexpected("repos.defer"),
     summaryBacklog: unexpected("repos.summaryBacklog")(),
     pendingSummaries: unexpected("repos.pendingSummaries"),
+    summaryCandidates: unexpected("repos.summaryCandidates"),
   },
   stars: {
     upsert: unexpected("stars.upsert"),

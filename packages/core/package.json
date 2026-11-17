@@ -10,6 +10,7 @@
     "curate": "bun scripts/curate.ts",
     "enrich": "bun scripts/enrich.ts",
     "github-explore": "bun scripts/github-explore.ts",
+    "import-stars": "bun scripts/import-stars.ts",
     "pilot": "bun scripts/pilot.ts",
     "prefill": "bun scripts/prefill.ts",
     "prefill-check": "bun scripts/prefill-check.ts",

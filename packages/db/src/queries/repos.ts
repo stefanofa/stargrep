@@ -268,6 +268,9 @@ export interface Deferral {
 const NamedRepo = Schema.Struct({ id: RepoId, owner: Login, name: RepoName });
 export type NamedRepo = typeof NamedRepo.Type;
 
+const SummaryCandidate = Schema.Struct({ ...NamedRepo.fields, stars: Schema.Int });
+export type SummaryCandidate = typeof SummaryCandidate.Type;
+
 // An enrichment attempt's hold on repos before its paid summary call. enrich_retry_at is the time before which no paid
 // attempt may start, so a lease is a retry time in the future, and until also names the lease, so the attempt can
 // settle only its own.
@@ -381,6 +384,12 @@ export interface Queries {
   readonly pendingSummaries: (
     query: SweepQuery,
   ) => Effect.Effect<ReadonlyArray<NamedRepo>, DbQueryFailed | DbRowInvalid>;
+  // The repos among these that have no summary under the current recipe, are under the failure cap, and have at least
+  // minStars GitHub stars by their metrics, for a prefill list. The prefill takes the rest from there.
+  readonly summaryCandidates: (input: {
+    readonly ids: ReadonlyArray<RepoId>;
+    readonly minStars: number;
+  }) => Effect.Effect<ReadonlyArray<SummaryCandidate>, DbQueryFailed | DbRowInvalid>;
 }
 
 const batchSize = 1000;
@@ -391,6 +400,7 @@ const decodePending = rowsDecoder(Schema.Struct({ pending: Schema.Boolean }));
 const decodeDue = rowsDecoder(DueIcon);
 const decodeLeases = rowsDecoder(Schema.Struct({ id: RepoId, inputHash: InputHash, leased: Schema.Boolean }));
 const decodeNamed = rowsDecoder(NamedRepo);
+const decodeCandidates = rowsDecoder(SummaryCandidate);
 const decodeCount = rowsDecoder(Schema.Struct({ count: Schema.Int }));
 const decodeMetadata = rowsDecoder(RepoMetadata);
 
@@ -895,5 +905,15 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           .orderBy(...sweepOrder)
           .limit(limit),
       ).pipe(Effect.flatMap(decodeNamed("repos.pendingSummaries"))),
+    summaryCandidates: ({ ids, minStars }) =>
+      run("repos.summaryCandidates", (db) =>
+        db
+          .select({ id: repos.id, owner: repos.owner, name: repos.name, stars: sql<number>`${repoMetrics.stars}` })
+          .from(repos)
+          .innerJoin(repoMetrics, eq(repoMetrics.repoId, repos.id))
+          .where(
+            sql`${repos.id} = any(${sql.param([...ids])}::bigint[]) and ${repoMetrics.stars} >= ${minStars} and ${retryableEnrichment(repos)} and (${repos.summary} is null or ${repos.summaryRecipe} is distinct from ${sql.raw(String(summaryRecipe))})`,
+          ),
+      ).pipe(Effect.flatMap(decodeCandidates("repos.summaryCandidates"))),
   } satisfies Queries;
 });
