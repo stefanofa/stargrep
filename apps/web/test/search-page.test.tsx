@@ -62,6 +62,12 @@ const api = (): Client => ({
   lookupFacets: async () => {
     throw new Error("Unexpected lookupFacets call");
   },
+  monthlyPicks: async () => {
+    throw new Error("Unexpected monthlyPicks call");
+  },
+  setMonthlyPicks: async () => {
+    throw new Error("Unexpected setMonthlyPicks call");
+  },
   viewer: async () => {
     if (!server.signedIn) throw new Error("signed out");
     return server.viewer;
