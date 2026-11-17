@@ -56,6 +56,8 @@ export interface StarsSnapshot {
   readonly accountId: GitHubAccountId;
   readonly stars: ReadonlyArray<StarredRepo>;
   readonly at: DateTime.Utc;
+  // Whether stars holds every star the account has. Only a complete snapshot marks the stored stars it lacks unstarred.
+  readonly complete: boolean;
 }
 
 export interface SnapshotChanges {
@@ -240,6 +242,7 @@ export const make = Effect.gen(function* () {
                     db.execute(sql`with ${writeStarsReturningVisibleChanges(snapshot.accountId, events, sql`true`)}`),
                   ).pipe(Effect.flatMap((result) => decodeChanged("stars.applySnapshot")(resultRows(result))))
                 : [];
+              if (!snapshot.complete) return { starred: starred.map((row) => row.repoId), unstarred: [] };
               const unstarred = yield* run("stars.applySnapshot", (db) =>
                 db
                   .update(stars)

@@ -136,6 +136,7 @@ const make = Effect.gen(function* () {
       Stream.runCollect,
     );
     const pages = written.map(({ page }) => page);
+    const listed = pages.flatMap((page) => page.listed);
     // Enrichment shares the token gate, so repos enqueued mid-read would hold it between pages.
     const pending = written.flatMap((entry) => entry.pending);
     if (Arr.isReadonlyArrayNonEmpty(pending)) {
@@ -146,17 +147,15 @@ const make = Effect.gen(function* () {
     const snapshotReady = !pages.some((page) => page.stopped) && Option.isSome(countBefore);
     const countAfter = snapshotReady ? Option.some(yield* countStars) : Option.none<number>();
     const shifted = Option.isSome(countAfter) && Option.isSome(countBefore) && countBefore.value !== countAfter.value;
+    // GitHub stops serving a very long list before its end, so such a read can tell nothing about the stars it lacks.
+    const partial = Option.isSome(countAfter) && !shifted && listed.length < countAfter.value;
     const counted = Option.orElse(countAfter, () => countBefore);
     if (Option.isSome(counted)) {
       yield* db.accounts.setStarredCount({ accountId: account.id, starredCount: counted.value });
     }
     const snapshot =
       snapshotReady && !shifted
-        ? yield* db.stars.applySnapshot({
-            accountId: account.id,
-            stars: pages.flatMap((page) => page.listed).map(toStarred),
-            at,
-          })
+        ? yield* db.stars.applySnapshot({ accountId: account.id, stars: listed.map(toStarred), at, complete: !partial })
         : noChanges;
     if (!shifted) yield* db.accounts.recordStarSync({ accountId: account.id, at });
     // A new repo can wait in the enrichment queue for a long time, so it is embedded from the list's metadata now, newest
@@ -172,7 +171,7 @@ const make = Effect.gen(function* () {
       Effect.provideService(Db.Db, db),
       Effect.provideService(Embeddings.Embeddings, embeddings),
     );
-    return DiffPage.report(stored, pages, snapshot, shifted);
+    return DiffPage.report(stored, pages, snapshot, { shifted, partial });
   });
 
   const syncLogin = Effect.fn("StarSync.syncLogin")(function* (request: LoginSyncRequest) {

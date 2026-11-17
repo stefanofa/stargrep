@@ -37,6 +37,14 @@ export interface SyncReport {
   readonly unstarred: number;
   readonly enqueued: number;
   readonly shifted: boolean;
+  readonly partial: boolean;
+}
+
+// What the count GitHub gave after a full read says about it. A shifted read saw the count move while it read. A
+// partial read listed fewer stars than GitHub counts, because GitHub stopped serving the list before its end.
+export interface ReadCheck {
+  readonly shifted: boolean;
+  readonly partial: boolean;
 }
 
 export const start: Cursor = { seen: new Set(), tie: Option.none() };
@@ -82,7 +90,7 @@ export const report = (
   stored: Stored,
   pages: ReadonlyArray<WrittenPage>,
   snapshot: Db.SnapshotChanges,
-  shifted: boolean,
+  check: ReadCheck,
 ): SyncReport => {
   const added = new Set([...pages.flatMap((page) => page.starred), ...snapshot.starred]);
   const unstarred = new Set(snapshot.unstarred);
@@ -92,6 +100,6 @@ export const report = (
     unchanged: [...stored.stars.keys()].filter((id) => !added.has(id) && !unstarred.has(id)).length,
     unstarred: unstarred.size,
     enqueued: pages.reduce((total, page) => total + page.enqueued, 0),
-    shifted,
+    ...check,
   };
 };

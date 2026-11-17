@@ -17,12 +17,16 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
       const db = yield* Db.Db;
       const id = accountId(102);
       yield* db.accounts.upsert(account(id));
-      expect(yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-02T00:00:00Z") })).toEqual({
+      expect(
+        yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-02T00:00:00Z"), complete: true }),
+      ).toEqual({
         starred: [],
         unstarred: [],
       });
       yield* db.accounts.recordStarSync({ accountId: id, at: at("2026-10-03T00:00:00Z") });
-      expect(yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-01T00:00:00Z") })).toEqual({
+      expect(
+        yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-01T00:00:00Z"), complete: true }),
+      ).toEqual({
         starred: [],
         unstarred: [],
       });
@@ -36,7 +40,7 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
         .recordStarSync({ accountId: missing, at: at("2026-10-02T00:00:00Z") })
         .pipe(Effect.flip);
       const snapshot = yield* db.stars
-        .applySnapshot({ accountId: missing, stars: [], at: at("2026-10-02T00:00:00Z") })
+        .applySnapshot({ accountId: missing, stars: [], at: at("2026-10-02T00:00:00Z"), complete: true })
         .pipe(Effect.flip);
       expect([sync._tag, snapshot._tag]).toEqual(["AccountNotFound", "AccountNotFound"]);
     }),
@@ -126,7 +130,7 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
         starred(newest, "2026-03-01T00:00:00Z"),
       ];
       yield* db.stars.upsert({ accountId: id, stars: [...kept, starred(gone, "2026-04-01T00:00:00Z")] });
-      yield* db.stars.applySnapshot({ accountId: id, stars: kept, at: at("2026-05-01T00:00:00Z") });
+      yield* db.stars.applySnapshot({ accountId: id, stars: kept, at: at("2026-05-01T00:00:00Z"), complete: true });
 
       const pages: Array<ReadonlyArray<RepoId>> = [];
       let after = Option.none<Db.StarsPosition>();
@@ -166,11 +170,37 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
         accountId: id,
         stars: [starred(kept, "2026-01-01T00:00:00Z")],
         at: at("2026-02-01T00:00:00Z"),
+        complete: true,
       };
       const changes = yield* db.stars.applySnapshot(snapshot);
       expect([changes.starred, changes.unstarred.toSorted()]).toEqual([[], [gone, alsoGone]]);
       expect(yield* db.stars.applySnapshot(snapshot)).toEqual({ starred: [], unstarred: [] });
       expect((yield* db.stars.list(id)).map((star) => star.repoId)).toEqual([kept]);
+    }),
+  );
+
+  test.effect("keeps the stars an incomplete list lacks, and still records the full read", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const id = accountId(306);
+      const [listed, unlisted, added] = [repoId(3601), repoId(3602), repoId(3603)];
+      yield* db.accounts.upsert(account(id));
+      yield* db.repos.upsertRefs([ref(listed), ref(unlisted), ref(added)]);
+      yield* db.stars.upsert({
+        accountId: id,
+        stars: [listed, unlisted].map((repo) => starred(repo, "2026-01-01T00:00:00Z")),
+      });
+
+      const changes = yield* db.stars.applySnapshot({
+        accountId: id,
+        stars: [starred(listed, "2026-01-01T00:00:00Z"), starred(added, "2026-01-15T00:00:00Z")],
+        at: at("2026-02-01T00:00:00Z"),
+        complete: false,
+      });
+
+      expect(changes).toEqual({ starred: [added], unstarred: [] });
+      expect((yield* db.stars.list(id)).map((star) => star.repoId).toSorted()).toEqual([listed, unlisted, added]);
+      expect(iso(Option.getOrThrow(yield* db.accounts.get(id)).starsFullSyncedAt)).toBe("2026-02-01T00:00:00.000Z");
     }),
   );
 
@@ -182,7 +212,7 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
       yield* db.accounts.upsert(account(id));
       yield* db.repos.upsertRefs([ref(repo)]);
       yield* db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-01-01T00:00:00Z")] });
-      yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-02-01T00:00:00Z") });
+      yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-02-01T00:00:00Z"), complete: true });
 
       yield* db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-01-01T00:00:00Z")] });
       expect(yield* db.stars.list(id)).toEqual([]);
@@ -202,8 +232,8 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
       yield* db.accounts.upsert(account(id));
       yield* db.repos.upsertRefs([ref(repo)]);
       yield* db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-10-01T00:00:00Z")] });
-      yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-02T00:00:00Z") });
-      yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-05T00:00:00Z") });
+      yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-02T00:00:00Z"), complete: true });
+      yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-05T00:00:00Z"), complete: true });
       yield* db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-10-03T00:00:00Z")] });
 
       expect(yield* db.stars.list(id)).toEqual([]);
@@ -221,6 +251,7 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
         accountId: id,
         stars: [starred(restarred, "2026-10-01T00:00:00Z")],
         at: at("2026-10-05T00:00:00Z"),
+        complete: true,
       });
 
       const changed = yield* db.stars.upsert({
@@ -246,7 +277,7 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
       const repo = repoId(9221);
       yield* db.accounts.upsert(account(id));
       yield* db.repos.upsertRefs([ref(repo)]);
-      yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-05T00:00:00Z") });
+      yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-05T00:00:00Z"), complete: true });
 
       expect(
         yield* db.stars.upsert({
@@ -287,7 +318,9 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
       yield* db.repos.upsertRefs([ref(repo)]);
       yield* db.stars.upsert({ accountId: id, stars: [starred(repo, "2026-10-05T00:00:00Z")] });
 
-      expect(yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-02T00:00:00Z") })).toEqual({
+      expect(
+        yield* db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-02T00:00:00Z"), complete: true }),
+      ).toEqual({
         starred: [],
         unstarred: [],
       });
@@ -307,6 +340,7 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
         accountId: id,
         stars: [starred(older, "2020-01-01T00:00:00Z"), starred(newer, "2026-09-01T00:00:00Z")],
         at: at("2026-10-05T00:00:00Z"),
+        complete: true,
       });
       yield* db.stars.upsert({ accountId: id, stars: [starred(replayed, "2026-10-01T00:00:00Z")] });
 
@@ -351,6 +385,7 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
         accountId: id,
         stars: [starred(repeated, "2026-10-03T00:00:00Z"), starred(repeated, "2026-10-04T00:00:00Z")],
         at: at("2026-10-05T00:00:00Z"),
+        complete: true,
       });
 
       expect(changes).toEqual({ starred: [repeated], unstarred: [] });
@@ -376,7 +411,12 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
       yield* db.repos.upsertRefs([ref(apiFirst), ref(archiveFirst)]);
 
       yield* db.stars.upsert({ accountId: viaUpsert, stars: repeated });
-      yield* db.stars.applySnapshot({ accountId: viaSnapshot, stars: repeated, at: at("2026-10-05T00:00:00Z") });
+      yield* db.stars.applySnapshot({
+        accountId: viaSnapshot,
+        stars: repeated,
+        at: at("2026-10-05T00:00:00Z"),
+        complete: true,
+      });
 
       for (const id of [viaUpsert, viaSnapshot]) {
         expect((yield* db.stars.list(id)).map((star) => [star.repoId, star.source])).toEqual([
@@ -442,7 +482,7 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 3
         );
         yield* until(Effect.map(lockWaits, (waiting) => waiting >= 1));
         const snapshot = yield* Effect.forkChild(
-          db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-05T00:00:00Z") }),
+          db.stars.applySnapshot({ accountId: id, stars: [], at: at("2026-10-05T00:00:00Z"), complete: true }),
         );
         yield* until(Effect.map(lockWaits, (waiting) => waiting >= 2 || snapshot.pollUnsafe() !== undefined));
         yield* Effect.promise(() => blocker.query("rollback"));

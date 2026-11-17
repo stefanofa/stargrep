@@ -21,7 +21,7 @@ import * as Settle from "../src/consumers/settle.ts";
 import * as SyncStarsConsumer from "../src/consumers/sync-stars.ts";
 import * as UserGate from "../src/user-gate.ts";
 
-export const report = { listed: 1, added: 1, unchanged: 0, unstarred: 0, enqueued: 1, shifted: false };
+export const report = { listed: 1, added: 1, unchanged: 0, unstarred: 0, enqueued: 1, shifted: false, partial: false };
 export const repoId = Schema.decodeSync(RepoId);
 export const share = BudgetShare.make(0.5);
 export const inMillis = (millis: number) => Effect.map(Clock.currentTimeMillis, (now) => now + millis);

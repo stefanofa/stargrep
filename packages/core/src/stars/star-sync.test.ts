@@ -41,6 +41,8 @@ const fixture = () => {
   const lists = new Map<string, Array<Starred>>();
   const users = new Map<string, { readonly id: number; readonly login: string }>();
   const orgs = new Set<string>();
+  // Stars GitHub counts for a login but no longer lists, as it does past the end of a very long list.
+  const unlisted = new Map<string, number>();
   const queue = EnrichQueue.layerMemory();
   const sent = queue.sent;
   const hooks: { beforePage: BeforePage; beforeEmbed: Effect.Effect<void> } = {
@@ -83,7 +85,7 @@ const fixture = () => {
               avatarUrl: null,
               followers: { totalCount: 1 },
               repositories: { totalCount: 2 },
-              starredRepositories: { totalCount: lists.get(login)?.length ?? 0 },
+              starredRepositories: { totalCount: (lists.get(login)?.length ?? 0) + (unlisted.get(login) ?? 0) },
             };
       return { body: { data: { repositoryOwner: node } }, headers: Fake.rateLimitHeaders(4000, 3600, "graphql") };
     }
@@ -115,6 +117,7 @@ const fixture = () => {
       lists.clear();
       users.clear();
       orgs.clear();
+      unlisted.clear();
       sent.length = 0;
       embedded.length = 0;
       github.sent.length = 0;
@@ -223,6 +226,7 @@ const fixture = () => {
           unstarred: 0,
           enqueued: 250,
           shifted: false,
+          partial: false,
         });
         expect(yield* activeRepos(id)).toEqual(list.map((star) => star.repo).toSorted(byNumber));
         expect(sentRepos().toSorted(byNumber)).toEqual(list.map((star) => star.repo).toSorted(byNumber));
@@ -267,6 +271,7 @@ const fixture = () => {
           unstarred: 0,
           enqueued: 0,
           shifted: false,
+          partial: false,
         });
         expect(yield* rows(id)).toEqual(before);
         expect(github.sent.length - requests).toBe(2);
@@ -291,6 +296,7 @@ const fixture = () => {
           unstarred: 0,
           enqueued: 2,
           shifted: false,
+          partial: false,
         });
         expect(github.sent.length - requests).toBe(2);
         expect(yield* activeRepos(id)).toContain(900);
@@ -318,6 +324,7 @@ const fixture = () => {
           unstarred: 1,
           enqueued: 149,
           shifted: false,
+          partial: false,
         });
         const row = (yield* rows(id)).find((candidate) => candidate.repo === gone.repo);
         expect(row?.unstarredAt).toBe(syncTime + 2 * 60 * minute);
@@ -346,6 +353,7 @@ const fixture = () => {
           unstarred: 0,
           enqueued: 1,
           shifted: false,
+          partial: false,
         });
         const row = (yield* rows(id)).find((candidate) => candidate.repo === gone.repo);
         expect(row).toEqual({ repo: gone.repo, starredAt: restarredAt, unstarredAt: null });
@@ -432,6 +440,34 @@ const fixture = () => {
         yield* TestClock.adjust("1 hour");
         expect(yield* sync(id)).toEqual(report({ listed: 151, added: 1, unchanged: 150, shifted: false }));
         expect(yield* activeRepos(id)).toContain(999);
+      }),
+    );
+
+    test.effect("keeps every stored star when GitHub lists fewer stars than it counts, and records the read", () =>
+      Effect.gen(function* () {
+        yield* reset();
+        const list = newestFirst(250);
+        const id = yield* account(1, "ada", list);
+        list.splice(200);
+        unlisted.set("ada", 50);
+        expect(yield* sync(id)).toEqual(report({ listed: 200, added: 200, partial: true, shifted: false }));
+        expect(yield* starredCount(id)).toBe(250);
+
+        yield* TestClock.adjust("1 hour");
+        list.unshift({ repo: 999, at: syncTime + 30 * minute });
+        list.splice(200);
+        unlisted.set("ada", 51);
+        expect(yield* sync(id, "full")).toEqual(report({ listed: 200, added: 1, unstarred: 0, partial: true }));
+        expect(yield* activeRepos(id)).toEqual([...range(1, 200), 999]);
+        const recorded = yield* Db.Db.use((db) => db.accounts.require(id));
+        expect(
+          [recorded.starsSyncedAt, recorded.starsFullSyncedAt].map((at) => at && DateTime.toEpochMillis(at)),
+        ).toEqual([syncTime + 60 * minute, syncTime + 60 * minute]);
+
+        yield* TestClock.adjust("1 hour");
+        unlisted.clear();
+        expect(yield* sync(id, "full")).toEqual(report({ listed: 200, unstarred: 1, partial: false }));
+        expect(yield* activeRepos(id)).toEqual([...range(1, 199), 999]);
       }),
     );
 

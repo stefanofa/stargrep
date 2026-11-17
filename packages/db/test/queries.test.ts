@@ -169,7 +169,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         starred(untracked, "2025-06-01T00:00:00Z"),
       ];
       yield* db.stars.upsert({ accountId: owner, stars: [...kept, starred(gone, "2026-02-01T00:00:00Z")] });
-      yield* db.stars.applySnapshot({ accountId: owner, stars: kept, at: at("2026-04-01T00:00:00Z") });
+      yield* db.stars.applySnapshot({ accountId: owner, stars: kept, at: at("2026-04-01T00:00:00Z"), complete: true });
 
       const library = yield* db.stars.library(owner);
       expect(library.map((entry) => [entry.repo.id, iso(entry.starredAt), entry.stars])).toEqual([
@@ -203,7 +203,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
 
       const kept = [shared, own, retrying, failed, waiting].map((id) => starred(id, "2025-02-01T00:00:00Z"));
       yield* db.stars.upsert({ accountId: reader, stars: [...kept, starred(unstarred, "2025-02-01T00:00:00Z")] });
-      yield* db.stars.applySnapshot({ accountId: reader, stars: kept, at: at("2026-04-01T00:00:00Z") });
+      yield* db.stars.applySnapshot({ accountId: reader, stars: kept, at: at("2026-04-01T00:00:00Z"), complete: true });
       expect(yield* db.stars.enrichment(login("reader"))).toEqual({ total: 5, read: 1, failed: 0, queued: 0 });
 
       yield* embedSummarized(db, own, embedding({ 1: 1 }));
@@ -1104,6 +1104,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         accountId: owner,
         stars: [same, close, far].map((id) => starred(id, "2026-01-01T00:00:00Z")),
         at: at("2026-02-01T00:00:00Z"),
+        complete: true,
       });
 
       const query = { scope: stars(owner), text: "", embedding: embedding({ 0: 1 }) };
