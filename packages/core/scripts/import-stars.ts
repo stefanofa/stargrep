@@ -3,6 +3,7 @@ import * as BunServices from "@effect/platform-bun/BunServices";
 import * as Embeddings from "@stargrep/ai/embeddings";
 import * as Local from "@stargrep/ai/local";
 import * as Db from "@stargrep/db";
+import { BudgetShare } from "@stargrep/github/schemas";
 import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
@@ -56,14 +57,19 @@ const layerDb = Layer.unwrap(
   Effect.map(Embeddings.Embeddings, (embeddings) => Runtime.layerDb(embeddings.model.id)),
 ).pipe(Layer.provideMerge(Local.layer));
 
-// GitHub on GITHUB_TOKEN one request at a time, and the pending file in place of the enrichment queue, so the import
-// shares nothing with the Worker but the database.
-const layerImport = (pendingFile: string) =>
+// GitHub on GITHUB_TOKEN, one request per account at a time within the token's share, and the pending file in place of
+// the enrichment queue, so the import shares nothing with the Worker but the database.
+const layerImport = (pendingFile: string, github: { readonly readers: number; readonly share: BudgetShare }) =>
   StarSync.layerWithoutEmbedding.pipe(
     Layer.provideMerge(layerDb),
-    Layer.provideMerge(Runtime.layerGitHub),
+    Layer.provideMerge(Runtime.layerGitHubBulk(github)),
     Layer.provide(layerPendingFile(pendingFile)),
   );
+
+// GitHub asks for few requests at once on one token, and a few readers already reach the share.
+const maxConcurrency = 8;
+
+const decodeShare = Schema.decodeUnknownOption(BudgetShare);
 
 const readLogins = Effect.fn("importStars.readLogins")(function* (path: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -81,6 +87,7 @@ const readLogins = Effect.fn("importStars.readLogins")(function* (path: string) 
 
 // GitHub requests to /users/<login>/starred, the star list pages, retries included.
 const starPagesSent = () => Runtime.requests.millis.get("users")?.length ?? 0;
+const starPagesOf = (login: string) => Runtime.requests.byPath.get(`/users/${login.toLowerCase()}/starred`) ?? 0;
 
 const describe = (outcome: StarImport.Outcome, pages: number) => {
   switch (outcome._tag) {
@@ -136,30 +143,55 @@ const runImport = Command.make(
       ),
       Flag.withDefault(20_000),
     ),
+    concurrency: Flag.Int("concurrency").pipe(
+      Flag.withDescription(
+        "Accounts to read at once, each one request at a time. A secondary rate limit from GitHub takes one away",
+      ),
+      Flag.withDefault(1),
+    ),
+    share: Flag.Finite("share").pipe(
+      Flag.withDescription(
+        "The most of each of the token's hourly limits the import spends, above 0 and at most 1. It waits for the window to reset once that is spent",
+      ),
+      Flag.withDefault(0.5),
+    ),
     state,
     out: Flag.String("out").pipe(Flag.withDescription("Where to write the run's report as JSON"), Flag.optional),
   },
   Effect.fn("importStars.run")(function* (flags) {
     if (flags.maxStars < 0) return yield* new StarImportRefused({ reason: "--max-stars takes 0 or more" });
+    if (flags.concurrency < 1 || flags.concurrency > maxConcurrency) {
+      return yield* new StarImportRefused({ reason: `--concurrency takes 1 to ${maxConcurrency}` });
+    }
+    const share = decodeShare(flags.share);
+    if (Option.isNone(share))
+      return yield* new StarImportRefused({ reason: "--share takes more than 0 and at most 1" });
     const logins = yield* readLogins(flags.logins);
     const fs = yield* FileSystem.FileSystem;
     const paths = yield* statePaths(flags.state);
     yield* fs.makeDirectory(flags.state, { recursive: true });
     const total = Arr.dedupeWith(logins, (a, b) => a.toLowerCase() === b.toLowerCase()).length;
     yield* Console.log(
-      `import-stars: ${total} logins, accounts over ${flags.maxStars} stars skipped, pending repos to ${paths.pending}, failures to ${paths.failures}`,
+      `import-stars: ${total} logins, ${flags.concurrency} at once within ${flags.share} of the token's limit, accounts over ${flags.maxStars} stars skipped, pending repos to ${paths.pending}, failures to ${paths.failures}`,
     );
 
     const started = yield* Clock.currentTimeMillis;
     const accounts: Array<Account> = [];
     const totals = { tried: 0, imported: 0, rows: 0, newRepos: 0, embedded: 0, failed: [] as ReadonlyArray<string> };
-    let pagesBefore = starPagesSent();
+    // Accounts overlap, so each one's pages are the requests for its own list since its last outcome. Two workers never
+    // read one login at once.
+    const counted = new Map<string, number>();
+    const pagesOf = (login: string) => {
+      const sent = starPagesOf(login);
+      const pages = sent - (counted.get(login.toLowerCase()) ?? 0);
+      counted.set(login.toLowerCase(), sent);
+      return pages;
+    };
     const pagesPerHour = (now: number) =>
       Math.round(starPagesSent() / Math.max((now - started) / 3_600_000, 1 / 3_600));
 
     const onOutcome = Effect.fn("importStars.onOutcome")(function* (outcome: StarImport.Outcome) {
-      const pages = starPagesSent() - pagesBefore;
-      pagesBefore = starPagesSent();
+      const pages = pagesOf(outcome.login);
       accounts.push(entryOf(outcome, pages));
       if (outcome._tag === "Imported") {
         totals.imported++;
@@ -203,7 +235,13 @@ const runImport = Command.make(
       yield* fs.writeFileString(flags.out.value, json);
     }, Effect.orDie);
 
-    yield* StarImport.run({ logins, maxStars: flags.maxStars, retries: 3, onOutcome }).pipe(
+    yield* StarImport.run({
+      logins,
+      maxStars: flags.maxStars,
+      retries: 3,
+      concurrency: flags.concurrency,
+      onOutcome,
+    }).pipe(
       Effect.tapError((error) =>
         error._tag === "StarImportBusy"
           ? Console.log("another star import driver holds this database, waiting")
@@ -212,12 +250,12 @@ const runImport = Command.make(
       Effect.retry(waitForOwner),
       Effect.tap((done) => Effect.sync(() => (totals.failed = done.failed))),
       Effect.onExit((exit) => write(exit._tag === "Success")),
-      Effect.provide(layerImport(paths.pending)),
+      Effect.provide(layerImport(paths.pending, { readers: flags.concurrency, share: share.value })),
     );
   }),
 ).pipe(
   Command.withDescription(
-    "Import the stars of a list of logins in order, one account at a time on GITHUB_TOKEN. A rerun skips the accounts the database already synced.",
+    "Import the stars of a list of logins in order, --concurrency accounts at a time on GITHUB_TOKEN, within --share of its hourly limit. A rerun skips the accounts the database already synced.",
   ),
 );
 

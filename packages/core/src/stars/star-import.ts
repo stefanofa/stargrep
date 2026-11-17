@@ -47,6 +47,8 @@ export interface ImportOptions {
   readonly maxStars: number;
   // How many more times the run tries an account that failed, once it has tried every login.
   readonly retries: number;
+  // How many accounts it reads at once. Each account's own sync sends one request at a time.
+  readonly concurrency: number;
   readonly onOutcome: (outcome: Outcome) => Effect.Effect<void>;
 }
 
@@ -118,10 +120,11 @@ const newId = SecureRandom.SecureRandom.use((random) => random.uuidV4()).pipe(
 
 const dedupe = (logins: ReadonlyArray<Login>) => Arr.dedupeWith(logins, (a, b) => a.toLowerCase() === b.toLowerCase());
 
-// Imports the stars of each login in order, one account at a time, with the services it is given: StarSync's layer
-// without embedding and a GitHub client on the operator's token for a bulk import. An account is done once the database
-// records its star sync time and every repo it stars that waits for a metadata embedding has one. A rerun reads again
-// only an account a crash cut short, whose writes are idempotent, and embeds what is left of an account it skips.
+// Imports the stars of each login in order, `concurrency` accounts at a time, with the services it is given: StarSync's
+// layer without embedding and a GitHub client on the operator's token for a bulk import. An account is done once the
+// database records its star sync time and every repo it stars that waits for a metadata embedding has one. A rerun reads
+// again only an account a crash cut short, whose writes are idempotent, and embeds what is left of an account it skips.
+// Accounts that share repos write them at once safely, since every writer locks repo rows in ID order.
 export const run = Effect.fn("StarImport.run")(function* (options: ImportOptions) {
   const db = yield* Db.Db;
   const github = yield* GitHub.GitHub;
@@ -171,16 +174,22 @@ export const run = Effect.fn("StarImport.run")(function* (options: ImportOptions
     return Effect.succeed({ _tag: "Failed", reason: `${error._tag}: ${error.message}` });
   };
 
+  // Each round hands every login left to one worker, in list order, so no two workers read the same account. The
+  // accounts a round failed are tried again in the next, in list order.
   const work = Effect.gen(function* () {
     let left = dedupe(options.logins);
     for (let attempt = 1; attempt <= 1 + options.retries && left.length > 0; attempt++) {
-      const failed: Array<Login> = [];
-      for (const login of left) {
-        const outcome: Outcome = { ...(yield* account(login).pipe(Effect.catch(settle))), login, attempt };
-        yield* options.onOutcome(outcome);
-        if (outcome._tag === "Failed") failed.push(login);
-      }
-      left = failed;
+      const outcomes = yield* Effect.forEach(
+        left,
+        (login) =>
+          account(login).pipe(
+            Effect.catch(settle),
+            Effect.map((result): Outcome => ({ ...result, login, attempt })),
+            Effect.tap(options.onOutcome),
+          ),
+        { concurrency: options.concurrency },
+      );
+      left = outcomes.flatMap((outcome) => (outcome._tag === "Failed" ? [outcome.login] : []));
     }
     return { failed: left };
   });

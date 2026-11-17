@@ -7,6 +7,7 @@ import * as Models from "@stargrep/ai/models";
 import * as SummarizeFake from "@stargrep/ai/summarize.fake";
 import * as Db from "@stargrep/db";
 import { EmbeddingModelId } from "@stargrep/db/embedding";
+import * as BulkGate from "@stargrep/github/bulk-gate";
 import * as GitHub from "@stargrep/github/github";
 import { BudgetShare, Login, Repo, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
 import * as TokenGate from "@stargrep/github/token-gate";
@@ -56,7 +57,7 @@ export const spentMillis = (name: string) =>
     0,
   );
 
-export const requests = { count: 0, millis: new Map<string, Array<number>>() };
+export const requests = { count: 0, millis: new Map<string, Array<number>>(), byPath: new Map<string, number>() };
 
 const requestKind = (url: URL) =>
   url.pathname === "/graphql"
@@ -80,10 +81,13 @@ const layerCountedFetch = Layer.effect(
       HttpClient.transformResponse((response) =>
         Effect.gen(function* () {
           const [duration, result] = yield* Effect.timed(response);
-          const kind = requestKind(new URL(result.request.url));
+          const url = new URL(result.request.url);
+          const kind = requestKind(url);
           const timings = requests.millis.get(kind) ?? [];
           timings.push(Math.round(Duration.toMillis(duration)));
           requests.millis.set(kind, timings);
+          const path = url.pathname.toLowerCase();
+          requests.byPath.set(path, (requests.byPath.get(path) ?? 0) + 1);
           return result;
         }),
       ),
@@ -91,15 +95,21 @@ const layerCountedFetch = Layer.effect(
   ),
 ).pipe(Layer.provide(FetchHttpClient.layer));
 
-export const layerGitHub = Layer.unwrap(
-  Effect.gen(function* () {
-    const token = yield* Config.Redacted("GITHUB_TOKEN");
-    return GitHub.layer.pipe(
-      Layer.provideMerge(TokenGate.layerMemory({ token, share: BudgetShare.make(0.5) })),
-      Layer.provide(layerCountedFetch),
-    );
-  }),
-);
+const layerGitHubWith = <E>(
+  gate: (token: Redacted.Redacted<string>) => Layer.Layer<TokenGate.TokenGate, E, HttpClient.HttpClient>,
+) =>
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const token = yield* Config.Redacted("GITHUB_TOKEN");
+      return GitHub.layer.pipe(Layer.provideMerge(gate(token)), Layer.provide(layerCountedFetch));
+    }),
+  );
+
+export const layerGitHub = layerGitHubWith((token) => TokenGate.layerMemory({ token, share: BudgetShare.make(0.5) }));
+
+// GITHUB_TOKEN for a bulk driver that reads several accounts at once, within its share of each window's limit.
+export const layerGitHubBulk = (options: { readonly readers: number; readonly share: BudgetShare }) =>
+  layerGitHubWith((token) => BulkGate.layer({ token, ...options }));
 
 const decodeModelId = Schema.decodeEffect(EmbeddingModelId);
 

@@ -70,7 +70,7 @@ export class TokenGate extends Context.Service<
   }
 >()("@stargrep/github/token-gate/TokenGate") {}
 
-const endpointOf = (operation: Operation, request: HttpClientRequest.HttpClientRequest) => ({
+export const endpointOf = (operation: Operation, request: HttpClientRequest.HttpClientRequest) => ({
   operation,
   method: request.method,
   path: new URL(request.url).pathname,
