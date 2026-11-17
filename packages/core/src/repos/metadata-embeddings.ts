@@ -13,6 +13,10 @@ import * as RateLine from "../limits/rate-line.ts";
 
 const batchSize = 128;
 
+// metadataAll pays out about 700 units between two runs of the 10-minute sweep, so a run takes up to 1,024 repos and
+// keeps pace with the line.
+export const sweepBatch = 8 * batchSize;
+
 const decodeEmbedding = Schema.decodeUnknownEffect(Embedding);
 
 export const metadataEmbeddings = Metric.counter("stargrep_metadata_embeddings", {
@@ -45,8 +49,8 @@ const embedBatch = Effect.fnUntraced(function* (batch: ReadonlyArray<Db.RepoMeta
 // Embeds the metadata of each of these repos that waits for its summary and has nothing current to be searched by, so
 // search finds it by meaning until its summary's embedding replaces this one. It embeds them in the order given, so a
 // caller that stops it early leaves the last ones waiting. Each repo takes a unit of metadataAll, not of the summary
-// cap. A batch the line refuses, a failed call, or a failed write only logs, and the repos wait for the next attempt
-// that reaches them, so this never fails its caller.
+// cap. A batch the line refuses, a failed call, or a failed write only logs, and the repos stay due for the sweep below,
+// so this never fails its caller.
 export const embed = Effect.fn("MetadataEmbeddings.embed")(
   function* (ids: ReadonlyArray<RepoId>) {
     const db = yield* Db.Db;
@@ -77,4 +81,13 @@ export const embedUnmetered = Effect.fn("MetadataEmbeddings.embedUnmetered")(fun
   let saved = 0;
   for (const batch of Arr.chunksOf(yield* db.repos.metadataDue(ids), batchSize)) saved += yield* embedBatch(batch);
   return saved;
+});
+
+// Embeds the lowest-ID repos due a metadata embedding, whatever the summary policy and the failure cap say, so a repo
+// whose embedding failed or that metadataAll refused gets it once the line has room, even one no other sweep sends.
+export const sweep = Effect.fn("MetadataEmbeddings.sweep")(function* () {
+  const db = yield* Db.Db;
+  const due = yield* db.repos.metadataSweepable(sweepBatch);
+  yield* embed(due);
+  return { due: due.length };
 });

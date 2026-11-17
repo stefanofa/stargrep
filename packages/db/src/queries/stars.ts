@@ -11,7 +11,15 @@ import * as Struct from "effect/Struct";
 import { AccountNotFound, type DbQueryFailed, type DbRowInvalid } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
 import { excluded, NullableTime, requireRow, resultRows, rowsDecoder, writeEncoder } from "../rows.ts";
-import { enrichFailureCap, githubAccounts, repoMetrics, repos, stars, unreadEnrichment } from "../schema.ts";
+import {
+  enrichFailureCap,
+  githubAccounts,
+  repoMetrics,
+  repos,
+  stars,
+  summaryUnwanted,
+  unreadEnrichment,
+} from "../schema.ts";
 import { accountNamed } from "./accounts.ts";
 import { Repo, repoColumns } from "./repos.ts";
 
@@ -38,7 +46,8 @@ const LibraryEntry = Schema.Struct({
 });
 export type LibraryEntry = typeof LibraryEntry.Type;
 
-// queued counts the unread repos the daily summary cap deferred, which Stargrep reads later on its own.
+// queued counts the unread repos whose summary waits: the daily summary cap deferred it, or the summary policy holds it
+// back until the repo gains stars or a signed-in user stars it. Stargrep reads them later on its own.
 const EnrichmentProgress = Schema.Struct({
   total: Schema.Int,
   read: Schema.Int,
@@ -302,7 +311,7 @@ export const make = Effect.gen(function* () {
             total: sql<number>`count(*)::int`,
             read: sql<number>`(count(*) filter (where not ${unread}))::int`,
             failed: sql<number>`(count(*) filter (where ${unread} and ${repos.enrichFailures} >= ${enrichFailureCap}))::int`,
-            queued: sql<number>`(count(*) filter (where ${unread} and ${repos.summaryDeferred} and ${repos.enrichFailures} < ${enrichFailureCap} and ${repos.goneAt} is null))::int`,
+            queued: sql<number>`(count(*) filter (where ${unread} and (${repos.summaryDeferred} or ${summaryUnwanted(repos)}) and ${repos.enrichFailures} < ${enrichFailureCap} and ${repos.goneAt} is null))::int`,
           })
           .from(stars)
           .innerJoin(repos, eq(repos.id, stars.repoId))

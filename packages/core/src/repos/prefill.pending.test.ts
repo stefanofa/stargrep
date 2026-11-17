@@ -2,7 +2,8 @@ import { expect } from "bun:test";
 import * as SummarizeFake from "@stargrep/ai/summarize.fake";
 import * as TextGeneration from "@stargrep/ai/text-generation";
 import * as Db from "@stargrep/db";
-import { RepoId, RepoNodeId } from "@stargrep/github/schemas";
+import { UserId } from "@stargrep/db/auth-schema";
+import { GitHubAccountId, Login, RepoId, RepoNodeId } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -21,6 +22,50 @@ const store = (numbers: ReadonlyArray<number>) =>
   Effect.flatMap(Db.Db, (db) =>
     db.repos.upsertRefs(numbers.map((n) => ({ ...ref(n), nodeId: RepoNodeId.make(`R_${n}`) }))),
   );
+
+// Repos as a star list shows them, each with GitHub's count of its stars.
+const list = (counts: ReadonlyArray<readonly [number, number]>) =>
+  Effect.flatMap(Db.Db, (db) =>
+    db.repos.saveListed(
+      counts.map(([n, stars]) => ({
+        ...ref(n),
+        nodeId: RepoNodeId.make(`R_${n}`),
+        description: `Repo ${n}`,
+        topics: [],
+        language: null,
+        stars,
+      })),
+    ),
+  );
+
+const starredBy = (account: number, ids: ReadonlyArray<RepoId>, claimedBy?: UserId) =>
+  Effect.gen(function* () {
+    const db = yield* Db.Db;
+    const accountId = GitHubAccountId.make(account);
+    const facts = {
+      id: accountId,
+      type: "user" as const,
+      login: Login.make(`stargazer-${account}`),
+      name: null,
+      avatarUrl: null,
+      followers: null,
+      publicRepos: null,
+    };
+    if (claimedBy === undefined) yield* db.accounts.upsert(facts);
+    else {
+      yield* query(
+        "insert into \"user\" (id, name, email) values ($1, $1, $1 || '@example.com') on conflict do nothing",
+        [claimedBy],
+      );
+      yield* db.accounts.claim({ facts, userId: claimedBy, starredCount: ids.length });
+    }
+    const at = DateTime.makeUnsafe("2026-12-01T00:00:00Z");
+    yield* db.stars.upsert({
+      accountId,
+      stars: ids.map((repoId) => ({ repoId, starredAt: at, observedAt: at, source: "api" as const })),
+    });
+    yield* db.repos.markUserStarred(accountId);
+  });
 
 // The units the Worker's summary line owes at this time, one per summary it allowed.
 const unitsOwed = (at: DateTime.Utc) =>
@@ -66,8 +111,8 @@ for (const [adapter, database] of adapters) {
 
         const backlog = yield* Prefill.backlog(10);
         expect(backlog.waiting).toBe(5);
-        expect(backlog.refs.map((repo) => repo.id)).toEqual([failedOnce, fresh, oldRecipe]);
-        expect((yield* Prefill.backlog(2)).refs.map((repo) => repo.id)).toEqual([failedOnce, fresh]);
+        expect(backlog.refs.map((repo) => repo.id)).toEqual([oldRecipe, fresh, failedOnce]);
+        expect((yield* Prefill.backlog(2)).refs.map((repo) => repo.id)).toEqual([oldRecipe, fresh]);
 
         // The Worker leases fresh after the selection, so the run finds it held and asks only the other two.
         expect(yield* db.repos.lease({ ids: [fresh], now, until: DateTime.add(now, { minutes: 15 }) })).toEqual([
@@ -76,6 +121,50 @@ for (const [adapter, database] of adapters) {
         const report = yield* runWith(backlog.refs, { adapter: "claude-code" });
         expect(tally(report)).toEqual({ saved: 2, held: 1 });
         expect(report.outcomes.get(fresh)).toBe("held");
+      }),
+    );
+
+    it.effect("asks in the order the summary cap spends in, and leaves out repos the policy holds back", () =>
+      Effect.gen(function* () {
+        yield* query("truncate repos cascade");
+        yield* TestClock.setTime(Date.parse("2027-01-05T00:00:00Z"));
+        const [fewer, more, twice, owned, tail, bare] = [
+          RepoId.make(3201),
+          RepoId.make(3202),
+          RepoId.make(3203),
+          RepoId.make(3204),
+          RepoId.make(3205),
+          RepoId.make(3206),
+        ];
+        yield* list([
+          [fewer, 250],
+          [more, 4000],
+          [twice, 300],
+          [owned, 30],
+          [tail, 120],
+        ]);
+        yield* Effect.flatMap(Db.Db, (db) =>
+          db.repos.saveListed([
+            {
+              ...ref(bare),
+              nodeId: RepoNodeId.make(`R_${bare}`),
+              description: null,
+              topics: [],
+              language: null,
+              stars: 80,
+            },
+          ]),
+        );
+        yield* starredBy(3201, [twice, more, tail]);
+        yield* starredBy(3202, [twice, tail]);
+        yield* starredBy(3203, [owned], UserId.make("user-pending-ada"));
+
+        const { waiting, refs } = yield* Prefill.backlog(10);
+        expect({ waiting, asking: refs.map((repo) => repo.id) }).toEqual({
+          waiting: 5,
+          asking: [owned, twice, more, fewer, bare],
+        });
+        expect((yield* Prefill.backlog(2)).refs.map((repo) => repo.id)).toEqual([owned, twice]);
       }),
     );
 

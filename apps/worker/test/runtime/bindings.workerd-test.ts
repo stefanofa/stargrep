@@ -172,7 +172,8 @@ it("caches a README read in a GraphQL batch in the real R2 binding through the e
           isArchived: false,
           isFork: false,
           isPrivate: false,
-          stargazerCount: 1,
+          // Enough stars for the summary policy to read the README.
+          stargazerCount: 500,
           forkCount: 0,
           root: { entries: [{ name: "README.md", type: "blob", oid }] },
         },

@@ -110,7 +110,7 @@ export type {
 } from "./queries/stars.ts";
 export type { Settlement, SyncClaim, SyncRequest } from "./queries/sync-requests.ts";
 export type { UsageCall, UsageCounts, UsageDay } from "./queries/usage.ts";
-export { enrichFailureCap } from "./schema.ts";
+export { enrichFailureCap, summaryPolicy } from "./schema.ts";
 
 export class Db extends Context.Service<
   Db,

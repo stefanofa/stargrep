@@ -77,8 +77,10 @@ for (const [adapter, database] of adapters) {
         expect(yield* retryAt(5002)).toBe("2026-11-10 12:15");
         expect(yield* retryAt(5003)).toBeNull();
         expect(
-          yield* query("select description, stars from repos join repo_metrics on repo_id = id where id = 5002"),
-        ).toEqual([{ description: "Moved", stars: 10 }]);
+          yield* query(
+            "select description, repos.stars, repo_metrics.stars as metric from repos join repo_metrics on repo_id = id where id = 5002",
+          ),
+        ).toEqual([{ description: "Moved", stars: 10, metric: 10 }]);
       }),
     );
 

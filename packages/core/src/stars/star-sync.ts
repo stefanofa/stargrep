@@ -143,8 +143,11 @@ const make = Effect.fnUntraced(function* (embedsMetadata: boolean) {
     );
     const pages = written.map(({ page }) => page);
     const listed = pages.flatMap((page) => page.listed);
-    // Enrichment shares the token gate, so repos enqueued mid-read would hold it between pages.
+    // Enrichment shares the token gate, so repos enqueued mid-read would hold it between pages. The summary policy wants
+    // every repo a signed-in user stars, so a claimed account's repos are marked before enrichment reads them, the ones
+    // an earlier sync stored included.
     const pending = written.flatMap((entry) => entry.pending);
+    yield* db.repos.markUserStarred(account.id);
     if (Arr.isReadonlyArrayNonEmpty(pending)) {
       const paidBy = request.userId === undefined ? {} : { userId: request.userId };
       yield* queue.send(pending.map((repoId) => ({ repoId, ...paidBy })));

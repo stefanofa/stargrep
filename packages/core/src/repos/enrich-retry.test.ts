@@ -100,18 +100,16 @@ it.layer(Layer.merge(TestDatabase.layerMemory({ embeddingModel }), queue.layer),
       Effect.sync(() => expect(EnrichRetry.retryDelays.length + 1).toBe(Db.enrichFailureCap)),
     );
 
-    it.effect("sends at most one batch per run, with retries ahead of repos that never failed", () =>
+    it.effect("sends at most one batch per run, a retry in its place among repos that never failed", () =>
       Effect.gen(function* () {
         const ids = Array.from({ length: EnrichRetry.sweepBatch + 5 }, (_, index) => 1000 + index);
         yield* reset(ids);
         const retried = ids.at(-1) ?? 0;
-        yield* fail([retried]);
+        yield* fail([retried, ids[0] ?? 0]);
         yield* TestClock.adjust("10 minutes");
 
         const first = yield* sweep;
-        expect(first).toHaveLength(EnrichRetry.sweepBatch);
-        expect(first[0]).toBe(repoId(retried));
-        expect(first.slice(1)).toEqual(ids.slice(0, EnrichRetry.sweepBatch - 1).map((n) => repoId(n)));
+        expect(first).toEqual(ids.slice(0, EnrichRetry.sweepBatch).map((n) => repoId(n)));
       }),
     );
   },

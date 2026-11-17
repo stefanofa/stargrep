@@ -27,6 +27,7 @@ const defaults = {
   repos: {
     upsertRefs: unexpected("repos.upsertRefs"),
     saveListed: unexpected("repos.saveListed"),
+    markUserStarred: unexpected("repos.markUserStarred"),
     pendingEnrichment: unexpected("repos.pendingEnrichment"),
     saveFacts: unexpected("repos.saveFacts"),
     saveCounts: unexpected("repos.saveCounts"),
@@ -35,6 +36,7 @@ const defaults = {
     saveEmbedding: unexpected("repos.saveEmbedding"),
     metadataDue: unexpected("repos.metadataDue"),
     saveMetadataEmbeddings: unexpected("repos.saveMetadataEmbeddings"),
+    metadataSweepable: unexpected("repos.metadataSweepable"),
     saveIcon: unexpected("repos.saveIcon"),
     saveOwners: unexpected("repos.saveOwners"),
     dueIcons: unexpected("repos.dueIcons"),
@@ -43,6 +45,7 @@ const defaults = {
     getMany: unexpected("repos.getMany"),
     recordEnrichFailures: unexpected("repos.recordEnrichFailures"),
     sweepable: unexpected("repos.sweepable"),
+    inSummaryOrder: unexpected("repos.inSummaryOrder"),
     lease: unexpected("repos.lease"),
     settleFailures: unexpected("repos.settleFailures"),
     defer: unexpected("repos.defer"),

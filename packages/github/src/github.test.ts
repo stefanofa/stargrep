@@ -34,7 +34,7 @@ const starPages =
   (total: number): Fake.Handler =>
   (sent) =>
     Fake.starPage(
-      Array.from({ length: total }, (_, i) => ({ repo: i + 1, starredAt: listedAt })),
+      Array.from({ length: total }, (_, i) => ({ repo: i + 1, starredAt: listedAt, stars: (i + 1) * 10 })),
       sent,
     );
 
@@ -97,7 +97,7 @@ describe("stars", () => {
         description: null,
         topics: [],
         language: null,
-        stars: null,
+        stars: 10,
       } as never);
       expect(fake.sent.map((sent) => sent.url.searchParams.get("page"))).toEqual(["1", "2", "3"]);
       const first = fake.sent[0];

@@ -653,6 +653,7 @@ describe("enrichment outcome table", () => {
     Gone: [[EnrichRepo.Enrichment.Gone({ id: repoId(4) }), "ack"]],
     Backoff: [[EnrichRepo.Enrichment.Backoff({ id: repoId(10) }), "ack"]],
     Capped: [[EnrichRepo.Enrichment.Capped({ id: repoId(11) }), "ack"]],
+    Unwanted: [[EnrichRepo.Enrichment.Unwanted({ id: repoId(12) }), "ack"]],
     Stale: [[EnrichRepo.Enrichment.Stale({ id: repoId(5) }), "retry"]],
     Failed: [
       [EnrichRepo.Enrichment.Failed({ id: repoId(6), error: timeout }), "retry"],
@@ -666,8 +667,8 @@ describe("enrichment outcome table", () => {
     >;
   };
 
-  // Gone, NoNodeId, Backoff, and Capped ack, because EnrichRepo counts a repo's own failure, or moves a capped repo's
-  // retry time to when the cap has room, and the sweep owns the next try.
+  // Gone, NoNodeId, Backoff, Capped, and Unwanted ack, because EnrichRepo counts a repo's own failure, or moves a capped
+  // repo's retry time to when the cap has room, and the sweep owns the next try. An unwanted repo leaves the sweep.
   it("settles every enrichment outcome the way its row says", async () => {
     const rows = Object.values(cases).flat();
     const { queues, deadLetters } = recordingQueues();
@@ -790,40 +791,36 @@ describe("knowledge crons", () => {
     expect(logs.map((log) => log.level)).toEqual(["Error"]);
   });
 
-  it("runs both sweeps from the ten-minute handler, and a failing one never stops the other", async () => {
-    const sweepsRuntime = (enrichFails: boolean, projectionFails: boolean) =>
-      Layer.merge(
+  it("runs all three sweeps from the ten-minute handler, and a failing one never stops the others", async () => {
+    const failing = (operation: DbQueryFailed["operation"]) =>
+      Effect.fail(new DbQueryFailed({ operation, reason: "transport", sqlState: null }));
+    const sweepsRuntime = (fails: "enrich" | "metadata" | "projection") =>
+      Layer.mergeAll(
         Layer.succeed(
           Db.Db,
           makeDb({
             repos: {
-              sweepable: () =>
-                enrichFails
-                  ? Effect.fail(
-                      new DbQueryFailed({ operation: "repos.sweepable", reason: "transport", sqlState: null }),
-                    )
-                  : Effect.succeed([]),
+              sweepable: () => (fails === "enrich" ? failing("repos.sweepable") : Effect.succeed([])),
+              metadataSweepable: () => (fails === "metadata" ? failing("repos.metadataSweepable") : Effect.succeed([])),
+              metadataDue: () => Effect.succeed([]),
             },
-            knowledge: { stale: () => (projectionFails ? Effect.fail(down) : Effect.succeed([])) },
+            knowledge: { stale: () => (fails === "projection" ? Effect.fail(down) : Effect.succeed([])) },
           }),
         ),
         EnrichQueue.layerMemory().layer,
+        AiFake.layerEmbeddings(),
       );
     const outcomes = [];
-    for (const [enrichFails, projectionFails] of [
-      [true, false],
-      [false, true],
-    ] as const) {
+    for (const fails of ["enrich", "metadata", "projection"] as const) {
       const { logs, layer } = capture();
-      const exit = await Effect.runPromiseExit(
-        Sweeps.run(sweepsRuntime(enrichFails, projectionFails)).pipe(Effect.provide(layer)),
-      );
+      const exit = await Effect.runPromiseExit(Sweeps.run(sweepsRuntime(fails)).pipe(Effect.provide(layer)));
       expect(Exit.isSuccess(exit)).toBe(true);
       outcomes.push(logs.map((log) => `${log.level} ${String(log.message[0])}`).sort());
     }
     expect(outcomes).toEqual([
-      ["Error Enrich sweep failed", "Info Projection sweep ran"],
-      ["Error Projection sweep failed", "Info Enrich sweep ran"],
+      ["Error Enrich sweep failed", "Info Metadata sweep ran", "Info Projection sweep ran"],
+      ["Error Metadata sweep failed", "Info Enrich sweep ran", "Info Projection sweep ran"],
+      ["Error Projection sweep failed", "Info Enrich sweep ran", "Info Metadata sweep ran"],
     ]);
   });
 

@@ -63,7 +63,8 @@ export const fixture = () => {
     isArchived: remote.archived ?? false,
     isFork: false,
     isPrivate: false,
-    stargazerCount: remote.stars ?? 10,
+    // Enough stars for the summary policy to want a summary, unless a test sets fewer.
+    stargazerCount: remote.stars ?? 500,
     forkCount: remote.forks ?? 1,
     root: { entries: remote.readme === undefined ? [] : [{ name: "README.md", type: "blob", oid: remote.readme.oid }] },
   });

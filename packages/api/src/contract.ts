@@ -185,7 +185,7 @@ export const EnrichmentProgress = Schema.Struct({
   }),
   queued: Schema.Int.annotate({
     description:
-      "How many of the unread ones wait for the daily summary cap. Stargrep reads them later on its own, possibly days later, and search finds them by name and description meanwhile.",
+      "How many of the unread ones wait for a summary, because the daily summary cap deferred it or because Stargrep summarizes a repo only once it is popular enough or a signed-in user stars it. Stargrep reads them later on its own, possibly days later, and search finds them by name and description meanwhile.",
   }),
 }).annotate({
   description:
