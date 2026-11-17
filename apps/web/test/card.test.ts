@@ -77,7 +77,9 @@ test("a login's card counts its starred repos and the languages of the stars it 
 test("a shared search shows the answer cache's best match and reads no library for it", async () => {
   const [first] = libraryRepos;
   if (first === undefined) throw new Error("empty fixture");
-  const { card, asked } = source(syncStatus({}), [{ ...first, summary: "From the cache." } as unknown as SearchResult]);
+  const { card, asked } = source(syncStatus({}), [
+    { ...first, description: "From the cache." } as unknown as SearchResult,
+  ]);
   const read = await readAccountCard(card, login, "  fast   python ");
   expect(read.card.search).toEqual({
     query: "fast python",

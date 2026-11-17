@@ -4,6 +4,7 @@ import { languageShares } from "../../lib/languages.ts";
 import type { LibraryRepo, SearchResult, SyncStatus } from "../../lib/rpc.ts";
 import { libraryRevision } from "../../lib/sync-status.ts";
 
+// A card has room for a line or two, so a match shows the repo's own GitHub description before Stargrep's summary.
 export interface TopMatch {
   readonly owner: string;
   readonly name: string;
@@ -31,7 +32,7 @@ export interface CardSource {
 const topOf = (repo: LibraryRepo | SearchResult): TopMatch => ({
   owner: repo.owner,
   name: repo.name,
-  about: repo.summary ?? repo.description,
+  about: repo.description ?? repo.summary,
 });
 
 const keywordTop = (repos: ReadonlyArray<LibraryRepo>, query: string) => {
