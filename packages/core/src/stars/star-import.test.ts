@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import * as Embeddings from "@stargrep/ai/embeddings";
-import { type AiError, AiUnavailable } from "@stargrep/ai/errors";
+import { type AiError, AiKeyMissing, AiUnavailable } from "@stargrep/ai/errors";
 import * as AiFake from "@stargrep/ai/fake";
 import * as Db from "@stargrep/db";
 import type { EmbeddingModelId } from "@stargrep/db/embedding";
@@ -92,7 +92,7 @@ const fixture = () => {
   );
 
   const layerOn = <E>(database: Layer.Layer<Db.Db | Db.Transactions | TestDatabase.TestDatabase, E>) =>
-    StarSync.layerUnmetered.pipe(
+    StarSync.layerWithoutEmbedding.pipe(
       Layer.provideMerge(database),
       Layer.provideMerge(github.layer),
       Layer.provide(queue.layer),
@@ -248,6 +248,18 @@ const fixture = () => {
         expect(error).toMatchObject({ _tag: "Unauthorized" });
         expect(tags()).toEqual(["ada Imported"]);
         expect(yield* (yield* Db.Db).starImports.claim({ owner: other, stale: StarImport.ownerStale })).toBe(true);
+      }),
+    );
+
+    test.effect("stops the run when no model key is configured, before it reads another account", () =>
+      Effect.gen(function* () {
+        yield* reset;
+        users.set("ada", { id: 1, stars: 2 });
+        users.set("bob", { id: 2, stars: 2 });
+        hooks.embed = () => Effect.fail(new AiKeyMissing({ operation: "embed", model: embeddingModel }));
+        expect(yield* Effect.flip(importStars(["ada", "bob"]))).toMatchObject({ _tag: "AiKeyMissing" });
+        expect(outcomes).toEqual([]);
+        expect(yield* syncedAt(2)).toBeUndefined();
       }),
     );
 

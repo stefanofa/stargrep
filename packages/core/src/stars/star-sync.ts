@@ -79,15 +79,12 @@ const toStarred = (star: Star): Db.StarredRepo => ({ repoId: star.repo.id, starr
 
 const noChanges: Db.SnapshotChanges = { starred: [], unstarred: [] };
 
-// How a sync embeds its new repos' metadata once its own writes are done: for how long, and whether each repo takes a
-// unit of metadataAll. A repo it does not reach waits for enrichment, which embeds it from its metadata when the summary
-// cap defers it or its summary fails, and the sweep sends it again if its message is lost.
-interface MetadataPlan {
-  readonly budget: Duration.Duration;
-  readonly metered: boolean;
-}
+// How long a sync spends embedding its new repos' metadata. A repo it does not reach waits for enrichment, which embeds
+// it from its metadata when the summary cap defers it or its summary fails, and the sweep sends it again if its message
+// is lost.
+const metadataBudget = Duration.seconds(30);
 
-const make = Effect.fnUntraced(function* (metadata: MetadataPlan) {
+const make = Effect.fnUntraced(function* (embedsMetadata: boolean) {
   const db = yield* Db.Db;
   const github = yield* GitHub.GitHub;
   const queue = yield* EnrichQueue.EnrichQueue;
@@ -168,18 +165,20 @@ const make = Effect.fnUntraced(function* (metadata: MetadataPlan) {
         : noChanges;
     if (!shifted) yield* db.accounts.recordStarSync({ accountId: account.id, at });
     // A new repo can wait in the enrichment queue for a long time, so it is embedded from the list's metadata now, newest
-    // star first. This runs after the sync's own writes and stops at its budget, so a big import never holds them.
-    yield* MetadataEmbeddings.embed(pending, metadata.metered).pipe(
-      Effect.timeoutOrElse({
-        duration: metadata.budget,
-        orElse: () =>
-          Effect.logInfo("Metadata embedding reached its budget, the rest wait for enrichment", {
-            queued: pending.length,
-          }),
-      }),
-      Effect.provideService(Db.Db, db),
-      Effect.provideService(Embeddings.Embeddings, embeddings),
-    );
+    // star first. This runs after the sync's own writes and stops at metadataBudget, so a big import never holds them.
+    if (embedsMetadata) {
+      yield* MetadataEmbeddings.embed(pending).pipe(
+        Effect.timeoutOrElse({
+          duration: metadataBudget,
+          orElse: () =>
+            Effect.logInfo("Metadata embedding reached its budget, the rest wait for enrichment", {
+              queued: pending.length,
+            }),
+        }),
+        Effect.provideService(Db.Db, db),
+        Effect.provideService(Embeddings.Embeddings, embeddings),
+      );
+    }
     return DiffPage.report(stored, pages, snapshot, { shifted, partial });
   });
 
@@ -197,9 +196,8 @@ const make = Effect.fnUntraced(function* (metadata: MetadataPlan) {
   return StarSync.of({ syncLogin, syncOwner });
 });
 
-// The Worker's sync embeds for at most 30 seconds, so a slow model never holds a queue consumer.
-export const layer = Layer.effect(StarSync, make({ budget: Duration.seconds(30), metered: true }));
+export const layer = Layer.effect(StarSync, make(true));
 
-// A bulk import on a developer's machine embeds every new repo before it moves to the next account, and takes nothing
-// from metadataAll, which stays for the Worker's syncs.
-export const layerUnmetered = Layer.effect(StarSync, make({ budget: Duration.infinity, metered: false }));
+// A bulk import on a developer's machine embeds an account's repos itself once the sync returns, so a rerun can finish
+// the embeddings a crash or a failed call left after the sync recorded its time.
+export const layerWithoutEmbedding = Layer.effect(StarSync, make(false));

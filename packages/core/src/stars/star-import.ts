@@ -1,8 +1,10 @@
+import type { AiError, AiKeyMissing } from "@stargrep/ai/errors";
 import * as Db from "@stargrep/db";
+import type { EmbeddingModelMismatch } from "@stargrep/db/embedding";
 import type { DbQueryFailed } from "@stargrep/db/errors";
 import type { GitHubTokenMissing, Unauthorized } from "@stargrep/github/errors";
 import * as GitHub from "@stargrep/github/github";
-import type { Login } from "@stargrep/github/schemas";
+import type { GitHubAccountId, Login } from "@stargrep/github/schemas";
 import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -13,15 +15,24 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { waitForGitHub } from "../limits/github-wait.ts";
 import type { EnrichQueueFailed } from "../repos/enrich-queue.ts";
+import * as MetadataEmbeddings from "../repos/metadata-embeddings.ts";
 import * as StarSync from "./star-sync.ts";
 
-// A driver holds the import while its heartbeat is fresh. A crashed driver's claim goes stale after ownerStale.
+// A driver holds the import while its heartbeat is fresh. A crashed driver's claim goes stale after ownerStale. A driver
+// that has not renewed its claim for ownerRenewal stops, before another driver can take the import.
 export const ownerHeartbeat = Duration.seconds(15);
+export const ownerRenewal = Duration.seconds(45);
 export const ownerStale = Duration.minutes(1);
 
+// embedded counts the account's repos this attempt embedded from their metadata.
 type Result =
-  | { readonly _tag: "Imported"; readonly report: StarSync.SyncReport; readonly millis: number }
-  | { readonly _tag: "AlreadySynced" }
+  | {
+      readonly _tag: "Imported";
+      readonly report: StarSync.SyncReport;
+      readonly embedded: number;
+      readonly millis: number;
+    }
+  | { readonly _tag: "AlreadySynced"; readonly embedded: number }
   | { readonly _tag: "TooManyStars"; readonly stars: number }
   | { readonly _tag: "Missing" }
   | { readonly _tag: "Failed"; readonly reason: string };
@@ -59,22 +70,37 @@ export class StarImportOwnershipLost extends Schema.TaggedError<
   }
 }
 
-// What stops a run instead of failing one account: a token GitHub refuses, a pending file that cannot be written, a
-// database that stays out of reach, or another driver.
+// This driver could not renew its claim, as when the database is out of reach, so it stopped before the claim could go
+// stale and let another driver read GitHub on the same token.
+export class StarImportRenewalFailed extends Schema.TaggedError<
+  StarImportRenewalFailed,
+  { readonly brand: unique symbol }
+>()("StarImportRenewalFailed", {}) {
+  override get message(): string {
+    return `This star import driver could not renew its claim for ${Duration.toSeconds(ownerRenewal)} seconds, so it stopped before another driver could take the import`;
+  }
+}
+
+// What stops a run instead of failing one account: a token GitHub refuses, a missing model key, a pending file that
+// cannot be written, a database that stays out of reach, or another driver.
 export type StarImportAbort =
   | Unauthorized
   | GitHubTokenMissing
+  | AiKeyMissing
   | EnrichQueueFailed
   | DbQueryFailed
   | StarImportBusy
-  | StarImportOwnershipLost;
+  | StarImportOwnershipLost
+  | StarImportRenewalFailed;
+
+type AccountError = StarSync.StarSyncError | AiError | EmbeddingModelMismatch;
 
 // A lost connection, a timeout, or a deadlock would fail every account alike, so the same account is tried again.
-const passing = (error: StarSync.StarSyncError) =>
+const passing = (error: AccountError) =>
   error._tag === "DbQueryFailed" && error.reason !== "query" && error.reason !== "constraint";
 
-// From 5 seconds up to 5 minutes, 8 times, about a quarter of an hour, so a laptop that sleeps or a database that
-// restarts costs a wait, not every account left in the list.
+// From 5 seconds up to 5 minutes, 8 times, so a query the database drops or times out costs a wait, not every account
+// left in the list. A database out of reach for ownerRenewal stops the run through the heartbeat first.
 const passingRetry = {
   schedule: Schedule.exponential("5 seconds").pipe(
     Schedule.jittered,
@@ -84,7 +110,7 @@ const passingRetry = {
   while: passing,
 };
 
-const waitForLimit = waitForGitHub<StarSync.StarSyncError>("Star import");
+const waitForLimit = waitForGitHub<AccountError>("Star import");
 
 const newId = SecureRandom.SecureRandom.use((random) => random.uuidV4()).pipe(
   Effect.provide(SecureRandom.layerWebCrypto),
@@ -92,36 +118,51 @@ const newId = SecureRandom.SecureRandom.use((random) => random.uuidV4()).pipe(
 
 const dedupe = (logins: ReadonlyArray<Login>) => Arr.dedupeWith(logins, (a, b) => a.toLowerCase() === b.toLowerCase());
 
-// Imports the stars of each login in order, one account at a time, with the services it is given: StarSync's local
-// layer and a GitHub client on the operator's token for a bulk import. An account counts as done once the database
-// records its star sync time, so a rerun skips it and reads again only an account a crash cut short, whose writes are
-// idempotent.
+// Imports the stars of each login in order, one account at a time, with the services it is given: StarSync's layer
+// without embedding and a GitHub client on the operator's token for a bulk import. An account is done once the database
+// records its star sync time and every repo it stars that waits for a metadata embedding has one. A rerun reads again
+// only an account a crash cut short, whose writes are idempotent, and embeds what is left of an account it skips.
 export const run = Effect.fn("StarImport.run")(function* (options: ImportOptions) {
   const db = yield* Db.Db;
   const github = yield* GitHub.GitHub;
   const starSync = yield* StarSync.StarSync;
 
+  const embedStarred = Effect.fnUntraced(function* (accountId: GitHubAccountId) {
+    const starred = yield* db.stars.list(accountId);
+    return yield* MetadataEmbeddings.embedUnmetered(starred.map((star) => star.repoId));
+  });
+
   const account = Effect.fn("StarImport.account")(
     function* (login: Login) {
       const known = yield* db.accounts.byLogin(login);
-      if (Option.exists(known, (found) => found.starsSyncedAt !== null))
-        return { _tag: "AlreadySynced" } satisfies Result;
+      if (Option.isSome(known) && known.value.starsSyncedAt !== null)
+        return { _tag: "AlreadySynced", embedded: yield* embedStarred(known.value.id) } satisfies Result;
       const found = yield* github.owner(login);
       if (Option.isNone(found)) return { _tag: "Missing" } satisfies Result;
       const stars = found.value.starredTotal;
       if (stars > options.maxStars) return { _tag: "TooManyStars", stars } satisfies Result;
       const started = yield* Clock.currentTimeMillis;
       const report = yield* starSync.syncOwner(found.value, { mode: "incremental" });
-      return { _tag: "Imported", report, millis: (yield* Clock.currentTimeMillis) - started } satisfies Result;
+      // A shifted read records no sync time, so the account is not done until a read sees the same count at both ends.
+      if (report.shifted)
+        return { _tag: "Failed", reason: "the star count moved while the list was read" } satisfies Result;
+      const embedded = yield* embedStarred(found.value.account.id);
+      return {
+        _tag: "Imported",
+        report,
+        embedded,
+        millis: (yield* Clock.currentTimeMillis) - started,
+      } satisfies Result;
     },
     Effect.retry(waitForLimit),
     Effect.retry(passingRetry),
   );
 
-  const settle = (error: StarSync.StarSyncError): Effect.Effect<Result, StarImportAbort> => {
+  const settle = (error: AccountError): Effect.Effect<Result, StarImportAbort> => {
     switch (error._tag) {
       case "Unauthorized":
       case "GitHubTokenMissing":
+      case "AiKeyMissing":
       case "EnrichQueueFailed":
         return Effect.fail(error);
       case "DbQueryFailed":
@@ -144,20 +185,34 @@ export const run = Effect.fn("StarImport.run")(function* (options: ImportOptions
     return { failed: left };
   });
 
-  // The driver holds the import for the whole run, so two drivers never read accounts on one token at once. A heartbeat
-  // that cannot reach the database is tried again at the next tick. Only another driver's claim stops the run.
+  // The driver holds the import for the whole run, so two drivers never read accounts on one token at once. It renews
+  // its claim every ownerHeartbeat, and a renewal that cannot reach the database is tried again at the next tick. It
+  // counts ownerRenewal from the moment it sent the last renewal that held, which the database stamped no earlier, so
+  // it stops while its claim is still fresh on the database's clock.
   const owner = yield* newId;
+  const claimedAt = yield* Clock.currentTimeMillis;
   if (!(yield* db.starImports.claim({ owner, stale: ownerStale }))) return yield* new StarImportBusy();
   const heartbeat = Effect.gen(function* () {
-    const held = yield* db.starImports.heartbeat(owner).pipe(
-      Effect.catchTags({
-        DbQueryFailed: (error) =>
-          Effect.logWarning("Star import heartbeat failed, trying again", { error: error.reason }).pipe(
-            Effect.as(true),
-          ),
-      }),
-    );
-    if (!held) return yield* new StarImportOwnershipLost();
-  }).pipe(Effect.delay(ownerHeartbeat), Effect.forever);
+    let renewedAt = claimedAt;
+    while (true) {
+      const deadline = renewedAt + Duration.toMillis(ownerRenewal);
+      const wait = Math.min(Duration.toMillis(ownerHeartbeat), deadline - (yield* Clock.currentTimeMillis));
+      yield* Effect.sleep(Duration.millis(Math.max(wait, 0)));
+      const sentAt = yield* Clock.currentTimeMillis;
+      if (sentAt >= deadline) return yield* new StarImportRenewalFailed();
+      const held = yield* db.starImports.heartbeat(owner).pipe(
+        Effect.timeoutOption(Duration.millis(deadline - sentAt)),
+        Effect.catchTags({
+          DbQueryFailed: (error) =>
+            Effect.logWarning("Star import heartbeat failed, trying again", { error: error.reason }).pipe(
+              Effect.as(Option.none<boolean>()),
+            ),
+        }),
+      );
+      if (Option.isNone(held)) continue;
+      if (!held.value) return yield* new StarImportOwnershipLost();
+      renewedAt = sentAt;
+    }
+  });
   return yield* Effect.raceFirst(work, heartbeat).pipe(Effect.ensuring(Effect.ignore(db.starImports.release(owner))));
 });

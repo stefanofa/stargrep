@@ -71,6 +71,7 @@ const Account = Schema.Struct({
   pages: Schema.optionalKey(Schema.Int),
   rows: Schema.optionalKey(Schema.Int),
   newRepos: Schema.optionalKey(Schema.Int),
+  embedded: Schema.optionalKey(Schema.Int),
   millis: Schema.optionalKey(Schema.Int),
   attempt: Schema.Int,
   reason: Schema.optionalKey(Schema.String),

@@ -59,7 +59,7 @@ const layerDb = Layer.unwrap(
 // GitHub on GITHUB_TOKEN one request at a time, and the pending file in place of the enrichment queue, so the import
 // shares nothing with the Worker but the database.
 const layerImport = (pendingFile: string) =>
-  StarSync.layerUnmetered.pipe(
+  StarSync.layerWithoutEmbedding.pipe(
     Layer.provideMerge(layerDb),
     Layer.provideMerge(Runtime.layerGitHub),
     Layer.provide(layerPendingFile(pendingFile)),
@@ -85,9 +85,9 @@ const starPagesSent = () => Runtime.requests.millis.get("users")?.length ?? 0;
 const describe = (outcome: StarImport.Outcome, pages: number) => {
   switch (outcome._tag) {
     case "Imported":
-      return `imported ${outcome.report.listed} stars in ${pages} pages, ${outcome.report.enqueued} new repos, ${(outcome.millis / 1000).toFixed(1)} s`;
+      return `imported ${outcome.report.listed} stars in ${pages} pages, ${outcome.report.enqueued} new repos, ${outcome.embedded} embedded, ${(outcome.millis / 1000).toFixed(1)} s`;
     case "AlreadySynced":
-      return "already synced";
+      return outcome.embedded === 0 ? "already synced" : `already synced, ${outcome.embedded} embedded`;
     case "TooManyStars":
       return `skipped, ${outcome.stars} stars is over --max-stars`;
     case "Missing":
@@ -108,13 +108,15 @@ const entryOf = (outcome: StarImport.Outcome, pages: number): Account => {
         pages,
         rows: outcome.report.added,
         newRepos: outcome.report.enqueued,
+        embedded: outcome.embedded,
         millis: outcome.millis,
       };
+    case "AlreadySynced":
+      return { login: outcome.login, attempt: outcome.attempt, outcome: outcome._tag, embedded: outcome.embedded };
     case "TooManyStars":
       return { login: outcome.login, attempt: outcome.attempt, outcome: outcome._tag, stars: outcome.stars };
     case "Failed":
       return { login: outcome.login, attempt: outcome.attempt, outcome: outcome._tag, pages, reason: outcome.reason };
-    case "AlreadySynced":
     case "Missing":
       return { login: outcome.login, attempt: outcome.attempt, outcome: outcome._tag };
   }
@@ -150,7 +152,7 @@ const runImport = Command.make(
 
     const started = yield* Clock.currentTimeMillis;
     const accounts: Array<Account> = [];
-    const totals = { tried: 0, imported: 0, rows: 0, newRepos: 0, failed: [] as ReadonlyArray<string> };
+    const totals = { tried: 0, imported: 0, rows: 0, newRepos: 0, embedded: 0, failed: [] as ReadonlyArray<string> };
     let pagesBefore = starPagesSent();
     const pagesPerHour = (now: number) =>
       Math.round(starPagesSent() / Math.max((now - started) / 3_600_000, 1 / 3_600));
@@ -164,6 +166,7 @@ const runImport = Command.make(
         totals.rows += outcome.report.added;
         totals.newRepos += outcome.report.enqueued;
       }
+      if (outcome._tag === "Imported" || outcome._tag === "AlreadySynced") totals.embedded += outcome.embedded;
       if (outcome._tag === "Failed") {
         const at = DateTime.formatIso(yield* DateTime.now);
         const line = yield* Schema.encodeEffect(FailureJson)({ ...outcome, at });
@@ -172,7 +175,7 @@ const runImport = Command.make(
       if (outcome.attempt === 1) totals.tried++;
       const position = outcome.attempt === 1 ? `${totals.tried}/${total}` : `retry ${outcome.attempt - 1}`;
       yield* Console.log(
-        `[${position}] ${outcome.login}: ${describe(outcome, pages)} | ${totals.imported} imported, ${starPagesSent()} pages, ${totals.rows} rows, ${totals.newRepos} new repos, ${pagesPerHour(yield* Clock.currentTimeMillis)} pages/h`,
+        `[${position}] ${outcome.login}: ${describe(outcome, pages)} | ${totals.imported} imported, ${starPagesSent()} pages, ${totals.rows} rows, ${totals.newRepos} new repos, ${totals.embedded} embedded, ${pagesPerHour(yield* Clock.currentTimeMillis)} pages/h`,
       );
     }, Effect.orDie);
 

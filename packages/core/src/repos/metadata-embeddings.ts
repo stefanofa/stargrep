@@ -22,13 +22,9 @@ export const metadataEmbeddings = Metric.counter("stargrep_metadata_embeddings",
 const count = (outcome: "embedded" | "refused", repos: number) =>
   repos === 0 ? Effect.void : Metric.update(Metric.withAttributes(metadataEmbeddings, { outcome }), repos);
 
-const embedBatch = Effect.fnUntraced(function* (batch: ReadonlyArray<Db.RepoMetadata>, metered: boolean) {
+const embedBatch = Effect.fnUntraced(function* (batch: ReadonlyArray<Db.RepoMetadata>) {
   const db = yield* Db.Db;
   const embeddings = yield* Embeddings.Embeddings;
-  if (metered) {
-    const reserved = yield* RateLine.reserve(db.rateLines, RateLine.metadataAll, yield* DateTime.now, batch.length);
-    if (Option.isNone(reserved)) return false;
-  }
   const vectors = yield* embeddings.embed(
     batch.map((repo) =>
       Summarize.metadataText({
@@ -43,21 +39,24 @@ const embedBatch = Effect.fnUntraced(function* (batch: ReadonlyArray<Db.RepoMeta
     Arr.zip(batch, decoded).map(([metadata, embedding]) => ({ metadata, embedding })),
   );
   yield* count("embedded", saved.length);
-  return true;
+  return saved.length;
 });
 
 // Embeds the metadata of each of these repos that waits for its summary and has nothing current to be searched by, so
 // search finds it by meaning until its summary's embedding replaces this one. It embeds them in the order given, so a
 // caller that stops it early leaves the last ones waiting. Each repo takes a unit of metadataAll, not of the summary
 // cap. A batch the line refuses, a failed call, or a failed write only logs, and the repos wait for the next attempt
-// that reaches them, so this never fails its caller. An unmetered run, such as a bulk import on a developer's machine,
-// takes no unit, so the line stays for the Worker.
+// that reaches them, so this never fails its caller.
 export const embed = Effect.fn("MetadataEmbeddings.embed")(
-  function* (ids: ReadonlyArray<RepoId>, metered = true) {
+  function* (ids: ReadonlyArray<RepoId>) {
     const db = yield* Db.Db;
     const batches = Arr.chunksOf(yield* db.repos.metadataDue(ids), batchSize);
     for (const [index, batch] of batches.entries()) {
-      if (yield* embedBatch(batch, metered)) continue;
+      const reserved = yield* RateLine.reserve(db.rateLines, RateLine.metadataAll, yield* DateTime.now, batch.length);
+      if (Option.isSome(reserved)) {
+        yield* embedBatch(batch);
+        continue;
+      }
       const refused = batches.slice(index).flat().length;
       yield* count("refused", refused);
       yield* Effect.logWarning(`Metadata embedding line reached, ${refused} repos waiting`, {
@@ -69,3 +68,13 @@ export const embed = Effect.fn("MetadataEmbeddings.embed")(
   },
   Effect.catch((error) => Effect.logWarning("Metadata embedding failed", { error: error._tag, detail: error.message })),
 );
+
+// Embeds every one of these repos that is due, as embed does, but takes no unit of metadataAll, which stays for the
+// Worker, and fails with the first batch that fails. A bulk import on a developer's machine tries the account again
+// until none is due. Returns how many it saved.
+export const embedUnmetered = Effect.fn("MetadataEmbeddings.embedUnmetered")(function* (ids: ReadonlyArray<RepoId>) {
+  const db = yield* Db.Db;
+  let saved = 0;
+  for (const batch of Arr.chunksOf(yield* db.repos.metadataDue(ids), batchSize)) saved += yield* embedBatch(batch);
+  return saved;
+});
