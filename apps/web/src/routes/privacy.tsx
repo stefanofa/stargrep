@@ -5,7 +5,7 @@ export const Route = createFileRoute("/privacy")({
   head: () => ({
     meta: [
       { title: "privacy · stargrep" },
-      { name: "description", content: "What stargrep stores, what it sends, and how to have it removed." },
+      { name: "description", content: "What stargrep stores and what it sends." },
     ],
   }),
   codeSplitGroupings: [],

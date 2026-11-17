@@ -83,13 +83,6 @@ export function PrivacyPage() {
           PostHog takes analytics, and GitHub supplies the data and the sign-in.
         </p>
       </Section>
-      <Section heading="removal">
-        <p>
-          to have your account or an account's stars removed, open an issue on{" "}
-          <ExternalTextLink href={`${stargrepRepoUrl}/issues`}>github.com/stefanofa/stargrep</ExternalTextLink>, which
-          is public, or message <ExternalTextLink href="https://x.com/stefanofa">@stefanofa</ExternalTextLink> on X.
-        </p>
-      </Section>
     </TextPage>
   );
 }
