@@ -70,15 +70,15 @@ test("a shared stars page previews with its own title, description, address and 
     "og:title": `"rust tui" in @octo's stars · stargrep`,
     "og:description": "Search @octo's starred GitHub repos in plain words.",
     "og:url": "https://stargrep.com/octo?q=rust+tui",
-    "og:image": "https://stargrep.com/og.png",
+    "og:image": "https://stargrep.com/og/octo.png?q=rust+tui",
     "og:image:type": "image/png",
     "og:image:width": "1200",
     "og:image:height": "630",
-    "og:image:alt": "stargrep: search anyone's starred GitHub repos in plain words",
+    "og:image:alt": "@octo's starred GitHub repos on stargrep",
     "twitter:card": "summary_large_image",
     "twitter:title": `"rust tui" in @octo's stars · stargrep`,
     "twitter:description": "Search @octo's starred GitHub repos in plain words.",
-    "twitter:image": "https://stargrep.com/og.png",
+    "twitter:image": "https://stargrep.com/og/octo.png?q=rust+tui",
   });
   expect(count).toBe(Object.keys(tags).length);
   expect(canonical).toBe("https://stargrep.com/octo?q=rust+tui");
