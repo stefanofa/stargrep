@@ -415,7 +415,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           }
         />
       </div>
-      {policy.landing && (
+      {policy.landing && audience.owner.demo && (
         <TryChips
           examples={data.config.examples.filter((example) => normalize(example) !== normalize(query))}
           onPick={search}

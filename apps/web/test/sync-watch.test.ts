@@ -131,6 +131,35 @@ it.effect("an unknown login triggers once, and a refusal waits for the visitor t
   }),
 );
 
+it.effect("a login GitHub didn't have shows that refusal, remembers it, and asks for no import", () =>
+  Effect.gen(function* () {
+    const changes: Array<SyncWatch> = [];
+    const refused: Array<string> = [];
+    let triggered = 0;
+    yield* Effect.forkChild(
+      watchSync({
+        initial: undefined,
+        retry: false,
+        own: false,
+        read: Effect.succeed(syncStatus({ state: "missing" })),
+        trigger: Effect.sync(() => {
+          triggered++;
+          return syncStatus({ state: "queued" });
+        }),
+        visible: Effect.never,
+        whenVisible: Effect.void,
+        changed: (watch) => changes.push(watch),
+        progressed: () => {},
+        refused: (refusal) => refused.push(refusal),
+      }),
+    );
+    yield* TestClock.adjust("1 hour");
+    expect(triggered).toBe(0);
+    expect(changes).toEqual([{ kind: "missing" }]);
+    expect(refused).toEqual(["missing"]);
+  }),
+);
+
 it.effect("a failed status read keeps the previous polling interval and recovers at the next poll", () =>
   Effect.gen(function* () {
     const previous = syncStatus({ state: "queued" });

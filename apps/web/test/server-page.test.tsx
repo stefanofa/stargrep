@@ -382,12 +382,25 @@ describe("a stars page from the Worker to the browser", () => {
 
     requested.length = 0;
     const reload = await renderOnServer("/ghost-login", cookie);
+    expect(reload.status).toBe(404);
     expect(reload.html).toContain("github has no one called @ghost-login");
     expect(reload.requested).toEqual([]);
     await hydratePage("/ghost-login", reload.html);
     await waitFor(() => expect(statusText()).toBe("no such github user"));
     expect(statusText()).toBe("no such github user");
     expect(requested).toEqual([]);
+  }, 60_000);
+
+  test("a login github didn't have at stargrep's last look answers 404 and paints so, and no one asks again", async () => {
+    const page = await renderOnServer("/gone-login");
+    expect(page.status).toBe(404);
+    expect(page.html).toContain("github has no one called @gone-login");
+    expect(page.html).not.toContain("ready to import");
+    expect(page.requested).toEqual([]);
+    await hydratePage("/gone-login", page.html);
+    await waitFor(() => expect(statusText()).toBe("no such github user"));
+    expect(requested).toEqual([]);
+    expect(errors).toEqual([]);
   }, 60_000);
 
   test("an import under way paints the claim tile from the server's status read, and its progress once hydrated", async () => {
@@ -423,6 +436,23 @@ describe("a stars page from the Worker to the browser", () => {
     expect(page.html).not.toContain("Something went wrong!");
     expect(page.html).toContain("$_TSR");
     expect(page.html).not.toContain(secret);
+  }, 60_000);
+
+  test("the hero's username field goes to that login's stars before the page hydrates", async () => {
+    const landing = await renderOnServer("/");
+    const form = landing.html.match(/<form[^>]*aria-label="Whose stars"[^>]*>.*?<\/form>/s)?.[0] ?? "";
+    expect(form).toMatch(/action="\/"/);
+    expect(form).toMatch(/method="get"/);
+    expect(form).toMatch(/<input[^>]*name="user"/);
+    for (const [typed, location] of [
+      ["+%40octosync+", "/octosync"],
+      ["api", "/@api"],
+    ] as const) {
+      const sent = await renderOnServer(`/?user=${typed}`);
+      expect([sent.status >= 300 && sent.status < 400, sent.location]).toEqual([true, location]);
+    }
+    const nonsense = await renderOnServer("/?user=not+a+login");
+    expect(nonsense.status).toBe(200);
   }, 60_000);
 
   test("a login named like a stargrep path lives at /@login, which any login can use", async () => {

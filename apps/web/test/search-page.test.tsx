@@ -868,9 +868,13 @@ describe("the search page in each state", () => {
     expect(
       page().getByRole("heading", { level: 1, name: "search anyone's starred github repos in plain words" }),
     ).toBeTruthy();
-    expect(page().getByRole("heading", { name: "your stars, in a minute" })).toBeTruthy();
+    expect(page().getByRole("heading", { name: "skip the line, stay synced" })).toBeTruthy();
     const owner = within(page().getByRole("main")).getByRole("link", { name: "@stefanofa" });
     expect(owner.closest("p")?.textContent).toBe("live results from @stefanofa, our demo account. try any username.");
+    const hero = owner.closest("section") as HTMLElement;
+    expect(shownAt(hero, "phone")).toContain("live results from @stefanofa, our demo account. try any username.");
+    expect(shownAt(hero, "phone")).toContain("github.com/");
+    expect(within(hero).getByRole("textbox", { name: "GitHub username" })).toBeTruthy();
     expect([owner.getAttribute("href"), owner.getAttribute("target")]).toEqual([
       "https://github.com/stefanofa",
       "_blank",
@@ -882,6 +886,27 @@ describe("the search page in each state", () => {
     const chips = page().getByRole("list", { name: "Example searches" });
     await user.click(within(chips).getByRole("button", { name: "terminal recorder" }));
     expect((page().getByRole("searchbox") as HTMLInputElement).value).toBe("terminal recorder");
+  });
+
+  test("a visitor types any username in the hero and lands on that login's stars", async () => {
+    const user = userEvent.setup();
+    server.signedIn = false;
+    const router = await open("/", "Search @stefanofa's stars");
+    await user.type(page().getByRole("textbox", { name: "GitHub username" }), " @octodone ");
+    await user.click(within(page().getByRole("form", { name: "Whose stars" })).getByRole("button", { name: "go" }));
+    await page().findByRole("searchbox", { name: "Search @octodone's stars" });
+    expect(router.state.location.pathname).toBe("/octodone");
+    expect((page().getByRole("textbox", { name: "GitHub username" }) as HTMLInputElement).value).toBe("");
+  });
+
+  test("the hero's username field stays put on something GitHub could not call a login", async () => {
+    const user = userEvent.setup();
+    server.signedIn = false;
+    const router = await open("/", "Search @stefanofa's stars");
+    await user.type(page().getByRole("textbox", { name: "GitHub username" }), "not a login");
+    await user.click(within(page().getByRole("form", { name: "Whose stars" })).getByRole("button", { name: "go" }));
+    expect(router.state.location.pathname).toBe("/");
+    expect(page().getByRole("searchbox", { name: "Search @stefanofa's stars" })).toBeTruthy();
   });
 
   test("the hero keeps its boxes when an import finishes in front of a visitor", async () => {
@@ -896,7 +921,7 @@ describe("the search page in each state", () => {
     await open("/octosync", "Search @octosync's stars");
     const hero = () => {
       const tile = page()
-        .getByRole("heading", { level: 2, name: /is this you|your stars, in a minute/ })
+        .getByRole("heading", { level: 2, name: /is this you|skip the line, stay synced/ })
         .closest("[data-slot=tile]") as HTMLElement;
       const subtitle = page().getByRole("heading", { level: 1 }).nextElementSibling as HTMLElement;
       return { tile: tile.className, pip: tile.firstElementChild?.className, subtitle: subtitle.className };
@@ -905,7 +930,7 @@ describe("the search page in each state", () => {
     const importing = hero();
     server.status = status({ login: "octosync", starredTotal: 6 });
     await poll();
-    await waitFor(() => expect(page().getByRole("heading", { name: "your stars, in a minute" })).toBeTruthy(), {
+    await waitFor(() => expect(page().getByRole("heading", { name: "skip the line, stay synced" })).toBeTruthy(), {
       timeout: 6000,
     });
     expect(hero()).toEqual(importing);
@@ -925,6 +950,7 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(strip()).toContain("importing @octosync's stars"));
     expect(page().getByRole("heading", { name: "is this you? skip the wait" })).toBeTruthy();
     expect(page().getByRole("progressbar", { name: "importing @octosync's stars" })).toBeTruthy();
+    expect(page().queryByRole("list", { name: "Example searches" })).toBeNull();
   });
 
   test("a network that read too many stars is told to wait a minute", async () => {

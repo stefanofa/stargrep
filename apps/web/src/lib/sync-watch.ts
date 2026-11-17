@@ -44,10 +44,16 @@ interface Watch {
 export const watchSync = Effect.fn("Sync.watch")(function* (watch: Watch) {
   const trigger = Effect.andThen(watch.whenVisible, watch.trigger);
   const read = watch.read.pipe(
-    Effect.filterOrElse(
-      (current) => current.state !== "unknown",
-      () => trigger,
-    ),
+    Effect.flatMap((current) => {
+      switch (current.state) {
+        case "unknown":
+          return trigger;
+        case "missing":
+          return Effect.fail(new SyncRefused({ refusal: "missing" }));
+        default:
+          return Effect.succeed(current);
+      }
+    }),
   );
   const step = (ask: typeof read, before: SyncStatus | undefined) =>
     ask.pipe(
