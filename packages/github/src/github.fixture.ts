@@ -41,6 +41,7 @@ export interface FakeStar {
   readonly starredAt: string;
   readonly description?: string;
   readonly topics?: ReadonlyArray<string>;
+  readonly stars?: number;
 }
 
 export const starItem = (star: FakeStar) => ({
@@ -54,6 +55,7 @@ export const starItem = (star: FakeStar) => ({
     description: star.description ?? null,
     topics: star.topics ?? [],
     language: null,
+    ...(star.stars === undefined ? {} : { stargazers_count: star.stars }),
   },
 });
 

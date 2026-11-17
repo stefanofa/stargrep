@@ -315,7 +315,8 @@ export interface SavedFacts {
 export interface Queries {
   readonly upsertRefs: (refs: ReadonlyArray<RepoRef>) => Effect.Effect<void, DbQueryFailed>;
   // Saves the repos a star list shows. It inserts a new one with the list's metadata, follows a rename, and fills in the
-  // metadata of a repo enrichment has not read yet, so a repo can be embedded from its metadata before its summary.
+  // metadata of a repo enrichment has not read yet, so a repo can be embedded from its metadata before its summary. It
+  // also stores the list's star count for a repo with no metrics yet, which enrichment's facts later replace.
   readonly saveListed: (listed: ReadonlyArray<ListedRepo>) => Effect.Effect<void, DbQueryFailed>;
   readonly pendingEnrichment: (
     ids: ReadonlyArray<RepoId>,
@@ -484,7 +485,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
                 run("repos.saveListed", (db) =>
                   db
                     .insert(repos, "id", "nodeId", "owner", "name", "description", "topics", "language")
-                    .values([...values])
+                    .values(values.map(({ stars: _, ...repo }) => repo))
                     .onConflictDoUpdate({
                       target: repos.id,
                       set: {
@@ -505,6 +506,14 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
                     }),
                 ),
               ),
+              Effect.andThen(() => {
+                const counted = chunk.flatMap((repo) =>
+                  repo.stars === null ? [] : [{ repoId: repo.id, stars: repo.stars, refreshedAt: sql`now()` }],
+                );
+                return Arr.isReadonlyArrayNonEmpty(counted)
+                  ? run("repos.saveListed", (db) => db.insert(repoMetrics).values(counted).onConflictDoNothing())
+                  : Effect.void;
+              }),
             ),
           { discard: true },
         ),

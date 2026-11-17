@@ -56,6 +56,8 @@ export const ListedRepo = Schema.Struct({
   description: Schema.NullOr(Schema.String),
   topics: Schema.Array(Schema.String),
   language: Schema.NullOr(Schema.String),
+  // GitHub's star count when the list was read.
+  stars: Schema.NullOr(Schema.Int),
 });
 export type ListedRepo = typeof ListedRepo.Type;
 
