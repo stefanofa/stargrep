@@ -41,8 +41,9 @@ const keywordTop = (repos: ReadonlyArray<LibraryRepo>, query: string) => {
   return best === undefined ? null : topOf(best.repo);
 };
 
-// Reads a login's card and the library revision it describes. A shared search reads the library only when the answer
-// cache has no match for it, since a card with a query shows no languages.
+// Reads a login's card and the library revision it describes, or null before the first import, whose revision stays
+// the same while GitHub's starred count arrives. A shared search reads the library only when the answer cache has no
+// match for it, since a card with a query shows no languages.
 export const readAccountCard = async (
   { status, library, cachedResults, avatar }: CardSource,
   login: string,
@@ -64,5 +65,5 @@ export const readAccountCard = async (
     languages: query === "" ? languageShares(repos) : [],
     search: query === "" ? null : { query, top: first !== undefined ? topOf(first) : keywordTop(repos, query) },
   };
-  return { card, revision: libraryRevision(sync) };
+  return { card, revision: imported ? libraryRevision(sync) : null };
 };

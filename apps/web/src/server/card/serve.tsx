@@ -35,8 +35,8 @@ export interface CardRoute {
   readonly report: (error: unknown) => void;
 }
 
-// A card whose address names the revision it drew is kept a day, since a new import or read star changes the page's
-// address for it. Any other card describes whatever the library holds now, so it is kept 10 minutes.
+// A card whose address names the imported library revision it drew is kept a day, since a new import or read star
+// changes the page's address for it. Any other card describes whatever Stargrep holds now, so it is kept 10 minutes.
 const keep = { revision: "public, max-age=86400", current: "public, max-age=600" };
 
 const loginOf = (pathname: string) => {
@@ -75,7 +75,7 @@ const answer = async (request: Request, url: URL, { cache, waitUntil, source, re
   const response = new Response(drawn.png.slice(), {
     headers: {
       "content-type": "image/png",
-      "cache-control": version === drawn.revision ? keep.revision : keep.current,
+      "cache-control": drawn.revision !== null && version === drawn.revision ? keep.revision : keep.current,
     },
   });
   waitUntil(cache.put(cacheKey, response.clone()));

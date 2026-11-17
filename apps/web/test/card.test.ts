@@ -98,6 +98,7 @@ test("a login Stargrep has not imported yet reads no library and claims no numbe
   const { card, asked } = source(syncStatus({ state: "unknown" }));
   const read = await readAccountCard(card, login, "");
   expect(read.card).toMatchObject({ stars: null, languages: [], search: null });
+  expect(read.revision).toBeNull();
   expect(asked.stars).toBe(0);
 });
 

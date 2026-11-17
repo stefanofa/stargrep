@@ -12,7 +12,7 @@ const revision = `${syncedAt}/2/2/0`;
 const pending: Array<Promise<unknown>> = [];
 const settled = () => Promise.all(pending.splice(0));
 
-const source = (reads: { count: number }, fail = false): CardSource => ({
+const source = (reads: { count: number }, fail = false, imported = true): CardSource => ({
   status: async () => {
     reads.count++;
     if (fail) throw new Error("refused");
@@ -20,7 +20,7 @@ const source = (reads: { count: number }, fail = false): CardSource => ({
       login: "junodev",
       state: "done",
       requestedAt: null,
-      syncedAt,
+      syncedAt: imported ? syncedAt : null,
       waiting: null,
       starredTotal: 412,
       accountType: "user",
@@ -62,9 +62,11 @@ describe("GET /og/<login>.png", () => {
     expect(reads.count).toBe(1);
   });
 
-  it("keeps a card for 10 minutes when its address names another revision or none", async () => {
+  it("keeps a card for 10 minutes when its address names another revision or none, or nothing is imported", async () => {
     const card = await get("/og/junodev.png?q=rust", source({ count: 0 }));
     expect([card.status, card.headers.get("cache-control")]).toEqual([200, "public, max-age=600"]);
+    const unimported = await get("/og/someone-new.png", source({ count: 0 }, false, false));
+    expect([unimported.status, unimported.headers.get("cache-control")]).toEqual([200, "public, max-age=600"]);
     await settled();
   });
 
