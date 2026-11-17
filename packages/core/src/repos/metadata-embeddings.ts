@@ -22,11 +22,13 @@ export const metadataEmbeddings = Metric.counter("stargrep_metadata_embeddings",
 const count = (outcome: "embedded" | "refused", repos: number) =>
   repos === 0 ? Effect.void : Metric.update(Metric.withAttributes(metadataEmbeddings, { outcome }), repos);
 
-const embedBatch = Effect.fnUntraced(function* (batch: ReadonlyArray<Db.RepoMetadata>) {
+const embedBatch = Effect.fnUntraced(function* (batch: ReadonlyArray<Db.RepoMetadata>, metered: boolean) {
   const db = yield* Db.Db;
   const embeddings = yield* Embeddings.Embeddings;
-  const reserved = yield* RateLine.reserve(db.rateLines, RateLine.metadataAll, yield* DateTime.now, batch.length);
-  if (Option.isNone(reserved)) return false;
+  if (metered) {
+    const reserved = yield* RateLine.reserve(db.rateLines, RateLine.metadataAll, yield* DateTime.now, batch.length);
+    if (Option.isNone(reserved)) return false;
+  }
   const vectors = yield* embeddings.embed(
     batch.map((repo) =>
       Summarize.metadataText({
@@ -48,13 +50,14 @@ const embedBatch = Effect.fnUntraced(function* (batch: ReadonlyArray<Db.RepoMeta
 // search finds it by meaning until its summary's embedding replaces this one. It embeds them in the order given, so a
 // caller that stops it early leaves the last ones waiting. Each repo takes a unit of metadataAll, not of the summary
 // cap. A batch the line refuses, a failed call, or a failed write only logs, and the repos wait for the next attempt
-// that reaches them, so this never fails its caller.
+// that reaches them, so this never fails its caller. An unmetered run, such as a bulk import on a developer's machine,
+// takes no unit, so the line stays for the Worker.
 export const embed = Effect.fn("MetadataEmbeddings.embed")(
-  function* (ids: ReadonlyArray<RepoId>) {
+  function* (ids: ReadonlyArray<RepoId>, metered = true) {
     const db = yield* Db.Db;
     const batches = Arr.chunksOf(yield* db.repos.metadataDue(ids), batchSize);
     for (const [index, batch] of batches.entries()) {
-      if (yield* embedBatch(batch)) continue;
+      if (yield* embedBatch(batch, metered)) continue;
       const refused = batches.slice(index).flat().length;
       yield* count("refused", refused);
       yield* Effect.logWarning(`Metadata embedding line reached, ${refused} repos waiting`, {

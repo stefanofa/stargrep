@@ -5,6 +5,7 @@ import { UserId } from "@stargrep/db/auth-schema";
 import type { AccountNotFound, DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
 import { type GitHubError, NotFound } from "@stargrep/github/errors";
 import * as GitHub from "@stargrep/github/github";
+import type * as Owner from "@stargrep/github/owner";
 import { type GitHubAccountId, Login, type Star } from "@stargrep/github/schemas";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
@@ -46,6 +47,9 @@ export const LoginSyncRequest = Schema.Struct({
 });
 export type LoginSyncRequest = typeof LoginSyncRequest.Type;
 
+// A sync of an account the caller already looked up.
+export type OwnerSyncRequest = Omit<LoginSyncRequest, "login">;
+
 export const actorOf = (request: LoginSyncRequest): Analytics.Actor =>
   request.userId !== undefined
     ? Analytics.Actor.User({ userId: request.userId })
@@ -66,6 +70,8 @@ export class StarSync extends Context.Service<
   StarSync,
   {
     readonly syncLogin: (request: LoginSyncRequest) => Effect.Effect<SyncReport, StarSyncError>;
+    // Syncs an account its caller already looked up, so the sync spends no second lookup on it.
+    readonly syncOwner: (owner: Owner.Owner, request: OwnerSyncRequest) => Effect.Effect<SyncReport, StarSyncError>;
   }
 >()("@stargrep/core/stars/star-sync/StarSync") {}
 
@@ -73,12 +79,15 @@ const toStarred = (star: Star): Db.StarredRepo => ({ repoId: star.repo.id, starr
 
 const noChanges: Db.SnapshotChanges = { starred: [], unstarred: [] };
 
-// How long a sync spends embedding its new repos' metadata. A repo it does not reach waits for enrichment, which embeds
-// it from its metadata when the summary cap defers it or its summary fails, and the sweep sends it again if its message
-// is lost.
-const metadataBudget = Duration.seconds(30);
+// How a sync embeds its new repos' metadata once its own writes are done: for how long, and whether each repo takes a
+// unit of metadataAll. A repo it does not reach waits for enrichment, which embeds it from its metadata when the summary
+// cap defers it or its summary fails, and the sweep sends it again if its message is lost.
+interface MetadataPlan {
+  readonly budget: Duration.Duration;
+  readonly metered: boolean;
+}
 
-const make = Effect.gen(function* () {
+const make = Effect.fnUntraced(function* (metadata: MetadataPlan) {
   const db = yield* Db.Db;
   const github = yield* GitHub.GitHub;
   const queue = yield* EnrichQueue.EnrichQueue;
@@ -101,7 +110,7 @@ const make = Effect.gen(function* () {
 
   const sync = Effect.fn("StarSync.sync")(function* (
     accountId: GitHubAccountId,
-    request: LoginSyncRequest,
+    request: OwnerSyncRequest,
     initialCount: number,
   ) {
     const account = yield* db.accounts.require(accountId);
@@ -159,10 +168,10 @@ const make = Effect.gen(function* () {
         : noChanges;
     if (!shifted) yield* db.accounts.recordStarSync({ accountId: account.id, at });
     // A new repo can wait in the enrichment queue for a long time, so it is embedded from the list's metadata now, newest
-    // star first. This runs after the sync's own writes and stops at metadataBudget, so a big import never holds them.
-    yield* MetadataEmbeddings.embed(pending).pipe(
+    // star first. This runs after the sync's own writes and stops at its budget, so a big import never holds them.
+    yield* MetadataEmbeddings.embed(pending, metadata.metered).pipe(
       Effect.timeoutOrElse({
-        duration: metadataBudget,
+        duration: metadata.budget,
         orElse: () =>
           Effect.logInfo("Metadata embedding reached its budget, the rest wait for enrichment", {
             queued: pending.length,
@@ -174,15 +183,23 @@ const make = Effect.gen(function* () {
     return DiffPage.report(stored, pages, snapshot, { shifted, partial });
   });
 
+  const syncOwner = Effect.fn("StarSync.syncOwner")(function* (owner: Owner.Owner, request: OwnerSyncRequest) {
+    yield* db.accounts.upsert(owner.account);
+    return yield* sync(owner.account.id, request, owner.starredTotal);
+  });
+
   const syncLogin = Effect.fn("StarSync.syncLogin")(function* (request: LoginSyncRequest) {
     const found = yield* github.owner(request.login);
     if (Option.isNone(found)) return yield* new NotFound({ operation: "owner", path: `/users/${request.login}` });
-    const { account, starredTotal } = found.value;
-    yield* db.accounts.upsert(account);
-    return yield* sync(account.id, request, starredTotal);
+    return yield* syncOwner(found.value, request);
   });
 
-  return StarSync.of({ syncLogin });
+  return StarSync.of({ syncLogin, syncOwner });
 });
 
-export const layer = Layer.effect(StarSync, make);
+// The Worker's sync embeds for at most 30 seconds, so a slow model never holds a queue consumer.
+export const layer = Layer.effect(StarSync, make({ budget: Duration.seconds(30), metered: true }));
+
+// A bulk import on a developer's machine embeds every new repo before it moves to the next account, and takes nothing
+// from metadataAll, which stays for the Worker's syncs.
+export const layerUnmetered = Layer.effect(StarSync, make({ budget: Duration.infinity, metered: false }));
