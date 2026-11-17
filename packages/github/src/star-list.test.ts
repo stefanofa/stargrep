@@ -50,6 +50,41 @@ it.effect("keeps the metadata a star page carries, and decodes a page without it
   }),
 );
 
+it.effect("keeps a star whose owner GitHub hides, reading the owner from full_name", () =>
+  Effect.gen(function* () {
+    const page = yield* decodeStarItems(
+      JSON.stringify([
+        {
+          starred_at: "2020-05-24T06:03:10Z",
+          repo: {
+            id: 245356768,
+            node_id: "MDEwOlJlcG9zaXRvcnkyNDUzNTY3Njg=",
+            name: "forkbacon",
+            full_name: "bejoistic/forkbacon",
+            owner: null,
+            description: "Simple GitHub Action to automatically update fork",
+            topics: [],
+            language: "Makefile",
+            stargazers_count: 23,
+          },
+        },
+      ]),
+    );
+    expect(page.map((item) => toStar(item).repo)).toMatchObject([
+      {
+        id: 245356768,
+        nodeId: "MDEwOlJlcG9zaXRvcnkyNDUzNTY3Njg=",
+        owner: "bejoistic",
+        name: "forkbacon",
+        description: "Simple GitHub Action to automatically update fork",
+        topics: [],
+        language: "Makefile",
+        stars: 23,
+      },
+    ]);
+  }),
+);
+
 describe("nextPage", () => {
   test("reads the page number of the next link", () => {
     const header = `${link("https://api.github.com/user/1/starred?page=1", "prev")}, ${link("https://api.github.com/user/1/starred?per_page=100&page=3")}`;
