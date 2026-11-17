@@ -6,11 +6,12 @@ const time = "2026-11-05T10:00:00.000Z";
 
 export const syncStatus = (extra: Partial<typeof SyncStatus.Type>): typeof SyncStatus.Type => {
   const state = extra.state ?? "done";
+  const never = state === "unknown" || state === "missing";
   return decode({
     login: "junodev",
     state,
-    requestedAt: state === "done" || state === "unknown" ? null : time,
-    syncedAt: state === "unknown" ? null : time,
+    requestedAt: state === "done" || never ? null : time,
+    syncedAt: never ? null : time,
     waiting: null,
     starredTotal: null,
     accountType: null,

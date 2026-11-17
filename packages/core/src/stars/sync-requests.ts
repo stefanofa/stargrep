@@ -23,7 +23,7 @@ import * as OwnerLookup from "./owner-lookup.ts";
 import { actorOf, type LoginSyncRequest, type Mode } from "./star-sync.ts";
 import * as SyncQueue from "./sync-queue.ts";
 
-export const SyncState = Schema.Literals(["unknown", "waiting", "queued", "failed", "done"]);
+export const SyncState = Schema.Literals(["unknown", "missing", "waiting", "queued", "failed", "done"]);
 export type SyncState = typeof SyncState.Type;
 
 interface Looked {
@@ -35,6 +35,7 @@ interface Looked {
 export type SyncStatus = Looked &
   (
     | { readonly state: "unknown" }
+    | { readonly state: "missing" }
     | {
         readonly state: "waiting";
         readonly requestedAt: DateTime.Utc;
@@ -246,6 +247,8 @@ interface Policy {
   readonly fullReads: boolean;
 }
 
+const lookupCooldown = Duration.minutes(10);
+
 // Anyone can ask for any login, so they wait 10 minutes. The owner asks on every library open, so they wait a minute,
 // and their library open is the one that runs the weekly full read.
 const policyOf = (by: Requester): Policy => {
@@ -253,9 +256,9 @@ const policyOf = (by: Requester): Policy => {
     case "owner":
       return { paidBy: by.userId, network: undefined, cooldown: Duration.minutes(1), fullReads: true };
     case "signed-in":
-      return { paidBy: by.userId, network: by.caller, cooldown: Duration.minutes(10), fullReads: false };
+      return { paidBy: by.userId, network: by.caller, cooldown: lookupCooldown, fullReads: false };
     case "anyone":
-      return { paidBy: undefined, network: by.caller, cooldown: Duration.minutes(10), fullReads: false };
+      return { paidBy: undefined, network: by.caller, cooldown: lookupCooldown, fullReads: false };
   }
 };
 
@@ -314,8 +317,9 @@ const lookedOf = (account: Option.Option<Db.Account>): Looked => ({
   accountType: Option.getOrNull(Option.map(account, (found) => found.type)),
 });
 
-// A missing login is no request: its row only answers triggers that GitHub has no such login. A claimed request is
-// about to send its sync, so it reads as queued. A waiting request's ahead is left at 0 here, and read counts it.
+// A missing login is no request. Its row says GitHub has no such login for as long as triggers answer so, unless the
+// login has stars synced before a rename. A claimed request is about to send its sync, so it reads as queued. A waiting
+// request's ahead is left at 0 here, and read counts it.
 const statusOf = (
   account: Option.Option<Db.Account>,
   stored: Option.Option<Db.SyncRequest>,
@@ -335,10 +339,13 @@ const statusOf = (
     }
     return { state: "queued", requestedAt, syncedAt, ...looked };
   }
-  return syncedAt === null ? { state: "unknown", ...looked } : { state: "done", syncedAt, ...looked };
+  if (syncedAt !== null) return { state: "done", syncedAt, ...looked };
+  const missing = Option.exists(stored, (found) => found.outcome === "missing" && holds(lookupCooldown, now)(found));
+  return { state: missing ? "missing" : "unknown", ...looked };
 };
 
-const syncedAtOf = (status: SyncStatus) => (status.state === "unknown" ? null : status.syncedAt);
+const syncedAtOf = (status: SyncStatus) =>
+  status.state === "unknown" || status.state === "missing" ? null : status.syncedAt;
 
 const make = Effect.fnUntraced(function* (share: BudgetShare) {
   const all = RateLine.githubAll(share);

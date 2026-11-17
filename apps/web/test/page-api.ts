@@ -21,7 +21,8 @@ import { testServer } from "./serve.ts";
 // The real API behind the stars pages, with fake services: the demo account stefanofa is synced with three stars in two
 // pages, of which mobile-mcp answers the demo query and asciinema, on the second page, is new and not read yet; octodone
 // is synced with the same three stars and no answer by meaning; octosync is importing, two stars in; every other login
-// is unknown, and ghost-login is no one on GitHub. Each process keeps its own record of the imports it was asked for.
+// is unknown, ghost-login is no one on GitHub, and gone-login is no one on GitHub as of a lookup minutes ago. Each process
+// keeps its own record of the imports it was asked for.
 // With STARGREP_SIGNED_IN set to one of those logins, every request comes from that account, signed in.
 
 const at = DateTime.makeUnsafe("2026-11-01T08:00:00Z");
@@ -99,7 +100,9 @@ const syncRequests = Layer.mock(SyncRequests.SyncRequests, {
         ? { state: "done", syncedAt: at, starredTotal: demoRepos.length, accountType: "user" }
         : login.toLowerCase() === "octosync"
           ? { state: "queued", requestedAt: at, syncedAt: null, ...looked }
-          : { state: "unknown", starredTotal: null, accountType: null },
+          : login.toLowerCase() === "gone-login"
+            ? { state: "missing", starredTotal: null, accountType: null }
+            : { state: "unknown", starredTotal: null, accountType: null },
     ),
 });
 

@@ -200,7 +200,7 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests admission", (it) => {
     ),
   );
 
-  it.effect("answers a login GitHub does not have as not found, from the claim row for 10 minutes", () =>
+  it.effect("answers a login GitHub does not have as not found and missing, from the claim row for 10 minutes", () =>
     admitting(({ sent, lookups }) =>
       Effect.gen(function* () {
         for (const _ of [1, 2]) {
@@ -211,15 +211,17 @@ it.layer(memory, { timeout: 30_000 })("SyncRequests admission", (it) => {
         }
         expect(lookups).toEqual(["no-such-login" as Login]);
         expect(sent).toEqual([]);
-        expect(yield* status("no-such-login")).toEqual({ state: "unknown", starredTotal: null, accountType: null });
+        expect(yield* status("no-such-login")).toEqual({ state: "missing", starredTotal: null, accountType: null });
         expect(yield* row("no-such-login")).toMatchObject(Option.some({ outcome: "missing", startsAt: null }));
 
         yield* TestClock.adjust("9 minutes");
         expect((yield* Effect.flip(request("no-such-login")))._tag).toBe("LoginNotFound");
         expect(lookups).toHaveLength(1);
         yield* TestClock.adjust("1 minute");
+        expect(yield* status("no-such-login")).toEqual({ state: "unknown", starredTotal: null, accountType: null });
         expect((yield* Effect.flip(request("no-such-login")))._tag).toBe("LoginNotFound");
         expect(lookups).toHaveLength(2);
+        expect((yield* status("no-such-login")).state).toBe("missing");
       }),
     ),
   );
