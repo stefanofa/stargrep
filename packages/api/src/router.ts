@@ -29,6 +29,7 @@ import {
   type IconPlate,
   type Library,
   type MetricId,
+  type MonthlyPicks,
   type maxIconSize,
   maxStarsPage,
   type OwnerType,
@@ -493,6 +494,26 @@ export const router = implementer.router({
   library: withServices.library.effect(function* ({ context }): ApiResult<"library", typeof Library.Type> {
     const { account } = yield* context.viewer;
     return yield* libraryRepos(yield* (yield* Db.Db).stars.library(account.id));
+  }),
+
+  monthlyPicks: withServices.monthlyPicks.effect(function* ({
+    context,
+  }): ApiResult<"monthlyPicks", typeof MonthlyPicks.Type> {
+    const { userId } = yield* context.viewer;
+    return { optedIn: yield* (yield* Db.Db).monthlyPicks.optedIn(userId) };
+  }),
+
+  setMonthlyPicks: withServices.setMonthlyPicks.effect(function* ({
+    input,
+    context,
+  }): ApiResult<"setMonthlyPicks", typeof MonthlyPicks.Type> {
+    const { userId } = yield* context.viewer;
+    const changed = yield* (yield* Db.Db).monthlyPicks.set(userId, input.optedIn);
+    if (changed) {
+      const event = input.optedIn ? Analytics.Event.MonthlyPicksOptedIn() : Analytics.Event.MonthlyPicksOptedOut();
+      yield* Analytics.capture(event).pipe(Analytics.withActor(Analytics.Actor.User({ userId })));
+    }
+    return { optedIn: input.optedIn };
   }),
 
   stars: os.stars

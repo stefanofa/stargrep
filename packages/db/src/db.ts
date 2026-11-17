@@ -12,6 +12,7 @@ import * as Postgres from "./postgres.ts";
 import * as Accounts from "./queries/accounts.ts";
 import * as Facets from "./queries/facets.ts";
 import * as Knowledge from "./queries/knowledge/index.ts";
+import * as MonthlyPicks from "./queries/monthly-picks.ts";
 import * as RateLines from "./queries/rate-lines.ts";
 import * as Repos from "./queries/repos.ts";
 import * as Search from "./queries/search.ts";
@@ -119,6 +120,7 @@ export class Db extends Context.Service<
     readonly usage: Usage.Queries;
     readonly knowledge: Knowledge.Queries;
     readonly facets: Facets.Queries;
+    readonly monthlyPicks: MonthlyPicks.Queries;
   }
 >()("@stargrep/db/db") {}
 
@@ -170,6 +172,7 @@ export const layer = (options: Options) =>
           usage: yield* Usage.make,
           knowledge: yield* Knowledge.make,
           facets: yield* Facets.make,
+          monthlyPicks: yield* MonthlyPicks.make,
         });
       }),
     ).pipe(Layer.provide(Digest.layerWebCrypto)),

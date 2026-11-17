@@ -630,7 +630,7 @@ describe("signed-in procedures", () => {
 
   test("refuse a caller with no session", async () => {
     const { api } = client();
-    for (const call of [api.viewer(), api.library()]) {
+    for (const call of [api.viewer(), api.library(), api.monthlyPicks(), api.setMonthlyPicks({ optedIn: true })]) {
       const error = await failure(call);
       expect([error.code, error.data]).toEqual(["UNAUTHORIZED", traceData]);
     }
@@ -1303,5 +1303,42 @@ it.layer(TestDatabase.layerMemory({ embeddingModel: "test/model" as EmbeddingMod
         expect([limits, builds()]).toEqual([[], 0]);
       }),
     );
+  },
+);
+
+it.layer(TestDatabase.layerMemory({ embeddingModel: "test/model" as EmbeddingModelId }), { timeout: 30_000 })(
+  "monthly picks",
+  (it) => {
+    it.effect("start off, switch on and off for the signed-in user, and send one event per change", () => {
+      const events = Analytics.layerMemory();
+      return Effect.gen(function* () {
+        yield* (yield* TestDatabase.TestDatabase).query(
+          `insert into "user" (id, name, email) values ($1, 'Ada', 'ada@example.test')`,
+          [ada.userId],
+        );
+        const real = yield* Effect.context<Db.Db>();
+        const api = createRouterClient(router, {
+          context: {
+            ...contextFor("rpc", Effect.succeed(Context.merge(services({ viewer: Effect.succeed(ada) }), real))),
+            "effect/context": yield* Effect.context<never>(),
+          },
+        });
+        const call = <A>(run: () => Promise<A>) => Effect.promise(run);
+
+        expect(yield* call(() => api.monthlyPicks())).toEqual({ optedIn: false });
+        expect(yield* call(() => api.setMonthlyPicks({ optedIn: true }))).toEqual({ optedIn: true });
+        expect(yield* call(() => api.setMonthlyPicks({ optedIn: true }))).toEqual({ optedIn: true });
+        expect(yield* call(() => api.monthlyPicks())).toEqual({ optedIn: true });
+        expect(yield* call(() => api.setMonthlyPicks({ optedIn: false }))).toEqual({ optedIn: false });
+        expect(yield* call(() => api.monthlyPicks())).toEqual({ optedIn: false });
+
+        const user = Analytics.Actor.User({ userId: ada.userId });
+        expect(events.captured.map(({ actor, event }) => ({ actor, event }))).toEqual([
+          { actor: user, event: Analytics.Event.MonthlyPicksOptedIn() },
+          { actor: user, event: Analytics.Event.MonthlyPicksOptedOut() },
+        ]);
+        expect(JSON.stringify(events.captured)).not.toContain("ada@example.test");
+      }).pipe(Effect.provide(events.layer));
+    });
   },
 );

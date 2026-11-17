@@ -1,0 +1,129 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "f21c5b98-37eb-484a-aa66-bdd884113758",
+  "prevIds": [
+    "df9ee8a8-d891-4881-9094-f51d5c9e4587"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "monthly_picks"
+      ],
+      "writes": [
+        "s|tbl|public.monthly_picks",
+        "n|tbl|public.monthly_picks",
+        "e|tbl|public.monthly_picks",
+        "n|rel|public.monthly_picks",
+        "n|type|public.monthly_picks",
+        "n|rel|public.monthly_picks_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "monthly_picks"
+      ],
+      "writes": [
+        "s|fk|public.monthly_picks.monthly_picks_user_id_user_id_fkey",
+        "n|fk|public.monthly_picks.monthly_picks_user_id_user_id_fkey",
+        "e|fk|public.monthly_picks.monthly_picks_user_id_user_id_fkey",
+        "n|con|public.monthly_picks.monthly_picks_user_id_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.monthly_picks",
+        "n|sch|public",
+        "n|tbl|public.user",
+        "n|sch|public",
+        "n|col|public.monthly_picks.user_id",
+        "n|col|public.user.id",
+        "e|uniqueness|public.user.id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "monthly_picks",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "monthly_picks",
+        "name": "user_id",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "monthly_picks",
+        "name": "opted_in_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "monthly_picks",
+        "name": "monthly_picks_user_id_user_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "user_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "user",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "monthly_picks",
+        "name": "monthly_picks_pkey",
+        "columns": [
+          "user_id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    }
+  ]
+}

@@ -35,6 +35,8 @@ export interface Thrown {
 // so no caller can send one.
 export type Event = Data.TaggedEnum<{
   SignedUp: {};
+  MonthlyPicksOptedIn: {};
+  MonthlyPicksOptedOut: {};
   StarsImportStarted: {
     // The starred total admission priced the import from, null before any lookup counted it.
     readonly stars: number | null;

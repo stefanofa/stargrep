@@ -185,6 +185,17 @@ describe("PostHog", () => {
     });
   });
 
+  test("marks the person on the monthly picks waitlist when they opt in and off it when they opt out", () => {
+    const encoded = [Analytics.Event.MonthlyPicksOptedIn(), Analytics.Event.MonthlyPicksOptedOut()].map((event) =>
+      PostHog.encode("prod", userId, { actor: Analytics.Actor.User({ userId }), at: 0, event }),
+    );
+    const wire: ReadonlyArray<unknown> = encoded.map(({ event, properties }) => [event, properties]);
+    expect(wire).toEqual([
+      ["monthly_picks_opted_in", { $set: { monthly_picks: true }, distinct_id: userId, stage: "prod" }],
+      ["monthly_picks_opted_out", { $set: { monthly_picks: false }, distinct_id: userId, stage: "prod" }],
+    ]);
+  });
+
   test("lists an exception's frames oldest first", () => {
     const encoded = PostHog.encode("prod", "stargrep", {
       actor: Analytics.Actor.Stargrep(),

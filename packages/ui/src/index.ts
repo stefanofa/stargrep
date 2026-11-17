@@ -34,6 +34,7 @@ export {
 export { Skeleton } from "./components/skeleton.tsx";
 export { type Sort, SortMenu, sorts } from "./components/sort-menu.tsx";
 export { type StarredDay, type StarredWeek, StarredWeeks } from "./components/starred-weeks.tsx";
+export { SwitchMark } from "./components/switch.tsx";
 export { Tile, type TileVariant } from "./components/tile.tsx";
 export { Tooltip } from "./components/tooltip.tsx";
 export { isView, type View, ViewToggle } from "./components/view-toggle.tsx";

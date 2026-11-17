@@ -266,6 +266,12 @@ export const Viewer = Schema.Struct({
   }),
 });
 
+export const MonthlyPicks = Schema.Struct({
+  optedIn: Schema.Boolean.annotate({
+    description: "Whether the signed-in account asked for a monthly email of repos picked from its stars.",
+  }),
+});
+
 export const LibraryRepo = Schema.Struct({
   ...repoFields,
   atoms: Schema.Array(AtomText).annotate({
@@ -439,6 +445,29 @@ export const contract = {
       description: "Returns every repo the signed-in account starred, newest star first.",
     })
     .output(Library),
+  monthlyPicks: withServices
+    .errors(Struct.pick(errors, ["UNAUTHORIZED"]))
+    .meta(sessionRequired)
+    .route({
+      method: "GET",
+      path: "/monthly-picks",
+      operationId: "monthlyPicks",
+      summary: "Read the monthly picks opt-in",
+      description: "Says whether the signed-in account asked for a monthly email of repos picked from its stars.",
+    })
+    .output(MonthlyPicks),
+  setMonthlyPicks: withServices
+    .errors(Struct.pick(errors, ["UNAUTHORIZED"]))
+    .meta(sessionRequired)
+    .route({
+      method: "PUT",
+      path: "/monthly-picks",
+      operationId: "setMonthlyPicks",
+      summary: "Opt in to or out of monthly picks",
+      description: "Turns the monthly picks email on or off for the signed-in account. Nothing sends it yet.",
+    })
+    .input(MonthlyPicks)
+    .output(MonthlyPicks),
   stars: withServices
     .errors(Struct.pick(errors, ["ACCOUNT_NOT_SYNCED", "TOO_MANY_REQUESTS"]))
     .route({
