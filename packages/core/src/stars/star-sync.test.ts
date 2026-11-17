@@ -1,4 +1,6 @@
 import { expect } from "bun:test";
+import * as Embeddings from "@stargrep/ai/embeddings";
+import * as AiFake from "@stargrep/ai/fake";
 import * as Db from "@stargrep/db";
 import { UserId } from "@stargrep/db/auth-schema";
 import type { EmbeddingModelId } from "@stargrep/db/embedding";
@@ -26,6 +28,8 @@ const syncTime = Date.parse("2026-11-04T00:00:00Z");
 interface Starred {
   readonly repo: number;
   readonly at: number;
+  readonly description?: string;
+  readonly topics?: ReadonlyArray<string>;
 }
 
 type BeforePage = (page: number, list: Array<Starred>) => Fake.Reply | undefined;
@@ -37,6 +41,20 @@ const fixture = () => {
   const queue = EnrichQueue.layerMemory();
   const sent = queue.sent;
   const hooks: { beforePage: BeforePage } = { beforePage: () => undefined };
+  const embedded: Array<string> = [];
+  const embeddings = Layer.succeed(
+    Embeddings.Embeddings,
+    Embeddings.make({
+      provider: "test",
+      model: { ...AiFake.hashEmbeddingModel, id: embeddingModel },
+      timeout: Duration.seconds(5),
+      run: (values) =>
+        Effect.sync(() => {
+          embedded.push(...values);
+          return { vectors: values.map(() => Array.from({ length: 1024 }, (_, at) => (at === 0 ? 1 : 0))), tokens: 1 };
+        }),
+    }),
+  );
 
   const github = Fake.layer((request) => {
     if (request.url.pathname === "/graphql") {
@@ -63,7 +81,7 @@ const fixture = () => {
     return (
       hooks.beforePage(page, stars) ??
       Fake.starPage(
-        stars.map((star) => ({ repo: star.repo, starredAt: DateTime.formatIso(DateTime.makeUnsafe(star.at)) })),
+        stars.map(({ at, ...star }) => ({ ...star, starredAt: DateTime.formatIso(DateTime.makeUnsafe(at)) })),
         request,
       )
     );
@@ -74,6 +92,7 @@ const fixture = () => {
       Layer.provideMerge(database),
       Layer.provideMerge(github.layer),
       Layer.provideMerge(queue.layer),
+      Layer.provideMerge(embeddings),
     );
 
   const query = (text: string, values: ReadonlyArray<unknown> = []) =>
@@ -85,6 +104,7 @@ const fixture = () => {
       users.clear();
       orgs.clear();
       sent.length = 0;
+      embedded.length = 0;
       github.sent.length = 0;
       hooks.beforePage = beforePage;
       yield* query("truncate github_accounts, repos, stars cascade");
@@ -559,6 +579,64 @@ const fixture = () => {
         lists.set("ada", newestFirst(2));
         yield* starSync.syncLogin({ login: "ada" as Login, mode: "incremental" });
         expect(sent.map((message) => "userId" in message)).toEqual([false, false]);
+      }),
+    );
+
+    test.effect("embeds a new repo from the listed metadata before queuing it, unless it lists only a name", () =>
+      Effect.gen(function* () {
+        yield* reset();
+        const id = yield* account(21, "meta", [
+          { repo: 1, at: syncTime - minute, description: "A command-line fuzzy finder", topics: ["cli", "fzf"] },
+          { repo: 2, at: syncTime - 2 * minute },
+        ]);
+        yield* sync(id);
+        expect(embedded).toEqual(["owner/repo-1\nA command-line fuzzy finder\ncli, fzf"]);
+        expect(
+          yield* query(
+            "select id::int, description, topics, embedding_source, embedding is not null as embedded from repos order by id",
+          ),
+        ).toEqual([
+          {
+            id: 1,
+            description: "A command-line fuzzy finder",
+            topics: ["cli", "fzf"],
+            embedding_source: "metadata",
+            embedded: true,
+          },
+          { id: 2, description: null, topics: [], embedding_source: "summary", embedded: false },
+        ]);
+        expect(sentRepos().toSorted(byNumber)).toEqual([1, 2]);
+      }),
+    );
+
+    test.effect("keeps a read repo's facts, and embeds a listed repo again only when its metadata moves", () =>
+      Effect.gen(function* () {
+        yield* reset();
+        const list: Array<Starred> = [
+          { repo: 1, at: syncTime - minute, description: "Old words", topics: ["b", "a"] },
+          { repo: 2, at: syncTime - 2 * minute, description: "Listed words" },
+        ];
+        const id = yield* account(22, "refill", list);
+        yield* query(
+          "insert into repos (id, owner, name, description, input_hash) values (2, 'owner', 'repo-2', 'Read words', repeat('a', 64))",
+        );
+        yield* sync(id);
+        expect(embedded.toSorted()).toEqual(["owner/repo-1\nOld words\nb, a", "owner/repo-2\nRead words"]);
+
+        embedded.length = 0;
+        list[0] = { repo: 1, at: syncTime - minute, description: "Old words", topics: ["a", "b"] };
+        yield* TestClock.adjust("2 minutes");
+        yield* sync(id, "full");
+        expect(embedded).toEqual([]);
+
+        list[0] = { repo: 1, at: syncTime - minute, description: "New words", topics: ["a", "b"] };
+        yield* TestClock.adjust("2 minutes");
+        yield* sync(id, "full");
+        expect(embedded).toEqual(["owner/repo-1\nNew words\na, b"]);
+        expect(yield* query("select id::int, description, embedding_stale from repos order by id")).toEqual([
+          { id: 1, description: "New words", embedding_stale: false },
+          { id: 2, description: "Read words", embedding_stale: false },
+        ]);
       }),
     );
 

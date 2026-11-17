@@ -15,6 +15,9 @@ const listed = (repo: number, hours: number): Star => ({
     nodeId: `R_${repo}` as RepoNodeId,
     owner: "owner" as Login,
     name: `r${repo}` as RepoName,
+    description: null,
+    topics: [],
+    language: null,
   },
 });
 

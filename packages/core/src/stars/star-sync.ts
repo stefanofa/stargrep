@@ -1,3 +1,4 @@
+import * as Embeddings from "@stargrep/ai/embeddings";
 import * as Analytics from "@stargrep/analytics/analytics";
 import * as Db from "@stargrep/db";
 import { UserId } from "@stargrep/db/auth-schema";
@@ -14,6 +15,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as EnrichQueue from "../repos/enrich-queue.ts";
+import * as MetadataEmbeddings from "../repos/metadata-embeddings.ts";
 import * as DiffPage from "./diff-page.ts";
 
 export const Mode = Schema.Literals(["incremental", "full"]);
@@ -74,6 +76,7 @@ const make = Effect.gen(function* () {
   const db = yield* Db.Db;
   const github = yield* GitHub.GitHub;
   const queue = yield* EnrichQueue.EnrichQueue;
+  const embeddings = yield* Embeddings.Embeddings;
 
   const writePage = Effect.fn("StarSync.writePage")(function* (
     accountId: GitHubAccountId,
@@ -81,7 +84,7 @@ const make = Effect.gen(function* () {
     page: DiffPage.PageDiff,
   ) {
     if (!Arr.isReadonlyArrayNonEmpty(page.listed)) return { page: { ...page, starred: [], enqueued: 0 }, pending: [] };
-    yield* db.repos.upsertRefs(page.listed.map((star) => star.repo));
+    yield* db.repos.saveListed(page.listed.map((star) => star.repo));
     const starred = yield* db.stars.upsert({
       accountId,
       stars: page.fresh.map((star) => ({ ...toStarred(star), observedAt: at })),
@@ -129,6 +132,11 @@ const make = Effect.gen(function* () {
     const pages = written.map(({ page }) => page);
     // Enrichment shares the token gate, so repos enqueued mid-read would hold it between pages.
     const pending = written.flatMap((entry) => entry.pending);
+    // A new repo can wait in the enrichment queue for a long time, so it is embedded from the list's metadata now.
+    yield* MetadataEmbeddings.embed(pending).pipe(
+      Effect.provideService(Db.Db, db),
+      Effect.provideService(Embeddings.Embeddings, embeddings),
+    );
     if (Arr.isReadonlyArrayNonEmpty(pending)) {
       const paidBy = request.userId === undefined ? {} : { userId: request.userId };
       yield* queue.send(pending.map((repoId) => ({ repoId, ...paidBy })));

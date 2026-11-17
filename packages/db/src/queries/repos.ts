@@ -1,5 +1,13 @@
 import { summaryRecipe } from "@stargrep/ai/models";
-import { Repo as GitHubRepo, Login, ObjectId, RepoId, RepoName, RepoNodeId } from "@stargrep/github/schemas";
+import {
+  Repo as GitHubRepo,
+  ListedRepo,
+  Login,
+  ObjectId,
+  RepoId,
+  RepoName,
+  RepoNodeId,
+} from "@stargrep/github/schemas";
 import { InputHash } from "@stargrep/knowledge/ids";
 import { inputHash } from "@stargrep/knowledge/input-hash";
 import { KindId } from "@stargrep/knowledge/registry";
@@ -148,6 +156,7 @@ export const repoColumns = {
 
 const RepoRef = GitHubRepo;
 export type RepoRef = typeof RepoRef.Type;
+export type { ListedRepo };
 
 // The facts saveFacts writes. An insert into repos names its columns, because a bare insert(repos) names every column
 // the schema has and fails while a migration that drops one runs ahead of the Workers deploy.
@@ -305,6 +314,9 @@ export interface SavedFacts {
 
 export interface Queries {
   readonly upsertRefs: (refs: ReadonlyArray<RepoRef>) => Effect.Effect<void, DbQueryFailed>;
+  // Saves the repos a star list shows. It inserts a new one with the list's metadata, follows a rename, and fills in the
+  // metadata of a repo enrichment has not read yet, so a repo can be embedded from its metadata before its summary.
+  readonly saveListed: (listed: ReadonlyArray<ListedRepo>) => Effect.Effect<void, DbQueryFailed>;
   readonly pendingEnrichment: (
     ids: ReadonlyArray<RepoId>,
   ) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
@@ -383,6 +395,7 @@ const decodeMetadata = rowsDecoder(RepoMetadata);
 
 const needsEnrichment = pendingEnrichment(repos);
 const encodeRefs = writeEncoder(Schema.Array(RepoRef));
+const encodeListed = writeEncoder(Schema.Array(ListedRepo));
 const encodeFacts = writeEncoder(RepoFacts);
 
 // A repo the sweep may send now: due, under the failure cap, and held by no attempt or backoff.
@@ -396,8 +409,24 @@ const retryAt = (at: DateTime.Utc, delays: ReadonlyArray<Duration.Duration>): SQ
 
 const repoFound = (id: RepoId) => requireRow(() => new RepoNotFound({ repoId: id }));
 
-// A write of facts marks a metadata embedding stale when the metadata it was made from changes.
-const metadataMoved = sql`${repos.embeddingStale} or (${repos.embeddingSource} = 'metadata' and (${repos.owner}, ${repos.name}, ${repos.description}, ${repos.topics}) is distinct from (${excluded(repos.owner)}, ${excluded(repos.name)}, ${excluded(repos.description)}, ${excluded(repos.topics)}))`;
+const topicSet = (topics: SQL) =>
+  sql`(select coalesce(array_agg(topic order by topic), '{}'::text[]) from jsonb_array_elements_text(${topics}) topic)`;
+
+// A write of a repo's metadata marks an embedding of it stale when the name, description, or topics it was made from
+// change. The star list sorts a repo's topics and GraphQL does not, so their order alone changes nothing.
+const metadataMoved = (written: { owner: SQL; name: SQL; description: SQL; topics: SQL }) =>
+  sql`${repos.embeddingStale} or (${repos.embeddingSource} = 'metadata' and (${repos.owner}, ${repos.name}, ${repos.description}, ${topicSet(sql`${repos.topics}`)}) is distinct from (${written.owner}, ${written.name}, ${written.description}, ${topicSet(written.topics)}))`;
+
+const factsMoved = metadataMoved({
+  owner: excluded(repos.owner),
+  name: excluded(repos.name),
+  description: excluded(repos.description),
+  topics: excluded(repos.topics),
+});
+
+// A star list's metadata fills in only a repo enrichment has not read, which saveFacts has never given an input hash.
+const unlessRead = (column: typeof repos.description | typeof repos.topics | typeof repos.language) =>
+  sql`case when ${repos.inputHash} is null then ${excluded(column)} else ${column} end`;
 
 export const make = Effect.fn("Db.repos.make")(function* (configuredModel: EmbeddingModelId) {
   const { run, withTransaction } = yield* Postgres.Postgres;
@@ -445,6 +474,41 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           { discard: true },
         ),
       ),
+    saveListed: (listed) =>
+      withTransaction(
+        Effect.forEach(
+          Arr.chunksOf(inIdOrder(listed), batchSize),
+          (chunk) =>
+            encodeListed(chunk).pipe(
+              Effect.flatMap((values) =>
+                run("repos.saveListed", (db) =>
+                  db
+                    .insert(repos, "id", "nodeId", "owner", "name", "description", "topics", "language")
+                    .values([...values])
+                    .onConflictDoUpdate({
+                      target: repos.id,
+                      set: {
+                        owner: excluded(repos.owner),
+                        name: excluded(repos.name),
+                        nodeId: excluded(repos.nodeId),
+                        description: unlessRead(repos.description),
+                        topics: unlessRead(repos.topics),
+                        language: unlessRead(repos.language),
+                        embeddingStale: metadataMoved({
+                          owner: excluded(repos.owner),
+                          name: excluded(repos.name),
+                          description: unlessRead(repos.description),
+                          topics: unlessRead(repos.topics),
+                        }),
+                      },
+                      setWhere: sql`(${repos.owner}, ${repos.name}, ${repos.nodeId}) is distinct from (${excluded(repos.owner)}, ${excluded(repos.name)}, ${excluded(repos.nodeId)}) or (${repos.inputHash} is null and (${repos.description}, ${repos.topics}, ${repos.language}) is distinct from (${excluded(repos.description)}, ${excluded(repos.topics)}, ${excluded(repos.language)}))`,
+                    }),
+                ),
+              ),
+            ),
+          { discard: true },
+        ),
+      ),
     pendingEnrichment: (ids) =>
       run("repos.pendingEnrichment", (db) =>
         db
@@ -468,7 +532,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
             db
               .insert(repos, ...factColumns, "inputHash")
               .values(values)
-              .onConflictDoUpdate({ target: repos.id, set: { ...changes, embeddingStale: metadataMoved } })
+              .onConflictDoUpdate({ target: repos.id, set: { ...changes, embeddingStale: factsMoved } })
               .returning({ pending: needsEnrichment }),
           ).pipe(
             Effect.flatMap(decodePending("repos.saveFacts")),
@@ -530,7 +594,7 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
                 ownerType: excluded(repos.ownerType),
                 ownerAvatarUrl: excluded(repos.ownerAvatarUrl),
                 inputHash: excluded(repos.inputHash),
-                embeddingStale: metadataMoved,
+                embeddingStale: factsMoved,
                 enrichRetryAt: sql`case when ${askCurrent ? askable : dueOnSave} and ${free} then ${excluded(repos.enrichRetryAt)} else ${repos.enrichRetryAt} end`,
               },
             })

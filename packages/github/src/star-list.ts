@@ -4,6 +4,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { Login, RepoId, RepoName, RepoNodeId, type Star } from "./schemas.ts";
 
+// The list's metadata only fills in what enrichment reads later, so an item that leaves it out still decodes.
 const StarItem = Schema.Struct({
   starred_at: Schema.DateTimeUtcFromString,
   repo: Schema.Struct({
@@ -11,15 +12,26 @@ const StarItem = Schema.Struct({
     node_id: RepoNodeId,
     name: RepoName,
     owner: Schema.Struct({ login: Login }),
+    description: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    topics: Schema.optionalKey(Schema.Array(Schema.String)),
+    language: Schema.optionalKey(Schema.NullOr(Schema.String)),
   }),
 });
 type StarItem = typeof StarItem.Type;
 
 export const decodeStarItems = Schema.decodeEffect(Schema.fromJsonString(Schema.Array(StarItem)));
 
-export const toStar = (item: StarItem): Star => ({
-  starredAt: item.starred_at,
-  repo: { id: item.repo.id, nodeId: item.repo.node_id, owner: item.repo.owner.login, name: item.repo.name },
+export const toStar = ({ starred_at, repo }: StarItem): Star => ({
+  starredAt: starred_at,
+  repo: {
+    id: repo.id,
+    nodeId: repo.node_id,
+    owner: repo.owner.login,
+    name: repo.name,
+    description: repo.description ?? null,
+    topics: repo.topics ?? [],
+    language: repo.language ?? null,
+  },
 });
 
 export const request = (login: Login, page: number) =>

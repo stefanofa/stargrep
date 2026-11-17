@@ -88,7 +88,15 @@ describe("stars", () => {
     return Effect.gen(function* () {
       const stars = yield* collectStars;
       expect(stars.map((star) => star.repo.id as number)).toEqual(Array.from({ length: 250 }, (_, i) => i + 1));
-      expect(stars[0]?.repo).toEqual({ id: 1, nodeId: "R_1", owner: "owner", name: "repo-1" } as never);
+      expect(stars[0]?.repo).toEqual({
+        id: 1,
+        nodeId: "R_1",
+        owner: "owner",
+        name: "repo-1",
+        description: null,
+        topics: [],
+        language: null,
+      } as never);
       expect(fake.sent.map((sent) => sent.url.searchParams.get("page"))).toEqual(["1", "2", "3"]);
       const first = fake.sent[0];
       expect(first?.url.pathname).toBe("/users/octocat/starred");

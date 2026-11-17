@@ -62,6 +62,7 @@ export type {
   Lease,
   LeasedFacts,
   LeaseFailures,
+  ListedRepo,
   MetadataEmbedding,
   Repo,
   RepoCounts,

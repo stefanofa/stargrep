@@ -23,6 +23,32 @@ it.effect("decodes star pages owned by existing GitHub accounts outside the sign
   }),
 );
 
+it.effect("keeps the metadata a star page carries, and decodes a page without it", () =>
+  Effect.gen(function* () {
+    const page = yield* decodeStarItems(
+      JSON.stringify([
+        {
+          starred_at: "2026-11-01T00:00:00Z",
+          repo: {
+            id: 42,
+            node_id: "R_42",
+            name: "fzf",
+            owner: { login: "junegunn" },
+            description: "A command-line fuzzy finder",
+            topics: ["cli", "fzf"],
+            language: "Go",
+          },
+        },
+        { starred_at: "2026-11-01T00:00:00Z", repo: { id: 43, node_id: "R_43", name: "bare", owner: { login: "x" } } },
+      ]),
+    );
+    expect(page.map((item) => toStar(item).repo)).toMatchObject([
+      { description: "A command-line fuzzy finder", topics: ["cli", "fzf"], language: "Go" },
+      { description: null, topics: [], language: null },
+    ]);
+  }),
+);
+
 describe("nextPage", () => {
   test("reads the page number of the next link", () => {
     const header = `${link("https://api.github.com/user/1/starred?page=1", "prev")}, ${link("https://api.github.com/user/1/starred?per_page=100&page=3")}`;

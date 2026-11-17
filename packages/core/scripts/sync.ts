@@ -1,5 +1,6 @@
 import * as BunRuntime from "@effect/platform-bun/BunRuntime";
 import * as BunServices from "@effect/platform-bun/BunServices";
+import * as Local from "@stargrep/ai/local";
 import { embeddingModel } from "@stargrep/ai/models";
 import { Login } from "@stargrep/github/schemas";
 import * as Console from "effect/Console";
@@ -15,7 +16,7 @@ import * as Runtime from "./runtime.ts";
 const writeSpans = [
   "Db.accounts.upsert",
   "Db.accounts.recordStarSync",
-  "Db.repos.upsertRefs",
+  "Db.repos.saveListed",
   "Db.stars.upsert",
   "Db.stars.applySnapshot",
 ];
@@ -66,6 +67,7 @@ const sync = Command.make(
         Layer.provideMerge(Runtime.layerDb(embeddingModel.id)),
         Layer.provideMerge(Runtime.layerGitHub),
         Layer.provide(queue.layer),
+        Layer.provide(Local.layer),
       ),
     ),
   ),

@@ -26,6 +26,7 @@ const defaults = {
   },
   repos: {
     upsertRefs: unexpected("repos.upsertRefs"),
+    saveListed: unexpected("repos.saveListed"),
     pendingEnrichment: unexpected("repos.pendingEnrichment"),
     saveFacts: unexpected("repos.saveFacts"),
     saveCounts: unexpected("repos.saveCounts"),
