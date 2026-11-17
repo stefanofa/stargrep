@@ -218,7 +218,7 @@ const importingStatus = (stage: Importing, timeLeft: string | undefined, whose: 
       return {
         icon: "paused",
         label: `ready to import ${theirs(whose)}`,
-        ...(whose.own ? {} : { phoneLabel: "ready to import" }),
+        phoneLabel: "ready to import",
       };
     case "in-line":
       return {
@@ -230,7 +230,7 @@ const importingStatus = (stage: Importing, timeLeft: string | undefined, whose: 
       return {
         icon: "busy",
         label: `importing ${theirs(whose)}`,
-        ...(whose.own ? {} : { phoneLabel: "importing" }),
+        phoneLabel: "importing",
         detail:
           stage.total === null
             ? `${formatCount(stage.done)} imported so far`
@@ -255,7 +255,7 @@ const browsing = (stage: Stage, synced: string | undefined, timeLeft: string | u
       return {
         icon: "busy",
         label: `reading ${theirs(whose)}`,
-        ...(whose.own ? {} : { phoneLabel: "reading" }),
+        phoneLabel: "reading",
         detail: `${formatCount(stage.read)} of ${formatCount(stage.total)} understood · names and descriptions already searchable`,
       };
     case "ready":

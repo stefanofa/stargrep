@@ -314,10 +314,11 @@ describe("a stars page from the Worker to the browser", () => {
     expect(countless.html).not.toContain("1.2k");
   }, 60_000);
 
-  test("a signed-in viewer's own page paints their stars from the server and hydrates without a change", async () => {
+  test("a signed-in viewer's own page paints their stars and the owner pill from the server, and hydrates without a change", async () => {
     const page = await renderOnServer("/", session, { STARGREP_SIGNED_IN: "octodone" });
     expect(page.status).toBe(200);
     expect(page.html).toContain('aria-label="Search your stars"');
+    expect(page.html).toContain('aria-label="Whose stars: @octodone. Change"');
     expect(page.html).toContain('aria-label="Account menu for octodone"');
     expect(page.html).not.toContain("<h1");
     expect(page.requested).toEqual([]);

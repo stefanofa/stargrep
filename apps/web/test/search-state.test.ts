@@ -173,6 +173,7 @@ describe("browsing", () => {
     expect(state.status).toEqual({
       icon: "busy",
       label: "importing your stars",
+      phoneLabel: "importing",
       detail: "1,204 of 1,776 · about 6 minutes left",
     });
     expect(state.progress).toEqual({
@@ -197,6 +198,7 @@ describe("browsing", () => {
     expect(state.status).toEqual({
       icon: "busy",
       label: "reading your stars",
+      phoneLabel: "reading",
       detail: "412 of 1,776 understood · names and descriptions already searchable",
     });
     expect(state.progress).toEqual({ value: 412, max: 1776, label: "reading your stars", text: "412 of 1,776 read" });

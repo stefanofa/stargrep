@@ -4,6 +4,7 @@ import { Avatar, cn, popupSurface } from "@stargrep/ui";
 import { useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
 import type { Audience } from "../lib/audience.ts";
+import { recentLogins } from "../lib/recent-logins.ts";
 import type { PublicConfig } from "../lib/rpc.ts";
 import { reservedLogin } from "../lib/search-params.ts";
 import { sameLogin } from "../lib/whose.ts";
@@ -28,6 +29,7 @@ export function OwnerPill({ audience, config }: { audience: Audience; config: Pu
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
+  const [recent, setRecent] = useState<ReadonlyArray<string>>([]);
   const field = useId();
 
   const owner = audience.owner.login;
@@ -36,7 +38,7 @@ export function OwnerPill({ audience, config }: { audience: Audience; config: Pu
   const home = you ?? config.demoLogin;
   const login = typed.trim().replace(/^@/, "");
   const valid = isGitHubLogin(login);
-  const people = [...(you === undefined ? [] : [you]), ...config.featured].filter(
+  const people = [...(you === undefined ? [] : [you]), ...recent, ...config.featured].filter(
     (person, index, all) => all.findIndex((other) => sameLogin(other, person)) === index,
   );
 
@@ -49,8 +51,7 @@ export function OwnerPill({ audience, config }: { audience: Audience; config: Pu
       : reservedLogin(next)
         ? navigate({ to: "/@{$login}", params: { login: next } })
         : navigate({ to: "/{-$login}", params: { login: next } });
-    // The switch remounts the page with a new pill, which takes focus where the old one had it. A page without a pill,
-    // such as the viewer's own, leaves focus alone.
+    // The switch remounts the page with a new pill, which takes focus where the old one had it.
     moved.then(() => document.querySelector<HTMLElement>("[data-owner-pill]")?.focus());
   };
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -59,7 +60,14 @@ export function OwnerPill({ audience, config }: { audience: Audience; config: Pu
   };
 
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
+    <Popover.Root
+      open={open}
+      onOpenChange={(next) => {
+        // Storage is the browser's, so the list reads it as it opens, never while the server renders.
+        if (next) setRecent(recentLogins());
+        setOpen(next);
+      }}
+    >
       <Popover.Trigger
         data-owner-pill
         aria-label={`Whose stars: @${owner}. Change`}

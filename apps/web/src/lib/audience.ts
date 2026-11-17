@@ -18,8 +18,6 @@ export interface Policy {
   // The hero with its butter sign-in tile, and the example searches. The hero owns the page's one butter tile, so the
   // count tile and the first result stay white.
   readonly landing: boolean;
-  // The control that switches whose stars the page searches.
-  readonly ownerPill: boolean;
   // The owner's library comes from the session-only library, anyone else's from the public stars pages.
   readonly library: "session" | "public";
   // The owner's page asks for a sync on every open. Other pages ask only for a login with nothing synced.
@@ -27,9 +25,9 @@ export interface Policy {
 }
 
 const policies = {
-  anyone: { landing: true, ownerPill: true, library: "public", syncOnOpen: false },
-  "signed-in": { landing: false, ownerPill: true, library: "public", syncOnOpen: false },
-  owner: { landing: false, ownerPill: false, library: "session", syncOnOpen: true },
+  anyone: { landing: true, library: "public", syncOnOpen: false },
+  "signed-in": { landing: false, library: "public", syncOnOpen: false },
+  owner: { landing: false, library: "session", syncOnOpen: true },
 } as const satisfies Record<Audience["by"], Policy>;
 
 export const policyOf = (audience: Audience): Policy => policies[audience.by];

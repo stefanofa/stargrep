@@ -25,6 +25,7 @@ import { askedPage, type PageData, type PageRequest, type Session } from "../lib
 import { hitsOf, liveView } from "../lib/page-view.ts";
 import { closesBack } from "../lib/panel-history.ts";
 import { now, startsIn, toDetail, withLinks } from "../lib/present.ts";
+import { rememberLogin } from "../lib/recent-logins.ts";
 import { withReply } from "../lib/results.ts";
 import { useReveal } from "../lib/reveal.ts";
 import { playSurprise } from "../lib/reveal-timing.ts";
@@ -212,6 +213,12 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     data.refusal ?? undefined,
   );
   const sync = watch.kind === "watching" ? watch.status : undefined;
+  // The owner pill offers the logins this browser looked at, once stargrep knows their stars. A login GitHub doesn't
+  // know never gets that far. The pill lists the viewer's own login anyway.
+  const known = sync !== undefined && sync.state !== "unknown";
+  useEffect(() => {
+    if (known && audience.by !== "owner") rememberLogin(owner);
+  }, [known, audience.by, owner]);
   const readAt = watch.kind === "watching" ? watch.at : undefined;
   const starred = starredOf(audience, sync);
   const stage = stageOf({ sync, entries, starred });
@@ -377,7 +384,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           label={`Search ${theirs(whose)}`}
           placeholder={page.placeholder}
           className={dock}
-          owner={policy.ownerPill ? <OwnerPill audience={audience} config={data.config} /> : undefined}
+          owner={<OwnerPill audience={audience} config={data.config} />}
           progress={page.progress}
           status={
             <StatusLine
@@ -398,9 +405,8 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           }
           controls={
             <>
-              {/* With an owner pill in the phone strip there is no room for the sort trigger, so phones sort by the
-                  default there. */}
-              <div className={policy.ownerPill ? "contents max-sm:hidden" : "contents"}>
+              {/* The owner pill takes the phone strip's room for the sort trigger, so phones sort by the default. */}
+              <div className="contents max-sm:hidden">
                 <SortMenu value={sort} onValueChange={setSort} options={searching ? searchSorts : librarySorts} />
               </div>
               <ViewToggle value={view} onValueChange={setView} />
