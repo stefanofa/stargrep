@@ -16,6 +16,7 @@ import {
 } from "@stargrep/ui";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { languageShares } from "../lib/languages.ts";
 import type { LibraryEntry } from "../lib/library-collection.ts";
 import { libraryOrder } from "../lib/order.ts";
 import { monthOf, toResult } from "../lib/present.ts";
@@ -24,15 +25,6 @@ import type { Arriving } from "../lib/search-state.ts";
 import { formatCount, starCount } from "../lib/whose.ts";
 
 const pageSize = 48;
-
-export const languageShares = (entries: ReadonlyArray<LibraryEntry>): ReadonlyArray<LanguageShare> => {
-  const counts = new Map<string, number>();
-  for (const entry of entries)
-    if (entry.language !== null) counts.set(entry.language, (counts.get(entry.language) ?? 0) + 1);
-  return Array.from(counts, ([name, count]) => ({ name, share: count / entries.length })).toSorted(
-    (a, b) => b.share - a.share,
-  );
-};
 
 const columns = 4;
 

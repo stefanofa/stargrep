@@ -8,9 +8,13 @@ export const palette = {
   card: "#ffffff",
   ink: "#1e1b2e",
   inkSecondary: "#3a3550",
+  mutedForeground: "#6e6985",
+  muted: "#efebfa",
+  accent: "#a78bfa",
   accentSoft: "#e9e2ff",
   highlight: "#ffd84d",
   highlightEdge: "#e9b826",
+  avatar: "#dcd0ff",
 } as const;
 
 // The header mark at rest: the star and its large eyes, as an image a card can place.

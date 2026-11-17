@@ -14,6 +14,8 @@ export default defineConfig({
       miniflare: {
         compatibilityDate: "2026-11-01",
         compatibilityFlags: ["nodejs_compat"],
+        // The pool adds this rule only for a Wrangler config. Alchemy's bundler uploads the same imports as CompiledWasm.
+        modulesRules: [{ type: "CompiledWasm", include: ["**/*.wasm?module"] }],
         kvNamespaces: ["SEARCH_CACHE"],
         r2Buckets: ["ICONS"],
         hyperdrives: { DATABASE: "postgres://stargrep:stargrep@127.0.0.1:1/stargrep", ...authHyperdrives },

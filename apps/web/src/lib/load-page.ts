@@ -2,8 +2,9 @@ import { createIsomorphicFn, createServerOnlyFn } from "@tanstack/react-start";
 import { serverLoads } from "../server/page-data.ts";
 import { loadEngine } from "./engine.ts";
 import type { PageData, PageRequest, Session } from "./page-data.ts";
-import { canonicalLinks, pagePath, previewMeta, siteDescription, siteTitle } from "./preview.ts";
+import { accountImage, canonicalLinks, pagePath, previewMeta, siteDescription, siteTitle } from "./preview.ts";
 import { revealScript } from "./reveal-script.ts";
+import { libraryRevision } from "./sync-status.ts";
 import { theirs, whoseOf } from "./whose.ts";
 
 // The root route loads the session once, on the server, and never reloads it. Signing in or out reloads the whole page.
@@ -44,6 +45,9 @@ export const pageHead = (
           ? siteDescription
           : `Search @${loaderData.owner}'s starred GitHub repos in plain words.`,
       path,
+      image: landing
+        ? undefined
+        : accountImage(loaderData.owner, loaderData.sync === null ? null : libraryRevision(loaderData.sync), query),
     }),
     links: canonicalLinks(loaderData.site, path),
     scripts:

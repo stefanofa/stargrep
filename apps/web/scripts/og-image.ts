@@ -8,8 +8,8 @@ const file = (specifier: string) => Bun.file(Bun.resolveSync(specifier, import.m
 
 export const siteCardPath = new URL("../public/og.png", import.meta.url);
 
-export const siteCard = async () => {
-  const render = cardRenderer({
+export const bunRenderer = async () =>
+  cardRenderer({
     layoutWasm: await file("satori/yoga.wasm").bytes(),
     resvgWasm: await file("@resvg/resvg-wasm/index_bg.wasm").bytes(),
     fonts: {
@@ -18,9 +18,10 @@ export const siteCard = async () => {
       inter600: await file("@fontsource/inter/files/inter-latin-600-normal.woff").arrayBuffer(),
     },
   });
-  return render(
+
+export const siteCard = async () =>
+  (await bunRenderer())(
     createElement(SiteCard, { query: defaultPublicConfig.demoQuery, examples: defaultPublicConfig.examples }),
   );
-};
 
 if (import.meta.main) await Bun.write(siteCardPath, await siteCard());
