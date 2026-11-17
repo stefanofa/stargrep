@@ -62,7 +62,6 @@ it("shares the server token's rate-limit deferral across users who spent their o
                 ...repo(id),
                 pending: true,
                 unwanted: false,
-                rank: 1,
                 enrichRetryAt: null,
                 enrichFailures: 0,
                 summaryRecipe: 0,

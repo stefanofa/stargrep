@@ -201,8 +201,8 @@ export const summaryPolicy = { stars: 200, bareStars: 50 } as const;
 export const summaryWanted = (table: PolicyColumns) =>
   sql<boolean>`(${table.userStarred} or ${table.stars} is null or ${table.stars} >= ${sql.raw(String(summaryPolicy.stars))} or (${table.stars} >= ${sql.raw(String(summaryPolicy.bareStars))} and not ${hasMetadata(table)}))`;
 
-// A summary is due but the policy does not want it, so the repo waits on its metadata embedding and the sweep leaves
-// it alone until it gains stars or a signed-in user stars it.
+// A summary is due but the policy does not want it, so the repo waits on its metadata embedding and the enrichment
+// sweep leaves it alone until it gains stars or a signed-in user stars it.
 export const summaryUnwanted = (table: PolicyColumns) =>
   sql<boolean>`${summaryDue(table)} and not ${summaryWanted(table)}`;
 
@@ -233,7 +233,7 @@ export const repos = pgTable(
     summary: text("summary"),
     summaryReadmeOid: text("summary_readme_oid"),
     // The current recipe by default, so a summary that a Worker without recipes saves during a rollout counts as
-    // current. A recipe bump changes this default in the migration that rebuilds the partial enrichment index.
+    // current. A recipe bump changes this default in the migration that rebuilds both sweeps' partial indexes.
     summaryRecipe: integer("summary_recipe").notNull().default(summaryRecipe),
     keywords: jsonb("keywords").notNull().default([]),
     embedding: halfvec("embedding", { dimensions: embeddingDimensions }),
@@ -294,6 +294,8 @@ export const repos = pgTable(
   (table) => [
     index("repos_search_idx").using("gin", table.search),
     index("repos_sweep_idx").on(table.enrichRetryAt, table.id).where(sweepableEnrichment(table)),
+    // The metadata sweep's, which holds every repo due a metadata embedding, the ones the policy holds back included.
+    index("repos_metadata_sweep_idx").on(table.id).where(metadataEmbeddingDue(table)),
     check(
       "repos_icon_complete",
       sql`(${table.iconKey} is null) = (${table.iconSource} is null) and (${table.iconKey} is null) = (${table.iconPlate} is null) and (${table.iconKey} is null) = (${table.iconSize} is null)`,

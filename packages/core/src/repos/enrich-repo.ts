@@ -62,8 +62,8 @@ export type Enrichment = Data.TaggedEnum<{
   Backoff: { readonly id: RepoId };
   // The daily summary cap refused its summary. It waits, counting no failure, until the cap has room.
   Capped: { readonly id: RepoId };
-  // The summary policy holds its summary back. It waits on its metadata embedding, off the sweep, until it gains stars
-  // or a signed-in user stars it.
+  // The summary policy holds its summary back. It waits on its metadata embedding, off the enrichment sweep, until it
+  // gains stars or a signed-in user stars it.
   Unwanted: { readonly id: RepoId };
   Stale: { readonly id: RepoId };
   Failed: { readonly id: RepoId; readonly error: EnrichRepoError };
@@ -163,8 +163,6 @@ type Work =
 
 interface Job {
   readonly id: RepoId;
-  // The repo's place in the order the summary cap spends in, among the repos this attempt read.
-  readonly rank: number;
   readonly facts: RepoFacts;
   // The prompt inputs these facts make, as saveFacts saved them, which an answer must carry to be saved.
   readonly inputHash: InputHash;
@@ -174,7 +172,6 @@ interface Job {
 // A pending repo's saved facts, with its saved summary when that is current, before any README is read.
 interface Planned {
   readonly id: RepoId;
-  readonly rank: number;
   readonly facts: RepoFacts;
   readonly inputHash: InputHash;
   readonly summary: Option.Option<Summary>;
@@ -322,7 +319,6 @@ const make = Effect.gen(function* () {
     if (unwanted) return Result.fail(Enrichment.Unwanted({ id }));
     return Result.succeed({
       id,
-      rank: row.rank,
       facts,
       inputHash,
       summary: summaryOf(row, readmeOidOf(facts), inputHash),
@@ -441,16 +437,16 @@ const make = Effect.gen(function* () {
     projector: RepoKnowledge.Projector,
   ) {
     const stored = jobs.flatMap((job) => (job.work._tag === "Embed" ? [{ job, summary: job.work.summary }] : []));
-    // The cap allows repos in the order given, so the ones it should spend on first go first.
-    const due = Arr.sort(
-      jobs.flatMap((job) => (job.work._tag === "Summarize" ? [{ job, facts: job.work.prompt }] : [])),
-      Order.mapInput(Order.Number, ({ job }: { readonly job: Job }) => job.rank),
-    );
+    const due = jobs.flatMap((job) => (job.work._tag === "Summarize" ? [{ job, facts: job.work.prompt }] : []));
     const now = yield* DateTime.now;
     const until = DateTime.addDuration(now, EnrichRetry.leaseFor(textGeneration.batchTimeout, due.length));
-    const leased = new Set<number>(yield* db.repos.lease({ ids: due.map(({ job }) => job.id), now, until }));
-    const held = due.filter(({ job }) => !leased.has(job.id));
-    const { allowed: asked, capped } = yield* allowance.take(due.filter(({ job }) => leased.has(job.id)));
+    const leased = yield* db.repos.lease({ ids: due.map(({ job }) => job.id), now, until });
+    const held = due.filter(({ job }) => !leased.includes(job.id));
+    // The cap allows repos in the order given, so the ones it should spend on first go first. The order reads the star
+    // counts plan just saved from GitHub's facts, not the ones the rows held before the read.
+    const byId = new Map(due.map((entry) => [entry.job.id, entry]));
+    const ranked = (yield* db.repos.inSummaryOrder(leased)).flatMap((id) => byId.get(id) ?? []);
+    const { allowed: asked, capped } = yield* allowance.take(ranked);
     const waiting = Option.match(capped, { onNone: () => [], onSome: ({ repos }) => repos.map(({ job }) => job.id) });
     if (Option.isSome(capped)) yield* db.repos.defer({ ids: waiting, until, retryAt: capped.value.until });
     const [answered, ended] = Arr.separate(

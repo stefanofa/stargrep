@@ -370,8 +370,8 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       }),
   );
 
-  // A recipe bump or a policy change needs a migration that rebuilds this index, or the sweep can no longer use it.
-  test.effect("migrates the column default and the sweep's partial index to the current recipe and policy", () =>
+  // A recipe bump or a policy change needs a migration that rebuilds these indexes, or the sweeps can no longer use them.
+  test.effect("migrates the column default and the sweeps' partial indexes to the current recipe and policy", () =>
     Effect.gen(function* () {
       const database = yield* TestDatabase.TestDatabase;
       expect(
@@ -396,6 +396,11 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           "select count(*)::int as old from pg_class where relname = 'repos_retryable_enrichment_idx'",
         ),
       ).toEqual([{ old: 0 }]);
+      expect(
+        yield* database.query(
+          "select pg_get_expr(indpred, indrelid) as predicate from pg_index where indexrelid = 'repos_metadata_sweep_idx'::regclass",
+        ),
+      ).toEqual([{ predicate: expect.stringContaining(`summary_recipe IS DISTINCT FROM ${summaryRecipe}`) }]);
     }),
   );
 
@@ -643,14 +648,16 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       expect(yield* db.repos.summaryBacklog).toBe(order.length);
       expect(yield* db.repos.pendingEnrichment([tail, bareTail])).toEqual([tail, bareTail]);
       const planned = yield* db.repos.getMany([unknown, tail, popular, owned]);
-      expect(
-        Object.fromEntries(planned.map((row) => [Number(row.id), { unwanted: row.unwanted, rank: row.rank }])),
-      ).toEqual({
-        [owned]: { unwanted: false, rank: 1 },
-        [tail]: { unwanted: true, rank: 2 },
-        [popular]: { unwanted: false, rank: 3 },
-        [unknown]: { unwanted: false, rank: 4 },
+      expect(Object.fromEntries(planned.map((row) => [Number(row.id), row.unwanted]))).toEqual({
+        [owned]: false,
+        [tail]: true,
+        [popular]: false,
+        [unknown]: false,
       });
+      expect(yield* db.repos.inSummaryOrder([unknown, tail, popular, owned])).toEqual([owned, tail, popular, unknown]);
+      expect(yield* db.repos.inSummaryOrder([unknown, noStargazers])).toEqual([noStargazers, unknown]);
+      yield* db.repos.saveCounts({ id: unknown, stars: 6000, forks: 1 });
+      expect(yield* db.repos.inSummaryOrder([unknown, noStargazers])).toEqual([unknown, noStargazers]);
     }),
   );
 
@@ -695,6 +702,52 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
 
       yield* db.repos.saveListed([listed(listedUp, null)]);
       expect(yield* storedStars(listedUp)).toEqual({ stars: 201 });
+    }),
+  );
+
+  test.effect("sweeps every repo due a metadata embedding, held back or failed, until one lands", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const [wanted, held, failed, nameOnly, summarized, embedded, gone] = [
+        repoId(2580),
+        repoId(2581),
+        repoId(2582),
+        repoId(2583),
+        repoId(2584),
+        repoId(2585),
+        repoId(2586),
+      ];
+      const mine = [wanted, held, failed, nameOnly, summarized, embedded, gone];
+      yield* db.repos.saveListed([
+        listed(wanted, 300),
+        listed(held, 20),
+        listed(failed, 300),
+        listed(nameOnly, 300, { description: null }),
+        listed(summarized, 300),
+        listed(embedded, 20),
+        listed(gone, 20),
+      ]);
+      yield* database.query("update repos set enrich_failures = 3 where id = $1", [failed]);
+      yield* database.query("update repos set gone_at = now() where id = $1", [gone]);
+      yield* embedSummarized(db, summarized, embedding({ 0: 1 }));
+      const embedMetadata = (id: RepoId) =>
+        Effect.flatMap(db.repos.metadataDue([id]), (due) =>
+          db.repos.saveMetadataEmbeddings(due.map((metadata) => ({ metadata, embedding: embedding({ 1: 1 }) }))),
+        );
+      expect(yield* embedMetadata(embedded)).toEqual([embedded]);
+      const swept = db.repos.metadataSweepable(10_000).pipe(Effect.map((ids) => ids.filter((id) => mine.includes(id))));
+
+      expect(yield* swept).toEqual([wanted, held, failed]);
+      expect(yield* db.repos.sweepable({ now: at("2026-05-01T00:00:00Z"), limit: 10_000 })).not.toContain(held);
+      const all = yield* db.repos.metadataSweepable(10_000);
+      expect(all).toEqual([...all].sort((a, b) => a - b));
+      expect(yield* db.repos.metadataSweepable(2)).toEqual(all.slice(0, 2));
+
+      expect(yield* embedMetadata(held)).toEqual([held]);
+      expect(yield* swept).toEqual([wanted, failed]);
+      yield* db.repos.saveListed([listed(embedded, 20, { description: "A new description" })]);
+      expect(yield* swept).toEqual([wanted, failed, embedded]);
     }),
   );
 

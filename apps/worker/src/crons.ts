@@ -1,4 +1,5 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
+import type * as Embeddings from "@stargrep/ai/embeddings";
 import { IconQueue } from "@stargrep/core/icons";
 import type { EnrichQueue } from "@stargrep/core/repos";
 import type * as Db from "@stargrep/db";
@@ -11,9 +12,10 @@ import * as Prune from "./jobs/prune.ts";
 import * as Sweeps from "./jobs/sweeps.ts";
 import { startIconBackfill } from "./queues.ts";
 
-// The enrichment sweep and the projection sweep. The first retry delay is 10 minutes, so a repo goes out again within
-// 10 minutes of its backoff ending, and a stale repo_facets row is projected within 10 minutes. Both run from this one
-// handler on the same minutes. Neon suspends a compute after 5 idle minutes, and a query at any other minute would
+// The enrichment sweep, the metadata sweep, and the projection sweep. The first retry delay is 10 minutes, so a repo goes
+// out again within 10 minutes of its backoff ending, a repo due a metadata embedding gets it within 10 minutes of the
+// line having room, and a stale repo_facets row is projected within 10 minutes. All three run from this one handler on
+// the same minutes. Neon suspends a compute after 5 idle minutes, and a query at any other minute would
 // leave it no idle window, so the database would never scale to zero.
 const sweepSchedule = "*/10 * * * *";
 // The backfill walks every repo whose icon was never checked or is due its 30-day refresh, a page per message.
@@ -24,7 +26,11 @@ const pruneSchedule = "40 * * * *";
 const knowledgeCountSchedule = "30 3 * * *";
 
 export const scheduleAll = <E>(
-  runtime: Layer.Layer<Db.Db | EnrichQueue.EnrichQueue | IconQueue.IconQueue, E, RuntimeContext>,
+  runtime: Layer.Layer<
+    Db.Db | EnrichQueue.EnrichQueue | IconQueue.IconQueue | Embeddings.Embeddings,
+    E,
+    RuntimeContext
+  >,
   observe: Observe,
 ) =>
   Effect.all([

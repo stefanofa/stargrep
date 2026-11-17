@@ -239,9 +239,8 @@ const enrichFields = Struct.pick(RepoRow.fields, [
   "summaryInputHash",
 ]);
 
-// unwanted says the summary policy holds back the repo's due summary. rank is the repo's place among the repos read
-// with it in the order the summary cap spends in, from 1.
-const plannedFields = { ...enrichFields, pending: Schema.Boolean, unwanted: Schema.Boolean, rank: Schema.Int };
+// unwanted says the summary policy holds back the repo's due summary.
+const plannedFields = { ...enrichFields, pending: Schema.Boolean, unwanted: Schema.Boolean };
 
 const StoredRepo = Schema.Struct({ ...rowFields, ...plannedFields }).pipe(
   Schema.decodeTo(
@@ -366,6 +365,9 @@ export interface Queries {
   readonly saveMetadataEmbeddings: (
     embeddings: ReadonlyArray<MetadataEmbedding>,
   ) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid | EmbeddingModelMismatch>;
+  // The repos due an embedding of their metadata, lowest ID first, at most limit, whatever the summary policy and the
+  // failure cap say.
+  readonly metadataSweepable: (limit: number) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
   readonly saveIcon: (check: IconCheck) => Effect.Effect<void, DbQueryFailed>;
   readonly saveOwners: (owners: ReadonlyArray<RepoOwner>) => Effect.Effect<void, DbQueryFailed>;
   readonly dueIcons: (page: {
@@ -388,6 +390,10 @@ export interface Queries {
   readonly settleFailures: (settled: LeaseFailures) => Effect.Effect<void, DbQueryFailed>;
   // The repos the sweep sends, in the order the summary cap spends in.
   readonly sweepable: (query: SweepQuery) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
+  // These repos in the order the summary cap spends in, as their rows stand now.
+  readonly inSummaryOrder: (
+    ids: ReadonlyArray<RepoId>,
+  ) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
   // Moves this attempt's lease on repos the summary cap refused to the time the cap has room again, counting no
   // failure, so the sweep sends them again then. It marks them deferred until they are read, so the library counts them
   // as queued.
@@ -804,6 +810,13 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
               ),
         ),
       ),
+    metadataSweepable: (limit) =>
+      run("repos.metadataSweepable", (db) =>
+        db.select({ id: repos.id }).from(repos).where(metadataEmbeddingDue(repos)).orderBy(repos.id).limit(limit),
+      ).pipe(
+        Effect.flatMap(decodeIds("repos.metadataSweepable")),
+        Effect.map((rows) => rows.map((row) => row.id)),
+      ),
     saveIcon: ({ id, icon }) =>
       run("repos.saveIcon", (db) =>
         db
@@ -859,7 +872,6 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
             ...repoColumns,
             pending: needsEnrichment,
             unwanted,
-            rank: sql<number>`(row_number() over (order by ${sql.join(summaryOrder, sql`, `)}))::int`,
             enrichFailures: repos.enrichFailures,
             enrichRetryAt: repos.enrichRetryAt,
             summaryRecipe: repos.summaryRecipe,
@@ -935,6 +947,19 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
         Effect.flatMap(decodeIds("repos.sweepable")),
         Effect.map((rows) => rows.map((row) => row.id)),
       ),
+    inSummaryOrder: (ids) =>
+      Arr.isReadonlyArrayEmpty(ids)
+        ? Effect.succeed([])
+        : run("repos.inSummaryOrder", (db) =>
+            db
+              .select({ id: repos.id })
+              .from(repos)
+              .where(sql`${repos.id} = any(${sql.param([...ids])}::bigint[])`)
+              .orderBy(...summaryOrder),
+          ).pipe(
+            Effect.flatMap(decodeIds("repos.inSummaryOrder")),
+            Effect.map((rows) => rows.map((row) => row.id)),
+          ),
     defer: ({ ids, until, retryAt: at }) =>
       Arr.isReadonlyArrayEmpty(ids)
         ? Effect.void
