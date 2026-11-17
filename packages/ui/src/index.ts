@@ -1,6 +1,7 @@
 export { Avatar, NetworkAvatars, type Person } from "./components/avatar.tsx";
 export { Badge } from "./components/badge.tsx";
-export { Button, buttonVariants } from "./components/button.tsx";
+export { Button } from "./components/button.tsx";
+export { buttonVariants } from "./components/button-variants.ts";
 export { Chip } from "./components/chip.tsx";
 export { DeepSearch } from "./components/deep-search.tsx";
 export { Digits } from "./components/digits.tsx";

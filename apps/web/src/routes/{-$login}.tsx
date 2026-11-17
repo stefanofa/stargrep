@@ -1,6 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { Failure } from "../components/problem-page.tsx";
+import { createFileRoute, lazyRouteComponent } from "@tanstack/react-router";
 import { StarsPage } from "../components/stars-page.tsx";
+import { loadEngine } from "../lib/engine.ts";
 import { loadPage, pageHead } from "../lib/load-page.ts";
 import { validateParams } from "../lib/search-params.ts";
 import { guardHome, guardLogin } from "../lib/stars-route.ts";
@@ -23,5 +23,5 @@ export const Route = createFileRoute("/{-$login}")({
     return <StarsPage data={Route.useLoaderData()} error={Route.useSearch().error} />;
   },
   // A route without its own error component falls back to TanStack's, not the root's.
-  errorComponent: Failure,
+  errorComponent: lazyRouteComponent(loadEngine, "Failure"),
 });

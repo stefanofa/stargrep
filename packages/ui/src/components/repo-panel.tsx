@@ -1,7 +1,8 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { formatStars } from "../lib/format-stars.ts";
 import { Avatar, type Person } from "./avatar.tsx";
-import { Button, buttonVariants } from "./button.tsx";
+import { Button } from "./button.tsx";
+import { buttonVariants } from "./button-variants.ts";
 import { CloseIcon, ExternalIcon, StarIcon } from "./icons.tsx";
 import { RepoIcon, type RepoVisual } from "./repo-icon.tsx";
 import { type Activity, activityLabel } from "./results.tsx";

@@ -8,6 +8,7 @@ export const forbidden: ReadonlyArray<readonly [name: string, module: RegExp]> =
   ["TanStack DB", /\/node_modules\/@tanstack\/(react-)?db\//],
   ["skullet", /\/node_modules\/skullet\//],
   ["oRPC client", /\/node_modules\/@orpc\//],
+  ["Base UI", /\/node_modules\/@base-ui\//],
 ];
 
 const indexRoute = /\/src\/routes\/\{-\$login\}\.tsx(\?|$)/;
