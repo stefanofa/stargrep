@@ -1,4 +1,5 @@
 import { expect } from "bun:test";
+import type * as Embeddings from "@stargrep/ai/embeddings";
 import * as SummarizeFake from "@stargrep/ai/summarize.fake";
 import * as Db from "@stargrep/db";
 import { UserId } from "@stargrep/db/auth-schema";
@@ -13,6 +14,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as RateLine from "../limits/rate-line.ts";
 import { embeddingModel, fixture, id, oid, repo } from "./enrich-repo.fixture.ts";
 import * as EnrichRepo from "./enrich-repo.ts";
+import * as MetadataEmbeddings from "./metadata-embeddings.ts";
 import * as SummaryAllowance from "./summary-allowance.ts";
 
 const adapters = [
@@ -39,11 +41,13 @@ for (const [adapter, database] of adapters) {
   const enrich = (
     ids: ReadonlyArray<RepoId>,
     allowance: Layer.Layer<SummaryAllowance.SummaryAllowance, never, Db.Db> = SummaryAllowance.layerUnmetered,
+    model: Layer.Layer<Embeddings.Embeddings> = recording,
   ) =>
     EnrichRepo.EnrichRepo.use((enricher) => enricher.enrichRepos(ids)).pipe(
       Effect.map((outcomes) => outcomes.map((outcome) => outcome._tag)),
-      Effect.provide(Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(Layer.mergeAll(text, recording, allowance)))),
+      Effect.provide(Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(Layer.mergeAll(text, model, allowance)))),
     );
+  const metadataSweep = () => MetadataEmbeddings.sweep().pipe(Effect.provide(recording));
   // A repo as a star list shows it, with GitHub's count of its stars, which GitHub also serves in its facts.
   const listed = (n: number, stars: number) => {
     const description = `Repo ${n}`;
@@ -192,6 +196,82 @@ for (const [adapter, database] of adapters) {
         expect(yield* swept).not.toContain(fewer);
         yield* TestClock.adjust(RateLine.durationOf(RateLine.summaryAll.rate, 1));
         expect(yield* swept).toContain(fewer);
+      }),
+    );
+
+    it.effect(
+      "spends the summary cap's last unit on the repo its facts read shows more stars, when neither count was known",
+      () =>
+        Effect.gen(function* () {
+          const db = yield* Db.Db;
+          yield* TestClock.setTime(Date.parse("2026-12-01T00:00:00Z"));
+          const reserved = yield* RateLine.reserve(
+            db.rateLines,
+            RateLine.summaryAll,
+            yield* DateTime.now,
+            RateLine.summariesPerDay - 1,
+          );
+          expect(Option.isSome(reserved)).toBe(true);
+          f.remotes.set(2207, { description: "Repo 2207", stars: 300, readme: { oid: oid("d"), text: "# Repo" } });
+          f.remotes.set(2208, { description: "Repo 2208", stars: 9000, readme: { oid: oid("d"), text: "# Repo" } });
+          yield* f.store([2207, 2208]);
+          const [fewer, more] = [id(2207), id(2208)];
+          quiet();
+
+          expect(yield* enrich([fewer, more], SummaryAllowance.layerMetered)).toEqual(["Capped", "Summarized"]);
+          expect(calls).toBe(1);
+        }),
+    );
+
+    it.effect("embeds a held-back repo on the next metadata sweep after its embedding call failed", () =>
+      Effect.gen(function* () {
+        const repoId = yield* listed(2209, 20);
+        quiet();
+        expect(yield* enrich([repoId], SummaryAllowance.layerUnmetered, f.failingEmbeddings)).toEqual(["Unwanted"]);
+        expect(yield* stateOf(2209)).toEqual([
+          { source: "summary", embedded: false, summarized: false, failures: 0, free: true },
+        ]);
+        expect(yield* swept).not.toContain(repoId);
+
+        yield* metadataSweep();
+        expect(embedded).toContain("owner/repo-2209\nRepo 2209\ncli");
+        expect(yield* stateOf(2209)).toEqual([
+          { source: "metadata", embedded: true, summarized: false, failures: 0, free: true },
+        ]);
+        quiet();
+        yield* metadataSweep();
+        expect(embedded).toEqual([]);
+        expect(f.github.sent).toEqual([]);
+      }),
+    );
+
+    it.effect("embeds a held-back repo the metadata line refused once the line has room again", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        yield* TestClock.setTime(Date.parse("2027-01-01T00:00:00Z"));
+        const reserved = yield* RateLine.reserve(
+          db.rateLines,
+          RateLine.metadataAll,
+          yield* DateTime.now,
+          RateLine.metadataEmbeddingsPerDay,
+        );
+        expect(Option.isSome(reserved)).toBe(true);
+        const repoId = yield* listed(2210, 20);
+        quiet();
+
+        expect(yield* enrich([repoId])).toEqual(["Unwanted"]);
+        yield* metadataSweep();
+        expect(embedded).toEqual([]);
+        expect(yield* stateOf(2210)).toEqual([
+          { source: "summary", embedded: false, summarized: false, failures: 0, free: true },
+        ]);
+
+        yield* TestClock.adjust(RateLine.durationOf(RateLine.metadataAll.rate, 1));
+        yield* metadataSweep();
+        expect(embedded).toEqual(["owner/repo-2210\nRepo 2210\ncli"]);
+        expect(yield* stateOf(2210)).toEqual([
+          { source: "metadata", embedded: true, summarized: false, failures: 0, free: true },
+        ]);
       }),
     );
   });
