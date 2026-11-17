@@ -950,6 +950,7 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(strip()).toContain("importing @octosync's stars"));
     expect(page().getByRole("heading", { name: "is this you? skip the wait" })).toBeTruthy();
     expect(page().getByRole("progressbar", { name: "importing @octosync's stars" })).toBeTruthy();
+    expect(page().queryByRole("list", { name: "Example searches" })).toBeNull();
   });
 
   test("a network that read too many stars is told to wait a minute", async () => {
