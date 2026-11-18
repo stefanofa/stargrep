@@ -203,6 +203,8 @@ describe("PostHog", () => {
       event: Analytics.Event.Exception({
         source: "Queue batch failed",
         traceId: undefined,
+        queue: "fetch-icon",
+        error: "IconStoreFailed",
         thrown: [
           {
             type: "TypeError",
@@ -216,6 +218,8 @@ describe("PostHog", () => {
     expect(encoded.event).toBe("$exception");
     expect(encoded.properties).toMatchObject({
       source: "Queue batch failed",
+      queue: "fetch-icon",
+      error_tag: "IconStoreFailed",
       $exception_list: [
         {
           type: "TypeError",

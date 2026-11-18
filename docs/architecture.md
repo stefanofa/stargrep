@@ -365,7 +365,7 @@ Each Worker binds `STARGREP_STAGE`. `layer` in `packages/runtime/src/analytics.t
 | `summary_generated` | `EnrichRepo`, once per summary it saves | `model` |
 | `$ai_generation` | the `TextGeneration` port, once per call | `$ai_provider`, `$ai_model`, `$ai_span_name` (`summary` or `plan`), `$ai_trace_id`, `$ai_latency`, `$ai_input_tokens`, `$ai_output_tokens`, the cache token counts, `$ai_total_cost_usd`, `$ai_is_error`, `$ai_error` |
 | `$ai_embedding` | the `Embeddings` port, once per call | the same, with input tokens only and `$ai_span_name` `repo` or `query` |
-| `$exception` | the error logger, for each error-level log | `$exception_list`, `source` (the log's message), `trace_id` |
+| `$exception` | the error logger, for each error-level log | `$exception_list`, `source` (the log's message), `trace_id`, and the log's `queue` and error tag (`error_tag`) when it names them |
 | `github_star_clicked` | the browser, when a visitor clicks the header's star on GitHub link | none |
 
 Model calls are for spend. The port's `make` sends every call whatever its outcome, so a call that timed out still shows. The Gateway reports what it billed in the answer's provider metadata as a decimal string. The adapter sends `gatewayCost`, which adds any surcharge, else `cost`, with `$ai_cost_passthrough`. Without either, PostHog prices the call from the vendor, the model, and the tokens. Batch API calls run only from local tools, which send nothing. A search's planner and query embedding name the searcher, and enrichment's calls name `stargrep`.

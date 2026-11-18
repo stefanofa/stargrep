@@ -118,6 +118,8 @@ const wireOf = Event.$match({
       $exception_list: event.thrown.map(wireException),
       source: event.source,
       trace_id: event.traceId,
+      queue: event.queue,
+      error_tag: event.error,
     }),
   }),
 });
