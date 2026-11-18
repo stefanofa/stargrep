@@ -27,6 +27,7 @@ export const Operation = Schema.Literals([
   "repos.saveMetadataEmbeddings",
   "repos.metadataSweepable",
   "repos.saveIcon",
+  "repos.markIconChecked",
   "repos.saveOwners",
   "repos.dueIcons",
   "repos.get",

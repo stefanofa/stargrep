@@ -505,6 +505,25 @@ const fixture = () => {
       }),
     );
 
+    it.effect("skips a repo marked checked, and keeps the icon it had", () =>
+      Effect.gen(function* () {
+        yield* f.seed([3001, 3002]);
+        const db = yield* Db.Db;
+        const icon = { key: Keys.gitKey(oid("c")), source: "repo-file", plate: "none", size: 64 } as const;
+        yield* db.repos.saveIcon({ id: idOf(3001), icon });
+        yield* (yield* TestDatabase.TestDatabase).query(
+          "update repos set icon_checked_at = now() - interval '40 days' where id = $1",
+          [idOf(3001)],
+        );
+        yield* db.repos.markIconChecked(idOf(3001));
+        yield* db.repos.markIconChecked(idOf(3002));
+
+        expect(yield* (yield* FetchIcon.FetchIcon).backfill(3000)).toEqual({ queued: 0, next: null });
+        expect((yield* f.stored(idOf(3001))).icon).toEqual(icon);
+        expect((yield* f.stored(idOf(3002))).icon).toBeNull();
+      }),
+    );
+
     it.effect("pages by repo ID and chains the next page until a short page ends it", () =>
       Effect.gen(function* () {
         const numbers = Array.from({ length: FetchIcon.backfillPage + 1 }, (_, index) => 1001 + index);

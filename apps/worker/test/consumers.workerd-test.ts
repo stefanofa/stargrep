@@ -1146,6 +1146,33 @@ describe("dead letters", () => {
     expect(db.failed).toEqual([["octocat", requestedAt]]);
   });
 
+  it("marks a dead-lettered icon request checked so the backfill skips it, and leaves a backfill page alone", async () => {
+    const checked: Array<number> = [];
+    const layer = Layer.succeed(
+      Db.Db,
+      makeDb({ repos: { markIconChecked: (id: RepoId) => Effect.sync(() => void checked.push(id)) } }),
+    );
+    const request = IconQueue.IconRequest.make({
+      repoId: repoId(7),
+      owner: Schema.decodeSync(Login)("acme"),
+      name: Schema.decodeSync(RepoName)("kit"),
+      homepage: "https://kit.dev",
+      iconFiles: [],
+      readmeOid: null,
+    });
+    const batch = batchOf("fetch-icon-dead-letters", [request, IconQueue.BackfillIcons.make({ after: 42 })]);
+    const result = await run(
+      Settle.handleDeadLetters(
+        "fetch-icon",
+        FetchIconConsumer.pipeline,
+        5,
+      )(Stream.fromIterable(batch.messages)).pipe(Effect.provide(layer)),
+      batch,
+    );
+    expect(checked).toEqual([7]);
+    expect(result.explicitAcks).toEqual(["m0", "m1"]);
+  });
+
   it("logs and acks a dead letter still unrecorded after its last retry, since nothing would retry it again", async () => {
     const body = { login: "octocat", mode: "incremental", requestedAt: Date.parse("2026-11-04T12:00:00Z") };
     const logs: Array<unknown> = [];

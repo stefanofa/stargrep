@@ -38,6 +38,7 @@ const defaults = {
     saveMetadataEmbeddings: unexpected("repos.saveMetadataEmbeddings"),
     metadataSweepable: unexpected("repos.metadataSweepable"),
     saveIcon: unexpected("repos.saveIcon"),
+    markIconChecked: unexpected("repos.markIconChecked"),
     saveOwners: unexpected("repos.saveOwners"),
     dueIcons: unexpected("repos.dueIcons"),
     get: unexpected("repos.get"),
