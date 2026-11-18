@@ -38,6 +38,7 @@ const defaults = {
     saveMetadataEmbeddings: unexpected("repos.saveMetadataEmbeddings"),
     metadataSweepable: unexpected("repos.metadataSweepable"),
     saveIcon: unexpected("repos.saveIcon"),
+    markIconChecked: unexpected("repos.markIconChecked"),
     saveOwners: unexpected("repos.saveOwners"),
     dueIcons: unexpected("repos.dueIcons"),
     get: unexpected("repos.get"),
@@ -130,6 +131,10 @@ const defaults = {
     heartbeat: unexpected("starImports.heartbeat"),
     release: unexpected("starImports.release"),
   },
+  iconBackfill: {
+    start: unexpected("iconBackfill.start")(),
+    advance: unexpected("iconBackfill.advance"),
+  },
 } satisfies Db.Db["Service"];
 
 export const makeDb = (overrides: Overrides = {}): Db.Db["Service"] =>
@@ -145,6 +150,7 @@ export const makeDb = (overrides: Overrides = {}): Db.Db["Service"] =>
     facets: { ...defaults.facets, ...overrides.facets },
     monthlyPicks: { ...defaults.monthlyPicks, ...overrides.monthlyPicks },
     starImports: { ...defaults.starImports, ...overrides.starImports },
+    iconBackfill: { ...defaults.iconBackfill, ...overrides.iconBackfill },
   });
 
 // The reservation rule of the rate_lines upsert, kept in a map, for a fake database behind procedures that meter.

@@ -1,4 +1,5 @@
 import { FetchIcon, IconQueue } from "@stargrep/core/icons";
+import * as Db from "@stargrep/db";
 import * as Effect from "effect/Effect";
 import * as Settle from "./settle.ts";
 
@@ -15,6 +16,15 @@ const handle = (
       return icons.backfill(message.after);
   }
 };
+
+// An icon request that used up its retries would fail the same way tomorrow, so it counts as checked and keeps the icon
+// the repo has. Otherwise the daily backfill sends it again, and it waits for the periodic refresh instead. A backfill
+// page records nothing, since the next daily start resumes the chain at that page.
+const recordCheck = Effect.fn("FetchIconConsumer.recordCheck")(function* (message: IconQueue.IconMessage) {
+  if (message._tag !== "IconRequest") return;
+  const db = yield* Db.Db;
+  yield* db.repos.markIconChecked(message.repoId);
+});
 
 export const pipeline = Settle.pipeline({
   schema: IconQueue.IconMessage,
@@ -34,4 +44,5 @@ export const pipeline = Settle.pipeline({
         return { backfillAfter: message.after };
     }
   },
+  onDeadLetter: recordCheck,
 });

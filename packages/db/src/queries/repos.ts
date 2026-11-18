@@ -369,6 +369,8 @@ export interface Queries {
   // failure cap say.
   readonly metadataSweepable: (limit: number) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
   readonly saveIcon: (check: IconCheck) => Effect.Effect<void, DbQueryFailed>;
+  // Records an icon check that found nothing new and keeps the icon the repo has, so it waits for the next refresh.
+  readonly markIconChecked: (id: RepoId) => Effect.Effect<void, DbQueryFailed>;
   readonly saveOwners: (owners: ReadonlyArray<RepoOwner>) => Effect.Effect<void, DbQueryFailed>;
   readonly dueIcons: (page: {
     readonly after: number;
@@ -824,6 +826,8 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
           .set({ ...iconColumnsOf(icon), iconCheckedAt: sql`now()` })
           .where(eq(repos.id, id)),
       ),
+    markIconChecked: (id) =>
+      run("repos.markIconChecked", (db) => db.update(repos).set({ iconCheckedAt: sql`now()` }).where(eq(repos.id, id))),
     saveOwners: (owners) => {
       const sorted = inIdOrder(owners);
       return sorted.length === 0

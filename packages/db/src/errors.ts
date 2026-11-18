@@ -27,6 +27,7 @@ export const Operation = Schema.Literals([
   "repos.saveMetadataEmbeddings",
   "repos.metadataSweepable",
   "repos.saveIcon",
+  "repos.markIconChecked",
   "repos.saveOwners",
   "repos.dueIcons",
   "repos.get",
@@ -101,6 +102,8 @@ export const Operation = Schema.Literals([
   "starImports.claim",
   "starImports.heartbeat",
   "starImports.release",
+  "iconBackfill.start",
+  "iconBackfill.advance",
 ]);
 export type Operation = typeof Operation.Type;
 

@@ -65,6 +65,36 @@ describe("Analytics", () => {
           source: "API call failed",
           thrown: [{ type: "DbQueryFailed", value: "API call failed", stack: undefined }],
           traceId: "t2",
+          queue: undefined,
+          error: "DbQueryFailed",
+        }),
+      ]);
+    }).pipe(Effect.provide(Layer.merge(memory.layer, Analytics.layerLogger)));
+  });
+
+  it.effect("names the queue and the error tag a log carries, and no other field", () => {
+    const memory = Analytics.layerMemory();
+    return Effect.gen(function* () {
+      yield* Effect.logError("Dead letter", { queue: "fetch-icon", messageId: "m0", attempts: 6, repoId: 7 });
+      yield* Effect.logError("Dead letter dropped unrecorded", {
+        queue: "sync-stars",
+        login: "octocat",
+        error: "DbQueryFailed",
+      });
+      expect(memory.captured.map(({ event }) => event)).toEqual([
+        Analytics.Event.Exception({
+          source: "Dead letter",
+          thrown: [{ type: "Error", value: "Dead letter", stack: undefined }],
+          traceId: undefined,
+          queue: "fetch-icon",
+          error: undefined,
+        }),
+        Analytics.Event.Exception({
+          source: "Dead letter dropped unrecorded",
+          thrown: [{ type: "DbQueryFailed", value: "Dead letter dropped unrecorded", stack: undefined }],
+          traceId: undefined,
+          queue: "sync-stars",
+          error: "DbQueryFailed",
         }),
       ]);
     }).pipe(Effect.provide(Layer.merge(memory.layer, Analytics.layerLogger)));

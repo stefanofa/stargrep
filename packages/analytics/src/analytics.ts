@@ -87,6 +87,10 @@ export type Event = Data.TaggedEnum<{
     readonly source: string;
     readonly thrown: ReadonlyArray<Thrown>;
     readonly traceId: string | undefined;
+    // The queue the log names, such as one whose dead letter it reports.
+    readonly queue: string | undefined;
+    // The failure's tag the log names, when it logged one.
+    readonly error: string | undefined;
   };
 }>;
 export const Event = Data.taggedEnum<Event>();
@@ -148,6 +152,8 @@ const stringField = (fields: Readonly<Record<string, unknown>>, name: string) =>
 
 // A failure logged at error level is one no caller handled, so it becomes an exception event. The log's cause, or a
 // cause logged as a field, gives each failure's type, message, and stack. A log without one names the failure it logged.
+// Of the log's other fields, only the queue and the error tag go along, since both come from a fixed set of names and
+// other fields can name a login or a URL.
 export const exceptionOf = (message: unknown, cause: Cause.Cause<unknown>): Event => {
   const parts: ReadonlyArray<unknown> = Array.isArray(message) ? message : [message];
   const fields = fieldsOf(parts);
@@ -167,6 +173,8 @@ export const exceptionOf = (message: unknown, cause: Cause.Cause<unknown>): Even
             },
           ],
     traceId: stringField(fields, "traceId"),
+    queue: stringField(fields, "queue"),
+    error: stringField(fields, "error"),
   });
 };
 

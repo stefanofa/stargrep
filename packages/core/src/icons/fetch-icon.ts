@@ -98,10 +98,10 @@ const firstFound = Effect.fnUntraced(function* <I, A, E, R>(
   return unreachable ? Attempt.Unreachable() : Attempt.Gone();
 });
 
-// A homepage is a site Stargrep does not control. A dead one, or a bot challenge that names no time to come back,
-// fails the same way every time, so it is a miss. The periodic refresh checks it again.
-const homepageMiss = (failure: Unavailable) =>
-  failure.reason !== "status" || (failure.status === 429 && failure.retryAfterMillis === null);
+// A homepage is a site Stargrep does not control. A dead one, one whose proxy answers 5xx such as Cloudflare's 521, or a
+// bot challenge that names no time to come back, fails the same way every time, so it is a miss. The periodic refresh
+// checks it again. Only a 429 that names a time waits for it.
+const homepageMiss = (failure: Unavailable) => !(failure.status === 429 && failure.retryAfterMillis !== null);
 
 const fetchFailed = (url: string, failure: Unavailable) =>
   new IconFetchFailed({
@@ -234,7 +234,10 @@ const make = Effect.gen(function* () {
   const backfill = Effect.fn("FetchIcon.backfill")(function* (after: number) {
     const checkedBefore = DateTime.subtractDuration(yield* DateTime.now, refreshAfter);
     const page = yield* db.repos.dueIcons({ after, limit: backfillPage, checkedBefore, keyVersion: outputVersion });
-    if (page.length === 0) return { queued: 0, next: null };
+    if (page.length === 0) {
+      yield* db.iconBackfill.advance({ from: after, to: null });
+      return { queued: 0, next: null };
+    }
     const facts = yield* github.repoFacts(page.map((row) => row.nodeId));
     const live = new Set<number>(facts.map((entry) => entry.id));
     yield* db.repos.saveOwners(
@@ -248,12 +251,29 @@ const make = Effect.gen(function* () {
       },
     );
     const next = page.length === backfillPage ? (page.at(-1)?.id ?? null) : null;
+    // Moved before the send, so of two copies of this page only one sends. A send that fails after the move leaves the
+    // chain stopped at next, and the daily start resumes it there.
+    if (!(yield* db.iconBackfill.advance({ from: after, to: next }))) {
+      yield* Effect.logInfo("Icon backfill page skipped, since its chain has moved on", { after });
+      return { queued: 0, next: null };
+    }
     const requests = facts.map(iconRequest);
     yield* queue.send(next === null ? requests : [...requests, BackfillIcons.make({ after: next })]);
     return { queued: requests.length, next };
   });
 
   return FetchIcon.of({ fetchIcon, backfill });
+});
+
+// Resumes the chain where it stands, or starts one from the lowest repo ID when none runs. A chain still running gets a
+// second copy of its current page, and whichever copy moves the chain second sends nothing.
+export const startBackfill = Effect.fn("FetchIcon.startBackfill")(function* () {
+  const db = yield* Db.Db;
+  const queue = yield* IconQueue;
+  const after = yield* db.iconBackfill.start;
+  yield* queue.send([BackfillIcons.make({ after })]);
+  yield* Effect.logInfo("Icon backfill started", { after });
+  return after;
 });
 
 export const layer = Layer.effect(FetchIcon, make).pipe(Layer.provide(Digest.layerWebCrypto));
