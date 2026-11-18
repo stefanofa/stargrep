@@ -98,10 +98,10 @@ const firstFound = Effect.fnUntraced(function* <I, A, E, R>(
   return unreachable ? Attempt.Unreachable() : Attempt.Gone();
 });
 
-// A homepage is a site Stargrep does not control. A dead one, or a bot challenge that names no time to come back,
-// fails the same way every time, so it is a miss. The periodic refresh checks it again.
-const homepageMiss = (failure: Unavailable) =>
-  failure.reason !== "status" || (failure.status === 429 && failure.retryAfterMillis === null);
+// A homepage is a site Stargrep does not control. A dead one, one whose proxy answers 5xx such as Cloudflare's 521, or a
+// bot challenge that names no time to come back, fails the same way every time, so it is a miss. The periodic refresh
+// checks it again. Only a 429 that names a time waits for it.
+const homepageMiss = (failure: Unavailable) => !(failure.status === 429 && failure.retryAfterMillis !== null);
 
 const fetchFailed = (url: string, failure: Unavailable) =>
   new IconFetchFailed({
