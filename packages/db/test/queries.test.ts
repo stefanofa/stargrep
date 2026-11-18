@@ -404,6 +404,18 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
     }),
   );
 
+  test.effect("keeps every GIN index's pending list at 256 kB, so no write merges a long one", () =>
+    Effect.gen(function* () {
+      const database = yield* TestDatabase.TestDatabase;
+      const options = yield* database.query(
+        `select distinct coalesce(array_to_string(c.reloptions, ','), '') as options
+         from pg_index i join pg_class c on c.oid = i.indexrelid join pg_am a on a.oid = c.relam
+         where a.amname = 'gin' and i.indrelid in ('repos'::regclass, 'repo_facets'::regclass)`,
+      );
+      expect(options).toEqual([{ options: "gin_pending_list_limit=256" }]);
+    }),
+  );
+
   test.effect("makes a summary due again when its description, topics, or language change, and never a gone repo", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;

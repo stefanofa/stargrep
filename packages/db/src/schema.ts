@@ -214,6 +214,10 @@ export const retryableEnrichment = (table: EnrichmentColumns) =>
 export const sweepableEnrichment = (table: PolicyColumns) =>
   sql<boolean>`${retryableEnrichment(table)} and (not (${summaryDue(table)}) or ${summaryWanted(table)})`;
 
+// Every GIN index's pending list, in kB. The write that fills a list merges all of it into the index before it returns,
+// and at the default 4 MB such a merge stalled a write for up to 12 s while a bulk import wrote repos.
+const ginPendingListLimit = 256;
+
 export const repos = pgTable(
   "repos",
   {
@@ -295,7 +299,7 @@ export const repos = pgTable(
       ),
   },
   (table) => [
-    index("repos_search_idx").using("gin", table.search),
+    index("repos_search_idx").using("gin", table.search).with({ gin_pending_list_limit: ginPendingListLimit }),
     // The sweep's, in summary order, so a sweep reads about as many entries as it sends however many repos wait.
     index("repos_sweep_order_idx")
       .on(
@@ -895,19 +899,19 @@ export const repoFacets = pgTable(
       columns: [table.receiptId, table.repoId],
       foreignColumns: [receipts.id, receipts.repoId],
     }),
-    index("repo_facets_members_idx").using("gin", table.members),
+    index("repo_facets_members_idx").using("gin", table.members).with({ gin_pending_list_limit: ginPendingListLimit }),
     index("repo_facets_built_with_idx")
       .using("gin", table.builtWith)
-      ,
+      .with({ gin_pending_list_limit: ginPendingListLimit }),
     index("repo_facets_alternative_to_idx")
       .using("gin", table.alternativeTo)
-      ,
+      .with({ gin_pending_list_limit: ginPendingListLimit }),
     index("repo_facets_replaced_by_idx")
       .using("gin", table.replacedBy)
-      ,
+      .with({ gin_pending_list_limit: ginPendingListLimit }),
     index("repo_facets_unresolved_keys_idx")
       .using("gin", table.unresolvedKeys)
-      ,
+      .with({ gin_pending_list_limit: ginPendingListLimit }),
     // The projection sweep reads only stale rows.
     index("repo_facets_stale_idx").on(table.repoId).where(sql`${table.stale}`),
     check(
