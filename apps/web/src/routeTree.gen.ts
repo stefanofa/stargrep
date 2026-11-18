@@ -13,6 +13,7 @@ import { Route as AtChar123loginChar125RouteImport } from './routes/@{$login}'
 import { Route as DevelopersRouteImport } from './routes/developers'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as SearchRouteImport } from './routes/search'
+import { Route as TermsRouteImport } from './routes/terms'
 import { Route as Char123LoginChar125RouteImport } from './routes/{-$login}'
 
 const AtChar123loginChar125Route = AtChar123loginChar125RouteImport.update({
@@ -35,6 +36,11 @@ const SearchRoute = SearchRouteImport.update({
   path: '/search',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TermsRoute = TermsRouteImport.update({
+  id: '/terms',
+  path: '/terms',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const Char123LoginChar125Route = Char123LoginChar125RouteImport.update({
   id: '/{-$login}',
   path: '/{-$login}',
@@ -46,6 +52,7 @@ export interface FileRoutesByFullPath {
   '/developers': typeof DevelopersRoute
   '/privacy': typeof PrivacyRoute
   '/search': typeof SearchRoute
+  '/terms': typeof TermsRoute
   '/{-$login}': typeof Char123LoginChar125Route
 }
 export interface FileRoutesByTo {
@@ -53,6 +60,7 @@ export interface FileRoutesByTo {
   '/developers': typeof DevelopersRoute
   '/privacy': typeof PrivacyRoute
   '/search': typeof SearchRoute
+  '/terms': typeof TermsRoute
   '/{-$login}': typeof Char123LoginChar125Route
 }
 export interface FileRoutesById {
@@ -61,20 +69,33 @@ export interface FileRoutesById {
   '/developers': typeof DevelopersRoute
   '/privacy': typeof PrivacyRoute
   '/search': typeof SearchRoute
+  '/terms': typeof TermsRoute
   '/{-$login}': typeof Char123LoginChar125Route
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/@{$login}' | '/developers' | '/privacy' | '/search' | '/{-$login}'
+    | '/@{$login}'
+    | '/developers'
+    | '/privacy'
+    | '/search'
+    | '/terms'
+    | '/{-$login}'
   fileRoutesByTo: FileRoutesByTo
-  to: '/@{$login}' | '/developers' | '/privacy' | '/search' | '/{-$login}'
+  to:
+    | '/@{$login}'
+    | '/developers'
+    | '/privacy'
+    | '/search'
+    | '/terms'
+    | '/{-$login}'
   id:
     | '__root__'
     | '/@{$login}'
     | '/developers'
     | '/privacy'
     | '/search'
+    | '/terms'
     | '/{-$login}'
   fileRoutesById: FileRoutesById
 }
@@ -83,6 +104,7 @@ export interface RootRouteChildren {
   DevelopersRoute: typeof DevelopersRoute
   PrivacyRoute: typeof PrivacyRoute
   SearchRoute: typeof SearchRoute
+  TermsRoute: typeof TermsRoute
   Char123LoginChar125Route: typeof Char123LoginChar125Route
 }
 
@@ -116,6 +138,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SearchRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/terms': {
+      id: '/terms'
+      path: '/terms'
+      fullPath: '/terms'
+      preLoaderRoute: typeof TermsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/{-$login}': {
       id: '/{-$login}'
       path: '/{-$login}'
@@ -131,6 +160,7 @@ const rootRouteChildren: RootRouteChildren = {
   DevelopersRoute: DevelopersRoute,
   PrivacyRoute: PrivacyRoute,
   SearchRoute: SearchRoute,
+  TermsRoute: TermsRoute,
   Char123LoginChar125Route: Char123LoginChar125Route,
 }
 export const routeTree = rootRouteImport

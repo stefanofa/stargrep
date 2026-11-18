@@ -443,3 +443,4 @@ export { DevelopersPage } from "./developers-page.tsx";
 export { PrivacyPage } from "./privacy-page.tsx";
 export { Failure, NotFound } from "./problem-page.tsx";
 export { SignInProblem } from "./sign-in-problem.tsx";
+export { TermsPage } from "./terms-page.tsx";
