@@ -66,6 +66,12 @@ export interface Variant {
   readonly b: { readonly key: LabelKey; readonly subjectId: SubjectId };
 }
 
+// One page of the usage floor: the candidates it accepts, and the last candidate it read when more may follow.
+export interface FloorPage {
+  readonly accepted: ReadonlyArray<SubjectId>;
+  readonly last: SubjectId | null;
+}
+
 export interface Queries {
   // The public curation log in revision order.
   readonly decisions: Effect.Effect<ReadonlyArray<Decisions.StoredDecision>, DbQueryFailed | DbRowInvalid>;
@@ -101,8 +107,12 @@ export interface Queries {
     limit: number,
   ) => Effect.Effect<ReadonlyMap<SubjectId, ReadonlyArray<RepoId>>, DbQueryFailed | DbRowInvalid>;
   // Candidates the usage floor accepts: canonical public subjects on at least three repos, by the last count, whose
-  // repos have at least two owners.
-  readonly floor: Effect.Effect<ReadonlyArray<SubjectId>, DbQueryFailed | DbRowInvalid>;
+  // repos have at least two owners. It reads at most limit candidates after the given ID, in ID order, and returns the
+  // last one it read when it read limit of them, so the caller pages through every candidate.
+  readonly floor: (page: {
+    readonly after: SubjectId | null;
+    readonly limit: number;
+  }) => Effect.Effect<FloorPage, DbQueryFailed | DbRowInvalid>;
   // Label pairs whose keys differ by a separator, a plural s, or a js suffix, resolved to two different live subjects,
   // keys of three characters or fewer left out.
   readonly variants: Effect.Effect<ReadonlyArray<Variant>, DbQueryFailed | DbRowInvalid>;
@@ -136,9 +146,10 @@ const decodeVariants = rowsDecoder(
 );
 const decodeIds = rowsDecoder(Schema.Struct({ id: RepoId }));
 const decodeSubjectIds = rowsDecoder(Schema.Struct({ id: SubjectId }));
+const decodeFloor = rowsDecoder(Schema.Struct({ id: SubjectId, accepted: Schema.Boolean }));
 
 export const make = Effect.gen(function* () {
-  const { run, withTransaction } = yield* Postgres.Postgres;
+  const { run, withTransaction, withLongTimeout } = yield* Postgres.Postgres;
   const { query, execute } = statements(run);
   const { head, invalidated } = vocabulary(query);
 
@@ -382,24 +393,47 @@ export const make = Effect.gen(function* () {
           ) as repos
           from t`,
       ).pipe(Effect.map((rows) => new Map(rows.map((row) => [row.subjectId, row.repos])))),
-    floor: query(
-      "knowledge.floor",
-      decodeSubjectIds,
-      sql`
-        select s.id::float8 as id
-        from subjects s
-        cross join lateral (
-          select count(distinct r.owner) as owners
-          from repo_facets f join repos r on r.id = f.repo_id
-          where f.members && knowledge_origins(array[s.id], true)
-            or f.built_with && knowledge_origins(array[s.id], true)
-            or f.alternative_to && knowledge_origins(array[s.id], false)
-            or f.replaced_by && knowledge_origins(array[s.id], false)
-        ) o
-        where s.namespace = ${namespace} and s.status = 'candidate' and s.repo_count >= 3 and o.owners >= 2
-          and not exists (select 1 from subject_canonical c where c.origin_id = s.id)
-        order by s.id`,
-    ).pipe(Effect.map((rows) => rows.map((row) => row.id))),
+    // Two owners need only one holder whose owner differs from the first's, so it stops reading repos there instead of
+    // counting the owners of every holder. It still finds every candidate's holders, so a page runs under the long
+    // limit.
+    floor: ({ after, limit }) =>
+      withLongTimeout(
+        query(
+          "knowledge.floor",
+          decodeFloor,
+          sql`
+          with page as (
+            select s.id from subjects s
+            where s.namespace = ${namespace} and s.status = 'candidate' and s.repo_count >= 3
+              and s.id > ${after ?? 0}
+              and not exists (select 1 from subject_canonical c where c.origin_id = s.id)
+            order by s.id
+            limit ${limit}
+          )
+          select p.id::float8 as id, exists (
+            select 1 from repos r
+            where r.id = any(holders.ids)
+              and r.owner <> (select first.owner from repos first where first.id = holders.ids[1])
+          ) as accepted
+          from page p
+          cross join lateral (
+            select array_agg(f.repo_id) as ids
+            from repo_facets f
+            where f.members && knowledge_origins(array[p.id], true)
+              or f.built_with && knowledge_origins(array[p.id], true)
+              or f.alternative_to && knowledge_origins(array[p.id], false)
+              or f.replaced_by && knowledge_origins(array[p.id], false)
+          ) holders
+          order by p.id`,
+        ),
+      ).pipe(
+        Effect.map(
+          (rows): FloorPage => ({
+            accepted: rows.flatMap((row) => (row.accepted ? [row.id] : [])),
+            last: rows.length === limit ? (rows.at(-1)?.id ?? null) : null,
+          }),
+        ),
+      ),
     variants: query(
       "knowledge.variants",
       decodeVariants,

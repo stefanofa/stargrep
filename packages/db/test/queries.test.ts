@@ -1774,6 +1774,30 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 3
     }),
   );
 
+  test.effect("lets the nightly count wait past the request limit, which a request's read still meets", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const pool = yield* NodePostgres.acquirePool(Option.getOrThrow(database.url));
+      const holder = yield* Effect.acquireRelease(
+        Effect.promise(() => pool.connect()),
+        (client) => Effect.sync(() => client.release()),
+      );
+      yield* Effect.promise(() => holder.query("begin"));
+      yield* Effect.promise(() => holder.query("lock table subjects in access exclusive mode"));
+      const counting = yield* Effect.forkChild(db.knowledge.count);
+      const lookingUp = yield* Effect.forkChild(Effect.flip(db.facets.lookup({ q: "postgres", limit: 10 })));
+      yield* TestClock.adjust("30 seconds");
+      expect(yield* Fiber.join(lookingUp)).toMatchObject({
+        _tag: "DbQueryFailed",
+        operation: "facets.lookup",
+        reason: "timeout",
+      });
+      yield* Effect.promise(() => holder.query("commit"));
+      expect(yield* Fiber.join(counting)).toBe(0);
+    }),
+  );
+
   test.effect("never erases another connection's commit when a transaction fails", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;

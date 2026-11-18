@@ -22,6 +22,9 @@ export const operatorThreshold = 1_000;
 
 // The usage floor accepts this many candidates in one transaction, so the knowledge lock is never held for long.
 const floorBatch = 500;
+// The usage floor reads this many candidates in one statement, so its read stays inside the long limit however many
+// candidates there are.
+const floorPage = 2_000;
 
 export const RefusalReason = Schema.Literals([
   "keep-apart",
@@ -506,36 +509,40 @@ export const seed = Effect.fn("Curation.seed")(function* (input: {
 // that loses a race to another decision is planned again against the new head.
 export const floor = Effect.fn("Curation.floor")(function* () {
   const db = yield* Db.Db;
-  const ids = yield* db.knowledge.floor;
   let accepted = 0;
-  for (let start = 0; start < ids.length; start += floorBatch) {
-    const batch = ids.slice(start, start + floorBatch);
-    // The list was read before this batch, so a curator may have decided on one of its subjects since. Each attempt
-    // keeps only the subjects the fold at its head still holds as live, canonical candidates, and the decide's head
-    // check makes that fold the one it writes against.
-    const attempt = Effect.gen(function* () {
-      const state = yield* current;
-      const candidates = batch.filter(
-        (subject) =>
-          !state.retired.has(subject) &&
-          !state.canonical.has(subject) &&
-          (state.subjects.get(subject)?.status ?? "candidate") === "candidate",
-      );
-      if (candidates.length === 0) return 0;
-      const plan = yield* planDecisions(
-        state,
-        candidates.map(
-          (subject): Proposed => ({
-            decision: { _tag: "Status", subject, status: "accepted" },
-            reason: "usage floor: at least 3 public repos from at least 2 owners",
-          }),
-        ),
-        db.knowledge.allocate,
-      );
-      yield* write(plan, "rule:floor", false);
-      return candidates.length;
-    });
-    accepted += yield* attempt.pipe(Effect.retry({ while: (error) => error._tag === "StaleRevision", times: 3 }));
-  }
+  let after: SubjectId | null = null;
+  do {
+    const page: Db.FloorPage = yield* db.knowledge.floor({ after, limit: floorPage });
+    for (let start = 0; start < page.accepted.length; start += floorBatch) {
+      const batch = page.accepted.slice(start, start + floorBatch);
+      // The list was read before this batch, so a curator may have decided on one of its subjects since. Each attempt
+      // keeps only the subjects the fold at its head still holds as live, canonical candidates, and the decide's head
+      // check makes that fold the one it writes against.
+      const attempt = Effect.gen(function* () {
+        const state = yield* current;
+        const candidates = batch.filter(
+          (subject) =>
+            !state.retired.has(subject) &&
+            !state.canonical.has(subject) &&
+            (state.subjects.get(subject)?.status ?? "candidate") === "candidate",
+        );
+        if (candidates.length === 0) return 0;
+        const plan = yield* planDecisions(
+          state,
+          candidates.map(
+            (subject): Proposed => ({
+              decision: { _tag: "Status", subject, status: "accepted" },
+              reason: "usage floor: at least 3 public repos from at least 2 owners",
+            }),
+          ),
+          db.knowledge.allocate,
+        );
+        yield* write(plan, "rule:floor", false);
+        return candidates.length;
+      });
+      accepted += yield* attempt.pipe(Effect.retry({ while: (error) => error._tag === "StaleRevision", times: 3 }));
+    }
+    after = page.last;
+  } while (after !== null);
   return { accepted };
 });
