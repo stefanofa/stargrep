@@ -32,6 +32,11 @@ export function Page({ header, children }: { header: ReactNode; children: ReactN
                 privacy
               </Link>
             </li>
+            <li>
+              <Link to="/terms" className={textLinkClass}>
+                terms
+              </Link>
+            </li>
           </ul>
         </nav>
       </footer>

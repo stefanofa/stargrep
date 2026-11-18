@@ -1,5 +1,6 @@
+import { Link } from "@tanstack/react-router";
 import { stargrepRepoUrl } from "../lib/github-star.ts";
-import { ExternalTextLink } from "./external-text-link.tsx";
+import { ExternalTextLink, textLinkClass } from "./external-text-link.tsx";
 import { Bullets, Code, Section, TextPage } from "./text-page.tsx";
 
 export function PrivacyPage() {
@@ -7,8 +8,19 @@ export function PrivacyPage() {
     <TextPage heading="privacy">
       <p className="font-sans text-lg text-secondary-foreground">
         what stargrep keeps, and why. stargrep is open source, so you can check every line here against{" "}
-        <ExternalTextLink href={stargrepRepoUrl}>the code</ExternalTextLink>. last changed November 17, 2026.
+        <ExternalTextLink href={stargrepRepoUrl}>the code</ExternalTextLink>. by using stargrep, you accept this policy
+        and the{" "}
+        <Link to="/terms" className={textLinkClass}>
+          terms
+        </Link>
+        . last changed November 18, 2026.
       </p>
+      <Section heading="what stargrep processes">
+        <p>
+          stargrep processes public GitHub data, what GitHub sign-in provides, and the searches and request details this
+          page lists. nothing else.
+        </p>
+      </Section>
       <Section heading="what stargrep stores">
         <Bullets>
           <li>
@@ -84,9 +96,13 @@ export function PrivacyPage() {
       </Section>
       <Section heading="who runs what">
         <p>
-          Cloudflare runs the site, Neon hosts the database in AWS us-east-1, Vercel AI Gateway routes model calls,
-          PostHog takes analytics, and GitHub supplies the data and the sign-in.
+          stargrep uses these third parties to run the service, and each one processes data on its behalf: Cloudflare
+          runs the site, Neon hosts the database in AWS us-east-1, Vercel AI Gateway routes model calls to an AI
+          provider, PostHog takes analytics, and GitHub supplies the data and the sign-in.
         </p>
+      </Section>
+      <Section heading="changes">
+        <p>this policy may change. using stargrep after a change means you accept the new policy.</p>
       </Section>
     </TextPage>
   );

@@ -132,8 +132,8 @@ test("a page that fails says so without its error, and offers a reload", async (
   }
 });
 
-test("every page's footer links the source, the API, MCP, and privacy", async () => {
-  for (const path of ["/octo", "/privacy", "/not..valid"]) {
+test("every page's footer links the source, the API, MCP, privacy, and terms", async () => {
+  for (const path of ["/octo", "/privacy", "/terms", "/not..valid"]) {
     const footer = (await renderPage(path)).split("<footer")[1] ?? "";
     const links = [...footer.matchAll(/<a [^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/g)].map(([, href, text]) => [
       text,
@@ -145,6 +145,7 @@ test("every page's footer links the source, the API, MCP, and privacy", async ()
       ["api", "/developers#api"],
       ["mcp", "/developers#mcp"],
       ["privacy", "/privacy"],
+      ["terms", "/terms"],
     ]);
   }
 });
@@ -154,6 +155,13 @@ test("/privacy is the privacy page, and a GitHub user called privacy keeps a pag
   expect(titleOf(privacy)).toBe("privacy · stargrep");
   expect(privacy).toContain("what stargrep stores");
   expect(titleOf(await renderPage("/@privacy"))).toBe("@privacy's stars · stargrep");
+});
+
+test("/terms is the terms page, and a GitHub user called terms keeps a page at /@terms", async () => {
+  const terms = await renderPage("/terms");
+  expect(titleOf(terms)).toBe("terms · stargrep");
+  expect(terms).toContain("provided as is");
+  expect(titleOf(await renderPage("/@terms"))).toBe("@terms's stars · stargrep");
 });
 
 test("the developers page names the MCP endpoint and every tool the server lists", async () => {

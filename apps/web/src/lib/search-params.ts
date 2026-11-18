@@ -46,6 +46,7 @@ export const reservedLogins: ReadonlyArray<string> = [
   "privacy",
   "rpc",
   "search",
+  "terms",
 ];
 
 export const reservedLogin = (login: string) => reservedLogins.includes(loginKey(login));
