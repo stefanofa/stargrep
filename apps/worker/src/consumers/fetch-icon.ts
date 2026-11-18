@@ -18,7 +18,8 @@ const handle = (
 };
 
 // An icon request that used up its retries would fail the same way tomorrow, so it counts as checked and keeps the icon
-// the repo has. Otherwise the daily backfill sends it again, and it waits for the periodic refresh instead.
+// the repo has. Otherwise the daily backfill sends it again, and it waits for the periodic refresh instead. A backfill
+// page records nothing, since the next daily start resumes the chain at that page.
 const recordCheck = Effect.fn("FetchIconConsumer.recordCheck")(function* (message: IconQueue.IconMessage) {
   if (message._tag !== "IconRequest") return;
   const db = yield* Db.Db;

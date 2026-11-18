@@ -1,0 +1,97 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "a2ee452f-2ec1-4d6e-a9e1-7e194cf3d2e6",
+  "prevIds": [
+    "89ba6a6d-fbe5-4fdb-b199-2d72cc2cd886",
+    "84a37168-4608-4cf1-9c83-77af9a2dab11"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "icon_backfill"
+      ],
+      "writes": [
+        "s|tbl|public.icon_backfill",
+        "n|tbl|public.icon_backfill",
+        "e|tbl|public.icon_backfill",
+        "n|rel|public.icon_backfill",
+        "n|type|public.icon_backfill",
+        "n|rel|public.icon_backfill_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "icon_backfill",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "icon_backfill",
+        "name": "singleton",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "true",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "icon_backfill",
+        "name": "after",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "icon_backfill",
+        "name": "icon_backfill_pkey",
+        "columns": [
+          "singleton"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "icon_backfill",
+        "name": "icon_backfill_one_row",
+        "value": "singleton",
+        "entityType": "checks"
+      }
+    }
+  ]
+}

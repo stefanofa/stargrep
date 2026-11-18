@@ -102,6 +102,8 @@ export const Operation = Schema.Literals([
   "starImports.claim",
   "starImports.heartbeat",
   "starImports.release",
+  "iconBackfill.start",
+  "iconBackfill.advance",
 ]);
 export type Operation = typeof Operation.Type;
 

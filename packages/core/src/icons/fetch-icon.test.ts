@@ -303,23 +303,25 @@ const fixture = () => {
       }),
     );
 
-    it.effect("reads a homepage that is unreachable or answers 5xx as a miss with one request, and checks the repo", () =>
-      Effect.gen(function* () {
-        const sites = [
-          [5, "https://dead.dev", unavailable(null)],
-          [6, "https://busy.dev", unavailable(503)],
-          [8, "https://parked.dev", unavailable(521)],
-          [9, "https://badcert.dev", unavailable(526)],
-        ] as const;
-        yield* seed(sites.map(([n]) => n));
-        for (const [n, site, reply] of sites) {
-          replies.set(`${site}/`, reply);
-          asked.length = 0;
-          expect((yield* fetchIcon(request(n, { homepage: site })))._tag).toBe("NoIcon");
-          expect(asked).toEqual([`${site}/`]);
-          expect((yield* stored(idOf(n))).iconCheckedAt).not.toBeNull();
-        }
-      }),
+    it.effect(
+      "reads a homepage that is unreachable or answers 5xx as a miss with one request, and checks the repo",
+      () =>
+        Effect.gen(function* () {
+          const sites = [
+            [5, "https://dead.dev", unavailable(null)],
+            [6, "https://busy.dev", unavailable(503)],
+            [8, "https://parked.dev", unavailable(521)],
+            [9, "https://badcert.dev", unavailable(526)],
+          ] as const;
+          yield* seed(sites.map(([n]) => n));
+          for (const [n, site, reply] of sites) {
+            replies.set(`${site}/`, reply);
+            asked.length = 0;
+            expect((yield* fetchIcon(request(n, { homepage: site })))._tag).toBe("NoIcon");
+            expect(asked).toEqual([`${site}/`]);
+            expect((yield* stored(idOf(n))).iconCheckedAt).not.toBeNull();
+          }
+        }),
     );
 
     it.effect("reads a homepage icon link that answers 5xx as a miss, and checks the repo", () =>
@@ -447,6 +449,16 @@ const fixture = () => {
 {
   const f = fixture();
 
+  // Starts a chain at this page, as a daily start does at the page the chain stands at.
+  const startAt = (after: number) =>
+    Effect.gen(function* () {
+      yield* (yield* TestDatabase.TestDatabase).query(
+        "insert into icon_backfill (after) values ($1) on conflict (singleton) do update set after = excluded.after",
+        [after],
+      );
+      return yield* (yield* FetchIcon.FetchIcon).backfill(after);
+    });
+
   it.layer(f.layer, { timeout: 30_000 })("backfill", (it) => {
     it.effect(
       "queues facts for due repos, writes owners, settles gone repos, and leaves summaries and embeddings alone",
@@ -466,7 +478,7 @@ const fixture = () => {
           yield* db.repos.saveIcon({ id: checked, icon: null });
           const before = yield* f.stored(summarized);
 
-          const result = yield* (yield* FetchIcon.FetchIcon).backfill(9);
+          const result = yield* startAt(9);
 
           expect(result).toEqual({ queued: 2, next: null });
           expect(f.queue.sent).toEqual([
@@ -496,12 +508,11 @@ const fixture = () => {
         yield* db.repos.saveIcon({ id: idOf(2003), icon: { ...icon, key: `v1/git/${"a".repeat(40)}.webp` } });
         yield* db.repos.saveIcon({ id: idOf(2004), icon: { ...icon, key: Keys.gitKey(oid("a")) } });
 
-        const backfill = (yield* FetchIcon.FetchIcon).backfill;
-        expect(yield* backfill(2002)).toEqual({ queued: 1, next: null });
+        expect(yield* startAt(2002)).toEqual({ queued: 1, next: null });
         expect(f.queue.sent).toEqual([f.request(2003, { homepage: "https://kit.dev" })]);
 
         yield* db.repos.saveIcon({ id: idOf(2003), icon: { ...icon, key: Keys.gitKey(oid("b")) } });
-        expect(yield* backfill(2002)).toEqual({ queued: 0, next: null });
+        expect(yield* startAt(2002)).toEqual({ queued: 0, next: null });
       }),
     );
 
@@ -518,7 +529,7 @@ const fixture = () => {
         yield* db.repos.markIconChecked(idOf(3001));
         yield* db.repos.markIconChecked(idOf(3002));
 
-        expect(yield* (yield* FetchIcon.FetchIcon).backfill(3000)).toEqual({ queued: 0, next: null });
+        expect(yield* startAt(3000)).toEqual({ queued: 0, next: null });
         expect((yield* f.stored(idOf(3001))).icon).toEqual(icon);
         expect((yield* f.stored(idOf(3002))).icon).toBeNull();
       }),
@@ -531,7 +542,7 @@ const fixture = () => {
         const lastOfPage = idOf(1000 + FetchIcon.backfillPage);
         const backfill = (yield* FetchIcon.FetchIcon).backfill;
 
-        const first = yield* backfill(1000);
+        const first = yield* startAt(1000);
         expect(first.next).toBe(lastOfPage);
         expect(f.queue.sent.at(-1)).toEqual(IconQueue.BackfillIcons.make({ after: lastOfPage }));
 
@@ -539,6 +550,43 @@ const fixture = () => {
         expect(yield* backfill(first.next ?? 0)).toEqual({ queued: 1, next: null });
         expect(f.queue.sent).toEqual([expect.objectContaining({ repoId: idOf(1001 + FetchIcon.backfillPage) })]);
       }),
+    );
+  });
+}
+
+{
+  const f = fixture();
+
+  it.layer(f.layer, { timeout: 30_000 })("backfill chain", (it) => {
+    it.effect(
+      "runs one chain: a second copy of a page sends nothing, and a start resumes the chain where it stands",
+      () =>
+        Effect.gen(function* () {
+          const numbers = Array.from({ length: FetchIcon.backfillPage + 1 }, (_, index) => 1 + index);
+          yield* f.seed(numbers);
+          const lastOfPage = idOf(FetchIcon.backfillPage);
+          const backfill = (yield* FetchIcon.FetchIcon).backfill;
+          const start = FetchIcon.startBackfill();
+
+          expect(yield* start).toBe(0);
+          expect(f.queue.sent).toEqual([IconQueue.BackfillIcons.make({ after: 0 })]);
+          f.queue.sent.length = 0;
+
+          expect((yield* backfill(0)).next).toBe(lastOfPage);
+          expect(f.queue.sent.at(-1)).toEqual(IconQueue.BackfillIcons.make({ after: lastOfPage }));
+          f.queue.sent.length = 0;
+          expect(yield* backfill(0)).toEqual({ queued: 0, next: null });
+          expect(f.queue.sent).toEqual([]);
+
+          expect(yield* start).toBe(lastOfPage);
+          expect(f.queue.sent).toEqual([IconQueue.BackfillIcons.make({ after: lastOfPage })]);
+          f.queue.sent.length = 0;
+          expect(yield* backfill(lastOfPage)).toEqual({ queued: 1, next: null });
+          expect(yield* backfill(lastOfPage)).toEqual({ queued: 0, next: null });
+          expect(f.queue.sent).toEqual([expect.objectContaining({ repoId: idOf(FetchIcon.backfillPage + 1) })]);
+
+          expect(yield* start).toBe(0);
+        }),
     );
   });
 }

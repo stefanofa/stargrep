@@ -1,7 +1,7 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import type * as Embeddings from "@stargrep/ai/embeddings";
 import type * as TextGeneration from "@stargrep/ai/text-generation";
-import { type FetchIcon, IconQueue } from "@stargrep/core/icons";
+import type { FetchIcon, IconQueue } from "@stargrep/core/icons";
 import { type BlobStore, type EnrichQueue, EnrichRepo, type SummaryAllowance } from "@stargrep/core/repos";
 import { StarSync } from "@stargrep/core/stars";
 import type * as Db from "@stargrep/db";
@@ -25,8 +25,6 @@ export const EnrichRepos = Cloudflare.Queues.Queue("EnrichRepos");
 const EnrichReposDeadLetters = Cloudflare.Queues.Queue("EnrichReposDeadLetters");
 export const FetchIcons = Cloudflare.Queues.Queue("FetchIcons");
 const FetchIconsDeadLetters = Cloudflare.Queues.Queue("FetchIconsDeadLetters");
-
-export const startIconBackfill = IconQueue.BackfillIcons.make({ after: 0 });
 
 export const queueNames = { syncStars: "sync-stars", enrichRepo: "enrich-repo", fetchIcon: "fetch-icon" } as const;
 

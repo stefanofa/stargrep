@@ -563,6 +563,18 @@ export const starImportOwner = pgTable(
   () => [check("star_import_owner_one_row", sql`singleton`)],
 );
 
+// Where the icon backfill's one chain stands: the repo ID its next page reads after, or null when no chain runs. A page
+// moves it from its own position to the next one before it sends anything, so a second copy of a page, or a second
+// chain, finds the row moved or finished and stops.
+export const iconBackfill = pgTable(
+  "icon_backfill",
+  {
+    singleton: boolean("singleton").primaryKey().default(true),
+    after: githubId("after"),
+  },
+  () => [check("icon_backfill_one_row", sql`singleton`)],
+);
+
 // What one source said about one repo for one input, kept as it was. A trigger refuses edits except to the projection
 // markers, and to batch_id and carried_from going null when the row they name expires.
 export const receipts = pgTable(
