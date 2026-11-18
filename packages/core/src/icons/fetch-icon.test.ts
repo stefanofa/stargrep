@@ -303,19 +303,33 @@ const fixture = () => {
       }),
     );
 
-    it.effect("reads a dead homepage as a miss with one request, and a homepage 503 as try later", () =>
+    it.effect("reads a homepage that is unreachable or answers 5xx as a miss with one request, and checks the repo", () =>
       Effect.gen(function* () {
-        yield* seed([5, 6]);
-        replies.set("https://dead.dev/", unavailable(null));
-        replies.set("https://busy.dev/", unavailable(503));
+        const sites = [
+          [5, "https://dead.dev", unavailable(null)],
+          [6, "https://busy.dev", unavailable(503)],
+          [8, "https://parked.dev", unavailable(521)],
+          [9, "https://badcert.dev", unavailable(526)],
+        ] as const;
+        yield* seed(sites.map(([n]) => n));
+        for (const [n, site, reply] of sites) {
+          replies.set(`${site}/`, reply);
+          asked.length = 0;
+          expect((yield* fetchIcon(request(n, { homepage: site })))._tag).toBe("NoIcon");
+          expect(asked).toEqual([`${site}/`]);
+          expect((yield* stored(idOf(n))).iconCheckedAt).not.toBeNull();
+        }
+      }),
+    );
 
-        expect((yield* fetchIcon(request(5, { homepage: "https://dead.dev" })))._tag).toBe("NoIcon");
-        expect(asked).toEqual(["https://dead.dev/"]);
-        expect((yield* stored(idOf(5))).iconCheckedAt).not.toBeNull();
+    it.effect("reads a homepage icon link that answers 5xx as a miss, and checks the repo", () =>
+      Effect.gen(function* () {
+        yield* seed([10]);
+        replies.set("https://kit.dev/", got(`<link rel="icon" href="/icon.png">`, "https://kit.dev/"));
+        replies.set("https://kit.dev/icon.png", unavailable(520));
 
-        const error = yield* fetchIcon(request(6, { homepage: "https://busy.dev" })).pipe(Effect.flip);
-        expect(error).toMatchObject({ _tag: "IconFetchFailed", status: 503 });
-        expect((yield* stored(idOf(6))).iconCheckedAt).toBeNull();
+        expect((yield* fetchIcon(request(10, { homepage: "https://kit.dev" })))._tag).toBe("NoIcon");
+        expect((yield* stored(idOf(10))).iconCheckedAt).not.toBeNull();
       }),
     );
 
