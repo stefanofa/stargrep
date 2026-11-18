@@ -13,7 +13,11 @@
 -- one transaction, so no index can be built concurrently. A build blocks writes to repos, not reads, while it runs. The
 -- new index is built before the old one is dropped, so the exclusive lock the drop takes on repos lasts only until the
 -- commit. The triggers come last, so star writes wait only for that commit. The lock timeout fails the migration rather
--- than queue behind a long statement, and a rerun retries it.
+-- than queue behind a long statement, and a rerun retries it. On a branch of prod at about a million repos, the build
+-- outlasted the 11 s every statement of the app's role gets, so this transaction allows 2 minutes. The limit takes
+-- effect at the next statement, so it is a statement of its own.
+set local statement_timeout = '2min';
+--> statement-breakpoint
 do $sweep_order_index$
 begin
 set local lock_timeout = '1s';
