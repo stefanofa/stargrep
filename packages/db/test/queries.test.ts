@@ -380,7 +380,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         ),
       ).toEqual([{ column_default: String(summaryRecipe) }]);
       const indexes = yield* database.query(
-        "select pg_get_expr(indpred, indrelid) as predicate from pg_index where indexrelid = 'repos_sweep_idx'::regclass",
+        "select pg_get_expr(indpred, indrelid) as predicate from pg_index where indexrelid = 'repos_sweep_order_idx'::regclass",
       );
       expect(indexes).toEqual([
         { predicate: expect.stringContaining(`summary_recipe IS DISTINCT FROM ${summaryRecipe}`) },
@@ -393,7 +393,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       expect(indexes[0]).toEqual({ predicate: expect.stringContaining(`stars >= ${Db.summaryPolicy.bareStars}`) });
       expect(
         yield* database.query(
-          "select count(*)::int as old from pg_class where relname = 'repos_retryable_enrichment_idx'",
+          "select count(*)::int as old from pg_class where relname in ('repos_retryable_enrichment_idx', 'repos_sweep_idx')",
         ),
       ).toEqual([{ old: 0 }]);
       expect(
@@ -401,6 +401,18 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
           "select pg_get_expr(indpred, indrelid) as predicate from pg_index where indexrelid = 'repos_metadata_sweep_idx'::regclass",
         ),
       ).toEqual([{ predicate: expect.stringContaining(`summary_recipe IS DISTINCT FROM ${summaryRecipe}`) }]);
+    }),
+  );
+
+  test.effect("keeps every GIN index's pending list at 256 kB, so no write merges a long one", () =>
+    Effect.gen(function* () {
+      const database = yield* TestDatabase.TestDatabase;
+      const options = yield* database.query(
+        `select distinct coalesce(array_to_string(c.reloptions, ','), '') as options
+         from pg_index i join pg_class c on c.oid = i.indexrelid join pg_am a on a.oid = c.relam
+         where a.amname = 'gin' and i.indrelid in ('repos'::regclass, 'repo_facets'::regclass)`,
+      );
+      expect(options).toEqual([{ options: "gin_pending_list_limit=256" }]);
     }),
   );
 
@@ -1771,6 +1783,30 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 3
       expect(yield* database.query("select current_setting('statement_timeout') as timeout")).toEqual([
         { timeout: "11s" },
       ]);
+    }),
+  );
+
+  test.effect("lets the nightly count wait past the request limit, which a request's read still meets", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const pool = yield* NodePostgres.acquirePool(Option.getOrThrow(database.url));
+      const holder = yield* Effect.acquireRelease(
+        Effect.promise(() => pool.connect()),
+        (client) => Effect.sync(() => client.release()),
+      );
+      yield* Effect.promise(() => holder.query("begin"));
+      yield* Effect.promise(() => holder.query("lock table subjects in access exclusive mode"));
+      const counting = yield* Effect.forkChild(db.knowledge.count);
+      const lookingUp = yield* Effect.forkChild(Effect.flip(db.facets.lookup({ q: "postgres", limit: 10 })));
+      yield* TestClock.adjust("30 seconds");
+      expect(yield* Fiber.join(lookingUp)).toMatchObject({
+        _tag: "DbQueryFailed",
+        operation: "facets.lookup",
+        reason: "timeout",
+      });
+      yield* Effect.promise(() => holder.query("commit"));
+      expect(yield* Fiber.join(counting)).toBe(0);
     }),
   );
 

@@ -15,15 +15,18 @@ export interface Queries {
 const decodeCount = rowsDecoder(Schema.Struct({ count: Schema.Int }));
 
 export const make = Effect.gen(function* () {
-  const { run } = yield* Postgres.Postgres;
+  const { run, withLongTimeout } = yield* Postgres.Postgres;
   const { query } = statements(run);
 
+  // Each count reads every live repo's atoms, so it runs under the long limit. No request waits on it.
   return {
-    count: query("knowledge.count", decodeCount, sql`select knowledge_refresh_counts() as count`).pipe(
+    count: withLongTimeout(query("knowledge.count", decodeCount, sql`select knowledge_refresh_counts() as count`)).pipe(
       Effect.flatMap(only),
       Effect.map((row) => row.count),
     ),
-    countAtoms: query("knowledge.countAtoms", decodeCount, sql`select knowledge_refresh_atom_stats() as count`).pipe(
+    countAtoms: withLongTimeout(
+      query("knowledge.countAtoms", decodeCount, sql`select knowledge_refresh_atom_stats() as count`),
+    ).pipe(
       Effect.flatMap(only),
       Effect.map((row) => row.count),
     ),

@@ -830,14 +830,18 @@ describe("knowledge crons", () => {
     const atomsDown = new DbQueryFailed({ operation: "knowledge.countAtoms", reason: "timeout", sqlState: null });
     await Effect.runPromise(
       KnowledgeCount.run(
-        knowledgeRuntime({ count: Effect.succeed(3), floor: Effect.succeed([]), countAtoms: Effect.succeed(22) }),
+        knowledgeRuntime({
+          count: Effect.succeed(3),
+          floor: () => Effect.succeed({ accepted: [], last: null }),
+          countAtoms: Effect.succeed(22),
+        }),
       ).pipe(Effect.provide(layer)),
     );
     await Effect.runPromise(
       KnowledgeCount.run(
         knowledgeRuntime({
           count: Effect.succeed(0),
-          floor: Effect.fail(floorDown),
+          floor: () => Effect.fail(floorDown),
           countAtoms: Effect.fail(atomsDown),
         }),
       ).pipe(Effect.provide(layer)),

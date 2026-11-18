@@ -6,7 +6,7 @@ import * as Projection from "./projection.ts";
 import * as Receipts from "./receipts.ts";
 
 export type { BatchAdapter, BatchState, Manifest, NewManifest } from "./batches.ts";
-export type { Decided, Decision, DecisionRow, Reach, SubjectInfo, Variant } from "./curation.ts";
+export type { Decided, Decision, DecisionRow, FloorPage, Reach, SubjectInfo, Variant } from "./curation.ts";
 export type { Label, LockedRepo, MintClaim, Minted, Projected, Projection, StoredAtom } from "./projection.ts";
 export type { Answer, Captured, ReceiptSource } from "./receipts.ts";
 

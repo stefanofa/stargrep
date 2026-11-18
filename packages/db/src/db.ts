@@ -40,6 +40,7 @@ export type {
   Decided,
   Decision,
   DecisionRow,
+  FloorPage,
   Label,
   LockedRepo,
   Manifest,

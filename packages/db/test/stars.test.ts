@@ -427,6 +427,59 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
     }),
   );
 
+  test.effect(
+    "keeps each repo's synced stargazer count equal to its current stars through every kind of star write",
+    () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const database = yield* TestDatabase.TestDatabase;
+        const [ada, grace, linus] = [accountId(311), accountId(312), accountId(313)];
+        const [kept, dropped, restarred, raw] = [repoId(3111), repoId(3112), repoId(3113), repoId(3114)];
+        const repos = [kept, dropped, restarred, raw];
+        for (const id of [ada, grace, linus]) yield* db.accounts.upsert(account(id));
+        yield* db.repos.upsertRefs(repos.map((id) => ref(id)));
+        const counts = database
+          .query(
+            `select r.id::int as id, r.synced_stargazers as stored,
+             (select count(*)::int from stars s where s.repo_id = r.id and s.unstarred_at is null) as current
+           from repos r where r.id = any($1::bigint[]) order by r.id`,
+            [repos],
+          )
+          .pipe(Effect.map((rows) => rows as ReadonlyArray<{ id: number; stored: number; current: number }>));
+        const expectCounts = Effect.fn(function* (expected: Array<number>) {
+          const rows = yield* counts;
+          expect(rows.map((row) => row.stored)).toEqual(rows.map((row) => row.current));
+          expect(rows.map((row) => row.stored)).toEqual(expected);
+        });
+
+        const page = (id: typeof ada, time: string, starredRepos: ReadonlyArray<RepoId>) =>
+          db.stars.upsert({ accountId: id, stars: starredRepos.map((repo) => starred(repo, time)) });
+        yield* page(ada, "2026-01-01T00:00:00Z", [kept, dropped, restarred]);
+        yield* page(grace, "2026-01-01T00:00:00Z", [kept, dropped]);
+        yield* page(ada, "2026-01-01T00:00:00Z", [kept, dropped, restarred]);
+        yield* expectCounts([2, 2, 1, 0]);
+
+        yield* db.stars.applySnapshot({
+          accountId: ada,
+          stars: [kept].map((repo) => ({ repoId: repo, starredAt: at("2026-01-01T00:00:00Z"), source: "api" })),
+          at: at("2026-02-01T00:00:00Z"),
+          complete: true,
+        });
+        yield* expectCounts([2, 1, 0, 0]);
+
+        yield* page(ada, "2026-03-01T00:00:00Z", [restarred]);
+        yield* database.query(
+          "insert into stars (account_id, repo_id, starred_at, observed_at, source) values ($1, $2, now(), now(), 'api')",
+          [linus, raw],
+        );
+        yield* expectCounts([2, 1, 1, 1]);
+
+        yield* database.query("delete from stars where account_id = $1 and repo_id = $2", [grace, dropped]);
+        yield* database.query("delete from github_accounts where id = $1", [linus]);
+        yield* expectCounts([2, 0, 1, 0]);
+      }),
+  );
+
   test.effect("does nothing for an empty star upsert, even for an unknown account", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
@@ -490,6 +543,52 @@ it.layer(TestDatabase.layerNodePostgres({ embeddingModel: model }), { timeout: 3
         yield* Fiber.join(snapshot);
 
         expect(yield* db.stars.list(id)).toEqual([]);
+      }),
+    );
+
+    test.effect("counts both of two syncs that star one repo at once", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const database = yield* TestDatabase.TestDatabase;
+        const [first, second] = [accountId(9811), accountId(9812)];
+        const repo = repoId(9811);
+        for (const id of [first, second]) yield* db.accounts.upsert(account(id));
+        yield* db.repos.upsertRefs([ref(repo)]);
+        const other = yield* Effect.acquireRelease(
+          Effect.promise(async () => {
+            const client = new pg.Client({ connectionString: Option.getOrThrow(database.url) });
+            client.on("error", ignoreError);
+            await client.connect();
+            return client;
+          }),
+          (client) => Effect.promise(() => client.end()),
+        );
+        const waiting = database
+          .query(
+            "select count(*)::int as waiting from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'",
+          )
+          .pipe(
+            Effect.flatMap(decodeWaiting),
+            Effect.map((rows) => rows[0]?.waiting ?? 0),
+          );
+
+        yield* Effect.promise(() => other.query("begin"));
+        yield* Effect.promise(() =>
+          other.query(
+            "insert into stars (account_id, repo_id, starred_at, observed_at, source) values ($1, $2, $3, $3, 'api')",
+            [first, repo, "2026-09-01T00:00:00Z"],
+          ),
+        );
+        const starring = yield* Effect.forkChild(
+          db.stars.upsert({ accountId: second, stars: [starred(repo, "2026-09-02T00:00:00Z")] }),
+        );
+        yield* waiting.pipe(Effect.repeat({ until: (count) => count >= 1, times: 5000 }));
+        yield* Effect.promise(() => other.query("commit"));
+        yield* Fiber.join(starring);
+
+        expect(yield* database.query("select synced_stargazers as count from repos where id = $1", [repo])).toEqual([
+          { count: 2 },
+        ]);
       }),
     );
   },

@@ -157,6 +157,8 @@ Name the database in `DATABASE_URL`, because `migrate` has no default. The first
 
 Deployed stages apply the same migrations through the stage's `Neon.Branch` in `apps/worker/src/database.ts`, before the Worker deploys. Alchemy records them in `__alchemy_migrations`, so never run `bun run migrate` against a stage branch.
 
+`bun run --cwd packages/db count-stargazers` sets every repo's `synced_stargazers` from `stars`, 1,000 repos at a time, for the database in `DATABASE_URL`. Triggers on `stars` keep the count from the migration `20261118103946_sweep_order_index` on, so a database that held stars before it needs one run after that migration. Each batch locks its rows before it counts, so a sync that runs meanwhile is counted once, and a rerun changes only counts that are wrong. A batch that loses a deadlock or a serialization failure rolls back and runs again. On a local copy of 2 million repos and 8 million stars it counted about 1,800 repos a second. On a branch of prod at about a million repos, run from a laptop about 150 ms from Neon, it took 13.5 minutes.
+
 To time the search queries, run `bun run --cwd packages/db bench`. It seeds 100,000 repos with random embeddings and 50 accounts of 5,000 stars into a `stargrep_bench` database, then prints the median and p95 of 100 interleaved runs of each query. It also adds one account of 3,000 stars, where half of all repos are pending and 44,000 of those are capped, and times its enrichment progress, its library, and one sweep.
 
 ## Enrich repos locally

@@ -113,7 +113,7 @@ const defaults = {
     minted: unexpected("knowledge.minted"),
     reach: unexpected("knowledge.reach"),
     examples: unexpected("knowledge.examples"),
-    floor: unexpected("knowledge.floor")(),
+    floor: unexpected("knowledge.floor"),
     variants: unexpected("knowledge.variants")(),
   },
   // Every procedure that answers repos reads their atoms, so a fake repo holds none unless a test says otherwise.

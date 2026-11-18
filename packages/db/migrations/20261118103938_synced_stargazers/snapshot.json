@@ -1,0 +1,47 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "27280f97-5972-42f4-90fc-4398f492cadb",
+  "prevIds": [
+    "a2ee452f-2ec1-4d6e-a9e1-7e194cf3d2e6"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repos",
+        "synced_stargazers"
+      ],
+      "writes": [
+        "s|col|public.repos.synced_stargazers",
+        "n|col|public.repos.synced_stargazers",
+        "e|col|public.repos.synced_stargazers"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "synced_stargazers",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "0",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

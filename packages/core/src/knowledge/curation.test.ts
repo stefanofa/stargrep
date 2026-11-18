@@ -751,9 +751,9 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
         }).pipe(Effect.provideService(Db.Db, db), Effect.orDie);
         const racing = Db.Db.of({
           ...db,
-          knowledge: { ...db.knowledge, floor: Effect.tap(db.knowledge.floor, () => curator) },
+          knowledge: { ...db.knowledge, floor: (page) => Effect.tap(db.knowledge.floor(page), () => curator) },
         });
-        const read = yield* db.knowledge.floor;
+        const read = (yield* db.knowledge.floor({ after: null, limit: 2_000 })).accepted;
         expect([rejected, merged, survivor, accepted, created].every((id) => read.includes(id))).toBe(true);
         const floored = yield* Curation.floor().pipe(Effect.provideService(Db.Db, racing));
         expect(floored.accepted).toBe(read.length - 4);
@@ -896,6 +896,14 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
       const wide = ids.get(key("floor wide"));
       const narrow = ids.get(key("floor narrow"));
       if (wide === undefined || narrow === undefined) return yield* Effect.die("fixture");
+      const paged: Array<SubjectId> = [];
+      let after: SubjectId | null = null;
+      do {
+        const page: Db.FloorPage = yield* db.knowledge.floor({ after, limit: 1 });
+        paged.push(...page.accepted);
+        after = page.last;
+      } while (after !== null && after < Math.max(wide, narrow));
+      expect(paged.filter((id) => id === wide || id === narrow)).toEqual([wide]);
       const { accepted } = yield* Curation.floor();
       expect(accepted).toBeGreaterThanOrEqual(1);
       const info = new Map((yield* db.knowledge.subjects([wide, narrow])).map((row) => [row.id, row.status]));

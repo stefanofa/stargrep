@@ -1,5 +1,7 @@
+import { sql } from "drizzle-orm";
 import type { PgAsyncDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -24,7 +26,16 @@ export interface Driver {
 }
 
 // Changing this needs a new migration: 20261104172317_app_statement_timeout keeps the server's limit 1 s above it.
-const queryTimeout = "10 seconds";
+const queryTimeout = Duration.seconds(10);
+
+// A statement no request waits on, such as the nightly count, may run this long. Hyperdrive ends any statement at 60 s,
+// so this stays under that, and withLongTimeout keeps the server's limit 1 s above it.
+export const longQueryTimeout = Duration.seconds(55);
+const longServerTimeout = sql.raw(`'${Duration.toSeconds(longQueryTimeout) + 1}s'`);
+
+const QueryTimeout = Context.Reference<Duration.Duration>("@stargrep/db/postgres/QueryTimeout", {
+  defaultValue: () => queryTimeout,
+});
 
 const errnoCodes = new Set([
   "ECONNREFUSED",
@@ -74,22 +85,26 @@ export class Postgres extends Context.Service<
   {
     readonly run: <A>(operation: Operation, query: (db: Database) => PromiseLike<A>) => Effect.Effect<A, DbQueryFailed>;
     readonly withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | DbQueryFailed, R>;
+    // Runs the effect in a transaction whose statements may each take longQueryTimeout, for a job no request waits on.
+    readonly withLongTimeout: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | DbQueryFailed, R>;
   }
 >()("@stargrep/db/postgres") {}
 
 export const make = (driver: Driver) => {
   const attempt = <A>(operation: Operation, evaluate: (signal: AbortSignal) => PromiseLike<A>) =>
-    Effect.promise(evaluate).pipe(
-      Effect.catchDefect((defect) =>
-        Option.match(classify(driver, operation, defect), {
-          onNone: () => Effect.die(defect),
-          onSome: Effect.fail,
+    Effect.flatMap(Effect.service(QueryTimeout), (duration) =>
+      Effect.promise(evaluate).pipe(
+        Effect.catchDefect((defect) =>
+          Option.match(classify(driver, operation, defect), {
+            onNone: () => Effect.die(defect),
+            onSome: Effect.fail,
+          }),
+        ),
+        Effect.timeoutOrElse({
+          duration,
+          orElse: () => Effect.fail(new DbQueryFailed({ operation, reason: "timeout", sqlState: null })),
         }),
       ),
-      Effect.timeoutOrElse({
-        duration: queryTimeout,
-        orElse: () => Effect.fail(new DbQueryFailed({ operation, reason: "timeout", sqlState: null })),
-      }),
     );
 
   const run = Effect.fnUntraced(
@@ -143,5 +158,14 @@ export const make = (driver: Driver) => {
     );
   });
 
-  return Postgres.of({ run, withTransaction });
+  // SET LOCAL ends with the transaction, so the longer limit never reaches a connection Hyperdrive hands to a request.
+  const withLongTimeout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    withTransaction(
+      Effect.andThen(
+        run("transaction", (db) => db.execute(sql`set local statement_timeout = ${longServerTimeout}`)),
+        effect,
+      ),
+    ).pipe(Effect.provideService(QueryTimeout, longQueryTimeout));
+
+  return Postgres.of({ run, withTransaction, withLongTimeout });
 };

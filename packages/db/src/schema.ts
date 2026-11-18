@@ -214,6 +214,10 @@ export const retryableEnrichment = (table: EnrichmentColumns) =>
 export const sweepableEnrichment = (table: PolicyColumns) =>
   sql<boolean>`${retryableEnrichment(table)} and (not (${summaryDue(table)}) or ${summaryWanted(table)})`;
 
+// Every GIN index's pending list, in kB. The write that fills a list merges all of it into the index before it returns,
+// and at the default 4 MB such a merge stalled a write for up to 12 s while a bulk import wrote repos.
+const ginPendingListLimit = 256;
+
 export const repos = pgTable(
   "repos",
   {
@@ -252,6 +256,9 @@ export const repos = pgTable(
     stars: integer("stars"),
     // A signed-in user starred the repo, so the summary policy wants it. An unstar leaves it set.
     userStarred: boolean("user_starred").notNull().default(false),
+    // How many synced accounts star the repo now, which the summary order ranks by. A trigger on stars keeps it in the
+    // statement that changes a star, so the sweep's index can hold the order.
+    syncedStargazers: integer("synced_stargazers").notNull().default(0),
     iconKey: text("icon_key"),
     iconSource: iconSource("icon_source"),
     iconPlate: iconPlate("icon_plate"),
@@ -292,8 +299,17 @@ export const repos = pgTable(
       ),
   },
   (table) => [
-    index("repos_search_idx").using("gin", table.search),
-    index("repos_sweep_idx").on(table.enrichRetryAt, table.id).where(sweepableEnrichment(table)),
+    index("repos_search_idx").using("gin", table.search).with({ gin_pending_list_limit: ginPendingListLimit }),
+    // The sweep's, in summary order, so a sweep reads about as many entries as it sends however many repos wait.
+    index("repos_sweep_order_idx")
+      .on(
+        sql`(${summaryDue(table)})`,
+        table.userStarred.desc().nullsLast(),
+        table.syncedStargazers.desc().nullsLast(),
+        table.stars.desc().nullsLast(),
+        table.id,
+      )
+      .where(sweepableEnrichment(table)),
     // The metadata sweep's, which holds every repo due a metadata embedding, the ones the policy holds back included.
     index("repos_metadata_sweep_idx").on(table.id).where(metadataEmbeddingDue(table)),
     check(
@@ -883,11 +899,19 @@ export const repoFacets = pgTable(
       columns: [table.receiptId, table.repoId],
       foreignColumns: [receipts.id, receipts.repoId],
     }),
-    index("repo_facets_members_idx").using("gin", table.members),
-    index("repo_facets_built_with_idx").using("gin", table.builtWith),
-    index("repo_facets_alternative_to_idx").using("gin", table.alternativeTo),
-    index("repo_facets_replaced_by_idx").using("gin", table.replacedBy),
-    index("repo_facets_unresolved_keys_idx").using("gin", table.unresolvedKeys),
+    index("repo_facets_members_idx").using("gin", table.members).with({ gin_pending_list_limit: ginPendingListLimit }),
+    index("repo_facets_built_with_idx")
+      .using("gin", table.builtWith)
+      .with({ gin_pending_list_limit: ginPendingListLimit }),
+    index("repo_facets_alternative_to_idx")
+      .using("gin", table.alternativeTo)
+      .with({ gin_pending_list_limit: ginPendingListLimit }),
+    index("repo_facets_replaced_by_idx")
+      .using("gin", table.replacedBy)
+      .with({ gin_pending_list_limit: ginPendingListLimit }),
+    index("repo_facets_unresolved_keys_idx")
+      .using("gin", table.unresolvedKeys)
+      .with({ gin_pending_list_limit: ginPendingListLimit }),
     // The projection sweep reads only stale rows.
     index("repo_facets_stale_idx").on(table.repoId).where(sql`${table.stale}`),
     check(

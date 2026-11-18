@@ -38,7 +38,6 @@ import {
   repoMetrics,
   repos,
   retryableEnrichment,
-  stars,
   summaryDue,
   summaryPolicy,
   summaryUnwanted,
@@ -94,6 +93,7 @@ const internalColumns = [
   "summaryDeferred",
   "stars",
   "userStarred",
+  "syncedStargazers",
   "summaryRecipe",
   "embeddingStale",
   "inputHash",
@@ -440,11 +440,12 @@ const sweepableAt = (now: DateTime.Utc) =>
   sql`${sweepableEnrichment(repos)} and (${repos.enrichRetryAt} is null or ${repos.enrichRetryAt} <= ${timeParam(now)})`;
 
 // The order the summary cap spends in. Work that needs no summary goes first, since it costs the cap nothing. Then
-// repos a signed-in user starred, then repos more synced accounts star now, then repos with more GitHub stars.
+// repos a signed-in user starred, then repos more synced accounts star now, then repos with more GitHub stars. It is
+// repos_sweep_order_idx's key, so the sweep reads it from the index instead of ranking every repo that waits.
 const summaryOrder = [
   sql`(${summaryDue(repos)})`,
-  sql`${repos.userStarred} desc`,
-  sql`(select count(*) from ${stars} where ${stars.repoId} = ${repos.id} and ${stars.unstarredAt} is null) desc`,
+  sql`${repos.userStarred} desc nulls last`,
+  sql`${repos.syncedStargazers} desc nulls last`,
   sql`${repos.stars} desc nulls last`,
   sql`${repos.id}`,
 ];
@@ -973,11 +974,19 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
               .set({ enrichRetryAt: sql`${timeParam(at)}`, summaryDeferred: true })
               .where(sql`${repos.id} in (${lockedRepoIds(ids)}) and ${repos.enrichRetryAt} = ${timeParam(until)}`),
           ),
-    summaryBacklog: run("repos.summaryBacklog", (db) =>
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(repos)
-        .where(sql`${sweepableEnrichment(repos)} and ${summaryDue(repos)}`),
+    // repos_sweep_order_idx's first key is the same for almost every repo it holds, so the planner takes the index for
+    // heap order and walks all of it, fetching rows at random. A bitmap scan reads the same rows in heap order.
+    summaryBacklog: withTransaction(
+      run("repos.summaryBacklog", (db) => db.execute(sql`set local enable_indexscan = off`)).pipe(
+        Effect.andThen(
+          run("repos.summaryBacklog", (db) =>
+            db
+              .select({ count: sql<number>`count(*)::int` })
+              .from(repos)
+              .where(sql`${sweepableEnrichment(repos)} and ${summaryDue(repos)}`),
+          ),
+        ),
+      ),
     ).pipe(
       Effect.flatMap(decodeCount("repos.summaryBacklog")),
       Effect.map((rows) => rows[0]?.count ?? 0),

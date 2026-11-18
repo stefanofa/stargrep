@@ -1,0 +1,187 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "31d34a5a-fa88-4a8e-bf13-ccecf622dcc1",
+  "prevIds": [
+    "de0dfbe3-90c4-4df6-9ec7-f2dd033e0ced"
+  ],
+  "footprints": [
+    {
+      "statementType": "recreate_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repos",
+        "repos_search_idx"
+      ],
+      "writes": [
+        "s|idx|public.repos_search_idx",
+        "n|idx|public.repos_search_idx",
+        "e|idx|public.repos_search_idx",
+        "n|rel|public.repos_search_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.repos.search"
+      ],
+      "sharedWrites": [],
+      "sqlHash": "169ecd1173f8381c"
+    },
+    {
+      "statementType": "recreate_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repo_facets",
+        "repo_facets_members_idx"
+      ],
+      "writes": [
+        "s|idx|public.repo_facets_members_idx",
+        "n|idx|public.repo_facets_members_idx",
+        "e|idx|public.repo_facets_members_idx",
+        "n|rel|public.repo_facets_members_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repo_facets",
+        "n|sch|public",
+        "n|col|public.repo_facets.members"
+      ],
+      "sharedWrites": [],
+      "sqlHash": "f1242527bbf2f1e7"
+    },
+    {
+      "statementType": "recreate_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repo_facets",
+        "repo_facets_built_with_idx"
+      ],
+      "writes": [
+        "s|idx|public.repo_facets_built_with_idx",
+        "n|idx|public.repo_facets_built_with_idx",
+        "e|idx|public.repo_facets_built_with_idx",
+        "n|rel|public.repo_facets_built_with_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repo_facets",
+        "n|sch|public",
+        "n|col|public.repo_facets.built_with"
+      ],
+      "sharedWrites": [],
+      "sqlHash": "5e12341b37cf25a3"
+    },
+    {
+      "statementType": "recreate_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repo_facets",
+        "repo_facets_alternative_to_idx"
+      ],
+      "writes": [
+        "s|idx|public.repo_facets_alternative_to_idx",
+        "n|idx|public.repo_facets_alternative_to_idx",
+        "e|idx|public.repo_facets_alternative_to_idx",
+        "n|rel|public.repo_facets_alternative_to_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repo_facets",
+        "n|sch|public",
+        "n|col|public.repo_facets.alternative_to"
+      ],
+      "sharedWrites": [],
+      "sqlHash": "4a68bc148b80bf89"
+    },
+    {
+      "statementType": "recreate_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repo_facets",
+        "repo_facets_replaced_by_idx"
+      ],
+      "writes": [
+        "s|idx|public.repo_facets_replaced_by_idx",
+        "n|idx|public.repo_facets_replaced_by_idx",
+        "e|idx|public.repo_facets_replaced_by_idx",
+        "n|rel|public.repo_facets_replaced_by_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repo_facets",
+        "n|sch|public",
+        "n|col|public.repo_facets.replaced_by"
+      ],
+      "sharedWrites": [],
+      "sqlHash": "a99fd224d60feb13"
+    },
+    {
+      "statementType": "recreate_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repo_facets",
+        "repo_facets_unresolved_keys_idx"
+      ],
+      "writes": [
+        "s|idx|public.repo_facets_unresolved_keys_idx",
+        "n|idx|public.repo_facets_unresolved_keys_idx",
+        "e|idx|public.repo_facets_unresolved_keys_idx",
+        "n|rel|public.repo_facets_unresolved_keys_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repo_facets",
+        "n|sch|public",
+        "n|col|public.repo_facets.unresolved_keys"
+      ],
+      "sharedWrites": [],
+      "sqlHash": "21d07bb01d896185"
+    }
+  ],
+  "deltas": [
+    {
+      "op": "alter",
+      "key": "indexes\u0000[\"public\",\"repos_search_idx\"]",
+      "set": {
+        "with": "gin_pending_list_limit=256"
+      }
+    },
+    {
+      "op": "alter",
+      "key": "indexes\u0000[\"public\",\"repo_facets_members_idx\"]",
+      "set": {
+        "with": "gin_pending_list_limit=256"
+      }
+    },
+    {
+      "op": "alter",
+      "key": "indexes\u0000[\"public\",\"repo_facets_built_with_idx\"]",
+      "set": {
+        "with": "gin_pending_list_limit=256"
+      }
+    },
+    {
+      "op": "alter",
+      "key": "indexes\u0000[\"public\",\"repo_facets_alternative_to_idx\"]",
+      "set": {
+        "with": "gin_pending_list_limit=256"
+      }
+    },
+    {
+      "op": "alter",
+      "key": "indexes\u0000[\"public\",\"repo_facets_replaced_by_idx\"]",
+      "set": {
+        "with": "gin_pending_list_limit=256"
+      }
+    },
+    {
+      "op": "alter",
+      "key": "indexes\u0000[\"public\",\"repo_facets_unresolved_keys_idx\"]",
+      "set": {
+        "with": "gin_pending_list_limit=256"
+      }
+    }
+  ]
+}
