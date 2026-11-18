@@ -1,0 +1,114 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "de0dfbe3-90c4-4df6-9ec7-f2dd033e0ced",
+  "prevIds": [
+    "27280f97-5972-42f4-90fc-4398f492cadb"
+  ],
+  "footprints": [
+    {
+      "statementType": "drop_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repos",
+        "repos_sweep_idx"
+      ],
+      "writes": [
+        "s|idx|public.repos_sweep_idx",
+        "n|idx|public.repos_sweep_idx",
+        "e|idx|public.repos_sweep_idx",
+        "n|rel|public.repos_sweep_idx"
+      ],
+      "reads": [
+        "e|tbl|public.repos",
+        "n|sch|public",
+        "e|col|public.repos.enrich_retry_at",
+        "e|col|public.repos.id"
+      ],
+      "sharedWrites": []
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repos",
+        "repos_sweep_order_idx"
+      ],
+      "writes": [
+        "s|idx|public.repos_sweep_order_idx",
+        "n|idx|public.repos_sweep_order_idx",
+        "e|idx|public.repos_sweep_order_idx",
+        "n|rel|public.repos_sweep_order_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.repos.user_starred",
+        "n|col|public.repos.synced_stargazers",
+        "n|col|public.repos.stars",
+        "n|col|public.repos.id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repos",
+        "name": "repos_sweep_order_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "((\"summary\" is null or \"summary_readme_oid\" is distinct from \"readme_oid\" or \"summary_recipe\" is distinct from 5 or \"summary_input_hash\" is distinct from \"input_hash\") and \"gone_at\" is null)",
+            "isExpression": true,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "user_starred",
+            "isExpression": false,
+            "asc": false,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "synced_stargazers",
+            "isExpression": false,
+            "asc": false,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "stars",
+            "isExpression": false,
+            "asc": false,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": "((\"summary\" is null or \"summary_readme_oid\" is distinct from \"readme_oid\" or \"embedding_model\" is null) or \"embedding_stale\" or \"summary_recipe\" is distinct from 5 or \"summary_input_hash\" is distinct from \"input_hash\") and \"gone_at\" is null and \"enrich_failures\" < 3 and (not ((\"summary\" is null or \"summary_readme_oid\" is distinct from \"readme_oid\" or \"summary_recipe\" is distinct from 5 or \"summary_input_hash\" is distinct from \"input_hash\") and \"gone_at\" is null) or (\"user_starred\" or \"stars\" is null or \"stars\" >= 200 or (\"stars\" >= 50 and not (coalesce(\"description\", '') <> '' or \"topics\" <> '[]'::jsonb))))",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "drop",
+      "key": "indexes\u0000[\"public\",\"repos_sweep_idx\"]"
+    }
+  ]
+}

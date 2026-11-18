@@ -380,7 +380,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         ),
       ).toEqual([{ column_default: String(summaryRecipe) }]);
       const indexes = yield* database.query(
-        "select pg_get_expr(indpred, indrelid) as predicate from pg_index where indexrelid = 'repos_sweep_idx'::regclass",
+        "select pg_get_expr(indpred, indrelid) as predicate from pg_index where indexrelid = 'repos_sweep_order_idx'::regclass",
       );
       expect(indexes).toEqual([
         { predicate: expect.stringContaining(`summary_recipe IS DISTINCT FROM ${summaryRecipe}`) },
@@ -393,7 +393,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       expect(indexes[0]).toEqual({ predicate: expect.stringContaining(`stars >= ${Db.summaryPolicy.bareStars}`) });
       expect(
         yield* database.query(
-          "select count(*)::int as old from pg_class where relname = 'repos_retryable_enrichment_idx'",
+          "select count(*)::int as old from pg_class where relname in ('repos_retryable_enrichment_idx', 'repos_sweep_idx')",
         ),
       ).toEqual([{ old: 0 }]);
       expect(

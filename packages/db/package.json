@@ -16,6 +16,7 @@
   },
   "scripts": {
     "bench": "bun scripts/bench.ts",
+    "count-stargazers": "bun scripts/count-stargazers.ts",
     "generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate",
     "typecheck": "effect-tsgo tsc -p ."
