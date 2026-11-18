@@ -3,9 +3,11 @@
 -- itself, so the sweep reads its first entries and stops. Its key needs the count on the row, so triggers on stars keep
 -- synced_stargazers in the statement that changes a star: every change that starts or ends a current star moves the
 -- count by one. They read the rows the statement wrote, so two statements that star one repo at once each add their
--- own, and a retry that changes nothing adds nothing. Each repo's row is locked in ID order, as every multi-row writer
--- of repos does. The count starts at 0 for every repo here, and `bun run --cwd packages/db count-stargazers` sets the
--- stars that existed before, in short batches, after the deploy.
+-- own, and a retry that changes nothing adds nothing. Each trigger locks its repos in ID order, as every multi-row
+-- writer of repos does, but an upsert fires its UPDATE trigger before its INSERT trigger, so the app's star writes lock
+-- every repo they can count first. TRUNCATE fires no delete trigger, so a truncate trigger sets every count to 0. The
+-- count starts at 0 for every repo here, and `bun run --cwd packages/db count-stargazers` sets the stars that existed
+-- before, in short batches, after the deploy.
 
 -- Validating a function's body locks repos, so everything runs in this one statement. A deploy runs each migration in
 -- one transaction, so no index can be built concurrently. A build blocks writes to repos, not reads, while it runs. The
@@ -51,6 +53,14 @@ begin
   return null;
 end
 $count$;
+
+create function stars_reset_stargazers() returns trigger language plpgsql as $reset$
+begin
+  update repos set synced_stargazers = 0
+  where id in (select id from repos where synced_stargazers <> 0 order by id for no key update);
+  return null;
+end
+$reset$;
 CREATE INDEX "repos_sweep_order_idx" ON "repos" ((("summary" is null or "summary_readme_oid" is distinct from "readme_oid" or "summary_recipe" is distinct from 5 or "summary_input_hash" is distinct from "input_hash") and "gone_at" is null),"user_starred" DESC NULLS LAST,"synced_stargazers" DESC NULLS LAST,"stars" DESC NULLS LAST,"id") WHERE (("summary" is null or "summary_readme_oid" is distinct from "readme_oid" or "embedding_model" is null) or "embedding_stale" or "summary_recipe" is distinct from 5 or "summary_input_hash" is distinct from "input_hash") and "gone_at" is null and "enrich_failures" < 3 and (not (("summary" is null or "summary_readme_oid" is distinct from "readme_oid" or "summary_recipe" is distinct from 5 or "summary_input_hash" is distinct from "input_hash") and "gone_at" is null) or ("user_starred" or "stars" is null or "stars" >= 200 or ("stars" >= 50 and not (coalesce("description", '') <> '' or "topics" <> '[]'::jsonb))));
 DROP INDEX "repos_sweep_idx";
 create trigger stars_count_inserted after insert on stars referencing new table as new_rows
@@ -59,5 +69,7 @@ create trigger stars_count_updated after update on stars referencing old table a
   for each statement execute function stars_count_stargazers();
 create trigger stars_count_deleted after delete on stars referencing old table as old_rows
   for each statement execute function stars_count_stargazers();
+create trigger stars_count_truncated after truncate on stars
+  for each statement execute function stars_reset_stargazers();
 end
 $sweep_order_index$;

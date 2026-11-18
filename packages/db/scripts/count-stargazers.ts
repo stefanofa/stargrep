@@ -1,5 +1,7 @@
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import pg from "pg";
 import { ignoreError } from "../src/node-postgres.ts";
 
@@ -9,24 +11,43 @@ import { ignoreError } from "../src/node-postgres.ts";
 // changes nothing that is right, so a run that stops can start again from the beginning.
 const batch = 1000;
 
+// Postgres aborts one side of a deadlock or a serialization failure so the other can commit. The batch then rolls back
+// whole, so it runs again from the same ID.
+const lostRace = (error: unknown): error is pg.DatabaseError & { readonly code: string } =>
+  error instanceof pg.DatabaseError && (error.code === "40P01" || error.code === "40001");
+
+class BatchLostRace extends Schema.TaggedError<BatchLostRace, { readonly brand: unique symbol }>()("BatchLostRace", {
+  after: Schema.Number,
+  sqlState: Schema.String,
+}) {
+  override get message(): string {
+    return `The batch after repo ${this.after} lost a race (${this.sqlState})`;
+  }
+}
+
 const countBatch = async (client: pg.Client, after: number) => {
   await client.query("begin");
-  const { rows } = await client.query<{ id: string }>(
-    "select id from repos where id > $1 order by id limit $2 for no key update",
-    [after, batch],
-  );
-  const ids = rows.map((row) => Number(row.id));
-  const updated = await client.query(
-    `update repos r set synced_stargazers = c.stargazers
-     from (
-       select l.id, (select count(*)::integer from stars s where s.repo_id = l.id and s.unstarred_at is null) as stargazers
-       from unnest($1::bigint[]) as l (id)
-     ) c
-     where r.id = c.id and r.synced_stargazers <> c.stargazers`,
-    [ids],
-  );
-  await client.query("commit");
-  return { ids, changed: updated.rowCount ?? 0 };
+  try {
+    const { rows } = await client.query<{ id: string }>(
+      "select id from repos where id > $1 order by id limit $2 for no key update",
+      [after, batch],
+    );
+    const ids = rows.map((row) => Number(row.id));
+    const updated = await client.query(
+      `update repos r set synced_stargazers = c.stargazers
+       from (
+         select l.id, (select count(*)::integer from stars s where s.repo_id = l.id and s.unstarred_at is null) as stargazers
+         from unnest($1::bigint[]) as l (id)
+       ) c
+       where r.id = c.id and r.synced_stargazers <> c.stargazers`,
+      [ids],
+    );
+    await client.query("commit");
+    return { ids, changed: updated.rowCount ?? 0 };
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  }
 };
 
 const program = Effect.gen(function* () {
@@ -45,7 +66,13 @@ const program = Effect.gen(function* () {
   let repos = 0;
   let changed = 0;
   for (;;) {
-    const counted = yield* Effect.promise(() => countBatch(client, after));
+    const counted = yield* Effect.promise(() => countBatch(client, after)).pipe(
+      Effect.catchDefect((defect) =>
+        lostRace(defect) ? Effect.fail(new BatchLostRace({ after, sqlState: defect.code })) : Effect.die(defect),
+      ),
+      Effect.tapError((error) => Console.log(error.message)),
+      Effect.retry({ schedule: Schedule.exponential("100 millis"), times: 8 }),
+    );
     if (counted.ids.length === 0) break;
     after = counted.ids.at(-1) ?? after;
     repos += counted.ids.length;

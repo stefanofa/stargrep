@@ -124,6 +124,26 @@ const noChanges: SnapshotChanges = { starred: [], unstarred: [] };
 
 const unread = unreadEnrichment(repos);
 
+// A star write locks its account's row and then every repo whose synced_stargazers it can change, in ID order, before it
+// writes: each listed repo the account does not star now and, for a snapshot that unstars, each repo it starred before.
+// The triggers keep ID order only within one trigger, and an upsert fires its UPDATE trigger before its INSERT trigger.
+// With the account held, no other star write for it changes what this reads before the commit.
+const lockCountedRepos = (accountId: GitHubAccountId, listed: ReadonlyArray<RepoId>, unstarsBefore?: string) => sql`
+  select id from ${repos} where id in (
+    select listed.id from unnest(${sql.param([...listed])}::bigint[]) as listed (id)
+    where not exists (
+      select from ${stars} s where s.account_id = ${accountId} and s.repo_id = listed.id and s.unstarred_at is null
+    )
+    ${
+      unstarsBefore === undefined
+        ? sql``
+        : sql`union all
+          select repo_id from ${stars}
+          where account_id = ${accountId} and unstarred_at is null and observed_at < ${unstarsBefore}::timestamptz`
+    }
+  )
+  order by id for no key update`;
+
 const writeStarsReturningVisibleChanges = (accountId: GitHubAccountId, events: string, filter: SQL) => sql`
   prior as (
     select ${column(stars.repoId)}, ${column(stars.starredAt)}, ${column(stars.unstarredAt)}
@@ -200,18 +220,36 @@ export const make = Effect.gen(function* () {
         ? Effect.succeed([])
         : encodeEvents(input.stars).pipe(
             Effect.flatMap((events) =>
-              run("stars.upsert", (db) =>
-                db.execute(sql`
-                  with account as (
-                    select ${githubAccounts.starsFullSyncedAt} as synced from ${githubAccounts}
-                    where ${githubAccounts.id} = ${input.accountId}
-                    for no key update
-                  ),
-                  ${writeStarsReturningVisibleChanges(
-                    input.accountId,
-                    events,
-                    sql`event."observedAt" > coalesce((select synced from account), '-infinity')`,
-                  )}`),
+              withTransaction(
+                Effect.gen(function* () {
+                  yield* run("stars.upsert", (db) =>
+                    db
+                      .select({ id: githubAccounts.id })
+                      .from(githubAccounts)
+                      .where(eq(githubAccounts.id, input.accountId))
+                      .for("no key update"),
+                  );
+                  yield* run("stars.upsert", (db) =>
+                    db.execute(
+                      lockCountedRepos(
+                        input.accountId,
+                        input.stars.map((star) => star.repoId),
+                      ),
+                    ),
+                  );
+                  return yield* run("stars.upsert", (db) =>
+                    db.execute(sql`
+                      with account as (
+                        select ${githubAccounts.starsFullSyncedAt} as synced from ${githubAccounts}
+                        where ${githubAccounts.id} = ${input.accountId}
+                      ),
+                      ${writeStarsReturningVisibleChanges(
+                        input.accountId,
+                        events,
+                        sql`event."observedAt" > coalesce((select synced from account), '-infinity')`,
+                      )}`),
+                  );
+                }),
               ),
             ),
             Effect.flatMap((result) => decodeChanged("stars.upsert")(resultRows(result))),
@@ -246,6 +284,15 @@ export const make = Effect.gen(function* () {
                 ).pipe(Effect.flatMap(requireRow(() => new AccountNotFound({ accountId: snapshot.accountId }))));
                 return noChanges;
               }
+              yield* run("stars.applySnapshot", (db) =>
+                db.execute(
+                  lockCountedRepos(
+                    snapshot.accountId,
+                    snapshot.stars.map((star) => star.repoId),
+                    snapshot.complete ? at : undefined,
+                  ),
+                ),
+              );
               const starred = Arr.isReadonlyArrayNonEmpty(snapshot.stars)
                 ? yield* run("stars.applySnapshot", (db) =>
                     db.execute(sql`with ${writeStarsReturningVisibleChanges(snapshot.accountId, events, sql`true`)}`),
