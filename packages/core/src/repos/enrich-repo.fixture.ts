@@ -42,6 +42,8 @@ interface Remote {
   readonly stars?: number;
   readonly forks?: number;
   readonly forbidden?: boolean;
+  // GitHub sends its facts with a null databaseId, which its schema allows and no repo row can be keyed by.
+  readonly unkeyed?: boolean;
 }
 
 export const fixture = () => {
@@ -49,7 +51,7 @@ export const fixture = () => {
   const missingBlob = "\u0000missing";
 
   const node = (n: number, remote: Remote) => ({
-    databaseId: n,
+    databaseId: remote.unkeyed === true ? null : n,
     id: `R_${n}`,
     name: `repo-${n}`,
     owner: { __typename: "Organization", login: "owner", avatarUrl: "https://avatars.githubusercontent.com/u/9?v=4" },

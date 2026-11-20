@@ -46,6 +46,11 @@ interface Remote {
   // The README GitHub lists that no read can return any longer.
   readonly readmeGone?: boolean;
   readonly isPrivate?: boolean;
+  // GitHub sends its facts with a null databaseId, which its schema allows and no repo row can be keyed by.
+  readonly unkeyed?: boolean;
+  // GitHub cuts off every facts read by node ID that holds this repo, alone too, with a 200 and an empty body, as it
+  // did at its 10 s limit for a batch holding archlinux/svntogit-community.
+  readonly cutOff?: boolean;
 }
 
 export const adapters = [
@@ -78,7 +83,7 @@ export const fixture = () => {
     return { body: { data, errors } };
   };
   const node = (n: number, remote: Remote) => ({
-    databaseId: remote.databaseId ?? n,
+    databaseId: remote.unkeyed === true ? null : (remote.databaseId ?? n),
     id: `R_${remote.databaseId ?? n}`,
     name: `repo-${n}`,
     owner: { __typename: "User", login: "owner", avatarUrl: "https://avatars.githubusercontent.com/u/9?v=4" },
@@ -108,6 +113,9 @@ export const fixture = () => {
         return readmeBatches.replies.shift() ?? (readmeBatches.on ? readmeBatch(variables) : { body: { data: {} } });
       }
       if (Array.isArray(variables.ids)) {
+        if (variables.ids.some((nodeId: string) => remotes.get(Number(nodeId.slice(2)))?.cutOff === true)) {
+          return { body: "" };
+        }
         const nodes = variables.ids.map((nodeId: string) => {
           const n = Number(nodeId.slice(2));
           const remote = remotes.get(n);

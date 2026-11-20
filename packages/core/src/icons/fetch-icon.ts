@@ -238,14 +238,17 @@ const make = Effect.gen(function* () {
       yield* db.iconBackfill.advance({ from: after, to: null });
       return { queued: 0, next: null };
     }
-    const facts = yield* github.repoFacts(page.map((row) => row.nodeId));
+    const { facts, invalid } = yield* github.repoFacts(page.map((row) => row.nodeId));
     const live = new Set<number>(facts.map((entry) => entry.id));
+    // A repo GitHub sent in a shape the decoder refuses is not gone, so it keeps its icon until the next refresh.
+    const unread = new Set<string>(invalid);
     yield* db.repos.saveOwners(
       facts.map((entry) => ({ id: entry.id, ownerType: entry.ownerType, ownerAvatarUrl: entry.ownerAvatarUrl })),
     );
     yield* Effect.forEach(
       page,
-      (row) => (live.has(row.id) ? Effect.void : db.repos.saveIcon({ id: row.id, icon: null })),
+      (row) =>
+        live.has(row.id) || unread.has(row.nodeId) ? Effect.void : db.repos.saveIcon({ id: row.id, icon: null }),
       {
         discard: true,
       },

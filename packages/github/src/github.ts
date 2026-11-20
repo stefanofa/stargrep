@@ -71,7 +71,15 @@ export class GitHub extends Context.Service<
     // Newest first, and never past the last page GitHub serves, so a list longer than that ends early.
     readonly starPages: (login: Login) => Stream.Stream<ReadonlyArray<Star>, GitHubError>;
     readonly stars: (login: Login) => Stream.Stream<Star, GitHubError>;
-    readonly repoFacts: (ids: ReadonlyArray<RepoNodeId>) => Effect.Effect<ReadonlyArray<RepoFacts>, GitHubError>;
+    // Facts for the repos GitHub still serves. A repo GitHub sent in a shape the decoder refuses, or left unanswered even
+    // when read alone, is logged and returned as invalid, and the rest of its batch is kept.
+    readonly repoFacts: (ids: ReadonlyArray<RepoNodeId>) => Effect.Effect<
+      {
+        readonly facts: ReadonlyArray<RepoFacts>;
+        readonly invalid: ReadonlyArray<RepoNodeId>;
+      },
+      GitHubError
+    >;
     // Facts for repos an archive names by ID and full name, looked up by name in batches, kept only where GitHub's ID
     // matches the archive's. The rest are returned as unresolved.
     readonly resolveRepos: (refs: ReadonlyArray<Facts.ArchiveRef>) => Effect.Effect<
@@ -132,6 +140,58 @@ const graphQLFailure = (endpoint: Endpoint, errors: ReadonlyArray<GraphQLError>)
     Effect.andThen(Effect.fail(new GitHubRequestFailed({ ...endpoint, status: null, reason: "graphql-errors" }))),
   );
 
+const logInvalid = (invalid: ReadonlyArray<Facts.Invalid<RepoNodeId | number>>) =>
+  Effect.forEach(
+    invalid,
+    ({ key, issue }) => Effect.logWarning("GitHub sent repo facts the decoder refuses", { repo: key, issue }),
+    { discard: true },
+  );
+
+const gaveUp = (repo: RepoNodeId | number, error: GitHubError) =>
+  Effect.logWarning("GitHub left a repo's facts unanswered even alone", { repo, error: error.message });
+
+// GitHub cuts a query off at 10 s and then answers 502, 504, or a 200 whose body is not JSON. A facts batch holding a
+// repo with a huge root tree can pass that limit.
+const cutOff = (error: GitHubError) =>
+  error._tag === "GitHubResponseInvalid" ||
+  (error._tag === "GitHubRequestFailed" && (error.status === 502 || error.status === 504));
+
+// Reads a batch GitHub cut off again as two halves. When both halves are cut off too, GitHub is failing every read and
+// the error stands. Otherwise the half that failed is split again, down to the one key that fails alone, which lone
+// answers for, so the rest of the batch goes on.
+const halving = <K, A>(
+  read: (keys: ReadonlyArray<K>) => Effect.Effect<A, GitHubError>,
+  lone: (key: K, error: GitHubError) => Effect.Effect<A>,
+  combine: (parts: ReadonlyArray<A>) => A,
+) => {
+  const split = (keys: ReadonlyArray<K>, error: GitHubError): Effect.Effect<A, GitHubError> => {
+    const [only, ...rest] = keys;
+    if (only !== undefined && rest.length === 0) return lone(only, error);
+    const halves = Arr.splitAt(keys, Math.ceil(keys.length / 2));
+    return Effect.forEach(halves, (half) => Effect.result(read(half))).pipe(
+      Effect.flatMap((results) =>
+        results.every((result) => Result.isFailure(result) && cutOff(result.failure))
+          ? Effect.fail(error)
+          : Effect.forEach(Arr.zip(halves, results), ([half, result]) =>
+              Result.isSuccess(result)
+                ? Effect.succeed(result.success)
+                : cutOff(result.failure)
+                  ? split(half, result.failure)
+                  : Effect.fail(result.failure),
+            ),
+      ),
+      Effect.map(combine),
+    );
+  };
+  return (keys: ReadonlyArray<K>) =>
+    read(keys).pipe(
+      Effect.catchIf(
+        (error) => keys.length > 1 && cutOff(error),
+        (error) => split(keys, error),
+      ),
+    );
+};
+
 const ownerQuery = GraphQL.operation(Owner.query, Owner.Data);
 const viewerQuery = GraphQL.operation(Viewer.query, Viewer.Data);
 const factsQuery = GraphQL.operation(Facts.query, Facts.Data);
@@ -179,7 +239,9 @@ const make = Effect.gen(function* () {
   ) =>
     exchange(operation, query.request(variables), (raw, _reply, endpoint) =>
       Effect.gen(function* () {
-        const body = yield* query.decode(raw);
+        const json = GraphQL.parse(raw);
+        if (Option.isNone(json)) return yield* new GitHubResponseInvalid({ ...endpoint, reason: "unreadable-body" });
+        const body = yield* query.decode(json.value);
         const errors = body.errors ?? [];
         const notFound = errors.every((error) => error.type === "NOT_FOUND");
         const unhandled = errors.filter((error) => !handled(error));
@@ -229,28 +291,56 @@ const make = Effect.gen(function* () {
 
   const factsBatch = Effect.fn("GitHub.factsBatch")(function* (ids: ReadonlyArray<RepoNodeId>) {
     const body = yield* graphql("repo-facts", factsQuery, { ids }, (error) => Facts.nodeError(error) !== null);
-    const { facts, forbidden } = Facts.settle(ids, body);
+    const { facts, forbidden, invalid } = Facts.settle(ids, body);
     if (forbidden.length > 0) yield* Effect.logWarning("GitHub forbade repos to the token", { nodeIds: forbidden });
-    return facts;
+    yield* logInvalid(invalid);
+    return { facts, invalid: invalid.map((entry) => entry.key) };
   });
 
+  const combineFacts = (
+    parts: ReadonlyArray<{ readonly facts: ReadonlyArray<RepoFacts>; readonly invalid: ReadonlyArray<RepoNodeId> }>,
+  ) => ({
+    facts: parts.flatMap((part) => part.facts),
+    invalid: parts.flatMap((part) => part.invalid),
+  });
+
+  const readFacts = halving(
+    factsBatch,
+    (nodeId: RepoNodeId, error) => gaveUp(nodeId, error).pipe(Effect.as({ facts: [], invalid: [nodeId] })),
+    combineFacts,
+  );
+
   const repoFacts = Effect.fn("GitHub.repoFacts")(function* (ids: ReadonlyArray<RepoNodeId>) {
-    const batches = yield* Effect.forEach(Arr.chunksOf(ids, Facts.batchSize), factsBatch);
-    return batches.flat();
+    return combineFacts(yield* Effect.forEach(Arr.chunksOf(ids, Facts.batchSize), readFacts));
   });
 
   const resolveBatch = Effect.fn("GitHub.resolveBatch")(function* (refs: ReadonlyArray<Facts.ArchiveRef>) {
     const query = GraphQL.operation(Facts.resolveQuery(refs.length), Facts.ResolveData);
     const body = yield* graphql("repo-facts", query, Facts.resolveVariables(refs), Facts.isAliasError);
-    return Facts.settleResolved(refs, body);
+    const { facts, unresolved, invalid } = Facts.settleResolved(refs, body);
+    yield* logInvalid(invalid);
+    return { facts, unresolved };
   });
 
+  const combineResolved = (
+    parts: ReadonlyArray<{
+      readonly facts: ReadonlyArray<RepoFacts>;
+      readonly unresolved: ReadonlyArray<Facts.Unresolved>;
+    }>,
+  ) => ({
+    facts: parts.flatMap((part) => part.facts),
+    unresolved: parts.flatMap((part) => part.unresolved),
+  });
+
+  const readResolved = halving(
+    resolveBatch,
+    (ref: Facts.ArchiveRef, error) =>
+      gaveUp(ref.id, error).pipe(Effect.as({ facts: [], unresolved: [{ id: ref.id, reason: "invalid" as const }] })),
+    combineResolved,
+  );
+
   const resolveRepos = Effect.fn("GitHub.resolveRepos")(function* (refs: ReadonlyArray<Facts.ArchiveRef>) {
-    const batches = yield* Effect.forEach(Arr.chunksOf(refs, Facts.batchSize), resolveBatch);
-    return {
-      facts: batches.flatMap((batch) => batch.facts),
-      unresolved: batches.flatMap((batch) => batch.unresolved),
-    };
+    return combineResolved(yield* Effect.forEach(Arr.chunksOf(refs, Facts.batchSize), readResolved));
   });
 
   const readme = Effect.fn("GitHub.readme")(function* (input: {

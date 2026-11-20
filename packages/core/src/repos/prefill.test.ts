@@ -98,6 +98,52 @@ for (const [adapter, database] of adapters) {
       }),
     );
 
+    it.effect("fails only the repos whose GitHub facts the decoder refuses, by node ID and by name, and goes on", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        f.seed(range(1121, 4));
+        for (const n of [1122, 1124]) f.remotes.set(n, { description: "Odd facts", readme: "# Odd", unkeyed: true });
+        yield* db.repos.upsertRefs([
+          {
+            id: RepoId.make(1122),
+            nodeId: RepoNodeId.make("R_1122"),
+            owner: Login.make("owner"),
+            name: RepoName.make("repo-1122"),
+          },
+        ]);
+        const report = yield* run(range(1121, 4).map(ref));
+        expect(tally(report)).toEqual({ saved: 2, failed: 2 });
+        expect(report.outcomes.get(RepoId.make(1122))).toBe("failed");
+        expect(report.outcomes.get(RepoId.make(1124))).toBe("failed");
+        expect(report.unresolved.map(({ id, reason }) => [Number(id), reason])).toEqual([
+          [1122, "invalid"],
+          [1124, "invalid"],
+        ]);
+        expect(askedFor(f.asked, [1122, 1124])).toEqual([]);
+      }),
+    );
+
+    it.effect("goes on past a facts batch GitHub cuts off, failing only the repo it never answers", () =>
+      Effect.gen(function* () {
+        const db = yield* Db.Db;
+        const numbers = range(1141, 4);
+        f.seed(numbers);
+        f.remotes.set(1142, { description: "A huge root tree", readme: "# Huge", cutOff: true });
+        yield* db.repos.upsertRefs(
+          numbers.map((n) => ({
+            id: RepoId.make(n),
+            nodeId: RepoNodeId.make(`R_${n}`),
+            owner: Login.make("owner"),
+            name: RepoName.make(`repo-${n}`),
+          })),
+        );
+        const report = yield* run(numbers.map(ref));
+        expect(tally(report)).toEqual({ saved: 3, failed: 1 });
+        expect(report.outcomes.get(RepoId.make(1142))).toBe("failed");
+        expect(report.unresolved).toEqual([{ id: RepoId.make(1142), reason: "invalid" }]);
+      }),
+    );
+
     it.effect("skips a repo that is private now, by name and through the node ID Stargrep already holds", () =>
       Effect.gen(function* () {
         const db = yield* Db.Db;

@@ -1,3 +1,5 @@
+import * as Arr from "effect/Array";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { rankIconFiles } from "./icon-files.ts";
 import { pickReadme, TreeEntry } from "./readme.ts";
@@ -46,8 +48,9 @@ const RepoNode = Schema.Struct({
   homepageUrl: Schema.NullOr(Schema.String),
   primaryLanguage: Schema.NullOr(Schema.Struct({ name: Schema.String })),
   licenseInfo: Schema.NullOr(Schema.Struct({ spdxId: Schema.NullOr(Schema.String) })),
+  // GitHub's schema lets the list and each of its items be null.
   repositoryTopics: Schema.Struct({
-    nodes: Schema.Array(Schema.Struct({ topic: Schema.Struct({ name: Schema.String }) })),
+    nodes: Schema.NullOr(Schema.Array(Schema.NullOr(Schema.Struct({ topic: Schema.Struct({ name: Schema.String }) })))),
   }),
   createdAt: Schema.DateTimeUtcFromString,
   pushedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -56,11 +59,21 @@ const RepoNode = Schema.Struct({
   isPrivate: Schema.Boolean,
   stargazerCount: Schema.Int,
   forkCount: Schema.Int,
-  root: Schema.NullOr(Schema.Struct({ entries: Schema.optionalKey(Schema.Array(TreeEntry)) })),
+  // GitHub's schema lets a tree's entries be null.
+  root: Schema.NullOr(Schema.Struct({ entries: Schema.optionalKey(Schema.NullOr(Schema.Array(TreeEntry))) })),
 });
 type RepoNode = typeof RepoNode.Type;
 
-export const Data = Schema.Struct({ nodes: Schema.Array(Schema.NullOr(RepoNode)) });
+// Each node decodes on its own, after the batch's errors are read, so one repo's odd shape never fails its batch.
+export const Data = Schema.Struct({ nodes: Schema.Array(Schema.Unknown) });
+
+const decodeNode = Schema.decodeUnknownResult(Schema.NullOr(RepoNode));
+
+// A repo GitHub sent in a shape the decoder refuses, and the decoder's reason.
+export interface Invalid<Key> {
+  readonly key: Key;
+  readonly issue: string;
+}
 
 const toFacts = (node: RepoNode): RepoFacts => ({
   id: node.databaseId,
@@ -71,7 +84,7 @@ const toFacts = (node: RepoNode): RepoFacts => ({
   homepage: node.homepageUrl || null,
   language: node.primaryLanguage?.name ?? null,
   license: node.licenseInfo?.spdxId ?? null,
-  topics: node.repositoryTopics.nodes.map((entry) => entry.topic.name),
+  topics: (node.repositoryTopics.nodes ?? []).flatMap((entry) => (entry === null ? [] : [entry.topic.name])),
   createdAt: node.createdAt,
   pushedAt: node.pushedAt,
   archived: node.isArchived,
@@ -102,15 +115,20 @@ export const settle = (
   body: { readonly data?: typeof Data.Type | null; readonly errors?: ReadonlyArray<GraphQLError> },
 ) => {
   const classified = (body.errors ?? []).map((error) => ({ error, node: nodeError(error) }));
+  const nodes = (body.data?.nodes ?? []).map((node) => decodeNode(node));
   const forbidden = new Set([
     ...classified.flatMap(({ node }) => (node?.kind === "FORBIDDEN" ? [node.index] : [])),
-    ...(body.data?.nodes ?? []).flatMap((node, index) => (node?.isPrivate === true ? [index] : [])),
+    ...nodes.flatMap((node, index) => (Result.isSuccess(node) && node.success?.isPrivate === true ? [index] : [])),
   ]);
   return {
-    facts: (body.data?.nodes ?? []).flatMap((node, index) =>
-      node === null || forbidden.has(index) ? [] : [toFacts(node)],
+    facts: nodes.flatMap((node, index) =>
+      Result.isFailure(node) || node.success === null || forbidden.has(index) ? [] : [toFacts(node.success)],
     ),
     forbidden: ids.filter((_, index) => forbidden.has(index)),
+    invalid: Arr.zip(ids, nodes).flatMap(
+      ([key, node], index): Array<Invalid<RepoNodeId>> =>
+        Result.isFailure(node) && !forbidden.has(index) ? [{ key, issue: node.failure.message }] : [],
+    ),
     errors: classified.flatMap(({ error, node }) => (node === null ? [error] : [])),
   };
 };
@@ -123,11 +141,11 @@ export interface ArchiveRef {
 }
 
 // Why an archive ref resolved to no repo: GitHub has no repo by that name, the token may not read it or the repo is
-// private, or the name now belongs to a repo with another ID, such as one created after the archived repo was deleted
-// or renamed away.
+// private, the name now belongs to a repo with another ID, such as one created after the archived repo was deleted or
+// renamed away, or GitHub sent its facts in a shape the decoder refuses or left them unanswered even alone.
 export type Unresolved = {
   readonly id: RepoId;
-  readonly reason: "missing" | "forbidden" | "other-repo";
+  readonly reason: "missing" | "forbidden" | "other-repo" | "invalid";
 };
 
 const alias = (index: number) => `r${index}`;
@@ -152,7 +170,7 @@ export const resolveVariables = (refs: ReadonlyArray<ArchiveRef>) =>
     ]),
   );
 
-export const ResolveData = Schema.Record(Schema.String, Schema.NullOr(RepoNode));
+export const ResolveData = Schema.Record(Schema.String, Schema.Unknown);
 
 const aliasError = (error: GraphQLError) => {
   const [field] = error.path ?? [];
@@ -177,12 +195,17 @@ export const settleResolved = (
   );
   const facts: Array<RepoFacts> = [];
   const unresolved: Array<Unresolved> = [];
+  const invalid: Array<Invalid<RepoId>> = [];
   refs.forEach((ref, index) => {
-    const node = body.data[alias(index)] ?? null;
+    const decoded = decodeNode(body.data[alias(index)] ?? null);
+    const node = Result.getOrNull(decoded);
     if (forbidden.has(index) || node?.isPrivate === true) unresolved.push({ id: ref.id, reason: "forbidden" });
-    else if (node === null) unresolved.push({ id: ref.id, reason: "missing" });
+    else if (Result.isFailure(decoded)) {
+      unresolved.push({ id: ref.id, reason: "invalid" });
+      invalid.push({ key: ref.id, issue: decoded.failure.message });
+    } else if (node === null) unresolved.push({ id: ref.id, reason: "missing" });
     else if (node.databaseId !== ref.id) unresolved.push({ id: ref.id, reason: "other-repo" });
     else facts.push(toFacts(node));
   });
-  return { facts, unresolved };
+  return { facts, unresolved, invalid };
 };
