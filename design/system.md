@@ -25,7 +25,7 @@ Names follow Tailwind v4 theme variables, so they drop into `@theme` in `package
 | `--color-foreground` | #1E1B2E | #F2F0FA | Headings, names, primary text |
 | `--color-card` | #FFFFFF | #201D2D | Tiles, inputs, panels |
 | `--color-secondary-foreground` | #3A3550 | #C9C4DC | Reason lines and body text in tiles |
-| `--color-muted-foreground` | #6E6985 | #9D97B5 | Dates, counts, labels |
+| `--color-muted-foreground` | #69647E | #9D97B5 | Dates, counts, labels |
 | `--color-muted` | #EFEBFA | #2C2840 | Hairlines in tiles, bar tracks, skeletons |
 | `--color-border` | #E4DDFA | #2C2840 | Rare outlines: archived tiles |
 | `--color-primary` | #1E1B2E | #F2F0FA | Primary buttons (Follow, go, Claim) |
@@ -58,7 +58,7 @@ These color tokens back the rules above:
 
 The butter tile maps the semantic tokens onto these, so a component inside it needs no override: `foreground` becomes `ink`, `accent-strong` and `ring` become `ink-accent`, and `primary` becomes an ink button with white text.
 
-`--color-muted-foreground` is #6E6985, not the #757089 used in the G13 render. On the lilac ground, #757089 at 13px fell just under 4.5:1. The key screens already use the new value.
+`--color-muted-foreground` is #69647E, not the #757089 used in the G13 render. On the lilac ground, #757089 at 13px fell just under 4.5:1. The next value, #6E6985, passed on the page and on white but fell to 4.46:1 on `muted` and 4.17:1 on `accent-soft`, where menus and pills put small labels. #69647E measures 4.81:1 on `muted` and 4.51:1 on `accent-soft`.
 
 ### Type
 

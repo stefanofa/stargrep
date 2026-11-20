@@ -8,7 +8,7 @@ export const palette = {
   card: "#ffffff",
   ink: "#1e1b2e",
   inkSecondary: "#3a3550",
-  mutedForeground: "#6e6985",
+  mutedForeground: "#69647e",
   muted: "#efebfa",
   accent: "#a78bfa",
   accentSoft: "#e9e2ff",

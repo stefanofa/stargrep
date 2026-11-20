@@ -75,12 +75,11 @@ function LoginField() {
       className="flex h-12 items-center rounded-full bg-card pr-1 pl-5 font-sans text-lg focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ring sm:h-14 sm:pr-1.5"
     >
       <label htmlFor={field} className="text-muted-foreground select-none">
-        github.com/
+        github.com/<span className="sr-only">username</span>
       </label>
       <input
         id={field}
         name={typedLoginParam}
-        aria-label="GitHub username"
         placeholder="username"
         required
         pattern={String.raw`\s*@?[A-Za-z\d][A-Za-z\d\-]{0,38}\s*`}
@@ -90,7 +89,7 @@ function LoginField() {
         autoCorrect="off"
         spellCheck={false}
         enterKeyHint="go"
-        className="h-full min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground/70"
+        className="h-full min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground"
       />
       <Button type="submit" size="lg" className="h-10 px-5 sm:h-11">
         go
