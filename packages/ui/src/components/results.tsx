@@ -289,7 +289,7 @@ type Entrance = "tile-in" | "fade-in";
 const entrances: Record<Entrance, { full: Keyframe[]; reduced: Keyframe[] | null; timing: KeyframeAnimationOptions }> =
   {
     "tile-in": {
-      full: [{ opacity: 0, translate: "0 6px" }, {}],
+      full: [{ opacity: 0, translate: "0 4px" }, {}],
       reduced: [{ opacity: 0 }, {}],
       timing: { duration: 200, easing: "cubic-bezier(0.2, 0, 0, 1)" },
     },
