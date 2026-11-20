@@ -485,7 +485,7 @@ const troubleCopy = (trouble: Trouble, owner: string, whose: Whose): TroubleCopy
       return {
         status: { icon: "failed", label: "no such github user" },
         heading: `github has no one called @${owner}`,
-        detail: "check the spelling, or pick someone else from the pill above.",
+        detail: "check the spelling, or pick someone else from the pill.",
         pose: "unsure",
         retry: undefined,
       };

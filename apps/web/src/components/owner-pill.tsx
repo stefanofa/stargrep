@@ -96,7 +96,7 @@ export function OwnerPill({ audience, config }: { audience: Audience; config: Pu
                   autoComplete="off"
                   autoCapitalize="none"
                   spellCheck={false}
-                  className="h-10 min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
+                  className="h-10 min-w-0 flex-1 bg-transparent text-[16px] outline-none placeholder:text-muted-foreground sm:text-meta"
                 />
                 <button
                   type="submit"

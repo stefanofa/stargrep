@@ -27,7 +27,7 @@ export function TextPage({ heading, children }: { heading: string; children: Rea
 
 export function Section({ id, heading, children }: { id?: string; heading: string; children: ReactNode }) {
   return (
-    <section id={id} className="flex scroll-mt-6 flex-col gap-3 font-sans text-base text-secondary-foreground">
+    <section id={id} className="flex scroll-mt-6 flex-col gap-3 font-sans text-lg text-secondary-foreground">
       <h2 className="font-display text-title font-semibold tracking-snug text-foreground">{heading}</h2>
       {children}
     </section>
