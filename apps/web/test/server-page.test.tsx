@@ -301,7 +301,7 @@ describe("a stars page from the Worker to the browser", () => {
   }, 60_000);
 
   test("the header's star link paints its count from the server and hydrates without a change", async () => {
-    const starLink = () => document.querySelector('a[aria-label="star stargrep on github"]');
+    const starLink = () => document.querySelector('a[aria-label="star stargrep on GitHub"]');
     const page = await renderOnServer("/", undefined, { STARGREP_HEADER_STARS: "1234" });
     await hydratePage("/", page.html);
     expect(starLink()?.getAttribute("href")).toBe("https://github.com/stefanofa/stargrep");
@@ -310,7 +310,7 @@ describe("a stars page from the Worker to the browser", () => {
 
     const countless = await renderOnServer("/stefanofa?q=terminal");
     expect(countless.status).toBe(200);
-    expect(countless.html).toContain('aria-label="star stargrep on github"');
+    expect(countless.html).toContain('aria-label="star stargrep on GitHub"');
     expect(countless.html).not.toContain("1.2k");
   }, 60_000);
 
@@ -373,7 +373,7 @@ describe("a stars page from the Worker to the browser", () => {
   test("a refused import is remembered: the reload paints the refusal and asks no one again", async () => {
     const first = await renderOnServer("/ghost-login");
     await hydratePage("/ghost-login", first.html);
-    await waitFor(() => expect(statusText()).toBe("no such github user"));
+    await waitFor(() => expect(statusText()).toBe("no such GitHub user"));
     expect(requested).toEqual(["ghost-login"]);
     const cookie = document.cookie;
     expect(cookie).toContain("stargrep-refused=");
@@ -383,32 +383,32 @@ describe("a stars page from the Worker to the browser", () => {
     requested.length = 0;
     const reload = await renderOnServer("/ghost-login", cookie);
     expect(reload.status).toBe(404);
-    expect(reload.html).toContain("github has no one called @ghost-login");
+    expect(reload.html).toContain("GitHub has no one called @ghost-login");
     expect(reload.requested).toEqual([]);
     await hydratePage("/ghost-login", reload.html);
-    await waitFor(() => expect(statusText()).toBe("no such github user"));
-    expect(statusText()).toBe("no such github user");
+    await waitFor(() => expect(statusText()).toBe("no such GitHub user"));
+    expect(statusText()).toBe("no such GitHub user");
     expect(requested).toEqual([]);
   }, 60_000);
 
   test("a login github didn't have at stargrep's last look answers 404 and paints so, and no one asks again", async () => {
     const page = await renderOnServer("/gone-login");
     expect(page.status).toBe(404);
-    expect(page.html).toContain("github has no one called @gone-login");
+    expect(page.html).toContain("GitHub has no one called @gone-login");
     expect(page.html).not.toContain("ready to import");
     expect(page.requested).toEqual([]);
     await hydratePage("/gone-login", page.html);
-    await waitFor(() => expect(statusText()).toBe("no such github user"));
+    await waitFor(() => expect(statusText()).toBe("no such GitHub user"));
     expect(requested).toEqual([]);
     expect(errors).toEqual([]);
   }, 60_000);
 
   test("a sign-in github refused paints its problem tile from the server and keeps it once hydrated", async () => {
     const page = await renderOnServer("/?error=access_denied");
-    expect(page.html).toContain("you said no to github");
+    expect(page.html).toContain("you said no to GitHub");
     await hydratePage("/?error=access_denied", page.html);
-    await waitFor(() => expect(document.querySelector("[role=alert] button")?.textContent).toContain("Try again"));
-    expect(document.querySelector("[role=alert] h2")?.textContent).toBe("you said no to github");
+    await waitFor(() => expect(document.querySelector("[role=alert] button")?.textContent).toContain("try again"));
+    expect(document.querySelector("[role=alert] h2")?.textContent).toBe("you said no to GitHub");
     expect(errors).toEqual([]);
   }, 60_000);
 
@@ -441,7 +441,7 @@ describe("a stars page from the Worker to the browser", () => {
     });
     expect(page.status).toBe(500);
     expect(page.html).toContain("stargrep tripped");
-    expect(page.html).toContain(">Reload</button>");
+    expect(page.html).toContain(">reload</button>");
     expect(page.html).not.toContain("Something went wrong!");
     expect(page.html).toContain("$_TSR");
     expect(page.html).not.toContain(secret);

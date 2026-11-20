@@ -28,7 +28,7 @@ Names follow Tailwind v4 theme variables, so they drop into `@theme` in `package
 | `--color-muted-foreground` | #69647E | #9D97B5 | Dates, counts, labels |
 | `--color-muted` | #EFEBFA | #2C2840 | Hairlines in tiles, bar tracks, skeletons |
 | `--color-border` | #E4DDFA | #2C2840 | Rare outlines: archived tiles |
-| `--color-primary` | #1E1B2E | #F2F0FA | Primary buttons (Follow, go, Claim) |
+| `--color-primary` | #1E1B2E | #F2F0FA | Primary buttons (follow, go, claim) |
 | `--color-primary-foreground` | #FFFFFF | #1E1B2E | Text on primary |
 | `--color-accent` | #A78BFA | #B9A3FF | Active scope, active toggle |
 | `--color-accent-soft` | #E9E2FF | #2E2847 | Chips, secondary buttons, avatar fills |
@@ -55,8 +55,12 @@ These color tokens back the rules above:
 | `--color-plate` | #FFFFFF | #FFF6D6 | The disc behind the mascot on the butter tile |
 | `--color-scrim` | #7860D2 at 26% | #0B0A12 at 60% | Behind the repo detail panel |
 | `--color-image-edge` | black at 10% | white at 10% | The 1px outline on images |
+| `--color-switch-track` | #8A84A3 | #77718F | A switch's track when off |
+| `--color-switch-thumb` | #FFFFFF | #E4E0F2 | A switch's thumb, off and on |
 
 The butter tile maps the semantic tokens onto these, so a component inside it needs no override: `foreground` becomes `ink`, `accent-strong` and `ring` become `ink-accent`, and `primary` becomes an ink button with white text.
+
+The off switch track measures 3.55:1 against the card and 3.03:1 against a highlighted `muted` menu row in light mode, and 3.56:1 and 3.06:1 in dark mode, so an off switch keeps a visible edge. The thumb measures over 3.5:1 against the off track in both themes.
 
 `--color-muted-foreground` is #69647E, not the #757089 used in the G13 render. On the lilac ground, #757089 at 13px fell just under 4.5:1. The next value, #6E6985, passed on the page and on white but fell to 4.46:1 on `muted` and 4.17:1 on `accent-soft`, where menus and pills put small labels. #69647E measures 4.81:1 on `muted` and 4.51:1 on `accent-soft`.
 
@@ -124,7 +128,7 @@ Components live in `packages/ui/src/components`. Interactive controls use Base U
 | Tile | Custom `Tile` | Variants: `default` (card), `highlight` (butter, one per page), `quiet` (border, transparent), `archived` (no border, muted text, `--opacity-archived` on the star and the alive dot, so text keeps its contrast). Radius `--radius-tile`. No shadow. |
 | Search tile | Custom `SearchTile` | The input is borderless, `--text-xl`, inside a white tile. `/` focuses it from anywhere. The query lives in the URL. |
 | Filter chip | Custom `Chip` | `accent-soft` fill. Language chips select a language. Removable planner filter chips are planned. |
-| Scope switch | Base UI `Tabs` | The gallery shows Your stars, Network, and Everyone. The app currently shows one link to the viewer's stars. |
+| Scope switch | Base UI `Tabs` | The gallery shows your stars, network, and everyone. The app currently shows one link to the viewer's stars. |
 | View toggle | Base UI `ToggleGroup` | Two icon toggles, tiles and list, `aria-label` on each. The `stargrep-view` cookie stores the choice for signed-in and signed-out visitors. `?view=` overrides it for a shared link and the first server paint. |
 | Deep search | Base UI `Switch` | Gallery only. The app does not rerank results. |
 | Monthly picks | Base UI `Menu.CheckboxItem` with `SwitchMark` | In the signed-in account menu. The label, one muted line under it that says what the email is, and the switch's track and thumb on the right. The switch moves at once and moves back with "couldn't save that. try again" when the save fails. |
@@ -134,7 +138,7 @@ Components live in `packages/ui/src/components`. Interactive controls use Base U
 | Matched words | `<mark>` | Styled as `accent-strong`, weight 600, no background. Screen readers and agents get the same spans. |
 | Network avatars | Base UI `Avatar`, stacked with -6px overlap | Gallery only. Network is planned. At most four, then "N you follow". `Tooltip` on hover lists handles. Never "friends". |
 | Alive | Text with an 8px dot | `success` dot for pushed in the last 30 days, `muted-foreground` dot after that. Archived and deprecated get a label instead. |
-| Repo detail panel | Base UI `Dialog`, side right, 520px | Opens on tile click, with its own URL (`?repo=ratatui/ratatui`). Escape closes it. The header puts the repo icon slot left of the name. The app shows the full summary, star count, activity, license, and Open on GitHub. Collection and network actions in mockups are planned. |
+| Repo detail panel | Base UI `Dialog`, side right, 520px | Opens on tile click, with its own URL (`?repo=ratatui/ratatui`). Escape closes it. The header puts the repo icon slot left of the name. The app shows the full summary, star count, activity, license, and "open on GitHub". Collection and network actions in mockups are planned. |
 | Search tile strip | Custom, inside the search tile | One status line on the left, sort and the view toggle on the right, 64px tall, the same in every state, so the controls never move. A 3px rail along the tile's bottom edge shows real progress: stars imported on the first sync, then stars read. The rail is a `progressbar` with the counts as its value text, and only the status label is a live region, so screen readers hear a state change, not every poll. A later sync only says "checking for new stars", and a few new stars read as "2 new stars · reading…" with no rail. On phones the tile docks at the bottom with the strip above the input and one line of detail, and the rail runs along the tile's top edge, inset 32px from each side so the squircle never clips its ends. |
 | Sort | Base UI `Menu` | Recently starred, most stars, recently pushed, and best match while searching. |
 | Buttons | Custom `Button` | `primary` (ink), `secondary` (accent-soft), `ghost` (white pill). Heights 36 and 44. Always `--radius-full`. |
@@ -166,12 +170,13 @@ Lowercase, short, friendly, a little cheeky. Only in strings that must exist.
 | Hidden by filters | 12 stars hidden by starred in 2019 · remove that filter |
 | Widen scope | search everyone instead |
 | Syncing | syncing · 1,204 of 2,431 · about 20 seconds left |
-| Unknown user | no github user called junodevv · did you mean junodev? |
-| Rate limited | github needs a breather. try again in 2 minutes |
+| Unknown user | no GitHub user called junodevv · did you mean junodev? |
+| Rate limited | GitHub needs a breather. try again in 2 minutes |
 | Unclaimed profile | is this you? · sign in to claim |
-| Landing | search anyone's starred github repos in plain words |
+| Landing | search anyone's starred GitHub repos in plain words |
+| Buttons and links | sign in with GitHub · try again · show more · sign out |
 
-Proper nouns keep their case inside lowercase copy (Rust, TypeScript, GitHub in buttons such as "Sign in with GitHub").
+Every string stargrep writes on screen is lowercase, button and link labels included, and so is the first word of a sentence. Proper nouns keep their case: Rust, TypeScript, GitHub. The product name is always lowercase. Repo names and descriptions come from GitHub and keep their own case.
 
 ## Motion
 
@@ -180,7 +185,7 @@ Proper nouns keep their case inside lowercase copy (Rust, TypeScript, GitHub in 
 - Loading frames have the final layout: an avatar-sized placeholder in the header, the strip with its controls, and the count, languages and month tiles at their final size, so a reload moves nothing.
 - The repo panel slides in from the right in 220ms over a 160ms scrim fade.
 - Toggles and tabs: 120ms color change, no movement.
-- `prefers-reduced-motion` removes all movement and keeps the opacity fades.
+- `prefers-reduced-motion` removes all movement. Library tiles and the repo panel keep their opacity fades. A search result appears at once with no fade, because results change on every query and a fade each time is the motion the setting asks to drop.
 
 ## For developers and agents
 
@@ -202,7 +207,7 @@ These are design references, not a list of shipped routes. Network, profiles wit
 | 02 Search · tiles | The hero search in tiles view |
 | 03 Search · list | The same results in list view |
 | 04 Search · dark | Tiles view in dark mode |
-| 05 Library | Your stars with no query, grouped by month, language filter, sort |
+| 05 Library | The viewer's stars with no query, grouped by month, language filter, sort |
 | 06 Network search | Scope Network, "auth library for next.js", faces first |
 | 07 Repo detail panel | ratatui in the right-side panel over search |
 | 08 Profile · claimed | @junodev seen by a signed-in visitor |

@@ -61,18 +61,18 @@ describe("the stars view after a failed library load", () => {
     if (isLoadingError)
       return (
         <button type="button" onClick={library.reload}>
-          Try again
+          try again
         </button>
       );
     return <p>{isReady ? `${data.length} stars` : "loading"}</p>;
   }
 
-  test("shows the library once Try again loads it", async () => {
+  test("shows the library once try again loads it", async () => {
     const github = server([repo(1)], 1);
     const library = makeLibrary(github.load);
     const { container, getByRole } = render(<Stars library={library} />);
     await act(async () => (await github.next())());
-    await waitFor(() => expect(container.textContent).toBe("Try again"));
+    await waitFor(() => expect(container.textContent).toBe("try again"));
 
     fireEvent.click(getByRole("button"));
     await act(async () => (await github.next())());
@@ -84,7 +84,7 @@ describe("the stars view after a failed library load", () => {
     const library = makeLibrary(github.load);
     const { container } = render(<Stars library={library} />);
     await act(async () => (await github.next())());
-    await waitFor(() => expect(container.textContent).toBe("Try again"));
+    await waitFor(() => expect(container.textContent).toBe("try again"));
 
     await act(async () => {
       const reloaded = library.reload();

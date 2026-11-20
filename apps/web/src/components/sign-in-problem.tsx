@@ -2,10 +2,10 @@ import { Tile } from "@stargrep/ui";
 import { SignInButton } from "./sign-in-button.tsx";
 
 const problems: Record<string, { readonly heading: string; readonly detail: string }> = {
-  access_denied: { heading: "you said no to github", detail: "stargrep saw nothing from your account" },
+  access_denied: { heading: "you said no to GitHub", detail: "stargrep saw nothing from your account" },
 };
 
-const failed = { heading: "sign-in didn't finish", detail: "github or stargrep hiccuped on the way back" };
+const failed = { heading: "sign-in didn't finish", detail: "GitHub or stargrep hiccuped on the way back" };
 
 export function SignInProblem({ error }: { error: string }) {
   const problem = problems[error] ?? failed;
@@ -18,7 +18,7 @@ export function SignInProblem({ error }: { error: string }) {
         <h2 className="font-display text-2xl font-semibold tracking-snug">{problem.heading}</h2>
         <p className="font-sans text-base text-secondary-foreground">{problem.detail}</p>
       </div>
-      <SignInButton variant="primary" size="lg" label="Try again" />
+      <SignInButton variant="primary" size="lg" label="try again" />
     </Tile>
   );
 }

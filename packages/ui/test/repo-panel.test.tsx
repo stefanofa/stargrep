@@ -15,9 +15,9 @@ const repo: RepoDetail = {
   visual: { kind: "monogram", letters: "ra" },
 };
 
-test("Open on GitHub opens the repo in a new tab without handing it the opener", () => {
+test("open on GitHub opens the repo in a new tab without handing it the opener", () => {
   render(<RepoPanel repo={repo} open onOpenChange={() => {}} />);
-  const link = page().getByRole("link", { name: "Open on GitHub" });
+  const link = page().getByRole("link", { name: "open on GitHub" });
   expect(link.getAttribute("href")).toBe(repo.githubUrl);
   expect(link.getAttribute("target")).toBe("_blank");
   expect(link.getAttribute("rel")).toBe("noopener noreferrer");

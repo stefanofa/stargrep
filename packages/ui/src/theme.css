@@ -36,6 +36,8 @@
   --color-scrim: light-dark(#7860d242, #0b0a1299);
   --color-plate: light-dark(#ffffff, #fff6d6);
   --color-image-edge: light-dark(oklch(0 0 0 / 0.1), oklch(1 0 0 / 0.1));
+  --color-switch-track: light-dark(#8a84a3, #77718f);
+  --color-switch-thumb: light-dark(#ffffff, #e4e0f2);
 
   --font-*: initial;
   --font-display: "Fredoka", "Fredoka Fallback", ui-rounded, system-ui, sans-serif;

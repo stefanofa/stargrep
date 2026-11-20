@@ -113,7 +113,7 @@ test("the home page a visitor lands on keeps the site's title", async () => {
 test("a path that is no page says so on a styled page with a way home", async () => {
   const html = await renderPage("/not..valid");
   expect(html).toContain("no page here");
-  expect(html).toContain(">Go home</a>");
+  expect(html).toContain(">go home</a>");
   expect(html).toContain("stargrep</a>");
 });
 
@@ -124,7 +124,7 @@ test("a page that fails says so without its error, and offers a reload", async (
   try {
     const html = await renderPage("/octo");
     expect(html).toContain("stargrep tripped");
-    expect(html).toContain(">Reload</button>");
+    expect(html).toContain(">reload</button>");
     expect(html).not.toContain("secret detail");
     expect(html).toContain('<meta name="theme-color"');
   } finally {
