@@ -96,9 +96,9 @@ function Section({ id, title, children }: { id: string; title: string; children:
 }
 
 const scopes = [
-  { value: "mine", label: "Your stars", href: "#mine" },
-  { value: "network", label: "Network", href: "#network" },
-  { value: "everyone", label: "Everyone", href: "#everyone" },
+  { value: "mine", label: "your stars", href: "#mine" },
+  { value: "network", label: "network", href: "#network" },
+  { value: "everyone", label: "everyone", href: "#everyone" },
 ];
 
 const swatches = [
@@ -282,17 +282,17 @@ function Gallery() {
           </Tile>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <Button>Follow</Button>
-          <Button variant="secondary">Add to collection</Button>
+          <Button>follow</Button>
+          <Button variant="secondary">add to collection</Button>
           <Button variant="ghost">search everyone instead</Button>
-          <Button size="lg">Claim</Button>
+          <Button size="lg">claim</Button>
           <Button variant="secondary" size="lg">
-            Sign in with GitHub
+            sign in with GitHub
           </Button>
           <Badge>archived</Badge>
           <Chip type="button">Rust 42%</Chip>
           <Chip type="button" active>
-            All
+            all
           </Chip>
           <Chip type="button" tone="card">
             terminal recorder

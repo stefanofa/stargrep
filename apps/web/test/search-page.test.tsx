@@ -267,7 +267,7 @@ describe("the search page in each state", () => {
         .getAllByRole("link")
         .filter((link) => link.getAttribute("aria-current") === "page")
         .map((link) => link.textContent);
-    await waitFor(() => expect(current()).toEqual(["All"]));
+    await waitFor(() => expect(current()).toEqual(["all"]));
     await user.click(within(filter).getByRole("link", { name: /^Rust/ }));
     await waitFor(() => expect(current()).toEqual(["Rust 100%"]));
   });
@@ -539,12 +539,12 @@ describe("the search page in each state", () => {
 
   test("the header links to your stars, and marks the link current only on your own page", async () => {
     await open("/?q=terminal");
-    expect(page().getByRole("link", { name: "Your stars" }).getAttribute("aria-current")).toBe("page");
+    expect(page().getByRole("link", { name: "your stars" }).getAttribute("aria-current")).toBe("page");
     expect(page().queryByRole("tablist")).toBeNull();
     cleanup();
     server.status = status({ login: "octosync" });
     await open("/octosync", "Search @octosync's stars");
-    expect(page().getByRole("link", { name: "Your stars" }).getAttribute("aria-current")).toBeNull();
+    expect(page().getByRole("link", { name: "your stars" }).getAttribute("aria-current")).toBeNull();
   });
 
   test("a result's link keeps the query and a view this browser saved, so it opens the same way anywhere", async () => {
@@ -817,9 +817,9 @@ describe("the search page in each state", () => {
     server.status = status({ login: "nobody-here-x", state: "unknown", syncedAt: null, requestedAt: null });
     await open("/nobody-here-x", "Search @nobody-here-x's stars");
     await waitFor(() =>
-      expect(page().getByRole("heading", { name: "github has no one called @nobody-here-x" })).toBeTruthy(),
+      expect(page().getByRole("heading", { name: "GitHub has no one called @nobody-here-x" })).toBeTruthy(),
     );
-    expect(strip()).toContain("no such github user");
+    expect(strip()).toContain("no such GitHub user");
     expect(page().getAllByRole("button", { name: /Whose stars: @nobody-here-x/ }).length).toBeGreaterThan(0);
     await waitFor(() => expect(mark()).toBe("unsure"));
   });
@@ -848,7 +848,7 @@ describe("the search page in each state", () => {
       expect(page().getByRole("heading", { name: "github's line for new imports is full" })).toBeTruthy(),
     );
     expect(strip()).toContain("the import line is full");
-    expect(page().getAllByRole("button", { name: "Try again" }).length).toBeGreaterThan(0);
+    expect(page().getAllByRole("button", { name: "try again" }).length).toBeGreaterThan(0);
     expect(page().getAllByRole("button", { name: /Whose stars: @busyline/ }).length).toBeGreaterThan(0);
   });
 
@@ -870,7 +870,7 @@ describe("the search page in each state", () => {
       expect(page().getByRole("heading", { name: "lots of requests from your network" })).toBeTruthy(),
     );
     expect(strip()).toContain("taking a breather");
-    expect(page().getAllByRole("button", { name: "Try again" }).length).toBeGreaterThan(0);
+    expect(page().getAllByRole("button", { name: "try again" }).length).toBeGreaterThan(0);
     expect(rememberedRefusal(document.cookie, "flooded")).toBe("limited");
     try {
       setSystemTime(DateTime.toEpochMillis(DateTime.add(DateTime.nowUnsafe(), { seconds: 61 })));
@@ -886,7 +886,7 @@ describe("the search page in each state", () => {
     server.status = status({ login: "stefanofa" });
     await open("/", "Search @stefanofa's stars");
     expect(
-      page().getByRole("heading", { level: 1, name: "search anyone's starred github repos in plain words" }),
+      page().getByRole("heading", { level: 1, name: "search anyone's starred GitHub repos in plain words" }),
     ).toBeTruthy();
     expect(page().getByRole("heading", { name: "skip the line, stay synced" })).toBeTruthy();
     const owner = within(page().getByRole("main")).getByRole("link", { name: "@stefanofa" });
@@ -979,7 +979,7 @@ describe("the search page in each state", () => {
     await waitFor(() =>
       expect(page().getByRole("heading", { name: "lots of requests from your network" })).toBeTruthy(),
     );
-    expect(page().getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(page().getByRole("button", { name: "try again" })).toBeTruthy();
     expect(strip()).toContain("taking a breather");
   });
 
@@ -988,10 +988,10 @@ describe("the search page in each state", () => {
     server.status = status({ login: "faraway", state: "unknown", syncedAt: null, requestedAt: null });
     await open("/faraway", "Search @faraway's stars");
     await waitFor(() =>
-      expect(page().getByRole("heading", { name: "stargrep couldn't reach github just now" })).toBeTruthy(),
+      expect(page().getByRole("heading", { name: "stargrep couldn't reach GitHub just now" })).toBeTruthy(),
     );
-    expect(strip()).toContain("couldn't reach github");
-    expect(page().getAllByRole("button", { name: "Try again" }).length).toBeGreaterThan(0);
+    expect(strip()).toContain("couldn't reach GitHub");
+    expect(page().getAllByRole("button", { name: "try again" }).length).toBeGreaterThan(0);
   });
 });
 
@@ -1027,7 +1027,7 @@ describe("whose stars the page searches", () => {
     server.refusals["nobody-here-x"] = "LOGIN_NOT_FOUND";
     server.status = status({ login: "nobody-here-x", state: "unknown", syncedAt: null, requestedAt: null });
     await open("/nobody-here-x", "Search @nobody-here-x's stars");
-    await waitFor(() => expect(strip()).toContain("no such github user"));
+    await waitFor(() => expect(strip()).toContain("no such GitHub user"));
     cleanup();
     server.status = status({});
     await open("/");
@@ -1044,7 +1044,7 @@ describe("whose stars the page searches", () => {
     await open(path, "Search @octosync's stars");
     using sent = spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ url: "https://github.com/login" }));
     using _ = spyOn(location, "assign").mockImplementation(() => {});
-    await user.click(within(page().getByRole("alert")).getByRole("button", { name: "Try again" }));
+    await user.click(within(page().getByRole("alert")).getByRole("button", { name: "try again" }));
     await waitFor(() => expect(sent).toHaveBeenCalled());
     const [url, init] = sent.mock.calls[0] ?? [];
     expect([url, JSON.parse(String(init?.body))]).toEqual([

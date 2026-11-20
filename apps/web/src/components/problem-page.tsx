@@ -37,7 +37,7 @@ export function NotFound() {
           params={{ login: undefined }}
           className={buttonVariants({ variant: "primary", size: "lg" })}
         >
-          Go home
+          go home
         </Link>
       }
     />
@@ -58,7 +58,7 @@ export function Failure({ error }: ErrorComponentProps) {
       body="something broke on our side. a reload usually fixes it."
       action={
         <Button variant="primary" size="lg" onClick={() => location.reload()}>
-          Reload
+          reload
         </Button>
       }
     />

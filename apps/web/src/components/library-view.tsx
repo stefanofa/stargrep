@@ -106,7 +106,7 @@ function LanguagesTile({
             />
           }
         >
-          All
+          all
         </Chip>
         {shares === undefined && waitingChips.map((width) => <Skeleton key={width} className={`h-9 ${width}`} />)}
         {(shares ?? []).slice(0, 3).map((share) => (
@@ -231,7 +231,7 @@ export function LibraryView({
       })}
       {visible.length > shown && (
         <Button variant="ghost" size="lg" className="self-center" onClick={() => setShown((count) => count + pageSize)}>
-          Show more
+          show more
         </Button>
       )}
     </>

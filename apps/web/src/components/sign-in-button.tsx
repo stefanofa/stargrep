@@ -4,7 +4,7 @@ import { signIn } from "../lib/auth-client.ts";
 import { GitHubMark } from "./github-mark.tsx";
 
 export function SignInButton({
-  label = "Sign in with GitHub",
+  label = "sign in with GitHub",
   markClassName,
   ...props
 }: { label?: ReactNode; markClassName?: string } & Pick<

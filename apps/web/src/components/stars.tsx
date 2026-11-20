@@ -73,7 +73,7 @@ export function HeaderControls({ viewer, star }: { viewer: Viewer; star: ReactNo
           activeOptions={{ exact: true, includeSearch: false }}
           className="flex h-9 items-center rounded-full px-[18px] font-sans text-meta font-medium text-muted-foreground transition-[color,background-color] duration-120 hover:text-foreground aria-[current=page]:bg-accent aria-[current=page]:font-semibold aria-[current=page]:text-ink"
         >
-          Your stars
+          your stars
         </Link>
       </nav>
       <HeaderEnd star={star} account={<AccountMenu login={viewer.login} avatarUrl={viewer.avatarUrl} />} />
@@ -328,7 +328,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
                 disabled={retrying}
                 onClick={tryAgain[current.retry]}
               >
-                Try again
+                try again
               </Button>
             )}
           </EmptyTile>

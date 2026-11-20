@@ -89,7 +89,7 @@ function Address({ path }: { path: string }) {
 function Pitch() {
   return (
     <div style={{ display: "flex", fontFamily: "Fredoka", fontSize: 62, lineHeight: 1.08, letterSpacing: -1.2 }}>
-      search anyone's starred github repos in plain words
+      search anyone's starred GitHub repos in plain words
     </div>
   );
 }

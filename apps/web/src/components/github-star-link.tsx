@@ -15,7 +15,7 @@ export function GitHubStarLink({ stars }: { stars: number | null }) {
       href={stargrepRepoUrl}
       target="_blank"
       rel="noopener"
-      aria-label="star stargrep on github"
+      aria-label="star stargrep on GitHub"
       onClick={() => capture("github_star_clicked")}
       className={buttonVariants({ variant: "ghost", className: "max-sm:px-3" })}
     >

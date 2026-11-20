@@ -483,8 +483,8 @@ const troubleCopy = (trouble: Trouble, owner: string, whose: Whose): TroubleCopy
   switch (trouble) {
     case "missing":
       return {
-        status: { icon: "failed", label: "no such github user" },
-        heading: `github has no one called @${owner}`,
+        status: { icon: "failed", label: "no such GitHub user" },
+        heading: `GitHub has no one called @${owner}`,
         detail: "check the spelling, or pick someone else from the pill.",
         pose: "unsure",
         retry: undefined,
@@ -507,8 +507,8 @@ const troubleCopy = (trouble: Trouble, owner: string, whose: Whose): TroubleCopy
       };
     case "unavailable":
       return {
-        status: { icon: "failed", label: "couldn't reach github" },
-        heading: "stargrep couldn't reach github just now",
+        status: { icon: "failed", label: "couldn't reach GitHub" },
+        heading: "stargrep couldn't reach GitHub just now",
         detail: `${theirs(whose)} can import once it answers. try again in a moment.`,
         pose: "unsure",
         retry: "sync",
@@ -552,9 +552,9 @@ const heroCopy = (stage: Stage, troubled: boolean, owner: Owner): HeroCopy => {
   if (stage.name === "importing") {
     const progress = stage.total === null ? 0 : stage.done / Math.max(1, stage.total);
     const rest = {
-      "not-asked": " is new here. their stars are ready to import from github, and search covers them as they land.",
-      "in-line": " is new here and waits in line for github. search covers their stars as they land.",
-      running: " is new here. their stars are on the way from github, and search covers the ones that landed.",
+      "not-asked": " is new here. their stars are ready to import from GitHub, and search covers them as they land.",
+      "in-line": " is new here and waits in line for GitHub. search covers their stars as they land.",
+      running: " is new here. their stars are on the way from GitHub, and search covers the ones that landed.",
     }[stage.phase.kind];
     return { subtitle: [mention, rest], butter: { kind: "claim", progress } };
   }

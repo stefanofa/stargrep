@@ -22,7 +22,7 @@ afterEach(() => {
   captured.length = 0;
 });
 
-const link = () => screen.getByRole("link", { name: "star stargrep on github" });
+const link = () => screen.getByRole("link", { name: "star stargrep on GitHub" });
 
 describe("the header's star on github link", () => {
   test("opens Stargrep's repo in a new tab, with the count the server read", () => {

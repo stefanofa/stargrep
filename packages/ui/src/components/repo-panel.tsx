@@ -147,7 +147,7 @@ export function RepoPanel({
                 rel="noopener noreferrer"
                 className={buttonVariants({ size: "lg", className: "mt-auto" })}
               >
-                Open on GitHub
+                open on GitHub
                 <ExternalIcon />
               </a>
             </>

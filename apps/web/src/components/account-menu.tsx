@@ -53,7 +53,7 @@ export function AccountMenu({ login, avatarUrl }: { login: string; avatarUrl: st
               }}
               className="flex h-9 items-center rounded-item px-3 outline-none data-highlighted:bg-muted"
             >
-              Sign out
+              sign out
             </Menu.Item>
           </Menu.Popup>
         </Menu.Positioner>

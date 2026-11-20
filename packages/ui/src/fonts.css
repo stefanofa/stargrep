@@ -35,8 +35,8 @@
   font-style: normal;
   font-weight: 600;
   src: local("Arial Bold"), local("Arial-BoldMT"), local("Liberation Sans Bold"), local("LiberationSans-Bold");
-  size-adjust: 94.13%;
-  ascent-override: 103.47%;
+  size-adjust: 94.15%;
+  ascent-override: 103.45%;
   descent-override: 25.07%;
   line-gap-override: 0.00%;
 }
@@ -46,9 +46,9 @@
   font-style: normal;
   font-weight: 400;
   src: local("Arial"), local("ArialMT"), local("Liberation Sans"), local("LiberationSans");
-  size-adjust: 106.67%;
-  ascent-override: 90.82%;
-  descent-override: 22.61%;
+  size-adjust: 106.75%;
+  ascent-override: 90.75%;
+  descent-override: 22.60%;
   line-gap-override: 0.00%;
 }
 
@@ -57,9 +57,9 @@
   font-style: normal;
   font-weight: 500;
   src: local("Arial"), local("ArialMT"), local("Liberation Sans"), local("LiberationSans");
-  size-adjust: 107.90%;
-  ascent-override: 89.79%;
-  descent-override: 22.36%;
+  size-adjust: 107.98%;
+  ascent-override: 89.72%;
+  descent-override: 22.34%;
   line-gap-override: 0.00%;
 }
 

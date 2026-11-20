@@ -43,11 +43,11 @@ export const baseFontsInstalled =
 // Width is averaged over text each family sets in the app, weighted by how often each character appears in it.
 // Fredoka sets the headings and the wordmark, Inter everything else.
 const display =
-  "search anyone's starred github repos in plain words. stargrep. sign in to search your stars. languages. stars. " +
+  "search anyone's starred GitHub repos in plain words. stargrep. sign in to search your stars. languages. stars. " +
   "stargrep couldn't load your account. stargrep couldn't load your stars. nothing matches that. " +
-  "you said no to github. sign-in didn't finish.";
+  "you said no to GitHub. sign-in didn't finish.";
 const body =
-  "the rust library for terminal dashboards i starred last year. Sign in with GitHub. Your stars. " +
+  "the rust library for terminal dashboards i starred last year. sign in with GitHub. your stars. " +
   "Recently starred, 36 stars, september 2026, 18.5k. try again in a moment. " +
   "ratatui/ratatui Widgets for charts, gauges, sparklines, and tables. The maintained fork of tui-rs. " +
   "A system monitor dashboard for the terminal. Rust 22% Go 19% TypeScript 19% other 39%. pushed 2 days ago";

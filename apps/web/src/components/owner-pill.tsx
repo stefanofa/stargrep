@@ -92,7 +92,7 @@ export function OwnerPill({ audience, config }: { audience: Audience; config: Pu
                   id={field}
                   value={typed}
                   onChange={(event) => setTyped(event.target.value)}
-                  placeholder="github username"
+                  placeholder="GitHub username"
                   autoComplete="off"
                   autoCapitalize="none"
                   spellCheck={false}

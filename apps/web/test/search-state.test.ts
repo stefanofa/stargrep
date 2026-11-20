@@ -563,7 +563,7 @@ describe("the hero above a visitor's search", () => {
 
   test("asks whether the visitor is the owner while their stars import, with the import's progress", () => {
     expect(hero(importingFor())).toEqual({
-      subtitle: [octo, " is new here. their stars are on the way from github, and search covers the ones that landed."],
+      subtitle: [octo, " is new here. their stars are on the way from GitHub, and search covers the ones that landed."],
       butter: { kind: "claim", progress: 0.5 },
     });
   });
@@ -572,7 +572,7 @@ describe("the hero above a visitor's search", () => {
     expect(hero(importingFor({ done: 0, total: null, phase: { kind: "not-asked" } }))).toEqual({
       subtitle: [
         octo,
-        " is new here. their stars are ready to import from github, and search covers them as they land.",
+        " is new here. their stars are ready to import from GitHub, and search covers them as they land.",
       ],
       butter: { kind: "claim", progress: 0 },
     });
@@ -582,7 +582,7 @@ describe("the hero above a visitor's search", () => {
     const waiting = importingFor({ done: 0, phase: { kind: "in-line", ahead: 3, startsAt: "2026-11-06T12:00:00Z" } });
     expect(hero(waiting)?.subtitle).toEqual([
       octo,
-      " is new here and waits in line for github. search covers their stars as they land.",
+      " is new here and waits in line for GitHub. search covers their stars as they land.",
     ]);
   });
 
@@ -627,7 +627,7 @@ describe("a page in trouble", () => {
     expect(troubleBody("load-failed").heading).toBe("stargrep couldn't load @octo's stars");
     expect(troubleBody("load-failed", { audience: ownPage }).heading).toBe("stargrep couldn't load your stars");
     expect(troubleBody("missing", { audience: anyone({ login: "nobody-x" }) }).heading).toBe(
-      "github has no one called @nobody-x",
+      "GitHub has no one called @nobody-x",
     );
   });
 });
