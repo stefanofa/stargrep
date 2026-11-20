@@ -258,6 +258,20 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(mark()).toBe("idle"));
   });
 
+  test("the language filter marks only the chosen language current", async () => {
+    const user = userEvent.setup();
+    await open("/", "Search your stars", false);
+    const filter = await waitFor(() => page().getByRole("navigation", { name: "Filter by language" }));
+    const current = () =>
+      within(filter)
+        .getAllByRole("link")
+        .filter((link) => link.getAttribute("aria-current") === "page")
+        .map((link) => link.textContent);
+    await waitFor(() => expect(current()).toEqual(["All"]));
+    await user.click(within(filter).getByRole("link", { name: /^Rust/ }));
+    await waitFor(() => expect(current()).toEqual(["Rust 100%"]));
+  });
+
   test("importing: real counts on the strip and the rail, and placeholders where stars will land", async () => {
     server.viewer = { ...server.viewer, starredCount: 10 };
     server.status = status({ state: "queued", syncedAt: null, enrichment: arriving });
@@ -880,7 +894,7 @@ describe("the search page in each state", () => {
     const hero = owner.closest("section") as HTMLElement;
     expect(shownAt(hero, "phone")).toContain("live results from @stefanofa, our demo account. try any username.");
     expect(shownAt(hero, "phone")).toContain("github.com/");
-    expect(within(hero).getByRole("textbox", { name: "GitHub username" })).toBeTruthy();
+    expect(within(hero).getByRole("textbox", { name: "github.com/ username" })).toBeTruthy();
     expect([owner.getAttribute("href"), owner.getAttribute("target")]).toEqual([
       "https://github.com/stefanofa",
       "_blank",
@@ -898,18 +912,18 @@ describe("the search page in each state", () => {
     const user = userEvent.setup();
     server.signedIn = false;
     const router = await open("/", "Search @stefanofa's stars");
-    await user.type(page().getByRole("textbox", { name: "GitHub username" }), " @octodone ");
+    await user.type(page().getByRole("textbox", { name: "github.com/ username" }), " @octodone ");
     await user.click(within(page().getByRole("form", { name: "Whose stars" })).getByRole("button", { name: "go" }));
     await page().findByRole("searchbox", { name: "Search @octodone's stars" });
     expect(router.state.location.pathname).toBe("/octodone");
-    expect((page().getByRole("textbox", { name: "GitHub username" }) as HTMLInputElement).value).toBe("");
+    expect((page().getByRole("textbox", { name: "github.com/ username" }) as HTMLInputElement).value).toBe("");
   });
 
   test("the hero's username field stays put on something GitHub could not call a login", async () => {
     const user = userEvent.setup();
     server.signedIn = false;
     const router = await open("/", "Search @stefanofa's stars");
-    await user.type(page().getByRole("textbox", { name: "GitHub username" }), "not a login");
+    await user.type(page().getByRole("textbox", { name: "github.com/ username" }), "not a login");
     await user.click(within(page().getByRole("form", { name: "Whose stars" })).getByRole("button", { name: "go" }));
     expect(router.state.location.pathname).toBe("/");
     expect(page().getByRole("searchbox", { name: "Search @stefanofa's stars" })).toBeTruthy();

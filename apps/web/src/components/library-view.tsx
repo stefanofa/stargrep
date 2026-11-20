@@ -98,7 +98,13 @@ function LanguagesTile({
       <nav aria-label="Filter by language" className="flex flex-wrap gap-2">
         <Chip
           active={language === undefined}
-          render={<Link to="." search={(previous) => ({ ...previous, lang: undefined })} />}
+          render={
+            <Link
+              to="."
+              search={(previous) => ({ ...previous, lang: undefined })}
+              activeOptions={{ explicitUndefined: true }}
+            />
+          }
         >
           All
         </Chip>
