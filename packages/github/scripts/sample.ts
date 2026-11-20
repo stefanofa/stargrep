@@ -115,7 +115,7 @@ const syncStars = Effect.fn("sample.syncStars")(function* (login: Login) {
 
 const showFacts = Effect.fn("sample.showFacts")(function* (stars: ReadonlyArray<Star>) {
   const github = yield* GitHub.GitHub;
-  const facts = yield* github.repoFacts(stars.map((star) => star.repo.nodeId));
+  const { facts } = yield* github.repoFacts(stars.map((star) => star.repo.nodeId));
   yield* Console.log(`facts: ${facts.length} of ${stars.length} repos`);
   for (const fact of facts) {
     yield* Console.log(
@@ -127,7 +127,7 @@ const showFacts = Effect.fn("sample.showFacts")(function* (stars: ReadonlyArray<
 
 const showReadme = Effect.fn("sample.showReadme")(function* (stars: ReadonlyArray<Star>) {
   const github = yield* GitHub.GitHub;
-  const facts = yield* github.repoFacts(stars.map((star) => star.repo.nodeId));
+  const { facts } = yield* github.repoFacts(stars.map((star) => star.repo.nodeId));
   const fact = facts.find((candidate) => candidate.readme !== null);
   if (fact?.readme == null) return yield* Console.log("readme: none of these repos has a README");
   const before = requests.length;

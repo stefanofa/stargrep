@@ -630,6 +630,23 @@ import * as EnrichRetry from "./enrich-retry.ts";
       }),
     );
 
+    it.effect(
+      "fails and counts only the repo whose GitHub facts the decoder refuses, and enriches its batch-mates",
+      () =>
+        Effect.gen(function* () {
+          const numbers = [880, 881, 882];
+          for (const n of numbers) f.remotes.set(n, { description: `Starred ${n}`, unkeyed: n === 881 });
+          const outcomes = yield* (yield* EnrichRepo.EnrichRepo).enrichRepos(yield* f.store(numbers));
+          expect(outcomes.map((outcome): [number, string] => [outcome.id, outcome._tag])).toEqual([
+            [880, "Summarized"],
+            [881, "Failed"],
+            [882, "Summarized"],
+          ]);
+          expect(outcomes[1]).toMatchObject({ error: { _tag: "GitHubResponseInvalid", reason: "schema-mismatch" } });
+          expect(yield* f.failuresOf(881)).toEqual([{ enrich_failures: 1 }]);
+        }),
+    );
+
     it.effect("counts a failure each time GitHub forbids a repo, and clears the count once the repo is read", () =>
       Effect.gen(function* () {
         f.remotes.set(240, { description: "Private now", forbidden: true });
@@ -969,7 +986,7 @@ import * as EnrichRetry from "./enrich-retry.ts";
       Effect.gen(function* () {
         const ids = yield* f.store([260]);
         const slowGitHub = Layer.mock(GitHub.GitHub, {
-          repoFacts: () => Effect.sleep("15 minutes").pipe(Effect.as([])),
+          repoFacts: () => Effect.sleep("15 minutes").pipe(Effect.as({ facts: [], invalid: [] })),
         });
         yield* TestClock.setTime(Date.parse("2026-11-07T12:00:00Z"));
         const fiber = yield* Effect.forkChild(

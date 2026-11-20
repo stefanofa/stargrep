@@ -107,7 +107,9 @@ export const outcomes = [
   "saved",
   // Its answer is kept as history only, because its README or inputs moved on while the batch was open.
   "stale",
-  // Its answer failed and is settled: counted against the repo, capped for a refusal, or its lease given back.
+  // Its answer failed and is settled: counted against the repo, capped for a refusal, or its lease given back. Or GitHub
+  // sent its facts in a shape the decoder refuses or left them unanswered even alone, so it was never asked, and a rerun
+  // reads it again.
   "failed",
   // It still holds its manifest's lease, so the next run resumes it.
   "waiting",
@@ -898,25 +900,43 @@ const make = Effect.gen(function* () {
     });
 
     // GitHub facts for a chunk: by node ID where Stargrep knows it, and by name otherwise or when the node is gone or
-    // private.
+    // private. A repo whose facts GitHub sent in a shape the decoder refuses, or left unanswered even alone, fails alone,
+    // and its chunk goes on without it.
     const resolve = Effect.fn("Prefill.resolve")(function* (refs: ReadonlyArray<GitHub.ArchiveRef>) {
       const known = new Map((yield* db.repos.getMany(refs.map((ref) => ref.id))).map((row) => [row.id, row.nodeId]));
       const nodeIds = refs.flatMap((ref) => {
         const nodeId = known.get(ref.id);
         return nodeId === undefined || nodeId === null ? [] : [nodeId];
       });
-      const byNode = nodeIds.length === 0 ? [] : yield* github.repoFacts(nodeIds).pipe(Effect.retry(budgetRetry));
-      const found = new Set<number>(byNode.map((facts) => facts.id));
+      const byNode =
+        nodeIds.length === 0
+          ? { facts: [], invalid: [] }
+          : yield* github.repoFacts(nodeIds).pipe(Effect.retry(budgetRetry));
+      const invalidNodes = new Set<string>(byNode.invalid);
+      const invalidByNode = refs.flatMap((ref): Array<GitHub.Unresolved> => {
+        const nodeId = known.get(ref.id);
+        return nodeId !== undefined && nodeId !== null && invalidNodes.has(nodeId)
+          ? [{ id: ref.id, reason: "invalid" }]
+          : [];
+      });
+      // A repo read by name too would come back in the same shape.
+      const settled = new Set<number>([...byNode.facts, ...invalidByNode].map((entry) => entry.id));
       const byName = yield* github
-        .resolveRepos(refs.filter((ref) => !found.has(ref.id)))
+        .resolveRepos(refs.filter((ref) => !settled.has(ref.id)))
         .pipe(Effect.retry(budgetRetry));
-      unresolved.push(...byName.unresolved.filter((entry) => !seen.has(entry.id)));
+      const missed = [...invalidByNode, ...byName.unresolved].filter((entry) => !seen.has(entry.id));
+      unresolved.push(...missed);
+      const invalid = missed.filter((entry) => entry.reason === "invalid").map((entry) => entry.id);
+      if (invalid.length > 0) {
+        yield* Effect.logWarning("Prefill skipped repos GitHub sent no usable facts for", { repoIds: invalid });
+      }
+      mark(invalid, "failed");
       mark(
-        byName.unresolved.map((entry) => entry.id),
+        missed.map((entry) => entry.id),
         "unresolved",
       );
       const asked = new Set<number>(refs.map((ref) => ref.id));
-      return [...byNode.filter((facts) => asked.has(facts.id)), ...byName.facts];
+      return [...byNode.facts.filter((facts) => asked.has(facts.id)), ...byName.facts];
     });
 
     // Saves the chunk's facts and takes the lease of every repo due, then writes the manifest, in one transaction, so a

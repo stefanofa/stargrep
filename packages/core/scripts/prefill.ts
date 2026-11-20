@@ -202,7 +202,11 @@ const runPrefill = Effect.fn("prefill.runPrefill")(function* (
       `direct calls: input ${tokens.input} (${tokens.cacheRead} read from cache, ${tokens.cacheWrite} written to it), output ${tokens.output} (${tokens.reasoning} thinking), per saved repo input ${perSaved(tokens.input)}, output ${perSaved(tokens.output)}, and thinking ${perSaved(tokens.reasoning)}`,
     );
     for (const stuck of report.manifests.stuck) yield* Console.log(`stuck manifest ${stuck.id}: ${remedy(stuck)}`);
-    for (const { id, reason } of report.unresolved.slice(0, 20)) yield* Console.log(`unresolved: ${id} ${reason}`);
+    // Every repo whose facts did not decode is named, since a rerun reads each again.
+    const invalid = report.unresolved.filter((entry) => entry.reason === "invalid");
+    for (const { id } of invalid) yield* Console.log(`failed: ${id} GitHub sent no facts for it that decode`);
+    const rest = report.unresolved.filter((entry) => entry.reason !== "invalid");
+    for (const { id, reason } of rest.slice(0, 20)) yield* Console.log(`unresolved: ${id} ${reason}`);
     yield* Console.log(
       `statements: ${statements.reduce((total, [, count]) => total + count, 0)} (${statements.map(([name, count]) => `${name.slice(3)} ${count}`).join(", ")})`,
     );

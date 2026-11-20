@@ -60,6 +60,8 @@ const fixture = () => {
   );
 
   const remoteReadmes = new Map<number, { readonly oid: ObjectId; readonly logo: string }>();
+  // Repos GitHub sends with a null databaseId, which its schema allows and no repo row can be keyed by.
+  const unkeyed = new Set<number>();
   const github = GitHubFake.layer((sent) => {
     if (sent.url.pathname !== "/graphql") return { status: 500 };
     const ids: ReadonlyArray<string> = JSON.parse(sent.body ?? "{}").variables.ids;
@@ -72,7 +74,7 @@ const fixture = () => {
             return n % 7 === 0
               ? null
               : {
-                  databaseId: n,
+                  databaseId: unkeyed.has(n) ? null : n,
                   id: nodeId,
                   name: `kit-${n}`,
                   owner: {
@@ -162,6 +164,7 @@ const fixture = () => {
     normalized,
     normalizer,
     remoteReadmes,
+    unkeyed,
     github,
     queue,
     store,
@@ -513,6 +516,26 @@ const fixture = () => {
 
         yield* db.repos.saveIcon({ id: idOf(2003), icon: { ...icon, key: Keys.gitKey(oid("b")) } });
         expect(yield* startAt(2002)).toEqual({ queued: 0, next: null });
+      }),
+    );
+
+    it.effect("keeps the icon of a repo whose GitHub facts the decoder refuses, and queues its page-mates", () =>
+      Effect.gen(function* () {
+        yield* f.seed([5001, 5002]);
+        f.unkeyed.add(5001);
+        const db = yield* Db.Db;
+        const icon = { key: Keys.gitKey(oid("e")), source: "repo-file", plate: "none", size: 64 } as const;
+        yield* db.repos.saveIcon({ id: idOf(5001), icon });
+        yield* (yield* TestDatabase.TestDatabase).query(
+          "update repos set icon_checked_at = now() - interval '40 days' where id = $1",
+          [idOf(5001)],
+        );
+
+        expect(yield* startAt(5000)).toEqual({ queued: 1, next: null });
+        expect(f.queue.sent).toEqual([f.request(5002, { homepage: "https://kit.dev" })]);
+        expect((yield* f.stored(idOf(5001))).icon).toEqual(icon);
+        yield* db.repos.markIconChecked(idOf(5001));
+        yield* db.repos.markIconChecked(idOf(5002));
       }),
     );
 

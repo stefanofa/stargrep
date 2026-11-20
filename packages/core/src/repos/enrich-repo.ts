@@ -7,7 +7,7 @@ import * as Analytics from "@stargrep/analytics/analytics";
 import * as Db from "@stargrep/db";
 import { Embedding, type EmbeddingModelMismatch } from "@stargrep/db/embedding";
 import type { DbQueryFailed, DbRowInvalid, RepoNotFound } from "@stargrep/db/errors";
-import { type GitHubError, isPermanent } from "@stargrep/github/errors";
+import { type GitHubError, GitHubResponseInvalid, isPermanent } from "@stargrep/github/errors";
 import * as GitHub from "@stargrep/github/github";
 import type { ObjectId, RepoFacts, RepoId } from "@stargrep/github/schemas";
 import type { InputHash } from "@stargrep/knowledge/ids";
@@ -253,6 +253,15 @@ const jobOf = ({ summary, ...job }: Planned, readme: ReadmeRead | undefined): St
       }),
   });
 
+// The error a repo fails with when GitHub sent its facts in a shape the decoder refuses, or left them unanswered even
+// alone. It is the repo's own, so it counts toward the failure cap, and its batch-mates go on.
+const factsInvalid = new GitHubResponseInvalid({
+  operation: "repo-facts",
+  method: "POST",
+  path: "/graphql",
+  reason: "schema-mismatch",
+});
+
 const guarded = <A, E>(id: RepoId, save: Effect.Effect<boolean, E | RepoNotFound>, saved: A) =>
   save.pipe(
     Effect.map((applied): Step<A> => (applied ? Result.succeed(saved) : Result.fail(Enrichment.Stale({ id })))),
@@ -338,8 +347,9 @@ const make = Effect.gen(function* () {
       return Result.succeed({ ...row, nodeId: row.nodeId });
     });
     const nodeIds = located.flatMap((step) => (Result.isSuccess(step) ? [step.success.nodeId] : []));
-    const facts = nodeIds.length === 0 ? [] : yield* github.repoFacts(nodeIds);
+    const { facts, invalid } = nodeIds.length === 0 ? { facts: [], invalid: [] } : yield* github.repoFacts(nodeIds);
     const factsById = new Map<number, RepoFacts>(facts.map((entry) => [entry.id, entry]));
+    const invalidNodes = new Set<string>(invalid);
     // planOne saves the new README ID and homepage, so the icon work is decided from the rows as they were. A failed
     // send only logs, because the icon backfill later checks a never-checked icon and the 30-day refresh a changed one.
     yield* icons
@@ -362,7 +372,9 @@ const make = Effect.gen(function* () {
       (step) =>
         Result.isFailure(step)
           ? Effect.succeed(Result.fail(step.failure))
-          : planOne(step.success, factsById.get(step.success.id)),
+          : invalidNodes.has(step.success.nodeId)
+            ? Effect.succeed(Result.fail(Enrichment.Failed({ id: step.success.id, error: factsInvalid })))
+            : planOne(step.success, factsById.get(step.success.id)),
       { concurrency: planConcurrency },
     );
     // Every README the due summaries need is read at once, so GraphQL can read them in batches.

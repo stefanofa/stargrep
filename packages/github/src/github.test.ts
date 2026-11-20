@@ -19,7 +19,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { blobOid } from "./blob-oid.ts";
 import * as Fake from "./github.fixture.ts";
 import * as GitHub from "./github.ts";
-import { type BudgetShare, Login, ObjectId, RepoId, RepoName, type RepoNodeId } from "./schemas.ts";
+import { type BudgetShare, Login, ObjectId, RepoId, RepoName, RepoNodeId } from "./schemas.ts";
 import * as StarList from "./star-list.ts";
 
 const login = "octocat" as Login;
@@ -452,7 +452,7 @@ describe("repoFacts", () => {
     return Effect.gen(function* () {
       const github = yield* GitHub.GitHub;
       const ids = Array.from({ length: 60 }, (_, i) => `R_${i + 1}` as RepoNodeId);
-      const facts = yield* github.repoFacts(ids);
+      const { facts } = yield* github.repoFacts(ids);
       expect(fake.sent.map((sent) => graphqlIds(sent).length)).toEqual([25, 25, 10]);
       expect(fake.sent[0]?.url.pathname).toBe("/graphql");
       expect(facts).toHaveLength(59);
@@ -498,7 +498,7 @@ describe("repoFacts", () => {
     const capture = Logger.layer([Logger.make(({ message }) => logs.push(message))]);
     return Effect.gen(function* () {
       const github = yield* GitHub.GitHub;
-      const facts = yield* github.repoFacts(Array.from({ length: 25 }, (_, i) => `R_${i + 1}` as RepoNodeId));
+      const { facts } = yield* github.repoFacts(Array.from({ length: 25 }, (_, i) => `R_${i + 1}` as RepoNodeId));
       expect(facts.map((fact): number => fact.id)).toEqual(
         Array.from({ length: 25 }, (_, i) => i + 1).filter((n) => n !== 5 && n !== 9),
       );
@@ -518,7 +518,7 @@ describe("repoFacts", () => {
     const capture = Logger.layer([Logger.make(({ message }) => logs.push(message))]);
     return Effect.gen(function* () {
       const github = yield* GitHub.GitHub;
-      const facts = yield* github.repoFacts(["R_1", "R_2", "R_3"].map((id) => id as RepoNodeId));
+      const { facts } = yield* github.repoFacts(["R_1", "R_2", "R_3"].map((id) => id as RepoNodeId));
       expect(facts.map((fact): number => fact.id)).toEqual([1, 3]);
       expect(logs).toContainEqual(["GitHub forbade repos to the token", { nodeIds: ["R_2"] }]);
     }).pipe(Effect.provide(Layer.merge(fake.layer, capture)));
@@ -534,8 +534,136 @@ describe("repoFacts", () => {
     }));
     return Effect.gen(function* () {
       const github = yield* GitHub.GitHub;
-      const facts = yield* github.repoFacts(Array.from({ length: 6 }, (_, i) => `R_${i + 1}` as RepoNodeId));
+      const { facts } = yield* github.repoFacts(Array.from({ length: 6 }, (_, i) => `R_${i + 1}` as RepoNodeId));
       expect(facts.map((fact): number => fact.id)).toEqual([1, 2, 3, 4, 5, 6]);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("reads the topics and tree entries GitHub's schema lets be null as none", () => {
+    const fake = Fake.layer(() => ({
+      headers: Fake.rateLimitHeaders(4000, 3600, "graphql"),
+      body: {
+        data: {
+          nodes: [
+            { ...node(1), repositoryTopics: { nodes: null }, root: { entries: null } },
+            { ...node(2), repositoryTopics: { nodes: [null, { topic: { name: "effect" } }] } },
+          ],
+        },
+      },
+    }));
+    return Effect.gen(function* () {
+      const github = yield* GitHub.GitHub;
+      const { facts, invalid } = yield* github.repoFacts(["R_1", "R_2"].map((id) => id as RepoNodeId));
+      expect(facts.map((fact) => ({ id: Number(fact.id), topics: fact.topics, readme: fact.readme?.name }))).toEqual([
+        { id: 1, topics: [], readme: undefined },
+        { id: 2, topics: ["effect"], readme: "readme.md" },
+      ]);
+      expect(invalid).toEqual([]);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("keeps the rest of a batch when GitHub sends one repo in a shape the decoder refuses", () => {
+    const fake = Fake.layer((sent) => ({
+      headers: Fake.rateLimitHeaders(4000, 3600, "graphql"),
+      body: {
+        data: {
+          nodes: graphqlIds(sent).map((id) =>
+            id === "R_2" ? { ...node(2), databaseId: null } : node(Number(id.slice(2))),
+          ),
+        },
+      },
+    }));
+    const logs: Array<unknown> = [];
+    const capture = Logger.layer([Logger.make(({ message }) => logs.push(message))]);
+    return Effect.gen(function* () {
+      const github = yield* GitHub.GitHub;
+      const { facts, invalid } = yield* github.repoFacts(["R_1", "R_2", "R_3"].map((id) => id as RepoNodeId));
+      expect(facts.map((fact): number => fact.id)).toEqual([1, 3]);
+      expect(invalid).toEqual([RepoNodeId.make("R_2")]);
+      expect(logs).toContainEqual([
+        "GitHub sent repo facts the decoder refuses",
+        { repo: "R_2", issue: expect.stringContaining("databaseId") },
+      ]);
+    }).pipe(Effect.provide(Layer.merge(fake.layer, capture)));
+  });
+
+  effect("fails the batch with GitHub's error, not a schema mismatch, when a field error nulls a field", () => {
+    const fake = Fake.layer(() => ({
+      headers: Fake.rateLimitHeaders(4000, 3600, "graphql"),
+      body: {
+        data: { nodes: [{ ...node(1), repositoryTopics: null }] },
+        errors: [{ type: "SERVICE_UNAVAILABLE", path: ["nodes", 0, "repositoryTopics"], message: "try again" }],
+      },
+    }));
+    return Effect.gen(function* () {
+      const github = yield* GitHub.GitHub;
+      const error = yield* Effect.flip(github.repoFacts(["R_1" as RepoNodeId]));
+      expect(error).toMatchObject({ _tag: "GitHubRequestFailed", reason: "graphql-errors" });
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  // GitHub cuts a query off at 10 s. A batch holding archlinux/svntogit-community, whose root tree lists 9,426 entries,
+  // came back as a 200 with an empty body.
+  const cutOffWith = (heavy: ReadonlyArray<string>, alone: boolean) =>
+    Fake.layer((sent) => {
+      const ids = graphqlIds(sent);
+      return ids.some((id) => heavy.includes(id)) && (ids.length > 1 || !alone)
+        ? { headers: Fake.rateLimitHeaders(4000, 3600, "graphql"), body: "" }
+        : {
+            headers: Fake.rateLimitHeaders(4000, 3600, "graphql"),
+            body: { data: { nodes: ids.map((id) => node(Number(id.slice(2)))) } },
+          };
+    });
+
+  effect("reads a batch GitHub cut off again in halves until the slow repo is read alone", () => {
+    const fake = cutOffWith(["R_2"], true);
+    return Effect.gen(function* () {
+      const github = yield* GitHub.GitHub;
+      const { facts, invalid } = yield* github.repoFacts(["R_1", "R_2", "R_3"].map((id) => id as RepoNodeId));
+      expect(facts.map((fact): number => fact.id)).toEqual([1, 2, 3]);
+      expect(invalid).toEqual([]);
+      expect(fake.sent.map((sent) => graphqlIds(sent))).toEqual([
+        ["R_1", "R_2", "R_3"],
+        ["R_1", "R_2"],
+        ["R_3"],
+        ["R_1"],
+        ["R_2"],
+      ]);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("returns a repo GitHub cuts off even alone as invalid, and keeps the rest of its batch", () => {
+    const fake = cutOffWith(["R_2"], false);
+    const logs: Array<unknown> = [];
+    const capture = Logger.layer([Logger.make(({ message }) => logs.push(message))]);
+    return Effect.gen(function* () {
+      const github = yield* GitHub.GitHub;
+      const { facts, invalid } = yield* github.repoFacts(["R_1", "R_2", "R_3", "R_4"].map((id) => id as RepoNodeId));
+      expect(facts.map((fact): number => fact.id)).toEqual([1, 3, 4]);
+      expect(invalid).toEqual([RepoNodeId.make("R_2")]);
+      expect(logs).toContainEqual([
+        "GitHub left a repo's facts unanswered even alone",
+        { repo: "R_2", error: expect.stringContaining("unreadable-body") },
+      ]);
+    }).pipe(Effect.provide(Layer.merge(fake.layer, capture)));
+  });
+
+  effect("fails when both halves of a cut-off batch are cut off too, after three reads", () => {
+    const fake = cutOffWith(["R_1", "R_2", "R_3", "R_4"], false);
+    return Effect.gen(function* () {
+      const github = yield* GitHub.GitHub;
+      const error = yield* Effect.flip(github.repoFacts(["R_1", "R_2", "R_3", "R_4"].map((id) => id as RepoNodeId)));
+      expect(error).toMatchObject({ _tag: "GitHubResponseInvalid", reason: "unreadable-body" });
+      expect(fake.sent).toHaveLength(3);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("fails a one-repo read GitHub cut off rather than call the repo invalid", () => {
+    const fake = cutOffWith(["R_1"], false);
+    return Effect.gen(function* () {
+      const github = yield* GitHub.GitHub;
+      const error = yield* Effect.flip(github.repoFacts(["R_1" as RepoNodeId]));
+      expect(error).toMatchObject({ _tag: "GitHubResponseInvalid", reason: "unreadable-body" });
     }).pipe(Effect.provide(fake.layer));
   });
 
@@ -570,7 +698,7 @@ describe("repoFacts", () => {
       const github = yield* GitHub.GitHub;
       const fiber = yield* Effect.forkChild(github.repoFacts(["R_1" as RepoNodeId]));
       yield* TestClock.adjust("10 seconds");
-      expect(yield* Fiber.join(fiber)).toHaveLength(1);
+      expect((yield* Fiber.join(fiber)).facts).toHaveLength(1);
       expect(fake.sent).toHaveLength(2);
     }).pipe(Effect.provide(fake.layer));
   });
@@ -599,6 +727,7 @@ describe("resolveRepos", () => {
           const n = Number(name.slice("repo-".length));
           if (n === 7 || n === 8) return [`r${index}`, null];
           if (n === 31) return [`r${index}`, { ...node(31), isPrivate: true }];
+          if (n === 33) return [`r${index}`, { ...node(33), owner: null }];
           return [`r${index}`, n === 30 ? { ...node(30), databaseId: 99_030 } : node(n)];
         }),
       );
@@ -615,7 +744,7 @@ describe("resolveRepos", () => {
       const { facts, unresolved } = yield* github.resolveRepos(Array.from({ length: 40 }, (_, i) => archiveRef(i + 1)));
       expect(fake.sent.map((sent) => resolvedNames(sent).length)).toEqual([25, 15]);
       expect(facts.map((fact): number => fact.id)).toEqual(
-        Array.from({ length: 40 }, (_, i) => i + 1).filter((n) => ![7, 8, 30, 31].includes(n)),
+        Array.from({ length: 40 }, (_, i) => i + 1).filter((n) => ![7, 8, 30, 31, 33].includes(n)),
       );
       expect(facts[0]).toMatchObject({ id: 1, nodeId: "R_1", owner: "owner", name: "repo-1" });
       expect(unresolved.map(({ id, reason }) => [Number(id), reason])).toEqual([
@@ -623,6 +752,7 @@ describe("resolveRepos", () => {
         [8, "forbidden"],
         [30, "other-repo"],
         [31, "forbidden"],
+        [33, "invalid"],
       ]);
     }).pipe(Effect.provide(fake.layer));
   });
@@ -950,7 +1080,7 @@ describe("reply boundaries", () => {
       const github = yield* GitHub.GitHub;
       const fiber = yield* Effect.forkChild(github.repoFacts(["R_1" as RepoNodeId]));
       yield* TestClock.adjust("1 minute");
-      expect(yield* Fiber.join(fiber)).toEqual([]);
+      expect(yield* Fiber.join(fiber)).toEqual({ facts: [], invalid: [] });
       expect(fake.sent.map((sent) => sent.startedAt)).toEqual([0, 5_000]);
     }).pipe(Effect.provide(fake.layer));
   });
