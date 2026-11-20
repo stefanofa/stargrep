@@ -92,7 +92,7 @@
   --spacing-24: 96px;
 
   --container-page: 1200px;
-  --container-narrow: 720px;
+  --container-narrow: 620px;
   --opacity-archived: 60%;
 
   --shadow-*: initial;
@@ -204,6 +204,7 @@
     font-family: var(--font-sans);
     font-synthesis: none;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   :focus-visible {

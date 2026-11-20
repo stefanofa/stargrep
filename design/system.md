@@ -71,7 +71,7 @@ The butter tile maps the semantic tokens onto these, so a component inside it ne
 | `--text-sm` | 13px / 16px | Meta lines in small tiles and list rows |
 | `--text-meta` | 14px / `--leading-sm` 18px | Owner lines in small tiles, meta lines in the hero tile, chips, tabs, buttons |
 | `--text-base` | 15px / `--leading-base` 22px | Reason lines in small tiles, body |
-| `--text-lg` | 17px / `--leading-lg` 26px | Reason line in the hero tile, collection notes |
+| `--text-lg` | 17px / `--leading-lg` 26px | Reason line in the hero tile, collection notes, text page body |
 | `--text-title` | 22px / 28px | Repo names in list rows, empty tile headings on phones, the monogram in the panel |
 | `--text-xl` | 24px / `--leading-xl` 32px | The query in the search tile |
 | `--text-name` | 26px / 30px | Repo names in small tiles |
@@ -104,7 +104,7 @@ Load Fredoka (600 only) and Inter (variable) from the app, with `font-display: s
 | `--radius-full` | 999px | Chips, buttons, toggles, avatars |
 | `--radius-item` | `--radius-md` minus 7.5px | Menu items, concentric inside a menu's 1.5px border and 6px padding |
 | `--container-page` | 1200px | Page width |
-| `--container-narrow` | 720px | Reserved for long text, such as docs and the privacy page |
+| `--container-narrow` | 620px | Reserved for long text, such as docs and the privacy page. Inside the tile's 30px sides, `--text-lg` body runs about 70 characters a line |
 | `--opacity-archived` | 60% | The star and the alive dot on archived and deprecated tiles |
 
 Cards take squircle corners. Add `squircle` next to the card's `rounded-*` token class, such as `rounded-tile` or `rounded-md`; an arbitrary radius does not scale and comes out shallower: tiles, result rows, the detail panel, and the boxes inside it. Where the browser supports `corner-shape`, the corner becomes a squircle and its radius grows 1.84 times, so it cuts into the card as deep as the round corner did. Other browsers keep the round corner at the token's radius. Chips, buttons, toggles, menus, and tooltips stay round.
