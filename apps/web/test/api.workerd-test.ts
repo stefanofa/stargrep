@@ -165,7 +165,7 @@ describe("when the services cannot start", () => {
     const down = await send("/api/search", post({ scope: { kind: "stars", login: "ada" }, q: "dashboards" }));
     expect([down.status, down.body.code]).toEqual([503, "SERVICE_UNAVAILABLE"]);
     expect(down.body.data.traceId).toEqual(traceId);
-    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(7);
+    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(8);
   });
 });
 
@@ -255,7 +255,7 @@ describe("when the database is unreachable", () => {
       data: { traceId },
     });
 
-    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(7);
+    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(8);
     expect(JSON.stringify([viaRest, viaRpc, viaMcp])).not.toContain("postgres://");
   });
 });
@@ -281,6 +281,7 @@ describe("mcp", () => {
       "getRepo",
       "lookupFacets",
       "search",
+      "similarRepos",
       "stars",
       "syncStatus",
       "triggerSync",
@@ -372,6 +373,18 @@ describe("sync", () => {
   });
 });
 
+describe("similarRepos", () => {
+  it("answers over REST with the login in the query, and the same as the MCP tool", async () => {
+    const { status, body } = await rest("/repos/42/similar?login=ada");
+    expect(status).toBe(200);
+    expect([body.inStars.map((found: { id: number }) => found.id), body.notStarred]).toEqual([[42], []]);
+    const viaMcp = await tool("similarRepos", { id: 42, login: "ada" });
+    expect(viaMcp.structuredContent).toEqual(body);
+    expect((await rest("/repos/42/similar?login=nobody-synced")).body.code).toBe("ACCOUNT_NOT_SYNCED");
+    expect((await rest("/repos/43/similar?login=ada")).body.code).toBe("REPO_NOT_FOUND");
+  });
+});
+
 describe("getRepo and the spec", () => {
   it("reads a repo by ID and says when there is none", async () => {
     expect((await rest("/repos/42")).body).toMatchObject({ id: 42, url: "https://github.com/ratatui/ratatui" });
@@ -414,6 +427,7 @@ describe("getRepo and the spec", () => {
       "/config",
       "/facets",
       "/repos/{id}",
+      "/repos/{id}/similar",
       "/search",
       "/stars/{login}",
       "/sync/{login}",

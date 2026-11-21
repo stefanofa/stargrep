@@ -124,6 +124,10 @@ const db = makeDb({
         login === ada.login ? { total: 1, read: 1, failed: 0, queued: 0 } : { total: 0, read: 0, failed: 0, queued: 0 },
       ),
   },
+  similar: {
+    inStars: () => Effect.succeed([{ repo, stars: 18_000 }]),
+    notStarred: () => Effect.succeed([]),
+  },
   facets: {
     lookup: ({ limit }) =>
       Effect.succeed(
