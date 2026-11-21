@@ -125,8 +125,7 @@ const db = makeDb({
       ),
   },
   similar: {
-    inStars: () => Effect.succeed([{ repo, stars: 18_000 }]),
-    notStarred: () => Effect.succeed([]),
+    near: () => Effect.succeed({ inStars: [{ repo, stars: 18_000 }], notStarred: [] }),
   },
   facets: {
     lookup: ({ limit }) =>

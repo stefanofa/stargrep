@@ -69,8 +69,7 @@ const defaults = {
     nearNames: unexpected("search.nearNames"),
   },
   similar: {
-    inStars: unexpected("similar.inStars"),
-    notStarred: unexpected("similar.notStarred"),
+    near: unexpected("similar.near"),
   },
   syncRequests: {
     get: unexpected("syncRequests.get"),

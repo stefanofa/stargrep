@@ -99,7 +99,7 @@ export type {
   SubjectGroup,
 } from "./queries/search.ts";
 export { acceptedKeysTtl, MetricFamily, MetricVariant, noAtoms, noFilters } from "./queries/search.ts";
-export type { SimilarQuery, SimilarRepo } from "./queries/similar.ts";
+export type { SimilarQuery, SimilarRepo, SimilarRows } from "./queries/similar.ts";
 export type {
   EnrichmentProgress,
   LibraryEntry,
