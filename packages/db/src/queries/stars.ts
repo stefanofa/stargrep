@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
+import type { EmbeddingModelId } from "../embedding.ts";
 import { AccountNotFound, type DbQueryFailed, type DbRowInvalid } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
 import { excluded, NullableTime, requireRow, resultRows, rowsDecoder, writeEncoder } from "../rows.ts";
@@ -86,6 +87,19 @@ export interface StarsPage {
   readonly next: Option.Option<StarsPosition>;
 }
 
+// Repos one account stars now that another does not, closest to the other's own stars first.
+export interface NewToYou {
+  // How many repos both accounts star now.
+  readonly shared: number;
+  readonly entries: ReadonlyArray<LibraryEntry>;
+}
+
+export interface NewToYouRequest {
+  readonly viewer: GitHubAccountId;
+  readonly owner: GitHubAccountId;
+  readonly limit: number;
+}
+
 export interface Queries {
   readonly upsert: (input: StarsUpsert) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
   readonly applySnapshot: (
@@ -100,12 +114,14 @@ export interface Queries {
     options: { readonly limit: number; readonly after: Option.Option<StarsPosition> },
   ) => Effect.Effect<StarsPage, DbQueryFailed | DbRowInvalid>;
   readonly enrichment: (login: Login) => Effect.Effect<EnrichmentProgress, DbQueryFailed | DbRowInvalid>;
+  readonly newToYou: (request: NewToYouRequest) => Effect.Effect<NewToYou, DbQueryFailed | DbRowInvalid>;
 }
 
 const decodeStars = rowsDecoder(Star);
 const decodeLibrary = rowsDecoder(LibraryEntry);
 const decodeProgress = rowsDecoder(EnrichmentProgress);
 const decodeChanged = rowsDecoder(Schema.Struct({ repoId: RepoId }));
+const decodeCloseness = rowsDecoder(Schema.Struct({ shared: Schema.Int, ranked: Schema.Array(RepoId) }));
 const encodeEvents = writeEncoder(
   Schema.fromJsonString(
     Schema.Array(
@@ -179,11 +195,16 @@ const encodePosition = (position: StarsPosition) =>
 
 // Newest star first, ties by repo ID, so a page continues after a position with no gap and no repeat. The bound on
 // starred_at alone lets stars_page_idx start a later page at its position instead of reading every older star.
-const libraryEntries = (
-  db: Postgres.Database,
-  accountId: GitHubAccountId,
-  after?: { readonly starredAt: string; readonly repoId: RepoId },
-) =>
+const startingAfter = (position: { readonly starredAt: string; readonly repoId: RepoId }) =>
+  and(
+    lte(stars.starredAt, sql`${position.starredAt}::timestamptz`),
+    or(
+      lt(stars.starredAt, sql`${position.starredAt}::timestamptz`),
+      and(eq(stars.starredAt, sql`${position.starredAt}::timestamptz`), gt(stars.repoId, position.repoId)),
+    ),
+  );
+
+const libraryEntries = (db: Postgres.Database, accountId: GitHubAccountId, condition?: SQL) =>
   db
     .select({
       repo: repoColumns,
@@ -195,25 +216,61 @@ const libraryEntries = (
     .from(stars)
     .innerJoin(repos, eq(repos.id, stars.repoId))
     .leftJoin(repoMetrics, eq(repoMetrics.repoId, stars.repoId))
-    .where(
-      and(
-        eq(stars.accountId, accountId),
-        isNull(stars.unstarredAt),
-        after === undefined
-          ? undefined
-          : and(
-              lte(stars.starredAt, sql`${after.starredAt}::timestamptz`),
-              or(
-                lt(stars.starredAt, sql`${after.starredAt}::timestamptz`),
-                and(eq(stars.starredAt, sql`${after.starredAt}::timestamptz`), gt(stars.repoId, after.repoId)),
-              ),
-            ),
-      ),
-    )
+    .where(and(eq(stars.accountId, accountId), isNull(stars.unstarredAt), condition))
     .orderBy(desc(stars.starredAt), stars.repoId)
     .$dynamic();
 
-export const make = Effect.gen(function* () {
+// Comparing every pair of two accounts' stars is millions of distances for accounts of a few thousand stars, which no
+// page can wait for. So the owner's newest unshared stars are the candidates, and the viewer's stars, taken evenly
+// across their whole history so a varied account keeps every interest, are the references, as many as fit the pair
+// budget. A candidate's distance is its mean distance to its nearest references, so one close interest ranks a repo
+// high where an average of every star would blur it. Distances compare the leading dimensions only, which measured
+// the same ranking at half the time.
+const candidateCap = 1500;
+const pairBudget = 400_000;
+const nearest = 3;
+const comparedDimensions = 256;
+
+const closeness = (model: EmbeddingModelId, { viewer, owner, limit }: NewToYouRequest) => sql`
+  with theirs as materialized (
+    select s.repo_id, s.starred_at, exists (
+      select from ${stars} v where v.account_id = ${viewer} and v.repo_id = s.repo_id and v.unstarred_at is null
+    ) as shared
+    from ${stars} s where s.account_id = ${owner} and s.unstarred_at is null
+  ),
+  candidates as materialized (
+    select t.repo_id, subvector(r.embedding, 1, ${comparedDimensions}) as embedding
+    from (
+      select repo_id, starred_at from theirs where not shared order by starred_at desc, repo_id limit ${candidateCap}
+    ) t
+    join ${repos} r on r.id = t.repo_id
+    where not r.archived and r.gone_at is null and r.embedding_model = ${model}
+  ),
+  mine as (
+    select s.repo_id, row_number() over (order by s.starred_at desc, s.repo_id) as n, count(*) over () as total
+    from ${stars} s where s.account_id = ${viewer} and s.unstarred_at is null
+  ),
+  refs as materialized (
+    select subvector(r.embedding, 1, ${comparedDimensions}) as embedding
+    from mine m join ${repos} r on r.id = m.repo_id
+    where r.embedding_model = ${model}
+      and (m.n - 1) % greatest(1, ceil(m.total * (select count(*) from candidates) / ${pairBudget}::numeric))::int = 0
+  )
+  select
+    (select count(*) from theirs where shared)::int as shared,
+    array(
+      select c.repo_id::float8 from candidates c
+      cross join lateral (
+        select avg(d) as distance from (
+          select c.embedding <=> f.embedding as d from refs f order by d limit ${nearest}
+        ) near
+      ) scored
+      where scored.distance is not null
+      order by scored.distance, c.repo_id
+      limit ${limit}
+    ) as ranked`;
+
+export const make = Effect.fn("Db.stars.make")(function* (model: EmbeddingModelId) {
   const { run, withTransaction } = yield* Postgres.Postgres;
 
   return {
@@ -337,7 +394,13 @@ export const make = Effect.gen(function* () {
       run("stars.library", (db) => libraryEntries(db, accountId)).pipe(Effect.flatMap(decodeLibrary("stars.library"))),
     page: (accountId, { limit, after }) =>
       Effect.flatMap(Option.match(after, { onNone: () => Effect.succeedNone, onSome: encodePosition }), (position) =>
-        run("stars.page", (db) => libraryEntries(db, accountId, Option.getOrUndefined(position)).limit(limit + 1)),
+        run("stars.page", (db) =>
+          libraryEntries(
+            db,
+            accountId,
+            Option.match(position, { onNone: () => undefined, onSome: startingAfter }),
+          ).limit(limit + 1),
+        ),
       ).pipe(
         Effect.flatMap(decodeLibrary("stars.page")),
         Effect.map((rows) => {
@@ -377,5 +440,20 @@ export const make = Effect.gen(function* () {
         Effect.flatMap(decodeProgress("stars.enrichment")),
         Effect.flatMap((rows) => Effect.orDie(Effect.fromNullishOr(rows[0]))),
       ),
+    newToYou: Effect.fn("Db.stars.newToYou")(function* (request) {
+      const [found] = yield* run("stars.newToYou", (db) => db.execute(closeness(model, request))).pipe(
+        Effect.flatMap((result) => decodeCloseness("stars.newToYou")(resultRows(result))),
+      );
+      const ranked = found?.ranked ?? [];
+      if (ranked.length === 0) return { shared: found?.shared ?? 0, entries: [] };
+      const rows = yield* run("stars.newToYou", (db) =>
+        libraryEntries(db, request.owner, sql`${stars.repoId} = any(${sql.param([...ranked])}::bigint[])`),
+      ).pipe(Effect.flatMap(decodeLibrary("stars.newToYou")));
+      const rank = new Map(ranked.map((id, index) => [id, index]));
+      return {
+        shared: found?.shared ?? 0,
+        entries: rows.toSorted((a, b) => (rank.get(a.repo.id) ?? 0) - (rank.get(b.repo.id) ?? 0)),
+      };
+    }),
   } satisfies Queries;
 });

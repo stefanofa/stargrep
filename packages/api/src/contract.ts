@@ -330,6 +330,26 @@ export const PublicStars = Schema.Struct({
   labels: Labels,
 });
 
+export const maxNewToYou = 48;
+
+export const NewToYouInput = Schema.Struct({
+  login: GitHubLogin.annotate({ description: "Whose stars to compare with the signed-in account's." }),
+  limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: maxNewToYou }))
+    .annotate({ description: `How many repos to return, at most. 8 when left out.` })
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed(8))),
+});
+
+export const NewToYou = Schema.Struct({
+  shared: Schema.NullOr(Schema.Int).annotate({
+    description: "How many repos both accounts star now, or null until the signed-in account's stars have synced.",
+  }),
+  repos: Schema.Array(LibraryRepo).annotate({
+    description:
+      "Repos the login stars that the signed-in account does not, closest to the signed-in account's own stars first. Archived repos and repos GitHub no longer serves are left out.",
+  }),
+  labels: Labels,
+});
+
 export const LookupInput = Schema.Struct({
   q: Schema.String.check(Schema.isPattern(/\S/), Schema.isMaxLength(100)).annotate({
     description: "The start of a facet's name, such as 'postg'.",
@@ -469,6 +489,19 @@ export const contract = {
     })
     .input(MonthlyPicks)
     .output(MonthlyPicks),
+  newToYou: withServices
+    .errors(Struct.pick(errors, ["UNAUTHORIZED", "ACCOUNT_NOT_SYNCED", "TOO_MANY_REQUESTS"]))
+    .meta(sessionRequired)
+    .route({
+      method: "GET",
+      path: "/new-to-you/{login}",
+      operationId: "newToYou",
+      summary: "Compare a login's stars with the signed-in account's",
+      description:
+        "Counts the repos both accounts star and lists the login's stars the signed-in account has not starred, closest to its own stars first.",
+    })
+    .input(NewToYouInput)
+    .output(NewToYou),
   stars: withServices
     .errors(Struct.pick(errors, ["ACCOUNT_NOT_SYNCED", "TOO_MANY_REQUESTS"]))
     .route({

@@ -21,6 +21,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { policyOf, starredOf, whoseOf } from "../lib/audience.ts";
 import { keywordTerms, normalize, searchText } from "../lib/keyword.ts";
 import { getLibrary, type Library } from "../lib/library-collection.ts";
+import { useNewToYou } from "../lib/new-to-you.ts";
 import { askedPage, type PageData, type PageRequest, type Session } from "../lib/page-data.ts";
 import { hitsOf, liveView } from "../lib/page-view.ts";
 import { closesBack } from "../lib/panel-history.ts";
@@ -42,6 +43,7 @@ import { AccountMenu } from "./account-menu.tsx";
 import { HeaderEnd } from "./github-star-link.tsx";
 import { Hero, TryChips } from "./landing-hero.tsx";
 import { LibraryPlaceholder, LibraryView } from "./library-view.tsx";
+import { NewToYouSection } from "./new-to-you.tsx";
 import { OwnerPill } from "./owner-pill.tsx";
 
 // A navigation in the browser starts from the session the server loaded. The page reads the rest once it mounts.
@@ -271,6 +273,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     surprised,
   });
   useEffect(() => onPose(page.pose), [onPose, page.pose]);
+  const newToYou = useNewToYou(audience, page.body.kind === "library");
 
   const reveal = useReveal(query, page.painted);
   const butterPose = reveal.phase === "typing" ? "thinking" : reveal.phase === "settled" ? "happy" : "idle";
@@ -350,6 +353,11 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
             pose={page.pose}
             butter={!policy.landing}
             onOpen={open}
+            aside={
+              newToYou && (
+                <NewToYouSection found={newToYou} login={owner} at={at} view={view} search={links} onOpen={open} />
+              )
+            }
           />
         );
       case "results":

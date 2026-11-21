@@ -167,6 +167,7 @@ Lowercase, short, friendly, a little cheeky. Only in strings that must exist.
 | Results count | found 5! |
 | Count detail | of your 2,431 stars |
 | Network | 4 you follow |
+| Someone else's stars, signed in | new to you · you share 333 stars with @ada |
 | Empty | nothing matches that |
 | Hidden by filters | 12 stars hidden by starred in 2019 · remove that filter |
 | Widen scope | search everyone instead |

@@ -64,12 +64,22 @@ export const reportError = (error: unknown) => {
   void started().then((posthog) => posthog?.captureException(error));
 };
 
-// The events the browser sends for a visitor's action. Autocapture is off, so each is named here and carries no text.
-export type ClientEvent = "github_star_clicked";
+// The events the browser sends for a visitor's action, with their properties. Autocapture is off, so each is named here
+// and carries counts at most, never text.
+interface ClientEvents {
+  readonly github_star_clicked: undefined;
+  readonly new_to_you_shown: { readonly shared: number; readonly repos: number };
+  readonly new_to_you_opened: { readonly position: number };
+}
 
-export const capture = (event: ClientEvent) => {
+export type ClientEvent = keyof ClientEvents;
+
+export const capture = <Event extends ClientEvent>(
+  event: Event,
+  ...[properties]: ClientEvents[Event] extends undefined ? [] : [ClientEvents[Event]]
+) => {
   if (!sends(location.hostname)) return;
-  void started().then((posthog) => posthog?.capture(event));
+  void started().then((posthog) => posthog?.capture(event, properties));
 };
 
 // Called once the page has hydrated. PostHog loads in a chunk of its own when the browser is idle, so the landing page's
