@@ -214,6 +214,19 @@ export const retryableEnrichment = (table: EnrichmentColumns) =>
 export const sweepableEnrichment = (table: PolicyColumns) =>
   sql<boolean>`${retryableEnrichment(table)} and (not (${summaryDue(table)}) or ${summaryWanted(table)})`;
 
+interface SimilarColumns {
+  readonly embedding: AnyPgColumn;
+  readonly summary: AnyPgColumn;
+  readonly goneAt: AnyPgColumn;
+  readonly archived: AnyPgColumn;
+}
+
+// A repo the panel may suggest to an account that hasn't starred it: one with a summary to show and an embedding to
+// rank by, that GitHub still serves and its owner hasn't archived. Triggers on repos keep similar_candidates to these,
+// with the same test written in SQL, which a test holds to this one.
+export const similarCandidate = (table: SimilarColumns) =>
+  sql<boolean>`${table.embedding} is not null and ${table.summary} is not null and ${table.goneAt} is null and not ${table.archived}`;
+
 // Every GIN index's pending list, in kB. The write that fills a list merges all of it into the index before it returns,
 // and at the default 4 MB such a merge stalled a write for up to 12 s while a bulk import wrote repos.
 const ginPendingListLimit = 256;
@@ -329,6 +342,21 @@ export const repos = pgTable(
       foreignColumns: [receipts.id, receipts.repoId],
     }),
   ],
+);
+
+// The embedding of every similarCandidate repo, so the panel's nearest repos across stargrep come from an HNSW index on a
+// table of their own. An index on repos would add the graph insert to every write that moves a repo's row, and a star
+// moves its repo's stargazer count. Triggers on repos write a row here only when a repo's embedding, summary, gone time,
+// or archived flag changes. `bun run --cwd packages/db backfill-similar` fills it once for the repos read before.
+export const similarCandidates = pgTable(
+  "similar_candidates",
+  {
+    repoId: githubId("repo_id")
+      .primaryKey()
+      .references(() => repos.id, { onDelete: "cascade" }),
+    embedding: halfvec("embedding", { dimensions: embeddingDimensions }).notNull(),
+  },
+  (table) => [index("similar_candidates_embedding_idx").using("hnsw", table.embedding.op("halfvec_cosine_ops"))],
 );
 
 export const repoMetrics = pgTable("repo_metrics", {

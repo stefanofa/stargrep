@@ -1,0 +1,176 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "7cfc9ce2-12bc-48cc-a0d3-e011ca1f1761",
+  "prevIds": [
+    "31d34a5a-fa88-4a8e-bf13-ccecf622dcc1"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "similar_candidates"
+      ],
+      "writes": [
+        "s|tbl|public.similar_candidates",
+        "n|tbl|public.similar_candidates",
+        "e|tbl|public.similar_candidates",
+        "n|rel|public.similar_candidates",
+        "n|type|public.similar_candidates",
+        "n|rel|public.similar_candidates_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "similar_candidates",
+        "similar_candidates_embedding_idx"
+      ],
+      "writes": [
+        "s|idx|public.similar_candidates_embedding_idx",
+        "n|idx|public.similar_candidates_embedding_idx",
+        "e|idx|public.similar_candidates_embedding_idx",
+        "n|rel|public.similar_candidates_embedding_idx"
+      ],
+      "reads": [
+        "n|tbl|public.similar_candidates",
+        "n|sch|public",
+        "n|col|public.similar_candidates.embedding"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "similar_candidates"
+      ],
+      "writes": [
+        "s|fk|public.similar_candidates.similar_candidates_repo_id_repos_id_fkey",
+        "n|fk|public.similar_candidates.similar_candidates_repo_id_repos_id_fkey",
+        "e|fk|public.similar_candidates.similar_candidates_repo_id_repos_id_fkey",
+        "n|con|public.similar_candidates.similar_candidates_repo_id_repos_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.similar_candidates",
+        "n|sch|public",
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.similar_candidates.repo_id",
+        "n|col|public.repos.id",
+        "e|uniqueness|public.repos.id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "similar_candidates",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "similar_candidates",
+        "name": "repo_id",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "similar_candidates",
+        "name": "embedding",
+        "type": "halfvec(1024)",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "similar_candidates",
+        "name": "similar_candidates_embedding_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "embedding",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": {
+              "name": "halfvec_cosine_ops",
+              "default": false
+            }
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "hnsw",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "similar_candidates",
+        "name": "similar_candidates_repo_id_repos_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "repo_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "repos",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "similar_candidates",
+        "name": "similar_candidates_pkey",
+        "columns": [
+          "repo_id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    }
+  ]
+}

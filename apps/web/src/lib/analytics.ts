@@ -70,6 +70,8 @@ interface ClientEvents {
   readonly github_star_clicked: undefined;
   readonly new_to_you_shown: { readonly shared: number; readonly repos: number };
   readonly new_to_you_opened: { readonly position: number };
+  // Which of the repo panel's rows held the repo the visitor opened.
+  readonly similar_repo_opened: { readonly row: "in_stars" | "not_starred" };
 }
 
 export type ClientEvent = keyof ClientEvents;

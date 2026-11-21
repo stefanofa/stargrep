@@ -1,4 +1,5 @@
 import { Dialog } from "@base-ui/react/dialog";
+import { type ReactNode, useLayoutEffect, useRef } from "react";
 import { formatStars } from "../lib/format-stars.ts";
 import { Avatar, type Person } from "./avatar.tsx";
 import { Button } from "./button.tsx";
@@ -32,17 +33,33 @@ export function RepoPanel({
   open,
   onOpenChange,
   returnFocus,
+  similar,
 }: {
   repo: RepoDetail | undefined;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   returnFocus?: HTMLElement | null;
+  // Repos near this one, under the link to GitHub.
+  similar?: ReactNode;
 }) {
+  // A repo opened from inside the panel replaces the one it showed, so the panel starts again from its top, and focus
+  // leaves the link that opened it, which is gone.
+  const popup = useRef<HTMLDivElement>(null);
+  const shown = repo && `${repo.owner}/${repo.name}`;
+  const previous = useRef({ shown, open });
+  useLayoutEffect(() => {
+    const before = previous.current;
+    previous.current = { shown, open };
+    if (!open || !before.open || before.shown === shown || popup.current === null) return;
+    popup.current.scrollTop = 0;
+    popup.current.focus({ preventScroll: true });
+  }, [shown, open]);
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-40 bg-scrim transition-opacity duration-160 data-ending-style:opacity-0 data-starting-style:opacity-0" />
         <Dialog.Popup
+          ref={popup}
           finalFocus={returnFocus ? () => returnFocus : true}
           className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[520px] flex-col gap-[34px] overflow-y-auto overscroll-contain squircle rounded-l-tile bg-card px-9 py-8 text-foreground shadow-panel transition-[translate,opacity] duration-220 ease-out data-ending-style:translate-x-full data-starting-style:translate-x-full max-sm:px-gap motion-reduce:transition-opacity motion-reduce:data-ending-style:translate-x-0 motion-reduce:data-ending-style:opacity-0 motion-reduce:data-starting-style:translate-x-0 motion-reduce:data-starting-style:opacity-0"
         >
@@ -150,6 +167,8 @@ export function RepoPanel({
                 open on GitHub
                 <ExternalIcon />
               </a>
+
+              {similar}
             </>
           )}
         </Dialog.Popup>

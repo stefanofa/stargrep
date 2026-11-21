@@ -53,6 +53,8 @@ export const Operation = Schema.Literals([
   "search.hybrid",
   "search.matchesAsPrefix",
   "search.nearNames",
+  "similar.inStars",
+  "similar.notStarred",
   "syncRequests.get",
   "syncRequests.claim",
   "syncRequests.prune",

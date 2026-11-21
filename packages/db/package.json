@@ -15,6 +15,7 @@
     "./testing": "./test/fakes.ts"
   },
   "scripts": {
+    "backfill-similar": "bun scripts/backfill-similar.ts",
     "bench": "bun scripts/bench.ts",
     "count-stargazers": "bun scripts/count-stargazers.ts",
     "generate": "drizzle-kit generate",

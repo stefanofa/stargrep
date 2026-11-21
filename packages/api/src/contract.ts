@@ -257,6 +257,30 @@ export const RepoDetail = Schema.Struct({
   createdAt: Schema.NullOr(Timestamp),
 });
 
+// How many repos each row of similarRepos holds, at most.
+export const similarLimit = 5;
+
+export const SimilarInput = Schema.Struct({
+  id: RepoId.annotate({ description: "The GitHub repo ID to find repos like." }),
+  login: GitHubLogin.annotate({
+    description: "Whose stars inStars looks in and notStarred leaves out. The login must be synced first.",
+  }),
+});
+
+const SimilarRepo = Schema.Struct({
+  ...repoFields,
+  stars: Schema.NullOr(Schema.Int).annotate({ description: "The repo's star count, when Stargrep has read it." }),
+});
+
+export const SimilarRepos = Schema.Struct({
+  inStars: Schema.Array(SimilarRepo).annotate({
+    description: `Up to ${similarLimit} of the login's own stars nearest the repo by meaning, nearest first, the repo itself left out.`,
+  }),
+  notStarred: Schema.Array(SimilarRepo).annotate({
+    description: `Up to ${similarLimit} repos across Stargrep nearest the repo by meaning that the login hasn't starred, nearest first. Only repos Stargrep has summarized, leaving out archived repos and repos GitHub no longer serves.`,
+  }),
+}).annotate({ description: "Both lists are empty when Stargrep has no embedding of the repo yet." });
+
 export const Viewer = Schema.Struct({
   login: Schema.String,
   name: Schema.NullOr(Schema.String),
@@ -444,6 +468,19 @@ export const contract = {
     })
     .input(RepoInput)
     .output(RepoDetail),
+  similarRepos: withServices
+    .errors(Struct.pick(errors, ["ACCOUNT_NOT_SYNCED", "REPO_NOT_FOUND", "TOO_MANY_REQUESTS"]))
+    .route({
+      method: "GET",
+      path: "/repos/{id}/similar",
+      operationId: "similarRepos",
+      summary: "Find repos like one repo",
+      description:
+        "Returns the repos nearest one repo by meaning, in two lists: those among a login's stars, and those across Stargrep the login hasn't starred.",
+    })
+    .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
+    .input(SimilarInput)
+    .output(SimilarRepos),
   viewer: withServices
     .errors(Struct.pick(errors, ["UNAUTHORIZED"]))
     .meta(sessionRequired)
