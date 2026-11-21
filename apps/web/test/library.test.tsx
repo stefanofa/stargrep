@@ -25,6 +25,7 @@ const repo = (id: number): LibraryRepo => ({
   starredAt: "2026-01-01T00:00:00.000Z",
   stars: null,
   read: false,
+  gone: false,
   icon: null,
   ownerType: null,
   ownerAvatarUrl: null,

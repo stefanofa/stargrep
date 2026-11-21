@@ -129,7 +129,9 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
     stars: {
       enrichment: () => Effect.succeed(reading),
       library: (accountId: GitHubAccountId) =>
-        Effect.succeed(accountId === ada.account.id ? [{ repo, starredAt, stars: 16_400, read: false }] : []),
+        Effect.succeed(
+          accountId === ada.account.id ? [{ repo, starredAt, stars: 16_400, read: false, gone: false }] : [],
+        ),
     },
     ...(fakes.facets === undefined ? {} : { facets: fakes.facets }),
   });

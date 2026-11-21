@@ -43,6 +43,7 @@ const LibraryEntry = Schema.Struct({
   starredAt: Schema.DateTimeUtcFromDate,
   stars: Schema.NullOr(Schema.Int),
   read: Schema.Boolean,
+  gone: Schema.Boolean,
 });
 export type LibraryEntry = typeof LibraryEntry.Type;
 
@@ -189,6 +190,7 @@ const libraryEntries = (
       starredAt: stars.starredAt,
       stars: repoMetrics.stars,
       read: sql<boolean>`not ${unread}`,
+      gone: sql<boolean>`${repos.goneAt} is not null`,
     })
     .from(stars)
     .innerJoin(repos, eq(repos.id, stars.repoId))

@@ -134,6 +134,7 @@ const repo = (id: number, owner: string, name: string, description: string, extr
   ownerType: "user",
   ownerAvatarUrl: null,
   read: true,
+  gone: false,
   ...extra,
 });
 

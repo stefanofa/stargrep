@@ -199,6 +199,7 @@ const libraryRepos = Effect.fnUntraced(function* (entries: ReadonlyArray<Db.Libr
       starredAt: DateTime.formatIso(entry.starredAt),
       stars: entry.stars,
       read: entry.read,
+      gone: entry.gone,
     })),
     labels,
   };

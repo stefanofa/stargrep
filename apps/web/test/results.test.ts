@@ -23,6 +23,7 @@ const entry = (id: number, name: string, stars: number, summary: string): Librar
     starredAt: "2026-01-01T00:00:00.000Z",
     stars,
     read: true,
+    gone: false,
     icon: null,
     ownerType: "org" as const,
     ownerAvatarUrl: "https://avatars.githubusercontent.com/u/1",

@@ -16,13 +16,15 @@ import {
 } from "@stargrep/ui";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { dead, deadStars } from "../lib/dead-stars.ts";
 import { languageShares } from "../lib/languages.ts";
 import type { LibraryEntry } from "../lib/library-collection.ts";
 import { libraryOrder } from "../lib/order.ts";
 import { monthOf, toResult } from "../lib/present.ts";
 import type { Params } from "../lib/search-params.ts";
 import type { Arriving } from "../lib/search-state.ts";
-import { formatCount, starCount } from "../lib/whose.ts";
+import { formatCount, starCount, type Whose } from "../lib/whose.ts";
+import { DeadStarsTile } from "./dead-stars-tile.tsx";
 
 const pageSize = 48;
 
@@ -136,6 +138,13 @@ function MonthHeading({ heading, size, arriving }: { heading: string; size: numb
   );
 }
 
+// The one heading of a library sorted by something other than the starred date.
+const groupHeading = (language: string | undefined, archived: boolean) => {
+  const scope = language === undefined ? "all stars" : language.toLowerCase();
+  if (!archived) return scope;
+  return language === undefined ? "archived" : `archived ${scope}`;
+};
+
 export function LibraryPlaceholder({
   view,
   arriving,
@@ -169,6 +178,7 @@ export function LibraryView({
   view,
   sort,
   search,
+  whose,
   arriving,
   pose,
   butter,
@@ -179,24 +189,30 @@ export function LibraryView({
   view: View;
   sort: Sort;
   search: Params;
+  whose: Whose;
   arriving: Arriving | undefined;
   pose: PipPose;
   butter: boolean;
   onOpen: OpenResult;
 }) {
   const language = search.lang;
+  const archived = search.archived === true;
   const [shown, setShown] = useState(pageSize);
   const seen = useRef(new Set<string>());
   const shares = useMemo(() => languageShares(entries), [entries]);
+  const graveyard = useMemo(() => deadStars(entries), [entries]);
   const visible = useMemo(
-    () => entries.filter((entry) => language === undefined || entry.language === language).toSorted(libraryOrder(sort)),
-    [entries, language, sort],
+    () =>
+      entries
+        .filter((entry) => (language === undefined || entry.language === language) && (!archived || dead(entry)))
+        .toSorted(libraryOrder(sort)),
+    [entries, language, archived, sort],
   );
   const page = visible.slice(0, shown);
   const byMonth = sort === "starred" || sort === "best";
   const groups = byMonth
     ? Map.groupBy(page, (entry) => monthOf(entry.starredAt))
-    : new Map([[language === undefined ? "all stars" : language.toLowerCase(), page]]);
+    : new Map([[groupHeading(language, archived), page]]);
   const counts = Map.groupBy(visible, (entry) => monthOf(entry.starredAt));
   const last = Array.from(groups.keys()).at(-1);
   const remaining = arriving?.total == null ? columns : Math.max(0, arriving.total - entries.length);
@@ -208,6 +224,10 @@ export function LibraryView({
       <div className="grid gap-gap lg:grid-cols-2">
         <CountTile count={entries.length} arriving={arriving} pose={pose} butter={butter} />
         <LanguagesTile shares={shares} language={language} />
+        {/* The tile stays while its filter is on, so its chip can take the filter back off. */}
+        {(graveyard.count > 0 || archived) && (
+          <DeadStarsTile dead={graveyard} whose={whose} at={at} search={search} onOpen={onOpen} />
+        )}
       </div>
       {Array.from(groups, ([heading, members]) => {
         const pending =
