@@ -345,6 +345,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
             view={view}
             sort={sort}
             search={links}
+            whose={whose}
             arriving={current.arriving}
             pose={page.pose}
             butter={!policy.landing}

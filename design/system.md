@@ -143,6 +143,7 @@ Components live in `packages/ui/src/components`. Interactive controls use Base U
 | Sort | Base UI `Menu` | Recently starred, most stars, recently pushed, and best match while searching. |
 | Buttons | Custom `Button` | `primary` (ink), `secondary` (accent-soft), `ghost` (white pill). Heights 36 and 44. Always `--radius-full`. |
 | Skeleton | skullet | skullet measures the real card with a sample repo and draws one bar per text line, so a placeholder is the size of the card that replaces it. The bars pulse between `muted` and `accent-soft` and hold still under reduced motion. |
+| Dead stars | `Tile` in `apps/web/src/components/dead-stars-tile.tsx` | A wide tile under the count and languages tiles, shown when an account starred at least one archived repo GitHub still serves. "dead stars", the count ("38 of your stars are archived"), the three most starred with their icon slot, name, owner and stars, and a chip that filters the library to them with `?archived=true` and back. A repo in it opens the detail panel. |
 | Language bar | Custom, divs in a flex row | Segments in ink, `accent`, `highlight`, then `muted` for the rest. A text legend under it, so color is never the only carrier. |
 | Starred-by-week grid | Custom, an SVG or CSS grid | 52 columns by 7 rows, five steps from `muted` to `accent-strong`, with one ink step for the busiest weeks. `role="img"` with a text summary, and the counts available as a hidden table. |
 | Mark | Custom React component, inline SVG | `<Pip pose="idle" size={…} />`. See below. `aria-hidden`. |
@@ -191,7 +192,7 @@ Every string stargrep writes on screen is lowercase, button and link labels incl
 
 These rules keep one structure for people, crawlers, and agents.
 
-- **Everything lives in the URL.** The login, query, language, sort, view, and open repo: `/junodev?q=rust+library+for+terminal+dashboards&lang=Rust&sort=starred&view=tiles&repo=ratatui/ratatui`. Agents and shared links land on the exact state.
+- **Everything lives in the URL.** The login, query, language, the archived filter (`?archived=true`), sort, view, and open repo: `/junodev?q=rust+library+for+terminal+dashboards&lang=Rust&sort=starred&view=tiles&repo=ratatui/ratatui`. Agents and shared links land on the exact state.
 - **Results are an ordered list.** Use `<ol>` of `<article>`, each with an `h3` repo link, the reason in a `p` with `<mark>`, and the meta in a `dl`. The tile and list views change CSS only, not markup.
 - **The UI derives presentation from the API.** `packages/api/src/contract.ts` defines wire fields. The web app derives its tiles and rows from those fields. The MCP tool is named `search`.
 - **Color never carries meaning alone.** Archived, deprecated, and alive always have a text label.

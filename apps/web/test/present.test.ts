@@ -24,6 +24,7 @@ const entry = (description: string | null, summary: string | null): LibraryEntry
     starredAt: "2026-01-01T00:00:00.000Z",
     stars: 16_400,
     read: true,
+    gone: false,
     icon: null,
     ownerType: "org" as const,
     ownerAvatarUrl: "https://avatars.githubusercontent.com/u/1",

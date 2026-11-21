@@ -110,6 +110,30 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
     }),
   );
 
+  test.effect("lists a repo GitHub stopped serving as gone, on the library and on a page", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const id = accountId(319);
+      const [kept, gone] = [repoId(3191), repoId(3192)];
+      yield* db.accounts.upsert(account(id));
+      yield* db.repos.upsertRefs([ref(kept), ref(gone)]);
+      yield* db.stars.upsert({
+        accountId: id,
+        stars: [starred(kept, "2026-01-01T00:00:00Z"), starred(gone, "2026-02-01T00:00:00Z")],
+      });
+      yield* database.query(`update repos set gone_at = now() where id = ${gone}`);
+
+      const flags = (entries: ReadonlyArray<Db.LibraryEntry>) => entries.map((entry) => [entry.repo.id, entry.gone]);
+      const expected = [
+        [gone, true],
+        [kept, false],
+      ];
+      expect(flags(yield* db.stars.library(id))).toEqual(expected);
+      expect(flags((yield* db.stars.page(id, { limit: 10, after: Option.none() })).entries)).toEqual(expected);
+    }),
+  );
+
   test.effect("pages through active stars newest first, ties by repo ID, with no gap and no repeat", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;

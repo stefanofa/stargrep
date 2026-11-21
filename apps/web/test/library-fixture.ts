@@ -162,5 +162,6 @@ export const libraryRepos: ReadonlyArray<LibraryRepo> = rows.map(
     starredAt: iso(base - (index < 4 ? index : 4 + index * 6) * day),
     stars,
     read: true,
+    gone: false,
   }),
 );

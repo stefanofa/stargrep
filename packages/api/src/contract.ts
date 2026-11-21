@@ -284,6 +284,7 @@ export const LibraryRepo = Schema.Struct({
   read: Schema.Boolean.annotate({
     description: "Whether Stargrep has summarized and embedded the repo, so search by meaning can find it.",
   }),
+  gone: Schema.Boolean.annotate({ description: "Whether GitHub stopped serving the repo publicly." }),
 });
 
 const Labels = Schema.Record(Schema.String, Schema.String).annotate({

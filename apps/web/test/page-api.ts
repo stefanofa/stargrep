@@ -156,6 +156,7 @@ const entriesOf = (id: number) =>
     starredAt: DateTime.subtract(at, { days: index }),
     stars: each.pushedAt === null ? null : 1000 * (index + 1),
     read: each.pushedAt !== null,
+    gone: false,
   }));
 
 const db = makeDb({

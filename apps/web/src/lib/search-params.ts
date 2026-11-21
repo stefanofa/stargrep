@@ -7,6 +7,8 @@ export interface Params {
   readonly view?: View | undefined;
   readonly sort?: Sort | undefined;
   readonly lang?: string | undefined;
+  // The library shows only the archived repos the account starred.
+  readonly archived?: true | undefined;
   readonly repo?: string | undefined;
   readonly error?: string | undefined;
 }
@@ -28,6 +30,7 @@ export const validateParams = (search: Record<string, unknown>): Params => {
     ...(search.view === "list" || search.view === "tiles" ? { view: search.view } : {}),
     ...(isSort(search.sort) ? { sort: search.sort } : {}),
     ...(lang === undefined ? {} : { lang }),
+    ...(search.archived === true ? { archived: true } : {}),
     ...(repo === undefined ? {} : { repo }),
     ...(error === undefined ? {} : { error }),
   };
