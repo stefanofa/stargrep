@@ -508,15 +508,10 @@ describe("getRepo", () => {
 describe("similarRepos", () => {
   const near = { repo: unchecked, stars: 1200 };
   const similar = (queries: Array<Db.SimilarQuery>) => ({
-    inStars: (query: Db.SimilarQuery) =>
+    near: (query: Db.SimilarQuery) =>
       Effect.sync(() => {
         queries.push(query);
-        return [{ repo, stars: 18_000 }];
-      }),
-    notStarred: (query: Db.SimilarQuery) =>
-      Effect.sync(() => {
-        queries.push(query);
-        return [near];
+        return { inStars: [{ repo, stars: 18_000 }], notStarred: [near] };
       }),
   });
 
@@ -545,8 +540,7 @@ describe("similarRepos", () => {
       },
     ]);
     expect(answer.notStarred.map((found) => [found.id, found.stars, found.icon])).toEqual([[44 as RepoId, 1200, null]]);
-    const query = { accountId: ada.account.id, repoId: 42 as RepoId, limit: 5 };
-    expect(queries).toEqual([query, query]);
+    expect(queries).toEqual([{ accountId: ada.account.id, repoId: 42 as RepoId, limit: 5 }]);
   });
 
   test("answers ACCOUNT_NOT_SYNCED for a login stargrep never synced and REPO_NOT_FOUND for an unknown repo", async () => {
@@ -577,7 +571,7 @@ describe("similarRepos", () => {
     expect(await ask()).toEqual(["miss", "public, max-age=300"]);
     expect(await ask()).toEqual(["hit", "public, max-age=300"]);
     expect(limits).toEqual(["search"]);
-    expect(queries).toHaveLength(2);
+    expect(queries).toHaveLength(1);
     expect([...memory.entries.keys()]).toEqual(["similar/ada/42"]);
   });
 });

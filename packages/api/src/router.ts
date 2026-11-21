@@ -398,8 +398,7 @@ const similarRepos = Effect.fnUntraced(function* (input: typeof SimilarInput.Typ
   if (Option.isNone(account)) return yield* new Search.AccountNotSynced({ login: input.login });
   yield* db.repos.require(input.id);
   const query = { accountId: account.value.id, repoId: input.id, limit: similarLimit };
-  const inStars = yield* db.similar.inStars(query);
-  const notStarred = yield* db.similar.notStarred(query);
+  const { inStars, notStarred } = yield* db.similar.near(query);
   const icons = yield* IconHost;
   const wire = (found: Db.SimilarRepo) => ({ ...repoBase(found.repo, icons), stars: found.stars });
   return { inStars: inStars.map(wire), notStarred: notStarred.map(wire) };

@@ -54,6 +54,14 @@ const star = Effect.fn("star")(function* (owner: GitHubAccountId, ids: ReadonlyA
   yield* db.stars.upsert({ accountId: owner, stars: ids.map((id) => starred(id, "2026-01-01T00:00:00Z")) });
 });
 
+// Gives a seeded repo an owner, a name, and a star count, as a fork and its original have.
+const named = Effect.fn("named")(function* (id: RepoId, fullName: string, count: number) {
+  const database = yield* TestDatabase.TestDatabase;
+  const [owner, name] = fullName.split("/");
+  yield* database.query("update repos set owner = $1, name = $2 where id = $3", [owner, name, id]);
+  yield* database.query("insert into repo_metrics (repo_id, stars, refreshed_at) values ($1, $2, now())", [id, count]);
+});
+
 const ids = (found: ReadonlyArray<Db.SimilarRepo>) => found.map((entry) => entry.repo.id);
 
 // similarCandidate as the app's code writes it, so the triggers that keep similar_candidates are held to it.
@@ -83,10 +91,11 @@ const similarCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Te
       yield* star(accountId(902), [theirs]);
       yield* database.query("update repos set gone_at = now() where id = $1", [gone]);
 
-      const found = yield* db.similar.inStars({ accountId: owner, repoId: opened, limit: 5 });
+      const { inStars } = yield* db.similar.near({ accountId: owner, repoId: opened, limit: 5 });
 
-      expect(ids(found)).toEqual([near, mid, far]);
-      expect(ids(yield* db.similar.inStars({ accountId: owner, repoId: opened, limit: 2 }))).toEqual([near, mid]);
+      expect(ids(inStars)).toEqual([near, mid, far]);
+      const fewer = yield* db.similar.near({ accountId: owner, repoId: opened, limit: 2 });
+      expect(ids(fewer.inStars)).toEqual([near, mid]);
     }),
   );
 
@@ -120,10 +129,10 @@ const similarCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Te
       ]);
       yield* database.query("update repos set gone_at = now() where id = $1", [gone]);
 
-      const found = yield* db.similar.notStarred({ accountId: owner, repoId: opened, limit: 5 });
+      const { notStarred } = yield* db.similar.near({ accountId: owner, repoId: opened, limit: 5 });
 
       // An unstarred repo is one the account doesn't star now, so it comes back.
-      expect(ids(found).filter((id) => id >= 9201 && id <= 9208)).toEqual([near, unstarred, far]);
+      expect(ids(notStarred).filter((id) => id >= 9201 && id <= 9208)).toEqual([near, unstarred, far]);
     }),
   );
 
@@ -145,12 +154,69 @@ const similarCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Te
 
       for (const repoId of [plain, foreign]) {
         const query = { accountId: owner, repoId, limit: 5 };
-        expect(yield* db.similar.inStars(query)).toEqual([]);
-        expect(yield* db.similar.notStarred(query)).toEqual([]);
+        expect(yield* db.similar.near(query)).toEqual({ inStars: [], notStarred: [] });
       }
       // A repo of another model is never a neighbor either.
-      const fromNear = yield* db.similar.inStars({ accountId: owner, repoId: near, limit: 5 });
-      expect(ids(fromNear)).toEqual([]);
+      const fromNear = yield* db.similar.near({ accountId: owner, repoId: near, limit: 5 });
+      expect(ids(fromNear.inStars)).toEqual([]);
+    }),
+  );
+
+  test.effect("leaves out forks and mirrors of the repo, of each other, and of the account's stars", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const owner = accountId(941);
+      const repo = (id: number, fullName: string, count: number, lean: number) => ({
+        id: repoId(id),
+        fullName,
+        count,
+        lean,
+      });
+      const opened = repo(9601, "codecrafters-io/build-your-own-x", 560_000, 0);
+      const mirror = repo(9602, "someone/tutorials", 100, 0.1);
+      const fork = repo(9603, "kjj6198/build-your-own-x", 490, 0.3);
+      const starred = repo(9604, "teacher/learn-x", 5000, -0.35);
+      const starredFork = repo(9605, "student/learn-x", 20, -0.37);
+      const ownFork = repo(9606, "pupil/learn-x", 10, -0.36);
+      const suffixed = repo(9607, "XiaomingX/build-your-own-xxx", 320, 0.35);
+      const shortened = repo(9608, "Teslow/build-your-x", 640, 0.4);
+      const originalMirror = repo(
+        9609,
+        "jderazoa/https-github.com-practical-tutorials-project-based-learning",
+        430,
+        0.44,
+      );
+      const original = repo(9610, "practical-tutorials/project-based-learning", 290_000, 0.45);
+      const popular = repo(9611, "big/build-your-own-x", 100_000, 0.5);
+      const different = repo(9612, "cweagans/awesome-diy-software", 780, 0.52);
+      const port = repo(9613, "rustacean/build-your-own-x-rs", 300, 0.55);
+      const far = repo(9614, "far/build-your-own-x", 50, 2);
+      const mine = repo(9615, "mine/other-thing", 2000, 0.7);
+      const all = [
+        opened,
+        mirror,
+        fork,
+        starred,
+        starredFork,
+        ownFork,
+        suffixed,
+        shortened,
+        originalMirror,
+        original,
+        popular,
+        different,
+        port,
+        far,
+        mine,
+      ];
+      yield* seed(all.map(({ id, lean }) => ({ id, axis: 60, lean })));
+      for (const { id, fullName, count } of all) yield* named(id, fullName, count);
+      yield* star(owner, [opened.id, starred.id, ownFork.id, mine.id]);
+
+      const found = yield* db.similar.near({ accountId: owner, repoId: opened.id, limit: 5 });
+
+      expect(ids(found.inStars)).toEqual([starred.id, mine.id]);
+      expect(ids(found.notStarred)).toEqual([original.id, popular.id, different.id, port.id, far.id]);
     }),
   );
 
@@ -213,7 +279,7 @@ const similarCases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.Te
       yield* star(owner, [opened, near]);
       yield* database.query("insert into repo_metrics (repo_id, stars, refreshed_at) values ($1, 1200, now())", [near]);
 
-      const [found] = yield* db.similar.inStars({ accountId: owner, repoId: opened, limit: 5 });
+      const [found] = (yield* db.similar.near({ accountId: owner, repoId: opened, limit: 5 })).inStars;
 
       expect(found?.stars).toBe(1200);
       expect(found?.repo.name).toBe(ref(near).name);
