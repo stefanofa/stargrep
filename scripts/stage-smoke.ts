@@ -195,8 +195,8 @@ const web = Effect.gen(function* () {
     ),
     check(
       "MCP lists the eight tools",
-      ["search", "triggerSync", "syncStatus", "getRepo", "stars", "config", "lookupFacets", "similarRepos"].every((name) =>
-        toolList.includes(`"name":"${name}"`),
+      ["search", "triggerSync", "syncStatus", "getRepo", "stars", "config", "lookupFacets", "similarRepos"].every(
+        (name) => toolList.includes(`"name":"${name}"`),
       ),
       { status: tools.status },
     ),
