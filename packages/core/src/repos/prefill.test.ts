@@ -33,7 +33,7 @@ const quiet = { resumed: 0, dropped: 0, created: 0, closed: 0, fallbacks: 0, stu
 for (const [adapter, database] of adapters) {
   const f = fixture();
 
-  it.layer(f.layer(database), { timeout: 60_000 })(`prefill on ${adapter}`, (it) => {
+  it.layer(f.layer(database), { timeout: 60_000, testTimeout: 60_000 })(`prefill on ${adapter}`, (it) => {
     it.effect("saves a chunk through one batch, with its manifest, receipts, atoms, and embeddings", () =>
       Effect.gen(function* () {
         f.seed(range(1001, 3));

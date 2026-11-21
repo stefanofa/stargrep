@@ -18,6 +18,7 @@ import * as RateLines from "./queries/rate-lines.ts";
 import * as Repos from "./queries/repos.ts";
 import * as Search from "./queries/search.ts";
 import * as Settings from "./queries/settings.ts";
+import * as Similar from "./queries/similar.ts";
 import * as StarImports from "./queries/star-imports.ts";
 import * as Stars from "./queries/stars.ts";
 import * as SyncRequests from "./queries/sync-requests.ts";
@@ -98,6 +99,7 @@ export type {
   SubjectGroup,
 } from "./queries/search.ts";
 export { acceptedKeysTtl, MetricFamily, MetricVariant, noAtoms, noFilters } from "./queries/search.ts";
+export type { SimilarQuery, SimilarRepo } from "./queries/similar.ts";
 export type {
   EnrichmentProgress,
   LibraryEntry,
@@ -123,6 +125,7 @@ export class Db extends Context.Service<
     readonly repos: Repos.Queries;
     readonly stars: Stars.Queries;
     readonly search: Search.Queries;
+    readonly similar: Similar.Queries;
     readonly syncRequests: SyncRequests.Queries;
     readonly rateLines: RateLines.Queries;
     readonly usage: Usage.Queries;
@@ -177,6 +180,7 @@ export const layer = (options: Options) =>
             embeddingModel,
             options.acceptedKeys ?? (yield* Ref.make(Option.none<Search.AcceptedKeys>())),
           ),
+          similar: yield* Similar.make(embeddingModel),
           syncRequests: yield* SyncRequests.make,
           rateLines: yield* RateLines.make,
           usage: yield* Usage.make,

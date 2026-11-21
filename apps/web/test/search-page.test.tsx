@@ -15,10 +15,20 @@ import { act, cleanup, configure, render, waitFor, within } from "@testing-libra
 import userEvent from "@testing-library/user-event";
 import * as DateTime from "effect/DateTime";
 import * as real from "../src/lib/library-collection.ts";
-import type { Client, LibraryRepo, NewToYou, SearchResult, SyncStatus, Viewer } from "../src/lib/rpc.ts";
+import type {
+  Client,
+  LibraryRepo,
+  NewToYou,
+  SearchResult,
+  SimilarRepo,
+  SimilarRepos,
+  SyncStatus,
+  Viewer,
+} from "../src/lib/rpc.ts";
 import { rememberedRefusal } from "../src/lib/trouble.ts";
 import type {} from "../src/routeTree.gen.ts";
 import { edgeAnswers } from "./edge-answers.ts";
+import { captured } from "./posthog.fake.ts";
 import { syncStatus } from "./sync-status.fixture.ts";
 
 type Repo = LibraryRepo;
@@ -38,6 +48,9 @@ interface Server {
   newToYou: NewToYou;
   // Every login the page asked what's new to the viewer in.
   compared: Array<string>;
+  similar: (id: number) => SimilarRepos;
+  // The repo IDs the page asked for similar repos of.
+  similarAsked: Array<number>;
 }
 
 let server: Server;
@@ -59,6 +72,10 @@ const entrances = () => {
 };
 
 const api = (): Client => ({
+  similarRepos: async ({ id }: { id: number }) => {
+    server.similarAsked.push(id);
+    return server.similar(id);
+  },
   getRepo: async () => {
     throw new Error("Unexpected getRepo call");
   },
@@ -117,16 +134,6 @@ configure({ asyncUtilTimeout: 4000 });
 const rpc = await import("../src/lib/rpc.ts");
 mock.module("../src/lib/rpc.ts", () => ({ ...rpc, api }));
 mock.module("../src/lib/library-collection.ts", () => ({ ...real, getLibrary: () => library }));
-// PostHog as the browser would load it on prod, for the tests that set the host to stargrep.com.
-const captured: Array<readonly [string, unknown]> = [];
-mock.module("posthog-js/dist/module.no-external", () => ({
-  posthog: {
-    init: () => {},
-    register: () => {},
-    capture: (event: string, properties: unknown) => void captured.push([event, properties]),
-    captureException: () => {},
-  },
-}));
 const setHost = (url: string) =>
   (window as unknown as { happyDOM: { setURL: (url: string) => void } }).happyDOM.setURL(url);
 
@@ -192,6 +199,7 @@ const inLine = () =>
     starredTotal: 412,
     enrichment: arriving,
   });
+const near = ({ atoms, keywords, starredAt, read, ...rest }: Repo): SimilarRepo => rest;
 const hit = (repo: Repo): SearchResult => ({ ...repo, facets: [], reason: "meaning match", rankedBy: [], metrics: [] });
 
 beforeEach(() => {
@@ -207,6 +215,8 @@ beforeEach(() => {
     calls: { library: 0, syncStatus: 0 },
     newToYou: { shared: null, repos: [], labels: {} },
     compared: [],
+    similar: () => ({ inStars: [], notStarred: [] }),
+    similarAsked: [],
   };
   library = real.makeLibrary(() =>
     real.onePage(
@@ -1165,5 +1175,43 @@ describe("what's new to you on someone else's stars", () => {
     await open("/octodone?q=terminal", "Search @octodone's stars");
     expect(server.compared).toEqual([]);
     expect(section()).toBeNull();
+  });
+});
+
+describe("repos near the open one", () => {
+  const helix = near(
+    repo(99, "helix-editor", "helix", "A post-modern modal text editor.", { stars: 40_000, license: "MPL-2.0" }),
+  );
+
+  test("load once the panel opens, leave an empty row out, and open a repo the login hasn't starred in place", async () => {
+    const user = userEvent.setup();
+    server.similar = (id) =>
+      id === 2 ? { inStars: [near(repos()[0] as Repo)], notStarred: [helix] } : { inStars: [], notStarred: [] };
+    const router = await open("/?q=terminal");
+    expect(server.similarAsked).toEqual([]);
+
+    await user.click(await page().findByRole("link", { name: "bottom" }));
+    const panel = within(await page().findByRole("dialog"));
+    await panel.findByRole("heading", { name: "also in these stars" });
+    expect(panel.getByRole("link", { name: /ratatui/ }).textContent).toContain("Widgets for terminal dashboards.");
+    expect(panel.getByRole("heading", { name: "not starred yet" })).toBeDefined();
+    expect(server.similarAsked).toEqual([2]);
+
+    await user.click(panel.getByRole("link", { name: /helix/ }));
+    await panel.findByRole("heading", { level: 2, name: "helix" });
+    expect(router.state.location.search).toMatchObject({ q: "terminal", repo: "helix-editor/helix" });
+    expect(panel.queryByText(/starred it/)).toBeNull();
+    // The link that opened helix is gone, so focus moves to the panel.
+    expect(document.activeElement).toBe(page().getByRole("dialog"));
+    // helix has nothing near it in either row, so neither row shows.
+    await waitFor(() => expect(server.similarAsked).toEqual([2, 99]));
+    await waitFor(() => expect(panel.queryByRole("heading", { name: "also in these stars" })).toBeNull());
+    expect(panel.queryByRole("heading", { name: "not starred yet" })).toBeNull();
+
+    // The repo replaced the one the click opened, so closing the panel goes straight back to the page.
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: "terminal" }));
+    expect(router.history.canGoBack()).toBe(false);
   });
 });

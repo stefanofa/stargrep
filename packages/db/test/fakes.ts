@@ -68,6 +68,10 @@ const defaults = {
     matchesAsPrefix: unexpected("search.matchesAsPrefix"),
     nearNames: unexpected("search.nearNames"),
   },
+  similar: {
+    inStars: unexpected("similar.inStars"),
+    notStarred: unexpected("similar.notStarred"),
+  },
   syncRequests: {
     get: unexpected("syncRequests.get"),
     claim: unexpected("syncRequests.claim"),
@@ -144,6 +148,7 @@ export const makeDb = (overrides: Overrides = {}): Db.Db["Service"] =>
     repos: { ...defaults.repos, ...overrides.repos },
     stars: { ...defaults.stars, ...overrides.stars },
     search: { ...defaults.search, ...overrides.search },
+    similar: { ...defaults.similar, ...overrides.similar },
     syncRequests: { ...defaults.syncRequests, ...overrides.syncRequests },
     rateLines: { ...defaults.rateLines, ...overrides.rateLines },
     usage: { ...defaults.usage, ...overrides.usage },

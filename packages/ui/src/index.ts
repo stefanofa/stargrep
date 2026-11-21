@@ -32,6 +32,7 @@ export {
   StatusLine,
   type TileProgress,
 } from "./components/search-tile.tsx";
+export { type OpenSimilar, type SimilarItem, SimilarRepos, type SimilarRow } from "./components/similar-repos.tsx";
 export { Skeleton } from "./components/skeleton.tsx";
 export { type Sort, SortMenu, sorts } from "./components/sort-menu.tsx";
 export { type StarredDay, type StarredWeek, StarredWeeks } from "./components/starred-weeks.tsx";

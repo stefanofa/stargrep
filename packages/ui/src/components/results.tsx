@@ -72,7 +72,8 @@ export type Hero = "butter" | "card";
 
 export type OpenResult = (result: Result, opener: HTMLAnchorElement) => void;
 
-const plainClick = (event: MouseEvent) =>
+// A click with no modifier, which the page handles itself. Any other click opens the link as the browser does.
+export const plainClick = (event: MouseEvent) =>
   event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 
 function UnreadChip({ className }: { className?: string }) {

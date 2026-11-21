@@ -2,11 +2,13 @@ import {
   Button,
   EmptyTile,
   type OpenResult,
+  type OpenSimilar,
   type PipPose,
   RephraseChips,
   RepoPanel,
   Results,
   SearchTile,
+  SimilarRepos,
   type Sort,
   SortMenu,
   StatusLine,
@@ -18,6 +20,7 @@ import { Link, useHydrated, useNavigate, useRouter, useSearch } from "@tanstack/
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { capture } from "../lib/analytics.ts";
 import { policyOf, starredOf, whoseOf } from "../lib/audience.ts";
 import { keywordTerms, normalize, searchText } from "../lib/keyword.ts";
 import { getLibrary, type Library } from "../lib/library-collection.ts";
@@ -25,18 +28,19 @@ import { useNewToYou } from "../lib/new-to-you.ts";
 import { askedPage, type PageData, type PageRequest, type Session } from "../lib/page-data.ts";
 import { hitsOf, liveView } from "../lib/page-view.ts";
 import { closesBack } from "../lib/panel-history.ts";
-import { now, startsIn, toDetail, withLinks } from "../lib/present.ts";
+import { now, type SimilarRowKey, similarRows, startsIn, strayDetail, toDetail, withLinks } from "../lib/present.ts";
 import { rememberLogin } from "../lib/recent-logins.ts";
 import { withReply } from "../lib/results.ts";
 import { useReveal } from "../lib/reveal.ts";
 import { playSurprise } from "../lib/reveal-timing.ts";
-import type { Viewer } from "../lib/rpc.ts";
+import type { SimilarRepo, Viewer } from "../lib/rpc.ts";
 import { librarySorts, type Params, searchSorts, validateParams } from "../lib/search-params.ts";
 import { type Arriving, type Body, pageView, type Retry, type Stage, stageOf } from "../lib/search-state.ts";
 import { storedView, useStoredView } from "../lib/stored-view.ts";
 import { libraryRevision, nothingSynced } from "../lib/sync-status.ts";
 import { libraryTrouble, type Trouble } from "../lib/trouble.ts";
 import { useSemanticSearch } from "../lib/use-semantic.ts";
+import { useSimilar } from "../lib/use-similar.ts";
 import { useSync } from "../lib/use-sync.ts";
 import { theirs } from "../lib/whose.ts";
 import { AccountMenu } from "./account-menu.tsx";
@@ -308,6 +312,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   // The panel keeps the last repo it showed while it slides closed. Until the library loads, the repo a shared link
   // opens comes from the server.
   const [panelRepo, setPanelRepo] = useState(params.repo);
+  const [strays, setStrays] = useState<ReadonlyMap<string, SimilarRepo>>(() => new Map());
   if (params.repo !== undefined && params.repo !== panelRepo) setPanelRepo(params.repo);
   const named = (repo: { readonly owner: string; readonly name: string }) => `${repo.owner}/${repo.name}` === panelRepo;
   const entry =
@@ -317,6 +322,22 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
         (data.opened !== null && named(data.opened) ? { ...data.opened, text: searchText(data.opened) } : undefined));
   const hit = hits.find((result) => result.id === entry?.id);
   const opened = entry && (hit ? withReply(entry, hit) : entry);
+  // A repo opened from the panel's rows that the library doesn't hold, such as one the login hasn't starred.
+  const stray = entry === undefined && panelRepo !== undefined ? strays.get(panelRepo) : undefined;
+  const detail = opened ? toDetail(opened, at, whose) : stray && strayDetail(stray, at);
+  const similar = useSimilar(owner, opened?.id ?? stray?.id);
+  // A repo opened from inside the panel replaces the one it showed, in the same history entry, so closing the panel
+  // still goes back to the page under it.
+  const openSimilar: OpenSimilar<SimilarRowKey> = (row, item) => {
+    const name = `${item.owner}/${item.name}`;
+    capture("similar_repo_opened", { row });
+    const found =
+      similar === undefined || similar === "loading"
+        ? undefined
+        : [...similar.inStars, ...similar.notStarred].find((repo) => `${repo.owner}/${repo.name}` === name);
+    if (found !== undefined) setStrays((previous) => new Map(previous).set(name, found));
+    navigate({ to: ".", search: (previous) => ({ ...previous, repo: name }), replace: true, state: true });
+  };
 
   const body = (current: Body) => {
     switch (current.kind) {
@@ -434,12 +455,13 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
         {body(page.body)}
       </div>
       <RepoPanel
-        repo={opened && toDetail(opened, at, whose)}
-        open={params.repo !== undefined && opened !== undefined}
+        repo={detail}
+        open={params.repo !== undefined && detail !== undefined}
         onOpenChange={(next) => {
           if (!next) close();
         }}
         returnFocus={opener}
+        similar={<SimilarRepos rows={similarRows(similar, links)} onOpen={openSimilar} />}
       />
     </>
   );

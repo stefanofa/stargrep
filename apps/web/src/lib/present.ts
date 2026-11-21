@@ -1,9 +1,10 @@
-import type { Activity, RepoDetail, Result, ResultGroup } from "@stargrep/ui";
+import type { Activity, RepoDetail, Result, ResultGroup, SimilarItem, SimilarRow } from "@stargrep/ui";
 import { defaultStringifySearch } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import { highlights } from "./keyword.ts";
 import type { LibraryEntry } from "./library-collection.ts";
 import { repoVisual } from "./repo-visual.ts";
+import type { LibraryRepo, SimilarRepo, SimilarRepos } from "./rpc.ts";
 import type { Params } from "./search-params.ts";
 import { factsPending } from "./search-state.ts";
 import type { Whose } from "./whose.ts";
@@ -39,7 +40,7 @@ export const syncedAgo = (iso: string, at: number) => {
   return `synced ${since(iso, at)}`;
 };
 
-const activity = (repo: LibraryEntry, at: number): Activity => {
+const activity = (repo: Pick<LibraryRepo, "archived" | "stars" | "pushedAt">, at: number): Activity => {
   if (repo.archived) return { state: "archived" };
   if (factsPending(repo)) return { state: "reading" };
   if (repo.pushedAt === null) return { state: "quiet", label: "no pushes yet" };
@@ -93,17 +94,64 @@ export const toResult = (
   };
 };
 
-export const toDetail = (repo: LibraryEntry, at: number, whose: Whose): RepoDetail => ({
+type Shown = Pick<
+  LibraryRepo,
+  | "owner"
+  | "name"
+  | "language"
+  | "description"
+  | "summary"
+  | "stars"
+  | "archived"
+  | "pushedAt"
+  | "license"
+  | "url"
+  | "icon"
+  | "ownerType"
+  | "ownerAvatarUrl"
+>;
+
+// The panel for a repo the login hasn't starred, such as one opened from its "not starred yet" row.
+export const strayDetail = (repo: Shown, at: number): RepoDetail => ({
   owner: repo.owner,
   name: repo.name,
   ...(repo.language === null ? {} : { language: repo.language }),
   description: repo.description ?? "",
   ...(repo.summary === null || repo.summary === repo.description ? {} : { summary: repo.summary }),
   stars: repo.stars,
-  starred: { by: whose.own ? "you" : `@${whose.login}`, on: starredOn(repo.starredAt) },
   activity: activity(repo, at),
   ...(repo.license === null ? {} : { license: repo.license }),
   network: [],
   githubUrl: repo.url,
   visual: repoVisual(repo, "panel"),
 });
+
+export const toDetail = (repo: LibraryEntry, at: number, whose: Whose): RepoDetail => ({
+  ...strayDetail(repo, at),
+  starred: { by: whose.own ? "you" : `@${whose.login}`, on: starredOn(repo.starredAt) },
+});
+
+export type SimilarRowKey = "in_stars" | "not_starred";
+
+const similarItem = (repo: SimilarRepo, search: Params): SimilarItem => ({
+  owner: repo.owner,
+  name: repo.name,
+  line: repo.summary ?? repo.description ?? "",
+  href: repoHref(search, repo),
+  visual: repoVisual(repo, "row"),
+});
+
+// The rows under the panel's link to GitHub, from the answer once it lands. No rows when the answer failed.
+export const similarRows = (
+  answer: SimilarRepos | "loading" | undefined,
+  search: Params,
+): ReadonlyArray<SimilarRow<SimilarRowKey>> => {
+  if (answer === undefined) return [];
+  const row = (repos: ReadonlyArray<SimilarRepo> | undefined) =>
+    repos === undefined ? ("loading" as const) : repos.map((repo) => similarItem(repo, search));
+  const loaded = answer === "loading" ? undefined : answer;
+  return [
+    { key: "in_stars", heading: "also in these stars", repos: row(loaded?.inStars) },
+    { key: "not_starred", heading: "not starred yet", repos: row(loaded?.notStarred) },
+  ];
+};

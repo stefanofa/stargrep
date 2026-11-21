@@ -68,6 +68,7 @@ const unchecked: Db.Repo = {
 interface Fakes {
   readonly search?: (request: Search.SearchRequest) => Effect.Effect<Search.SearchOutcome, Search.SearchError>;
   readonly facets?: Partial<Db.Db["Service"]["facets"]>;
+  readonly similar?: Partial<Db.Db["Service"]["similar"]>;
   readonly limiter?: (kind: RateLimitKind) => Effect.Effect<void, RateLimited | RateLimiterUnavailable>;
   readonly requests?: SyncRequests.SyncRequests["Service"];
   readonly sent?: Array<readonly [Login, SyncRequests.Requester]>;
@@ -120,7 +121,14 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
   const db = makeDb({
     accounts: {
       claimedBy: (userId: UserId) => Effect.succeed(userId === ada.userId ? Option.some(ada.account) : Option.none()),
-      byLogin: (login: Login) => Effect.succeed(login === grace.login ? Option.some(grace) : Option.none()),
+      byLogin: (login: Login) =>
+        Effect.succeed(
+          login === grace.login
+            ? Option.some(grace)
+            : login === ada.account.login
+              ? Option.some(ada.account)
+              : Option.none(),
+        ),
     },
     repos: {
       require: (id: RepoId) =>
@@ -139,6 +147,7 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
       ...(fakes.newToYou === undefined ? {} : { newToYou: fakes.newToYou }),
     },
     ...(fakes.facets === undefined ? {} : { facets: fakes.facets }),
+    ...(fakes.similar === undefined ? {} : { similar: fakes.similar }),
   });
   const requests =
     fakes.requests ??
@@ -493,6 +502,83 @@ describe("getRepo", () => {
       ownerType: null,
       ownerAvatarUrl: null,
     });
+  });
+});
+
+describe("similarRepos", () => {
+  const near = { repo: unchecked, stars: 1200 };
+  const similar = (queries: Array<Db.SimilarQuery>) => ({
+    inStars: (query: Db.SimilarQuery) =>
+      Effect.sync(() => {
+        queries.push(query);
+        return [{ repo, stars: 18_000 }];
+      }),
+    notStarred: (query: Db.SimilarQuery) =>
+      Effect.sync(() => {
+        queries.push(query);
+        return [near];
+      }),
+  });
+
+  test("answers the login's nearest stars and the nearest repos it hasn't starred, five at most", async () => {
+    const queries: Array<Db.SimilarQuery> = [];
+    const { api } = client({ similar: similar(queries) });
+    const answer = await api.similarRepos({ id: 42 as RepoId, login: "ada" });
+    expect(answer.inStars).toEqual([
+      {
+        id: 42 as RepoId,
+        owner: "ratatui",
+        name: "ratatui",
+        url: "https://github.com/ratatui/ratatui",
+        description: "Rust library for terminal user interfaces",
+        summary: repo.summary,
+        language: "Rust",
+        topics: ["tui"],
+        license: "MIT",
+        kind: "library",
+        archived: false,
+        pushedAt: "2026-10-01T08:00:00.000Z",
+        icon: { url: "https://stargrep.test/icons/v1/git/abc.webp", plate: "dark", size: 96 },
+        ownerType: "org",
+        ownerAvatarUrl: "https://avatars.githubusercontent.com/u/1",
+        stars: 18_000,
+      },
+    ]);
+    expect(answer.notStarred.map((found) => [found.id, found.stars, found.icon])).toEqual([[44 as RepoId, 1200, null]]);
+    const query = { accountId: ada.account.id, repoId: 42 as RepoId, limit: 5 };
+    expect(queries).toEqual([query, query]);
+  });
+
+  test("answers ACCOUNT_NOT_SYNCED for a login stargrep never synced and REPO_NOT_FOUND for an unknown repo", async () => {
+    const { api } = client({ similar: similar([]) });
+    expect((await failure(api.similarRepos({ id: 42 as RepoId, login: "linus" }))).code).toBe("ACCOUNT_NOT_SYNCED");
+    expect((await failure(api.similarRepos({ id: 43 as RepoId, login: "ada" }))).code).toBe("REPO_NOT_FOUND");
+  });
+
+  test("keeps each answer, so a repeat takes no rate limit turn and reads no database", async () => {
+    const queries: Array<Db.SimilarQuery> = [];
+    const limits: Array<RateLimitKind> = [];
+    const memory = AnswerCache.memory();
+    const ask = async () => {
+      const resHeaders = new Headers();
+      const context: ApiContext = {
+        ...contextFor(
+          "rest",
+          Effect.succeed(
+            services({ similar: similar(queries), limiter: (kind) => Effect.sync(() => limits.push(kind)) }),
+          ),
+        ),
+        answerCache: memory.cache,
+        resHeaders,
+      };
+      await createRouterClient(router, { context }).similarRepos({ id: 42 as RepoId, login: "ada" });
+      return [resHeaders.get("x-answer-cache"), resHeaders.get("cache-control")];
+    };
+    expect(await ask()).toEqual(["miss", "public, max-age=300"]);
+    expect(await ask()).toEqual(["hit", "public, max-age=300"]);
+    expect(limits).toEqual(["search"]);
+    expect(queries).toHaveLength(2);
+    expect([...memory.entries.keys()]).toEqual(["similar/ada/42"]);
   });
 });
 

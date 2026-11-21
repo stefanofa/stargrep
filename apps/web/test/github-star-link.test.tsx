@@ -1,16 +1,8 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { captured } from "./posthog.fake.ts";
 
-// PostHog itself, as the browser would load it on prod.
-const captured: Array<string> = [];
-const posthog = {
-  init: () => {},
-  register: () => {},
-  capture: (event: string) => void captured.push(event),
-  captureException: () => {},
-};
-mock.module("posthog-js/dist/module.no-external", () => ({ posthog }));
 const { fewestStarsShown, GitHubStarLink } = await import("../src/components/github-star-link.tsx");
 
 const setHost = (url: string) =>
@@ -55,7 +47,7 @@ describe("the header's star on github link", () => {
     render(<GitHubStarLink stars={5} />);
     link().addEventListener("click", (event) => event.preventDefault());
     await userEvent.setup().click(link());
-    await waitFor(() => expect(captured).toEqual(["github_star_clicked"]));
+    await waitFor(() => expect(captured).toEqual([["github_star_clicked", undefined]]));
   });
 
   test("a click anywhere but prod sends nothing", async () => {

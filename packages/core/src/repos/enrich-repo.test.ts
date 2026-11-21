@@ -551,10 +551,14 @@ import * as EnrichRetry from "./enrich-retry.ts";
   }
 }
 
+// Each test enriches up to 100 repos, and each saved embedding also enters similar_candidates' HNSW index, which PGlite
+// builds slowly, so a parallel run can push a test past Bun's 5 s default.
+const batches = { timeout: 30_000, testTimeout: 60_000 };
+
 {
   const f = fixture();
 
-  it.layer(f.enrichment(TestDatabase.layerMemory({ embeddingModel })), { timeout: 30_000 })("enrichRepos", (it) => {
+  it.layer(f.enrichment(TestDatabase.layerMemory({ embeddingModel })), batches)("enrichRepos", (it) => {
     it.effect(
       "enriches a batch, reports each outcome in input order, and neither summarizes nor looks up anything twice on a rerun",
       () =>

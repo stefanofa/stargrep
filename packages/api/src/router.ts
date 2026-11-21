@@ -42,9 +42,12 @@ import {
   requiresSession,
   SearchInput,
   SearchOutput,
+  type SimilarInput,
+  SimilarRepos,
   StarsCursor,
   type StarsInput,
   type SyncStatus,
+  similarLimit,
   type Viewer as WireViewer,
 } from "./contract.ts";
 import { errorStatus, type WireCode, wireError } from "./errors.ts";
@@ -378,6 +381,30 @@ const firstOf = (page: typeof PublicStars.Encoded, limit: number): typeof Public
   };
 };
 
+// Nearest repos change only when an embedding, a star, or a summary does, so an answer keeps for 10 minutes and is then
+// served for up to a day while a refresh runs.
+const similarAnswers: AnswerPolicy<typeof SimilarRepos.Encoded> = {
+  procedure: "similarRepos",
+  json: Schema.fromJsonString(Schema.toEncoded(SimilarRepos)),
+  fresh: Duration.minutes(10),
+  stale: Duration.days(1),
+  keep: () => true,
+  refused: refusesRequest,
+};
+
+const similarRepos = Effect.fnUntraced(function* (input: typeof SimilarInput.Type) {
+  const db = yield* Db.Db;
+  const account = yield* db.accounts.byLogin(input.login);
+  if (Option.isNone(account)) return yield* new Search.AccountNotSynced({ login: input.login });
+  yield* db.repos.require(input.id);
+  const query = { accountId: account.value.id, repoId: input.id, limit: similarLimit };
+  const inStars = yield* db.similar.inStars(query);
+  const notStarred = yield* db.similar.notStarred(query);
+  const icons = yield* IconHost;
+  const wire = (found: Db.SimilarRepo) => ({ ...repoBase(found.repo, icons), stars: found.stars });
+  return { inStars: inStars.map(wire), notStarred: notStarred.map(wire) };
+});
+
 const syncStatus =
   (login: Login) =>
   ([status, enrichment]: readonly [SyncRequests.SyncStatus, Db.EnrichmentProgress]): typeof SyncStatus.Type => {
@@ -435,6 +462,17 @@ const starsCache = answerCache(starsAnswers, (input: typeof StarsInput.Type, _co
     `stars/${loginKey(input.login)}/${pageSizeFor(input.limit)}/${input.cursor === undefined ? "" : encodeCursor(input.cursor)}`,
   ),
 );
+
+const similarCache = answerCache(similarAnswers, (input: typeof SimilarInput.Type, _context: ApiContext) =>
+  Option.some(`similar/${loginKey(input.login)}/${input.id}`),
+);
+
+const similarResponse = middlewareGen<AnswerContext>(function* ({ context, next }) {
+  // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC erases downstream failures to unknown.
+  const result = yield* next();
+  context.resHeaders?.set("cache-control", "public, max-age=300");
+  return result;
+});
 
 const starsResponse = middlewareGen<AnswerContext, object, typeof StarsInput.Type, typeof PublicStars.Encoded>(
   function* ({ context, next }, input) {
@@ -539,6 +577,16 @@ export const router = implementer.router({
     .use(admission("stars"))
     .effect(function* ({ input }): ApiResult<"stars", typeof PublicStars.Type> {
       return yield* starsPage(input.login, pageSizeFor(input.limit), Option.fromUndefinedOr(input.cursor));
+    }),
+
+  // A database read with no model call, so it takes from the search binding as lookupFacets does, and only on a miss.
+  similarRepos: os.similarRepos
+    .use(similarResponse)
+    .use(similarCache)
+    .use(Services.services)
+    .use(admission("search"))
+    .effect(function* ({ input }): ApiResult<"similarRepos", typeof SimilarRepos.Type> {
+      return yield* similarRepos(input);
     }),
 
   lookupFacets: withServices.lookupFacets.use(admission("search")).effect(function* ({

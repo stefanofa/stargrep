@@ -4,7 +4,7 @@ import type { LibraryRepo, OwnerType } from "./rpc.ts";
 export const avatarOwners: ReadonlySet<OwnerType> = new Set(["org", "user"]);
 
 // Twice each slot's side, so an avatar stays sharp on a 2x screen.
-const avatarSizes: Record<RepoIconSize, number> = { card: 88, panel: 112 };
+const avatarSizes: Record<RepoIconSize, number> = { card: 88, row: 72, panel: 112 };
 
 const sized = (url: string, slot: RepoIconSize) => {
   const parsed = new URL(url);

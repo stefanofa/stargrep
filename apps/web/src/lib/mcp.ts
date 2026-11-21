@@ -7,6 +7,7 @@ export const mcpTools = [
   { name: "syncStatus", does: "says whether a login is synced and how many of its stars stargrep has read" },
   { name: "stars", does: "lists a login's synced stars, newest first" },
   { name: "getRepo", does: "reads one repo, with its summary" },
+  { name: "similarRepos", does: "finds the repos nearest one repo, in a login's stars and ones it hasn't starred" },
   { name: "lookupFacets", does: "finds languages, kinds, and subjects to narrow a search with" },
   { name: "config", does: "names the demo account and its example queries" },
 ] as const;
