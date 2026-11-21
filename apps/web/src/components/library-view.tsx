@@ -15,7 +15,7 @@ import {
   type View,
 } from "@stargrep/ui";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { dead, deadStars } from "../lib/dead-stars.ts";
 import { languageShares } from "../lib/languages.ts";
 import type { LibraryEntry } from "../lib/library-collection.ts";
@@ -183,6 +183,7 @@ export function LibraryView({
   pose,
   butter,
   onOpen,
+  aside,
 }: {
   entries: ReadonlyArray<LibraryEntry>;
   at: number;
@@ -194,6 +195,8 @@ export function LibraryView({
   pose: PipPose;
   butter: boolean;
   onOpen: OpenResult;
+  // A section between the summary tiles and the months, such as what's new to a signed-in viewer.
+  aside?: ReactNode;
 }) {
   const language = search.lang;
   const archived = search.archived === true;
@@ -229,6 +232,7 @@ export function LibraryView({
           <DeadStarsTile dead={graveyard} whose={whose} at={at} search={search} onOpen={onOpen} />
         )}
       </div>
+      {aside}
       {Array.from(groups, ([heading, members]) => {
         const pending =
           arriving !== undefined && heading === last && visible.length <= shown

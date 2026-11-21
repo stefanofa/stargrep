@@ -101,6 +101,8 @@ export { acceptedKeysTtl, MetricFamily, MetricVariant, noAtoms, noFilters } from
 export type {
   EnrichmentProgress,
   LibraryEntry,
+  NewToYou,
+  NewToYouRequest,
   SnapshotChanges,
   Star,
   StarEvent,
@@ -170,7 +172,7 @@ export const layer = (options: Options) =>
         return Db.of({
           accounts: yield* Accounts.make,
           repos: yield* Repos.make(embeddingModel),
-          stars: yield* Stars.make,
+          stars: yield* Stars.make(embeddingModel),
           search: yield* Search.make(
             embeddingModel,
             options.acceptedKeys ?? (yield* Ref.make(Option.none<Search.AcceptedKeys>())),

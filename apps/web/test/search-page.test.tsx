@@ -15,7 +15,7 @@ import { act, cleanup, configure, render, waitFor, within } from "@testing-libra
 import userEvent from "@testing-library/user-event";
 import * as DateTime from "effect/DateTime";
 import * as real from "../src/lib/library-collection.ts";
-import type { Client, LibraryRepo, SearchResult, SyncStatus, Viewer } from "../src/lib/rpc.ts";
+import type { Client, LibraryRepo, NewToYou, SearchResult, SyncStatus, Viewer } from "../src/lib/rpc.ts";
 import { rememberedRefusal } from "../src/lib/trouble.ts";
 import type {} from "../src/routeTree.gen.ts";
 import { edgeAnswers } from "./edge-answers.ts";
@@ -35,6 +35,9 @@ interface Server {
   // A refusal the API answers, or the zone's rate limit turning the address away before the API sees the request.
   refusals: Record<string, "LOGIN_NOT_FOUND" | "SYNC_BUSY" | "TOO_MANY_REQUESTS" | "SERVICE_UNAVAILABLE" | "zone">;
   calls: { library: number; syncStatus: number };
+  newToYou: NewToYou;
+  // Every login the page asked what's new to the viewer in.
+  compared: Array<string>;
 }
 
 let server: Server;
@@ -64,6 +67,10 @@ const api = (): Client => ({
   },
   monthlyPicks: async () => {
     throw new Error("Unexpected monthlyPicks call");
+  },
+  newToYou: async ({ login }: { login: string }) => {
+    server.compared.push(login);
+    return server.newToYou;
   },
   setMonthlyPicks: async () => {
     throw new Error("Unexpected setMonthlyPicks call");
@@ -110,6 +117,18 @@ configure({ asyncUtilTimeout: 4000 });
 const rpc = await import("../src/lib/rpc.ts");
 mock.module("../src/lib/rpc.ts", () => ({ ...rpc, api }));
 mock.module("../src/lib/library-collection.ts", () => ({ ...real, getLibrary: () => library }));
+// PostHog as the browser would load it on prod, for the tests that set the host to stargrep.com.
+const captured: Array<readonly [string, unknown]> = [];
+mock.module("posthog-js/dist/module.no-external", () => ({
+  posthog: {
+    init: () => {},
+    register: () => {},
+    capture: (event: string, properties: unknown) => void captured.push([event, properties]),
+    captureException: () => {},
+  },
+}));
+const setHost = (url: string) =>
+  (window as unknown as { happyDOM: { setURL: (url: string) => void } }).happyDOM.setURL(url);
 
 const { Route: StarsRoute } = await import("../src/routes/{-$login}.tsx");
 
@@ -186,6 +205,8 @@ beforeEach(() => {
     triggered: [],
     refusals: {},
     calls: { library: 0, syncStatus: 0 },
+    newToYou: { shared: null, repos: [], labels: {} },
+    compared: [],
   };
   library = real.makeLibrary(() =>
     real.onePage(
@@ -199,6 +220,8 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  captured.length = 0;
+  setHost("http://localhost/");
 });
 
 const open = async (path: string, label: string | RegExp = "Search your stars", settle = true) => {
@@ -1052,5 +1075,95 @@ describe("whose stars the page searches", () => {
       "/auth/sign-in/social",
       { provider: "github", callbackURL: "/octosync?q=terminal", errorCallbackURL: "/octosync?q=terminal" },
     ]);
+  });
+});
+
+describe("what's new to you on someone else's stars", () => {
+  const section = () => page().queryByRole("region", { name: "new to you" });
+  const names = () =>
+    within(section() as HTMLElement)
+      .getAllByRole("heading", { level: 3 })
+      .map((name) => name.textContent);
+  const many = () =>
+    Array.from({ length: 10 }, (_, index) =>
+      repo(20 + index, "someone", `close-${index}`, "A close repo.", { starredAt: "2026-09-01T00:00:00.000Z" }),
+    );
+
+  test("lists their stars closest to yours, and a tile opens its repo over the page", async () => {
+    const user = userEvent.setup();
+    setHost("https://stargrep.com/octodone");
+    server.status = status({ login: "octodone" });
+    const [first, second, third] = [repos()[5], repos()[4], repos()[3]] as [Repo, Repo, Repo];
+    server.newToYou = { shared: 2, repos: [first, second, third], labels: {} };
+    const router = await open("/octodone", "Search @octodone's stars");
+    await waitFor(() => expect(section()).not.toBeNull());
+    expect(within(section() as HTMLElement).getByText("you share 2 stars with @octodone")).toBeTruthy();
+    expect(names()).toEqual(["tui-textarea", "tui-rs", "cursive"]);
+    expect(within(section() as HTMLElement).queryByRole("button", { name: "see all" })).toBeNull();
+    expect(server.compared).toEqual(["octodone"]);
+    await user.click(within(section() as HTMLElement).getByRole("link", { name: "tui-rs" }));
+    await page().findByRole("dialog");
+    expect(router.state.location.search).toEqual({ repo: "fdehau/tui-rs" });
+    await waitFor(() =>
+      expect(captured).toEqual([
+        ["new_to_you_shown", { shared: 2, repos: 3 }],
+        ["new_to_you_opened", { position: 2 }],
+      ]),
+    );
+  });
+
+  test("shows eight at first and the rest on see all", async () => {
+    const user = userEvent.setup();
+    server.status = status({ login: "octodone" });
+    server.repos = [...repos(), ...many()];
+    server.newToYou = { shared: 0, repos: many(), labels: {} };
+    await open("/octodone", "Search @octodone's stars");
+    await waitFor(() => expect(section()).not.toBeNull());
+    expect(within(section() as HTMLElement).getByText("you share no stars with @octodone")).toBeTruthy();
+    expect(names()).toHaveLength(8);
+    await user.click(within(section() as HTMLElement).getByRole("button", { name: "see all" }));
+    expect(names()).toHaveLength(10);
+  });
+
+  test("shows the shared count alone while your stars are not read yet", async () => {
+    server.status = status({ login: "octodone" });
+    server.newToYou = { shared: 4, repos: [], labels: {} };
+    await open("/octodone", "Search @octodone's stars");
+    await waitFor(() => expect(section()).not.toBeNull());
+    expect(section()?.textContent).toBe("new to youyou share 4 stars with @octodone");
+  });
+
+  test("shows nothing, and reports nothing shown, before your own stars have synced or with nothing in common", async () => {
+    setHost("https://stargrep.com/octodone");
+    server.status = status({ login: "octodone" });
+    for (const answer of [
+      { shared: null, repos: [], labels: {} },
+      { shared: 0, repos: [], labels: {} },
+    ]) {
+      server.newToYou = answer;
+      server.compared = [];
+      await open("/octodone", "Search @octodone's stars");
+      await waitFor(() => expect(server.compared).toEqual(["octodone"]));
+      await waitFor(() => expect(strip()).toContain("6 stars"));
+      expect(section()).toBeNull();
+      cleanup();
+    }
+    expect(captured).toEqual([]);
+  });
+
+  test("never asks on your own page, signed out, or while a search is on screen", async () => {
+    server.newToYou = { shared: 2, repos: [repos()[5] as Repo], labels: {} };
+    await open("/");
+    await waitFor(() => expect(strip()).toContain("6 stars"));
+    cleanup();
+    server.signedIn = false;
+    server.status = status({ login: "octodone" });
+    await open("/octodone", "Search @octodone's stars");
+    await waitFor(() => expect(strip()).toContain("6 stars"));
+    cleanup();
+    server.signedIn = true;
+    await open("/octodone?q=terminal", "Search @octodone's stars");
+    expect(server.compared).toEqual([]);
+    expect(section()).toBeNull();
   });
 });

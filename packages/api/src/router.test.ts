@@ -73,6 +73,7 @@ interface Fakes {
   readonly sent?: Array<readonly [Login, SyncRequests.Requester]>;
   readonly viewer?: Effect.Effect<Viewer, ViewerError>;
   readonly signedIn?: Effect.Effect<Option.Option<UserId>, ViewerUnavailable>;
+  readonly newToYou?: Db.Db["Service"]["stars"]["newToYou"];
 }
 
 const ada: Viewer = {
@@ -85,6 +86,8 @@ const ada: Viewer = {
     starredCount: 2431,
   }),
 };
+
+const grace = accountRow(GitHubAccountId.make(9), { login: Login.make("grace") });
 
 const starredAt = DateTime.makeUnsafe("2025-03-14T10:00:00Z");
 
@@ -117,6 +120,7 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
   const db = makeDb({
     accounts: {
       claimedBy: (userId: UserId) => Effect.succeed(userId === ada.userId ? Option.some(ada.account) : Option.none()),
+      byLogin: (login: Login) => Effect.succeed(login === grace.login ? Option.some(grace) : Option.none()),
     },
     repos: {
       require: (id: RepoId) =>
@@ -132,6 +136,7 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
         Effect.succeed(
           accountId === ada.account.id ? [{ repo, starredAt, stars: 16_400, read: false, gone: false }] : [],
         ),
+      ...(fakes.newToYou === undefined ? {} : { newToYou: fakes.newToYou }),
     },
     ...(fakes.facets === undefined ? {} : { facets: fakes.facets }),
   });
@@ -632,7 +637,13 @@ describe("signed-in procedures", () => {
 
   test("refuse a caller with no session", async () => {
     const { api } = client();
-    for (const call of [api.viewer(), api.library(), api.monthlyPicks(), api.setMonthlyPicks({ optedIn: true })]) {
+    for (const call of [
+      api.viewer(),
+      api.library(),
+      api.monthlyPicks(),
+      api.setMonthlyPicks({ optedIn: true }),
+      api.newToYou({ login: "grace" }),
+    ]) {
       const error = await failure(call);
       expect([error.code, error.data]).toEqual(["UNAUTHORIZED", traceData]);
     }
@@ -670,6 +681,56 @@ describe("signed-in procedures", () => {
   test("map an unreadable session to service unavailable", async () => {
     const { api } = client({ viewer: Effect.fail(new ViewerUnavailable({ step: "session" })) });
     expect((await failure(api.library())).code).toBe("SERVICE_UNAVAILABLE");
+  });
+});
+
+describe("new to you", () => {
+  const synced: Viewer = { ...ada, account: { ...ada.account, starsSyncedAt: starredAt } };
+
+  test("counts the stars both accounts share and lists the login's others, closest first", async () => {
+    const asked: Array<Db.NewToYouRequest> = [];
+    const { api } = client({
+      viewer: Effect.succeed(synced),
+      newToYou: (request) =>
+        Effect.sync(() => {
+          asked.push(request);
+          return { shared: 12, entries: [{ repo, starredAt, stars: 16_400, read: true, gone: false }] };
+        }),
+    });
+    expect(await api.newToYou({ login: "grace" })).toEqual({
+      shared: 12,
+      repos: [expect.objectContaining({ id: 42, owner: "ratatui", name: "ratatui", stars: 16_400, read: true })],
+      labels: {},
+    });
+    expect(asked).toEqual([{ viewer: ada.account.id, owner: grace.id, limit: 8 }]);
+  });
+
+  test("compares nothing until the viewer's own stars have synced", async () => {
+    const { api } = client({ viewer: Effect.succeed(ada) });
+    expect(await api.newToYou({ login: "grace", limit: 48 })).toEqual({ shared: null, repos: [], labels: {} });
+  });
+
+  test("answers ACCOUNT_NOT_SYNCED for a login stargrep has never seen", async () => {
+    const { api } = client({ viewer: Effect.succeed(synced) });
+    expect((await failure(api.newToYou({ login: "nobody" }))).code).toBe("ACCOUNT_NOT_SYNCED");
+  });
+
+  test("takes a turn from the per-network read limit", async () => {
+    const kinds: Array<RateLimitKind> = [];
+    const { api } = client({
+      viewer: Effect.succeed(synced),
+      limiter: (kind) => {
+        kinds.push(kind);
+        return Effect.fail(new RateLimited({ limit: "network" }));
+      },
+    });
+    expect((await failure(api.newToYou({ login: "grace" }))).code).toBe("TOO_MANY_REQUESTS");
+    expect(kinds).toEqual(["search"]);
+  });
+
+  test("refuses a limit past the most it lists", async () => {
+    const { api } = client({ viewer: Effect.succeed(synced) });
+    expect((await failure(api.newToYou({ login: "grace", limit: 49 }))).code).toBe("BAD_REQUEST");
   });
 });
 

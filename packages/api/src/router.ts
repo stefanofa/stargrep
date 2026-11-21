@@ -32,6 +32,7 @@ import {
   type MonthlyPicks,
   type maxIconSize,
   maxStarsPage,
+  type NewToYou,
   type OwnerType,
   type PlanSource,
   type PublicConfig,
@@ -515,6 +516,20 @@ export const router = implementer.router({
       yield* Analytics.capture(event).pipe(Analytics.withActor(Analytics.Actor.User({ userId })));
     }
     return { optedIn: input.optedIn };
+  }),
+
+  // The viewer's stars are compared only once they have synced, so a first import still running counts nothing.
+  newToYou: withServices.newToYou.use(admission("search")).effect(function* ({
+    input,
+    context,
+  }): ApiResult<"newToYou", typeof NewToYou.Type> {
+    const { account } = yield* context.viewer;
+    const db = yield* Db.Db;
+    const owner = yield* db.accounts.byLogin(input.login);
+    if (Option.isNone(owner)) return yield* new Search.AccountNotSynced({ login: input.login });
+    if (account.starsSyncedAt === null) return { shared: null, repos: [], labels: {} };
+    const found = yield* db.stars.newToYou({ viewer: account.id, owner: owner.value.id, limit: input.limit });
+    return { shared: found.shared, ...(yield* libraryRepos(found.entries)) };
   }),
 
   stars: os.stars

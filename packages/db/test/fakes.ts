@@ -61,6 +61,7 @@ const defaults = {
     library: unexpected("stars.library"),
     page: unexpected("stars.page"),
     enrichment: unexpected("stars.enrichment"),
+    newToYou: unexpected("stars.newToYou"),
   },
   search: {
     hybrid: unexpected("search.hybrid"),
