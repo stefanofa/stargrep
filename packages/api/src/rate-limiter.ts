@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 export type RateLimitKind = "sync" | "search" | "stars";
 
 export class RateLimited extends Schema.TaggedError<RateLimited, { readonly brand: unique symbol }>()("RateLimited", {
-  limit: Schema.Literals(["network", "all"]),
+  limit: Schema.Literals(["network", "all", "account"]),
 }) {
   override get message(): string {
     return `Requests are over the ${this.limit} rate limit`;

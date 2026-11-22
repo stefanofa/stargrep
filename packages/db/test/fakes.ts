@@ -147,6 +147,16 @@ const defaults = {
     like: unexpected("people.like"),
     starredBy: unexpected("people.starredBy"),
   },
+  follows: {
+    follow: unexpected("follows.follow"),
+    unfollow: unexpected("follows.unfollow"),
+    list: unexpected("follows.list"),
+    followed: unexpected("follows.followed"),
+    stars: unexpected("follows.stars"),
+    repos: unexpected("follows.repos"),
+    starredBy: unexpected("follows.starredBy"),
+    known: unexpected("follows.known"),
+  },
   topics: {
     refresh: unexpected("topics.refresh"),
     page: unexpected("topics.page"),
@@ -173,6 +183,7 @@ export const makeDb = (overrides: Overrides = {}): Db.Db["Service"] =>
     starImports: { ...defaults.starImports, ...overrides.starImports },
     iconBackfill: { ...defaults.iconBackfill, ...overrides.iconBackfill },
     people: { ...defaults.people, ...overrides.people },
+    follows: { ...defaults.follows, ...overrides.follows },
     topics: { ...defaults.topics, ...overrides.topics },
   });
 

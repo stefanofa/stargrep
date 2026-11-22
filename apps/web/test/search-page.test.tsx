@@ -105,6 +105,27 @@ const api = (): Client => ({
   monthlyPicks: async () => {
     throw new Error("Unexpected monthlyPicks call");
   },
+  follow: async () => {
+    throw new Error("Unexpected follow call");
+  },
+  unfollow: async () => {
+    throw new Error("Unexpected unfollow call");
+  },
+  followedLogins: async () => {
+    throw new Error("Unexpected followedLogins call");
+  },
+  followedPeople: async () => {
+    throw new Error("Unexpected followedPeople call");
+  },
+  followingFeed: async () => {
+    throw new Error("Unexpected followingFeed call");
+  },
+  githubFollowing: async () => {
+    throw new Error("Unexpected githubFollowing call");
+  },
+  followedStarrers: async () => {
+    throw new Error("Unexpected followedStarrers call");
+  },
   newToYou: async ({ login }: { login: string }) => {
     server.compared.push(login);
     return server.newToYou;

@@ -60,6 +60,11 @@ const wireOf = Event.$match({
   // The person property counts the waitlist as it stands, so an opt-out leaves it.
   MonthlyPicksOptedIn: () => ({ event: "monthly_picks_opted_in", properties: { $set: { monthly_picks: true } } }),
   MonthlyPicksOptedOut: () => ({ event: "monthly_picks_opted_out", properties: { $set: { monthly_picks: false } } }),
+  Followed: (event) => ({
+    event: "followed",
+    properties: { added: event.added, source: event.source, $set: { following: event.following } },
+  }),
+  Unfollowed: () => ({ event: "unfollowed", properties: {} }),
   StarsImportStarted: (event) => ({
     event: "stars_import_started",
     properties: {

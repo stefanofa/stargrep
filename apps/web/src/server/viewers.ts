@@ -58,13 +58,29 @@ const signedIn = (headers: Headers) =>
         const account = yield* importViewer(userId, token).pipe(Effect.provide(context));
         return { userId, account } satisfies Viewer;
       }).pipe(Effect.withSpan("Viewers.current"));
-      return Viewers.of({ current: yield* Effect.cached(current), signedIn });
+      const viewer = yield* Effect.cached(current);
+      // Read with the viewer's own token, inside its share of the token's budget.
+      const githubFollowing = Effect.gen(function* () {
+        const { userId, account } = yield* viewer;
+        const token = yield* auth.githubToken(userId).pipe(Effect.catch(unavailable("token")));
+        return yield* GitHub.GitHub.use((github) => github.following(account.login)).pipe(
+          Effect.provide(GitHub.layer.pipe(Layer.provide(TokenGate.layerMemory({ token, share: userShare })))),
+          Effect.tapError((error) => Effect.logWarning("GitHub following read failed", { error: error._tag })),
+          Effect.mapError(() => new ViewerUnavailable({ step: "github" })),
+          Effect.provide(context),
+        );
+      }).pipe(Effect.withSpan("Viewers.githubFollowing"));
+      return Viewers.of({ current: viewer, githubFollowing, signedIn });
     }),
   );
 
 const signedOut = Layer.succeed(
   Viewers,
-  Viewers.of({ current: Effect.fail(new NotSignedIn()), signedIn: Effect.succeedNone }),
+  Viewers.of({
+    current: Effect.fail(new NotSignedIn()),
+    githubFollowing: Effect.fail(new NotSignedIn()),
+    signedIn: Effect.succeedNone,
+  }),
 );
 
 export const layerViewers = (

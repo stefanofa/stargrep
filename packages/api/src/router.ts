@@ -2,13 +2,14 @@ import "@orpc/effect/extensions/effect";
 import { middlewareGen, type WithEffectContext } from "@orpc/effect";
 import { implement } from "@orpc/server";
 import * as Analytics from "@stargrep/analytics/analytics";
+import { Feed } from "@stargrep/core/follows";
 import { RateLine } from "@stargrep/core/limits";
 import { MetricRegistry, QueryPlan, type QueryPlanner, Search } from "@stargrep/core/search";
 import { OwnerAccount, SyncRequests } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import type { DbQueryFailed, DbRowInvalid, RepoNotFound } from "@stargrep/db/errors";
 import { loginKey } from "@stargrep/github/login";
-import type { Login } from "@stargrep/github/schemas";
+import type { GitHubAccountId, Login } from "@stargrep/github/schemas";
 import { everything, normalize, SelectionKey } from "@stargrep/knowledge/atom";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -26,10 +27,17 @@ import {
   type AppliedAtom,
   contract,
   type FacetMatches,
+  type FollowedLogins,
+  type Followed as FollowedOutput,
+  type FollowedPeople,
+  type FollowedStarrers,
+  type FollowingFeed,
+  type GitHubFollowing,
   type IconPlate,
   type Library,
   type MetricId,
   type MonthlyPicks,
+  type maxFollows,
   type maxIconSize,
   maxStarsPage,
   type NewToYou,
@@ -58,6 +66,7 @@ import {
   type TopicPages,
   Topics,
   type TopicsInput,
+  type Unfollowed,
   type Viewer as WireViewer,
 } from "./contract.ts";
 import { errorStatus, type WireCode, wireError } from "./errors.ts";
@@ -85,6 +94,7 @@ true satisfies Equals<typeof OwnerType.Type, Db.OwnerType>;
 true satisfies Equals<(typeof SyncStatus.Type)["state"], SyncRequests.SyncStatus["state"]>;
 true satisfies Equals<typeof AppliedAtom.Type, Search.SearchOutcome["applied"][number]>;
 true satisfies Equals<typeof PeopleInput.Type.sort, Db.PeopleSort>;
+true satisfies Equals<typeof maxFollows, typeof Feed.followCap>;
 
 type ApiFailure =
   | Search.SearchError
@@ -542,6 +552,126 @@ const topicPage = Effect.fnUntraced(function* (input: typeof TopicInput.Type) {
   };
 });
 
+// Follows are the signed-in account's own, so every read below names it as the follower and no input names another.
+// Each follow or unfollow takes a turn in the account's line.
+const followTurn = Effect.fnUntraced(function* (account: Db.Account) {
+  const turn = yield* RateLine.reserve(
+    (yield* Db.Db).rateLines,
+    RateLine.followsAccount(account.id),
+    yield* DateTime.now,
+    1,
+  );
+  if (Option.isNone(turn)) return yield* new RateLimited({ limit: "account" });
+});
+
+const followedPerson = (person: Db.Followee) => ({
+  login: person.login,
+  avatarUrl: person.avatarUrl,
+  source: person.source,
+  followedAt: DateTime.formatIso(person.followedAt),
+  lastStarredAt: iso(person.lastStarredAt),
+  checkedAt: iso(person.checkedAt),
+});
+
+const oldest = (times: ReadonlyArray<DateTime.Utc>) =>
+  times.reduce<DateTime.Utc | null>((min, time) => (min === null || DateTime.isLessThan(time, min) ? time : min), null);
+
+const newestStar = (people: ReadonlyArray<Db.Followee>) =>
+  people.reduce<{ readonly login: string; readonly starredAt: DateTime.Utc } | null>((best, person) => {
+    if (person.lastStarredAt === null) return best;
+    return best !== null && !DateTime.isGreaterThan(person.lastStarredAt, best.starredAt)
+      ? best
+      : { login: person.login, starredAt: person.lastStarredAt };
+  }, null);
+
+// The followees' stars in the window, one row per repo the account doesn't star, with the week's top repo and busiest
+// people. Repos GitHub no longer serves drop out with their rows.
+const followingFeed = Effect.fnUntraced(function* (account: Db.Account) {
+  const db = yield* Db.Db;
+  const now = yield* DateTime.now;
+  const [people, stars] = yield* Effect.all(
+    [
+      db.follows.list(account.id),
+      db.follows.stars({
+        follower: account.id,
+        since: DateTime.subtractDuration(now, Feed.window),
+        perFollowee: Feed.perFollowee,
+      }),
+    ],
+    { concurrency: 2 },
+  );
+  const feed = Feed.assemble(stars, now);
+  const cards = new Map(
+    (yield* db.follows.repos(feed.rows.map((row) => row.repoId))).map((card) => [card.repo.id, card] as const),
+  );
+  // The two reads run side by side, so a star can name someone unfollowed in between. It is left out.
+  const byId = new Map(people.map((person) => [person.id, person] as const));
+  const named = new Set<string>();
+  const loginOf = (id: GitHubAccountId) => {
+    const login = byId.get(id)?.login;
+    if (login !== undefined) named.add(login);
+    return login === undefined ? [] : [login];
+  };
+  const icons = yield* IconHost;
+  const repos = feed.rows.flatMap((row) => {
+    const card = cards.get(row.repoId);
+    if (card === undefined) return [];
+    return [
+      {
+        ...repoBase(card.repo, icons),
+        stars: card.stars,
+        starredBy: row.starredBy.flatMap((starrer) =>
+          loginOf(starrer.followee).map((login) => ({ login, starredAt: DateTime.formatIso(starrer.starredAt) })),
+        ),
+      },
+    ];
+  });
+  const top = Option.getOrNull(Option.filter(feed.top, (found) => cards.has(found.repoId)));
+  const busiest = feed.busiest.flatMap((busy) =>
+    loginOf(busy.followee).map((login) => ({ login, stars: busy.stars, latestAt: DateTime.formatIso(busy.latestAt) })),
+  );
+  const last = newestStar(people);
+  if (last !== null) named.add(last.login);
+  return {
+    following: people.length,
+    arriving: people.filter((person) => person.starsSyncedAt === null).length,
+    checkedAt: iso(oldest(people.flatMap((person) => (person.checkedAt === null ? [] : [person.checkedAt])))),
+    windowDays: Duration.toDays(Feed.window),
+    avatars: Object.fromEntries(
+      people.filter((person) => named.has(person.login)).map((person) => [person.login, person.avatarUrl] as const),
+    ),
+    repos,
+    top: top && { id: top.repoId, starrers: top.starrers },
+    busiest,
+    lastStar: last && { login: last.login, starredAt: DateTime.formatIso(last.starredAt) },
+  };
+});
+
+// The account's GitHub following, read with its own token once a day, kept to the users whose stars Stargrep holds. A
+// read GitHub fails gives the day's turn back.
+const githubFollowing = Effect.fnUntraced(function* (account: Db.Account) {
+  const db = yield* Db.Db;
+  const viewers = yield* Viewers;
+  const turn = yield* RateLine.reserve(db.rateLines, RateLine.followingImport(account.id), yield* DateTime.now, 1);
+  if (Option.isNone(turn)) return yield* new RateLimited({ limit: "account" });
+  const followed = yield* viewers.githubFollowing.pipe(
+    Effect.tapError(() => Effect.flatMap(DateTime.now, (now) => db.rateLines.release(turn.value, now))),
+  );
+  const [known, mine] = yield* Effect.all([
+    db.follows.known(followed.map((user) => user.id)),
+    db.follows.followed(account.id),
+  ]);
+  const following = new Set(mine.map((followed) => loginKey(followed.login)));
+  return {
+    people: known.map((person) => ({
+      login: person.login,
+      avatarUrl: person.avatarUrl,
+      following: following.has(loginKey(person.login)),
+    })),
+    notOnStargrep: followed.length - known.length,
+  };
+});
+
 const syncStatus =
   (login: Login) =>
   ([status, enrichment]: readonly [SyncRequests.SyncStatus, Db.EnrichmentProgress]): typeof SyncStatus.Type => {
@@ -705,6 +835,80 @@ export const router = implementer.router({
       yield* Analytics.capture(event).pipe(Analytics.withActor(Analytics.Actor.User({ userId })));
     }
     return { optedIn: input.optedIn };
+  }),
+
+  follow: withServices.follow.effect(function* ({ input, context }): ApiResult<"follow", typeof FollowedOutput.Type> {
+    const { userId, account } = yield* context.viewer;
+    yield* followTurn(account);
+    const result = yield* (yield* Db.Db).follows.follow({
+      follower: account.id,
+      logins: input.logins,
+      source: input.source,
+      cap: Feed.followCap,
+    });
+    if (result.added > 0)
+      yield* Analytics.capture(
+        Analytics.Event.Followed({ added: result.added, source: input.source, following: result.total }),
+      ).pipe(Analytics.withActor(Analytics.Actor.User({ userId })));
+    return { following: result.following, total: result.total, full: result.full };
+  }),
+
+  unfollow: withServices.unfollow.effect(function* ({ input, context }): ApiResult<"unfollow", typeof Unfollowed.Type> {
+    const { userId, account } = yield* context.viewer;
+    yield* followTurn(account);
+    const unfollowed = yield* (yield* Db.Db).follows.unfollow(account.id, input.login);
+    if (unfollowed)
+      yield* Analytics.capture(Analytics.Event.Unfollowed()).pipe(
+        Analytics.withActor(Analytics.Actor.User({ userId })),
+      );
+    return { unfollowed };
+  }),
+
+  followedLogins: withServices.followedLogins.use(admission("search")).effect(function* ({
+    context,
+  }): ApiResult<"followedLogins", typeof FollowedLogins.Type> {
+    const { account } = yield* context.viewer;
+    const followed = yield* (yield* Db.Db).follows.followed(account.id);
+    return {
+      follows: followed.map(({ login, followedAt }) => ({ login, followedAt: DateTime.formatIso(followedAt) })),
+    };
+  }),
+
+  followedPeople: withServices.followedPeople.use(admission("search")).effect(function* ({
+    context,
+  }): ApiResult<"followedPeople", typeof FollowedPeople.Type> {
+    const { account } = yield* context.viewer;
+    return { people: (yield* (yield* Db.Db).follows.list(account.id)).map(followedPerson) };
+  }),
+
+  followingFeed: withServices.followingFeed.use(admission("search")).effect(function* ({
+    context,
+  }): ApiResult<"followingFeed", typeof FollowingFeed.Type> {
+    const { account } = yield* context.viewer;
+    return yield* followingFeed(account);
+  }),
+
+  githubFollowing: withServices.githubFollowing.effect(function* ({
+    context,
+  }): ApiResult<"githubFollowing", typeof GitHubFollowing.Type> {
+    const { account } = yield* context.viewer;
+    return yield* githubFollowing(account);
+  }),
+
+  followedStarrers: withServices.followedStarrers.use(admission("search")).effect(function* ({
+    input,
+    context,
+  }): ApiResult<"followedStarrers", typeof FollowedStarrers.Type> {
+    const { account } = yield* context.viewer;
+    const db = yield* Db.Db;
+    const owner = yield* db.accounts.byLogin(input.login);
+    if (Option.isNone(owner)) return { people: [], total: 0 };
+    return yield* db.follows.starredBy({
+      follower: account.id,
+      repoId: input.id,
+      except: owner.value.id,
+      limit: starredByLimit,
+    });
   }),
 
   // The viewer's stars are compared only once they have synced, so a first import still running counts nothing.

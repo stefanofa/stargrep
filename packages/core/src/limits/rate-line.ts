@@ -1,5 +1,5 @@
 import * as Db from "@stargrep/db";
-import type { BudgetShare } from "@stargrep/github/schemas";
+import type { BudgetShare, GitHubAccountId } from "@stargrep/github/schemas";
 import type * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 
@@ -51,6 +51,18 @@ export const modelAll: Line = {
 export const starsNetwork = (caller: Db.CallerKey): Line => ({
   key: Db.LineKey.make(`stars/${caller}`),
   rate: { units: 60, per: Duration.minutes(1), burst: 60, maxWait: Duration.zero },
+});
+
+// Each follow or unfollow a signed-in account asks for counts one, so one account cannot write follows without end.
+export const followsAccount = (account: GitHubAccountId): Line => ({
+  key: Db.LineKey.make(`follows/${account}`),
+  rate: { units: 60, per: Duration.hours(1), burst: 60, maxWait: Duration.zero },
+});
+
+// Reading an account's GitHub following costs up to 10 requests on its own token, so it reads once a day.
+export const followingImport = (account: GitHubAccountId): Line => ({
+  key: Db.LineKey.make(`following-import/${account}`),
+  rate: { units: 1, per: Duration.days(1), burst: 1, maxWait: Duration.zero },
 });
 
 // How many summaries the Worker may ask the model for in a day. Change it here, and the line follows.

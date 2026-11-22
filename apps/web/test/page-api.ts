@@ -80,6 +80,7 @@ const viewers = () => {
   const viewer = signedIn();
   return Viewers.of({
     current: Effect.fromOption(viewer).pipe(Effect.mapError(() => new NotSignedIn())),
+    githubFollowing: Effect.succeed([]),
     signedIn: Effect.succeed(Option.map(viewer, ({ userId }) => userId)),
   });
 };

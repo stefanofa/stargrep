@@ -37,6 +37,14 @@ export type Event = Data.TaggedEnum<{
   SignedUp: {};
   MonthlyPicksOptedIn: {};
   MonthlyPicksOptedOut: {};
+  // Follows a user asked for that added someone, never who.
+  Followed: {
+    readonly added: number;
+    readonly source: "github" | "stargrep";
+    // How many people the user follows now.
+    readonly following: number;
+  };
+  Unfollowed: {};
   StarsImportStarted: {
     // The starred total admission priced the import from, null before any lookup counted it.
     readonly stars: number | null;

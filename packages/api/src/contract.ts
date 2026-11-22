@@ -601,6 +601,117 @@ export const TopicPages = Schema.Struct({
   ).annotate({ description: "One entry for each topic asked for that has a page. Topics without one are left out." }),
 });
 
+// How many accounts one person may follow. core's followCap holds the same number.
+export const maxFollows = 1000;
+
+export const FollowSource = Schema.Literals(["stargrep", "github"]).annotate({
+  description: "github for people copied from the account's GitHub following, stargrep for everyone else.",
+});
+
+export const FollowInput = Schema.Struct({
+  logins: Schema.Array(GitHubLogin)
+    .check(Schema.isMinLength(1), Schema.isMaxLength(maxFollows))
+    .annotate({ description: "The GitHub users to follow, such as a topic's people." }),
+  source: FollowSource.pipe(Schema.withDecodingDefaultKey(Effect.succeed("stargrep" as const))),
+});
+
+export const Followed = Schema.Struct({
+  following: Schema.Array(Schema.String).annotate({
+    description:
+      "The logins asked for that the account follows now, in the order asked. Orgs, the account itself, logins Stargrep doesn't know, and logins past the cap are left out.",
+  }),
+  total: Schema.Int.annotate({ description: "How many people the account follows now." }),
+  full: Schema.Boolean.annotate({
+    description: `Whether the cap of ${maxFollows} follows left some of the logins out.`,
+  }),
+});
+
+export const UnfollowInput = Schema.Struct({ login: GitHubLogin });
+
+export const Unfollowed = Schema.Struct({
+  unfollowed: Schema.Boolean.annotate({ description: "Whether the account followed the login until now." }),
+});
+
+export const FollowedLogins = Schema.Struct({
+  follows: Schema.Array(Schema.Struct({ login: Schema.String, followedAt: Timestamp })).annotate({
+    description: "Everyone the account follows and since when, the newest follow first.",
+  }),
+});
+
+export const FollowedPerson = Schema.Struct({
+  login: Schema.String,
+  avatarUrl: Schema.NullOr(Schema.String),
+  source: FollowSource,
+  followedAt: Timestamp,
+  lastStarredAt: Schema.NullOr(Timestamp).annotate({
+    description: "The person's newest current star Stargrep holds, or null before their stars arrive.",
+  }),
+  checkedAt: Schema.NullOr(Timestamp).annotate({
+    description: "When Stargrep last found the person's stars current, or null while their stars are still arriving.",
+  }),
+});
+
+export const FollowedPeople = Schema.Struct({
+  people: Schema.Array(FollowedPerson).annotate({
+    description: "Everyone the account follows, the newest follow first.",
+  }),
+});
+
+const FeedRepo = Schema.Struct({
+  ...repoFields,
+  stars: Schema.NullOr(Schema.Int).annotate({ description: "The repo's star count, when Stargrep has read it." }),
+  starredBy: Schema.Array(Schema.Struct({ login: Schema.String, starredAt: Timestamp })).annotate({
+    description: "The people the account follows who starred the repo in the window, the latest first.",
+  }),
+});
+
+export const FollowingFeed = Schema.Struct({
+  following: Schema.Int.annotate({ description: "How many people the account follows." }),
+  arriving: Schema.Int.annotate({ description: "How many of them Stargrep hasn't read the stars of yet." }),
+  checkedAt: Schema.NullOr(Timestamp).annotate({
+    description: "The oldest time Stargrep last found the stars of someone the account follows current.",
+  }),
+  windowDays: Schema.Int,
+  avatars: Schema.Record(Schema.String, Schema.NullOr(Schema.String)).annotate({
+    description: "The avatar of every login the feed names.",
+  }),
+  repos: Schema.Array(FeedRepo).annotate({
+    description:
+      "One entry per repo the people the account follows starred in the window, the latest star first, leaving out repos the account stars.",
+  }),
+  top: Schema.NullOr(Schema.Struct({ id: RepoId, starrers: Schema.Int })).annotate({
+    description: "The repo the most of them starred in the last 7 days, when at least 2 did. It is in repos too.",
+  }),
+  busiest: Schema.Array(Schema.Struct({ login: Schema.String, stars: Schema.Int, latestAt: Timestamp })).annotate({
+    description: "Up to 3 of them who starred the most repos in the last 7 days.",
+  }),
+  lastStar: Schema.NullOr(Schema.Struct({ login: Schema.String, starredAt: Timestamp })).annotate({
+    description: "The newest star of anyone the account follows, inside the window or not.",
+  }),
+});
+
+export const GitHubFollowing = Schema.Struct({
+  people: Schema.Array(
+    Schema.Struct({ login: Schema.String, avatarUrl: Schema.NullOr(Schema.String), following: Schema.Boolean }),
+  ).annotate({
+    description:
+      "The users the account follows on GitHub whose stars Stargrep holds, the most followed first, with whether the account follows them here.",
+  }),
+  notOnStargrep: Schema.Int.annotate({ description: "How many other users it follows on GitHub." }),
+});
+
+export const FollowedStarrersInput = Schema.Struct({
+  id: RepoId.annotate({ description: "The GitHub repo ID." }),
+  login: GitHubLogin.annotate({ description: "Whose stars the repo is shown on. That account is left out." }),
+});
+
+export const FollowedStarrers = Schema.Struct({
+  people: Schema.Array(Schema.Struct({ login: Schema.String, avatarUrl: Schema.NullOr(Schema.String) })).annotate({
+    description: `Up to ${starredByLimit} of the people the account follows who star the repo now, the latest star first.`,
+  }),
+  total: Schema.Int,
+});
+
 const sessionRequired = {
   name: "session",
   init: (meta: object) => ({ ...meta, session: "required" }),
@@ -720,6 +831,89 @@ export const contract = {
     })
     .input(MonthlyPicks)
     .output(MonthlyPicks),
+  follow: withServices
+    .errors(Struct.pick(errors, ["UNAUTHORIZED", "TOO_MANY_REQUESTS"]))
+    .meta(sessionRequired)
+    .route({
+      method: "POST",
+      path: "/follows",
+      operationId: "follow",
+      summary: "Follow GitHub users",
+      description:
+        "Follows GitHub users whose stars Stargrep knows, so their new stars show in the account's following feed. Follows are private and nobody is told.",
+    })
+    .input(FollowInput)
+    .output(Followed),
+  unfollow: withServices
+    .errors(Struct.pick(errors, ["UNAUTHORIZED", "TOO_MANY_REQUESTS"]))
+    .meta(sessionRequired)
+    .route({
+      method: "DELETE",
+      path: "/follows/{login}",
+      operationId: "unfollow",
+      summary: "Unfollow a GitHub user",
+      description: "Stops following a GitHub user. Nobody is told.",
+    })
+    .input(UnfollowInput)
+    .output(Unfollowed),
+  followedLogins: withServices
+    .errors(Struct.pick(errors, ["UNAUTHORIZED", "TOO_MANY_REQUESTS"]))
+    .meta(sessionRequired)
+    .route({
+      method: "GET",
+      path: "/follows",
+      operationId: "followedLogins",
+      summary: "List whom the signed-in account follows",
+      description: "Returns the login of everyone the signed-in account follows and when each follow started.",
+    })
+    .output(FollowedLogins),
+  followedPeople: withServices
+    .errors(Struct.pick(errors, ["UNAUTHORIZED", "TOO_MANY_REQUESTS"]))
+    .meta(sessionRequired)
+    .route({
+      method: "GET",
+      path: "/following/people",
+      operationId: "followedPeople",
+      summary: "List the people the signed-in account follows",
+      description: "Returns everyone the signed-in account follows, with their latest star and when it was checked.",
+    })
+    .output(FollowedPeople),
+  followingFeed: withServices
+    .errors(Struct.pick(errors, ["UNAUTHORIZED", "TOO_MANY_REQUESTS"]))
+    .meta(sessionRequired)
+    .route({
+      method: "GET",
+      path: "/following/feed",
+      operationId: "followingFeed",
+      summary: "Read the following feed",
+      description:
+        "Returns the repos the people the signed-in account follows starred in the last 30 days, one entry per repo, leaving out repos the account stars.",
+    })
+    .output(FollowingFeed),
+  githubFollowing: withServices
+    .errors(Struct.pick(errors, ["UNAUTHORIZED", "TOO_MANY_REQUESTS"]))
+    .meta(sessionRequired)
+    .route({
+      method: "GET",
+      path: "/following/github",
+      operationId: "githubFollowing",
+      summary: "Read the signed-in account's GitHub following",
+      description:
+        "Reads whom the signed-in account follows on GitHub, with its own token, and returns the ones whose stars Stargrep holds. It reads at most once a day.",
+    })
+    .output(GitHubFollowing),
+  followedStarrers: withServices
+    .errors(Struct.pick(errors, ["UNAUTHORIZED", "TOO_MANY_REQUESTS"]))
+    .meta(sessionRequired)
+    .route({
+      method: "GET",
+      path: "/repos/{id}/followed",
+      operationId: "followedStarrers",
+      summary: "List the people you follow who star a repo",
+      description: "Returns the people the signed-in account follows who star the repo now.",
+    })
+    .input(FollowedStarrersInput)
+    .output(FollowedStarrers),
   newToYou: withServices
     .errors(Struct.pick(errors, ["UNAUTHORIZED", "ACCOUNT_NOT_SYNCED", "TOO_MANY_REQUESTS"]))
     .meta(sessionRequired)

@@ -196,6 +196,18 @@ describe("PostHog", () => {
     ]);
   });
 
+  test("a follow names how many it added and sets how many the person follows, never who", () => {
+    const encoded = [
+      Analytics.Event.Followed({ added: 6, source: "stargrep", following: 9 }),
+      Analytics.Event.Unfollowed(),
+    ].map((event) => PostHog.encode("prod", userId, { actor: Analytics.Actor.User({ userId }), at: 0, event }));
+    const wire: ReadonlyArray<unknown> = encoded.map(({ event, properties }) => [event, properties]);
+    expect(wire).toEqual([
+      ["followed", { added: 6, source: "stargrep", $set: { following: 9 }, distinct_id: userId, stage: "prod" }],
+      ["unfollowed", { distinct_id: userId, stage: "prod" }],
+    ]);
+  });
+
   test("lists an exception's frames oldest first", () => {
     const encoded = PostHog.encode("prod", "stargrep", {
       actor: Analytics.Actor.Stargrep(),

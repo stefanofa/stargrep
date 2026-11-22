@@ -1,6 +1,7 @@
 import type * as Db from "@stargrep/db";
 import type { UserId } from "@stargrep/db/auth-schema";
 import type { DbQueryFailed, DbRowInvalid } from "@stargrep/db/errors";
+import type { Followed } from "@stargrep/github/following-list";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
@@ -37,6 +38,8 @@ export class Viewers extends Context.Service<
   Viewers,
   {
     readonly current: Effect.Effect<Viewer, ViewerError>;
+    // The users the signed-in account follows on GitHub, read with its own token.
+    readonly githubFollowing: Effect.Effect<ReadonlyArray<Followed>, ViewerError>;
     // Who is signed in, from the session alone, for a request that works the same signed out.
     readonly signedIn: Effect.Effect<Option.Option<UserId>, ViewerUnavailable>;
   }
