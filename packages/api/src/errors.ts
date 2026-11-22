@@ -19,6 +19,10 @@ const wire = {
   LOGIN_NOT_FOUND: { status: 404, message: "GitHub has no user or org with this login." },
   ACCOUNT_NOT_SYNCED: { status: 404, message: "Stargrep has not synced this login's stars yet. Trigger a sync first." },
   REPO_NOT_FOUND: { status: 404, message: "Stargrep has no repo with this ID." },
+  TOPIC_NOT_FOUND: {
+    status: 404,
+    message: "Stargrep has no page for this topic. A topic gets one once enough developers star its repos.",
+  },
   SCOPE_UNAVAILABLE: { status: 422, message: "This search scope is not available yet." },
   TOO_MANY_REQUESTS: { status: 429, message: "Too many requests from your network. Try again in a minute." },
   SYNC_BUSY: {

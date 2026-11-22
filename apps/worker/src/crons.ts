@@ -11,6 +11,7 @@ import * as KnowledgeCount from "./jobs/knowledge-count.ts";
 import * as People from "./jobs/people.ts";
 import * as Prune from "./jobs/prune.ts";
 import * as Sweeps from "./jobs/sweeps.ts";
+import * as Topics from "./jobs/topics.ts";
 
 // The enrichment sweep, the metadata sweep, and the projection sweep. The first retry delay is 10 minutes, so a repo goes
 // out again within 10 minutes of its backoff ending, a repo due a metadata embedding gets it within 10 minutes of the
@@ -25,7 +26,8 @@ const iconBackfillSchedule = "20 4 * * *";
 const pruneSchedule = "40 * * * *";
 // Listing reads the nightly count. It runs on a sweep minute, so it wakes the database no extra time.
 const knowledgeCountSchedule = "30 3 * * *";
-// The people list changes by the day, so it refreshes nightly, on a sweep minute after the count.
+// The people list changes by the day, so it refreshes nightly, on a sweep minute after the count. Topic pages read the
+// people list's copy of stars, so they refresh right after it, in the same run.
 const peopleSchedule = "50 3 * * *";
 
 export const scheduleAll = <E>(
@@ -43,5 +45,7 @@ export const scheduleAll = <E>(
     ),
     Cloudflare.Workers.cron(pruneSchedule, () => Prune.run(runtime).pipe(observe("Prune"))),
     Cloudflare.Workers.cron(knowledgeCountSchedule, () => KnowledgeCount.run(runtime).pipe(observe("Knowledge count"))),
-    Cloudflare.Workers.cron(peopleSchedule, () => People.run(runtime).pipe(observe("People"))),
+    Cloudflare.Workers.cron(peopleSchedule, () =>
+      People.run(runtime).pipe(observe("People"), Effect.andThen(Topics.run(runtime).pipe(observe("Topics")))),
+    ),
   ]);

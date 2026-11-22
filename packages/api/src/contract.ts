@@ -36,12 +36,23 @@ export const MetricId = Schema.TemplateLiteral([MetricFamily, Schema.Literals(["
 export const maxFilterGroups = 8;
 export const maxFilterAtoms = 8;
 
+// A GitHub topic, such as nextjs. GitHub keeps topics in lowercase letters, digits, and hyphens, and an address may
+// carry a spelling such as next.js that leads to one.
+export const TopicName = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9.+#-]{0,49}$/)).annotate({
+  description:
+    "A GitHub topic in lowercase, such as 'nextjs'. Another spelling, such as 'next-js', means the same topic.",
+});
+
 export const SearchInput = Schema.Struct({
   q: Schema.String.check(Schema.isPattern(/\S/), Schema.isMaxLength(500)).annotate({
     description: "What to look for, in plain language, such as 'rust library for terminal dashboards'.",
   }),
-  scope: Schema.Struct({ kind: Schema.Literal("stars"), login: GitHubLogin }).annotate({
-    description: "Whose stars to search. Only stars, the login's own stars, is available now.",
+  scope: Schema.Union([
+    Schema.Struct({ kind: Schema.Literal("stars"), login: GitHubLogin }),
+    Schema.Struct({ kind: Schema.Literal("topic"), topic: TopicName }),
+  ]).annotate({
+    description:
+      "What to search: stars, a login's own stars, or topic, every repo of a GitHub topic that has a page on Stargrep. listTopics names those.",
   }),
   limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))
     .annotate({ description: "How many repos to return, at most. 20 when left out." })
@@ -500,6 +511,91 @@ export const SimilarPeople = Schema.Struct({
   }),
 });
 
+export const maxTopicsPage = 200;
+
+export const TopicsInput = Schema.Struct({
+  q: Schema.optionalKey(
+    Schema.String.check(Schema.isMaxLength(50)).annotate({
+      description: "Text the topic's name holds, such as 'react'. Every topic when left out.",
+    }),
+  ),
+  limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: maxTopicsPage }))
+    .annotate({ description: "How many topics to return, at most. 60 when left out." })
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed(60))),
+  offset: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 10_000 }))
+    .annotate({ description: "How many topics to skip, from nextOffset. 0 when left out." })
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed(0))),
+});
+
+const topicCountFields = {
+  topic: Schema.String,
+  repos: Schema.Int.annotate({ description: "How many repos the topic's search reads." }),
+  ranked: Schema.Int.annotate({
+    description: "How many repos for or about the topic at least 3 of the developers Stargrep synced star.",
+  }),
+};
+
+export const Topics = Schema.Struct({
+  topics: Schema.Array(Schema.Struct(topicCountFields)).annotate({
+    description: "Most ranked repos first. With q, the names that start with it come first.",
+  }),
+  total: Schema.Int.annotate({ description: "How many topics match." }),
+  nextOffset: Schema.NullOr(Schema.Int).annotate({
+    description: "Pass as offset to read the next page, or null when this page is the last.",
+  }),
+}).annotate({ description: "The GitHub topics that have a page, as of the nightly refresh." });
+
+export const TopicInput = Schema.Struct({ topic: TopicName });
+
+const TopicRepo = Schema.Struct({
+  ...repoFields,
+  devs: Schema.Int.annotate({ description: "How many of the developers Stargrep synced star the repo." }),
+  stars: Schema.NullOr(Schema.Int).annotate({ description: "GitHub's star count, or null before Stargrep read it." }),
+});
+
+export const Topic = Schema.Struct({
+  ...topicCountFields,
+  topic: TopicName.annotate({ description: "The topic's own spelling, which may differ from the one asked for." }),
+  home: Schema.NullOr(TopicRepo).annotate({ description: "The topic's own repo, such as vercel/next.js for nextjs." }),
+  core: Schema.Array(TopicRepo).annotate({
+    description: "Repos for or about the topic, most starred by synced developers first. The home repo is left out.",
+  }),
+  built: Schema.Array(TopicRepo).annotate({
+    description: "Apps built with the topic, most starred by synced developers first. Empty unless at least 6 rank.",
+  }),
+  related: Schema.Array(Schema.Struct(topicCountFields)).annotate({
+    description: "Topics whose repos overlap this one's the most, closest first.",
+  }),
+  people: Schema.Array(
+    Schema.Struct({
+      login: Schema.String,
+      avatarUrl: Schema.NullOr(Schema.String),
+      repos: Schema.Int.annotate({ description: "How many of the topic's repos the person stars." }),
+      stars: Schema.Int.annotate({ description: "How many repos the person stars in all." }),
+    }),
+  ).annotate({
+    description:
+      "People on the people list who star the most of the topic's repos for how many they star. Empty unless at least 5 qualify.",
+  }),
+});
+
+export const maxTopicPages = 50;
+
+export const TopicPagesInput = Schema.Struct({
+  topics: Schema.Array(Schema.String.check(Schema.isMaxLength(100)))
+    .check(Schema.isMaxLength(maxTopicPages))
+    .annotate({ description: `GitHub topics as a repo or an account carries them, at most ${maxTopicPages}.` }),
+});
+
+export const TopicPages = Schema.Struct({
+  pages: Schema.Array(
+    Schema.Struct({
+      topic: Schema.String.annotate({ description: "A topic as it was asked for." }),
+      page: Schema.String.annotate({ description: "The topic whose page it leads to, for the topic's path." }),
+    }),
+  ).annotate({ description: "One entry for each topic asked for that has a page. Topics without one are left out." }),
+});
+
 const sessionRequired = {
   name: "session",
   init: (meta: object) => ({ ...meta, session: "required" }),
@@ -514,14 +610,14 @@ const withServices = procedure.errors(Struct.pick(errors, ["SERVICE_UNAVAILABLE"
 export const contract = {
   // The query goes in the body, so it never lands in a URL, a request log, or the platform's request span.
   search: withServices
-    .errors(Struct.pick(errors, ["ACCOUNT_NOT_SYNCED", "TOO_MANY_REQUESTS"]))
+    .errors(Struct.pick(errors, ["ACCOUNT_NOT_SYNCED", "TOPIC_NOT_FOUND", "TOO_MANY_REQUESTS"]))
     .route({
       method: "POST",
       path: "/search",
       operationId: "search",
-      summary: "Search a login's GitHub stars",
+      summary: "Search a login's GitHub stars or a topic's repos",
       description:
-        "Searches the repos a GitHub login starred, in plain language, and ranks them by how well they match. The login must be synced first.",
+        "Searches the repos a GitHub login starred, or the repos of a GitHub topic, in plain language, and ranks them by how well they match. The login must be synced first.",
     })
     .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
     .input(SearchInput)
@@ -685,6 +781,46 @@ export const contract = {
     .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
     .input(SimilarPeopleInput)
     .output(SimilarPeople),
+  listTopics: withServices
+    .errors(Struct.pick(errors, ["TOO_MANY_REQUESTS"]))
+    .route({
+      method: "GET",
+      path: "/topics",
+      operationId: "listTopics",
+      summary: "List GitHub topics with a page",
+      description:
+        "Lists the GitHub topics Stargrep has a page for, the ones whose repos developers star the most first. Each topic's repos are searchable with search's topic scope.",
+    })
+    .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
+    .input(TopicsInput)
+    .output(Topics),
+  topic: withServices
+    .errors(Struct.pick(errors, ["TOPIC_NOT_FOUND", "TOO_MANY_REQUESTS"]))
+    .route({
+      method: "GET",
+      path: "/topics/{topic}",
+      operationId: "topic",
+      summary: "Read a GitHub topic's page",
+      description:
+        "Returns a GitHub topic's repos ranked by how many synced developers star them, the apps built with it, related topics, and the people who star its repos.",
+    })
+    .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
+    .input(TopicInput)
+    .output(Topic),
+  // The topics go in the body, as lookupFacets's name does, since a repo can carry 20.
+  topicPages: withServices
+    .errors(Struct.pick(errors, ["TOO_MANY_REQUESTS"]))
+    .route({
+      method: "POST",
+      path: "/topics/pages",
+      operationId: "topicPages",
+      summary: "Find which GitHub topics have a page",
+      description:
+        "Takes GitHub topics, such as a repo's, and answers the ones Stargrep has a page for, each with the topic its page is under, so next-js leads to nextjs.",
+    })
+    .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
+    .input(TopicPagesInput)
+    .output(TopicPages),
   config: procedure
     .route({
       method: "GET",

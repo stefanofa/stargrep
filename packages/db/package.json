@@ -16,10 +16,12 @@
   },
   "scripts": {
     "backfill-similar": "bun scripts/backfill-similar.ts",
+    "backfill-topics": "bun scripts/backfill-topics.ts",
     "bench": "bun scripts/bench.ts",
     "count-stargazers": "bun scripts/count-stargazers.ts",
     "generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate",
+    "refresh-topics": "bun scripts/refresh-topics.ts",
     "typecheck": "effect-tsgo tsc -p ."
   },
   "dependencies": {

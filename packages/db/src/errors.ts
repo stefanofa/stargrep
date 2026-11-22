@@ -114,6 +114,14 @@ export const Operation = Schema.Literals([
   "people.page",
   "people.like",
   "people.starredBy",
+  "topics.considered",
+  "topics.members",
+  "topics.list",
+  "topics.related",
+  "topics.people",
+  "topics.page",
+  "topics.size",
+  "topics.resolve",
 ]);
 export type Operation = typeof Operation.Type;
 

@@ -53,6 +53,7 @@ import * as KnowledgeCount from "../src/jobs/knowledge-count.ts";
 import * as People from "../src/jobs/people.ts";
 import * as ProjectionSweep from "../src/jobs/projection-sweep.ts";
 import * as Sweeps from "../src/jobs/sweeps.ts";
+import * as Topics from "../src/jobs/topics.ts";
 import * as Layers from "../src/layers.ts";
 import * as UserGate from "../src/user-gate.ts";
 import {
@@ -896,6 +897,27 @@ describe("knowledge crons", () => {
       ["Error", "People refresh failed"],
     ]);
     expect(logs[0]?.message[1]).toEqual({ listed: 361, recounted: 12 });
+  });
+
+  it("refreshes the topic pages and logs a refresh that fails", async () => {
+    const { logs, layer } = capture();
+    const topics = (refresh: Db.Db["Service"]["topics"]["refresh"]) =>
+      Layer.succeed(Db.Db, makeDb({ topics: { refresh } }));
+    await Effect.runPromise(
+      Topics.run(topics(() => Effect.succeed({ considered: 10_636, members: 2_831_571, listed: 4806 }))).pipe(
+        Effect.provide(layer),
+      ),
+    );
+    await Effect.runPromise(
+      Topics.run(
+        topics(() => Effect.fail(new DbQueryFailed({ operation: "topics.list", reason: "timeout", sqlState: null }))),
+      ).pipe(Effect.provide(layer)),
+    );
+    expect(logs.map((log) => [log.level, log.message[0]])).toEqual([
+      ["Info", "Topics refreshed"],
+      ["Error", "Topics refresh failed"],
+    ]);
+    expect(logs[0]?.message[1]).toEqual({ considered: 10_636, members: 2_831_571, listed: 4806 });
   });
 });
 

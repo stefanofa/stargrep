@@ -53,6 +53,11 @@ import {
   type SyncStatus,
   similarLimit,
   starredByLimit,
+  Topic,
+  type TopicInput,
+  type TopicPages,
+  Topics,
+  type TopicsInput,
   type Viewer as WireViewer,
 } from "./contract.ts";
 import { errorStatus, type WireCode, wireError } from "./errors.ts";
@@ -96,6 +101,7 @@ const wireCodes = {
   AccountNotSynced: "ACCOUNT_NOT_SYNCED",
   LoginNotFound: "LOGIN_NOT_FOUND",
   RepoNotFound: "REPO_NOT_FOUND",
+  TopicNotFound: "TOPIC_NOT_FOUND",
   SearchScopeUnavailable: "SCOPE_UNAVAILABLE",
   FacetUnavailable: "BAD_REQUEST",
   RateLimited: "TOO_MANY_REQUESTS",
@@ -219,11 +225,14 @@ const libraryRepos = Effect.fnUntraced(function* (entries: ReadonlyArray<Db.Libr
 const filterOf = (input: typeof SearchInput.Type) => normalize(input.filter ?? everything);
 
 const searchAnswer = Effect.fnUntraced(function* (input: typeof SearchInput.Type) {
-  const scope: Search.Scope = { _tag: input.scope.kind, login: input.scope.login };
+  const scope: Search.Scope =
+    input.scope.kind === "stars"
+      ? { _tag: "stars", login: input.scope.login }
+      : { _tag: "topic", topic: input.scope.topic };
   const outcome = yield* (yield* Search.Search)
     .search({ scope, query: input.q, limit: input.limit, filter: filterOf(input) })
     .pipe(
-      // The contract only accepts stars, so this failure violates the service's contract.
+      // The contract only accepts stars and topics, so this failure violates the service's contract.
       Effect.catchTags({ SearchScopeUnavailable: Effect.die }),
     );
   const held = yield* heldFacets(outcome.results.map((result) => result.repo.id));
@@ -258,16 +267,19 @@ const encodeSelection = Schema.encodeSync(SelectionKey);
 const answerKey = (input: typeof SearchInput.Type) =>
   [
     "search",
-    loginKey(input.scope.login),
+    input.scope.kind === "stars" ? loginKey(input.scope.login) : input.scope.topic,
     input.scope.kind,
     input.limit,
     encodeSelection(filterOf(input)),
     QueryPlan.normalize(input.q).toLowerCase(),
   ].join("/");
 
-// Only the demo account's own stars are cached, so the landing page answers without building any service.
-const demoSearchKey = (input: typeof SearchInput.Type, config: PublicConfig) =>
-  loginKey(input.scope.login) === loginKey(config.demoLogin) ? Option.some(answerKey(input)) : Option.none();
+// Only searches every visitor gets the same answer to are cached: the demo account's own stars, so the landing page
+// answers without building any service, and a topic's repos, so a shared topic search costs one plan and one embedding.
+const sharedSearchKey = (input: typeof SearchInput.Type, config: PublicConfig) =>
+  input.scope.kind === "topic" || loginKey(input.scope.login) === loginKey(config.demoLogin)
+    ? Option.some(answerKey(input))
+    : Option.none();
 
 const answerCacheOf = (headers: Headers | undefined): Analytics.AnswerCache => {
   const outcome = headers?.get("x-answer-cache");
@@ -326,7 +338,7 @@ export const cachedSearch = (
 ) =>
   decodeSearchInput(input).pipe(
     Effect.flatMap((decoded) =>
-      Option.match(demoSearchKey(decoded, publicConfig), {
+      Option.match(sharedSearchKey(decoded, publicConfig), {
         onNone: () => Effect.succeed(miss),
         onSome: (key) => readSearch(answerCache, key),
       }),
@@ -471,6 +483,46 @@ const similarPeople = Effect.fnUntraced(function* (input: typeof SimilarPeopleIn
   return { people: found.map((person) => ({ ...personFields(person), shared: person.shared })) };
 });
 
+// Topic pages change once a night, so an answer keeps for 10 minutes and is then served for up to a day while a refresh
+// runs.
+const topicWindows = { fresh: Duration.minutes(10), stale: Duration.days(1) };
+
+const topicsAnswers: AnswerPolicy<typeof Topics.Encoded> = {
+  procedure: "topics",
+  json: Schema.fromJsonString(Schema.toEncoded(Topics)),
+  ...topicWindows,
+  keep: () => true,
+  refused: refusesRequest,
+};
+
+const topicAnswers: AnswerPolicy<typeof Topic.Encoded> = {
+  procedure: "topic",
+  json: Schema.fromJsonString(Schema.toEncoded(Topic)),
+  ...topicWindows,
+  keep: () => true,
+  refused: refusesRequest,
+};
+
+const listTopics = Effect.fnUntraced(function* (input: typeof TopicsInput.Type) {
+  const page = yield* (yield* Db.Db).topics.list({ q: input.q ?? "", offset: input.offset, limit: input.limit });
+  const next = input.offset + page.topics.length;
+  return { ...page, nextOffset: page.topics.length > 0 && next < page.total ? next : null };
+});
+
+// A spelling of a topic answers with the page of the topic it means, under that topic's own name.
+const topicPage = Effect.fnUntraced(function* (input: typeof TopicInput.Type) {
+  const db = yield* Db.Db;
+  const notFound = new Search.TopicNotFound({ topic: input.topic });
+  const topic = yield* db.topics.resolve(input.topic);
+  if (Option.isNone(topic)) return yield* notFound;
+  const page = yield* db.topics.page(topic.value);
+  if (Option.isNone(page)) return yield* notFound;
+  const icons = yield* IconHost;
+  const wire = (listed: Db.TopicRepo) => ({ ...repoBase(listed.repo, icons), devs: listed.devs, stars: listed.stars });
+  const { home, core, built, ...rest } = page.value;
+  return { ...rest, home: Option.getOrNull(Option.map(home, wire)), core: core.map(wire), built: built.map(wire) };
+});
+
 const syncStatus =
   (login: Login) =>
   ([status, enrichment]: readonly [SyncRequests.SyncStatus, Db.EnrichmentProgress]): typeof SyncStatus.Type => {
@@ -521,7 +573,7 @@ const os = implementer.use(instrumentation).use(wireErrors);
 const withServices = os.use(Services.services).use(session);
 
 const searchCache = answerCache(searchAnswers, (input: typeof SearchInput.Type, context: ApiContext) =>
-  demoSearchKey(input, context.publicConfig),
+  sharedSearchKey(input, context.publicConfig),
 );
 const starsCache = answerCache(starsAnswers, (input: typeof StarsInput.Type, _context: ApiContext) =>
   Option.some(
@@ -537,6 +589,14 @@ const similarPeopleCache = answerCache(
   similarPeopleAnswers,
   (input: typeof SimilarPeopleInput.Type, _context: ApiContext) =>
     Option.some(`similar-people/${loginKey(input.login)}/${input.limit}`),
+);
+
+const topicsCache = answerCache(topicsAnswers, (input: typeof TopicsInput.Type, _context: ApiContext) =>
+  Option.some(`topics/${input.limit}/${input.offset}/${(input.q ?? "").trim().toLowerCase()}`),
+);
+
+const topicCache = answerCache(topicAnswers, (input: typeof TopicInput.Type, _context: ApiContext) =>
+  Option.some(`topic/${input.topic}`),
 );
 
 const similarResponse = middlewareGen<AnswerContext>(function* ({ context, next }) {
@@ -683,6 +743,31 @@ export const router = implementer.router({
     input,
   }): ApiResult<"lookupFacets", typeof FacetMatches.Type> {
     return { facets: yield* (yield* Db.Db).facets.lookup({ q: input.q, limit: input.limit }) };
+  }),
+
+  // Database reads with no model call, so they take from the search binding, and only on a miss.
+  listTopics: os.listTopics
+    .use(similarResponse)
+    .use(topicsCache)
+    .use(Services.services)
+    .use(admission("search"))
+    .effect(function* ({ input }): ApiResult<"listTopics", typeof Topics.Type> {
+      return yield* listTopics(input);
+    }),
+
+  topic: os.topic
+    .use(similarResponse)
+    .use(topicCache)
+    .use(Services.services)
+    .use(admission("search"))
+    .effect(function* ({ input }): ApiResult<"topic", typeof Topic.Type> {
+      return yield* topicPage(input);
+    }),
+
+  topicPages: withServices.topicPages.use(admission("search")).effect(function* ({
+    input,
+  }): ApiResult<"topicPages", typeof TopicPages.Type> {
+    return { pages: yield* (yield* Db.Db).topics.pages(input.topics) };
   }),
 
   config: os.config.handler(({ context }) => {

@@ -23,6 +23,7 @@ import * as Similar from "./queries/similar.ts";
 import * as StarImports from "./queries/star-imports.ts";
 import * as Stars from "./queries/stars.ts";
 import * as SyncRequests from "./queries/sync-requests.ts";
+import * as Topics from "./queries/topics.ts";
 import * as Usage from "./queries/usage.ts";
 
 export type {
@@ -126,6 +127,17 @@ export type {
   StarsUpsert,
 } from "./queries/stars.ts";
 export type { Settlement, SyncClaim, SyncRequest } from "./queries/sync-requests.ts";
+export type {
+  Refreshed as TopicsRefreshed,
+  TopicCount,
+  TopicPage,
+  TopicPageLink,
+  TopicPerson,
+  TopicRepo,
+  TopicsPage,
+  TopicsQuery,
+} from "./queries/topics.ts";
+export { canonicalTopic, topicAliases, topicRule } from "./queries/topics.ts";
 export type { UsageCall, UsageCounts, UsageDay } from "./queries/usage.ts";
 export { enrichFailureCap, summaryPolicy } from "./schema.ts";
 
@@ -146,6 +158,7 @@ export class Db extends Context.Service<
     readonly starImports: StarImports.Queries;
     readonly iconBackfill: IconBackfill.Queries;
     readonly people: People.Queries;
+    readonly topics: Topics.Queries;
   }
 >()("@stargrep/db/db") {}
 
@@ -202,6 +215,7 @@ export const layer = (options: Options) =>
           starImports: yield* StarImports.make,
           iconBackfill: yield* IconBackfill.make,
           people: yield* People.make,
+          topics: yield* Topics.make,
         });
       }),
     ).pipe(Layer.provide(Digest.layerWebCrypto)),

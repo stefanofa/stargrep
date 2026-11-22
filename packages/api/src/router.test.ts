@@ -76,6 +76,7 @@ interface Fakes {
   readonly signedIn?: Effect.Effect<Option.Option<UserId>, ViewerUnavailable>;
   readonly newToYou?: Db.Db["Service"]["stars"]["newToYou"];
   readonly people?: Partial<Db.Db["Service"]["people"]>;
+  readonly topics?: Partial<Db.Db["Service"]["topics"]>;
   // The account a signed-in user claimed, ada's by default.
   readonly claimed?: Db.Account;
 }
@@ -111,12 +112,20 @@ const searchOutcome = (request: Search.SearchRequest): Search.SearchOutcome => (
   applied: [],
 });
 
-const searchAda = (request: Search.SearchRequest) =>
-  request.scope._tag !== "stars"
-    ? Effect.fail(new Search.SearchScopeUnavailable({ scope: request.scope._tag }))
-    : request.scope.login === "ada"
-      ? Effect.succeed(searchOutcome(request))
-      : Effect.fail(new Search.AccountNotSynced({ login: request.scope.login }));
+const searchAda = (request: Search.SearchRequest) => {
+  switch (request.scope._tag) {
+    case "stars":
+      return request.scope.login === "ada"
+        ? Effect.succeed(searchOutcome(request))
+        : Effect.fail(new Search.AccountNotSynced({ login: request.scope.login }));
+    case "topic":
+      return request.scope.topic === "nextjs"
+        ? Effect.succeed(searchOutcome(request))
+        : Effect.fail(new Search.TopicNotFound({ topic: request.scope.topic }));
+    default:
+      return Effect.fail(new Search.SearchScopeUnavailable({ scope: request.scope._tag }));
+  }
+};
 
 const reading = { total: 1776, read: 412, failed: 3, queued: 0 };
 
@@ -153,6 +162,7 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
     ...(fakes.facets === undefined ? {} : { facets: fakes.facets }),
     ...(fakes.similar === undefined ? {} : { similar: fakes.similar }),
     ...(fakes.people === undefined ? {} : { people: fakes.people }),
+    ...(fakes.topics === undefined ? {} : { topics: fakes.topics }),
   });
   const requests =
     fakes.requests ??
@@ -761,6 +771,109 @@ describe("similarPeople", () => {
   test("answers ACCOUNT_NOT_SYNCED for a login stargrep never synced", async () => {
     const { api } = client({ people: like([]) });
     expect((await failure(api.similarPeople({ login: "linus" }))).code).toBe("ACCOUNT_NOT_SYNCED");
+  });
+});
+
+describe("topics", () => {
+  const listed = { repo, devs: 775, stars: 16_400 };
+  const page: Db.TopicPage = {
+    topic: "nextjs",
+    repos: 8145,
+    ranked: 1058,
+    home: Option.none(),
+    core: [listed],
+    built: [],
+    related: [{ topic: "react", repos: 6830, ranked: 6830 }],
+    people: [{ login: Login.make("theo"), avatarUrl: null, repos: 37, stars: 616 }],
+  };
+  const topics = (asked: Array<string>): Partial<Db.Db["Service"]["topics"]> => ({
+    resolve: (typed) =>
+      Effect.succeed(typed === "next-js" || typed === "nextjs" ? Option.some("nextjs") : Option.none()),
+    page: (topic) =>
+      Effect.sync(() => {
+        asked.push(topic);
+        return Option.some(page);
+      }),
+    list: ({ q, offset, limit }) =>
+      Effect.sync(() => {
+        asked.push(`${q}/${offset}/${limit}`);
+        return { topics: [{ topic: "nextjs", repos: 8145, ranked: 1058 }], total: 2 };
+      }),
+  });
+
+  test("answers a spelling of a topic with its page under its own name, kept for the next asker", async () => {
+    const asked: Array<string> = [];
+    const memory = AnswerCache.memory();
+    const ask = async () => {
+      const resHeaders = new Headers();
+      const context: ApiContext = {
+        ...contextFor("rest", Effect.succeed(services({ topics: topics(asked) }))),
+        answerCache: memory.cache,
+        resHeaders,
+      };
+      const answer = await createRouterClient(router, { context }).topic({ topic: "next-js" });
+      return [answer.topic, answer.core.map((found) => [found.name, found.devs]), resHeaders.get("x-answer-cache")];
+    };
+    expect(await ask()).toEqual(["nextjs", [["ratatui", 775]], "miss"]);
+    expect(await ask()).toEqual(["nextjs", [["ratatui", 775]], "hit"]);
+    expect([asked, [...memory.entries.keys()]]).toEqual([["nextjs"], ["topic/next-js"]]);
+  });
+
+  test("answers TOPIC_NOT_FOUND for a topic without a page", async () => {
+    const { api } = client({ topics: topics([]) });
+    expect((await failure(api.topic({ topic: "astro" }))).code).toBe("TOPIC_NOT_FOUND");
+    expect((await failure(api.topic({ topic: "Next JS" }))).code).toBe("BAD_REQUEST");
+  });
+
+  test("lists topics a page at a time", async () => {
+    const asked: Array<string> = [];
+    const { api } = client({ topics: topics(asked) });
+    expect(await api.listTopics({ q: "next", limit: 1 })).toEqual({
+      topics: [{ topic: "nextjs", repos: 8145, ranked: 1058 }],
+      total: 2,
+      nextOffset: 1,
+    });
+    expect(asked).toEqual(["next/0/1"]);
+  });
+
+  test("answers which topics have a page", async () => {
+    const { api } = client({
+      topics: {
+        pages: (typed) => Effect.succeed(typed.includes("next-js") ? [{ topic: "next-js", page: "nextjs" }] : []),
+      },
+    });
+    expect(await api.topicPages({ topics: ["next-js", "my-dotfiles"] })).toEqual({
+      pages: [{ topic: "next-js", page: "nextjs" }],
+    });
+  });
+
+  test("keeps a topic search for the next asker, as everyone gets the same answer", async () => {
+    const memory = AnswerCache.memory();
+    const ask = async () => {
+      const resHeaders = new Headers();
+      const context: ApiContext = {
+        ...contextFor(
+          "rest",
+          Effect.succeed(
+            services({ search: (request) => Effect.succeed({ ...searchOutcome(request), planSource: "model" }) }),
+          ),
+        ),
+        answerCache: memory.cache,
+        resHeaders,
+      };
+      await createRouterClient(router, { context }).search({ scope: { kind: "topic", topic: "nextjs" }, q: "auth" });
+      return resHeaders.get("x-answer-cache");
+    };
+    expect([await ask(), await ask()]).toEqual(["miss", "hit"]);
+  });
+
+  test("searches a topic's repos, and says when the topic has no page", async () => {
+    const { api } = client({});
+    const answer = await api.search({ scope: { kind: "topic", topic: "nextjs" }, q: "auth" });
+    expect(answer.results.map((result) => result.name)).toEqual(["ratatui"]);
+    expect((await failure(api.search({ scope: { kind: "topic", topic: "astro" }, q: "auth" }))).code).toBe(
+      "TOPIC_NOT_FOUND",
+    );
   });
 });
 
