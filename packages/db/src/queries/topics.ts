@@ -25,7 +25,7 @@ import { Repo, repoColumns } from "./repos.ts";
 // once `gate` of its core repos have `devs` synced developers who star them, the count it ranks by.
 export const topicRule = {
   considered: 30,
-  gate: 30,
+  gate: 20,
   devs: 3,
   core: 48,
   built: 12,
@@ -85,8 +85,24 @@ export const topicAliases: Readonly<Record<string, string>> = {
 const blocked =
   "^(hacktoberfest.*|awesome|portfolio|beginner|project|good-first-issue|first-contributions|first-timers-only|up-for-grabs)$";
 
-// Repos a topic's page leaves out by hand, such as one whose facets file it wrongly. Empty until one needs it.
-const topicExcludes: Readonly<Record<string, ReadonlyArray<RepoId>>> = {};
+// Calls made by hand about single topics, after reading their lists.
+// - strict: topics whose tag also means something else, such as effect, which visual effects repos carry too. Only a
+//   repo's facets give it a role there: a tag with a kind makes no repo core or built, and names no home.
+// - excludes: repos a topic leaves out of its lists and search, by GitHub ID, such as ones whose facets file them under
+//   the topic wrongly.
+export const topicOverrides: {
+  readonly strict: ReadonlyArray<string>;
+  readonly excludes: Readonly<Record<string, Readonly<Record<string, number>>>>;
+} = {
+  strict: ["effect"],
+  excludes: {
+    astro: {
+      "yoavbls/pretty-ts-errors": 530861050,
+      "uidotdev/usehooks": 164721045,
+      "appcypher/awesome-wasm-langs": 114363116,
+    },
+  },
+};
 
 export const canonicalTopic = (topic: string): string => {
   const typed = topic.trim().toLowerCase();
@@ -211,9 +227,12 @@ const considered = sql`
 // it, with dots, spaces, underscores, and hyphens left out, and every subject merged into one of them. Facets that say
 // a repo is for or about one make it core, and built with one makes it built. A tagged repo of a core kind is core and
 // one of an app kind is built, so a kind beats a built-with facet. The subjects' own repo, and any tagged repo named like
-// the topic, may be its home.
+// the topic, may be its home. A strict topic's tags give no role. repo_topics holds only repos GitHub serves that are
+// not archived, and the repos facets or a subject bring are checked against repos, so no other repo is a member.
 const members = (spelled: ReadonlyArray<Spelling>) => {
-  const excluded = Object.entries(topicExcludes).flatMap(([topic, ids]) => ids.map((id) => [topic, id] as const));
+  const excluded = Object.entries(topicOverrides.excludes).flatMap(([topic, ids]) =>
+    Object.values(ids).map((id) => [topic, id] as const),
+  );
   return sql`
     with spellings as (
       select * from unnest(
@@ -222,7 +241,8 @@ const members = (spelled: ReadonlyArray<Spelling>) => {
     ),
     names as (select distinct topic from spellings),
     tagged as (
-      select s.topic, t.repo_id, t.kinds, t.name_key = regexp_replace(s.topic, '[^a-z0-9]', '', 'g') as named
+      select s.topic, t.repo_id, t.kinds, t.name_key = regexp_replace(s.topic, '[^a-z0-9]', '', 'g') as named,
+        s.topic = any(${textArray(topicOverrides.strict)}) as strict
       from spellings s join ${repoTopics} t on t.topic = s.spelling
     ),
     labelled as (
@@ -242,6 +262,12 @@ const members = (spelled: ReadonlyArray<Spelling>) => {
       from subjects_of s join repo_facets f on (f.members && s.ids or f.built_with && s.ids)
       where f.for_subjects && s.ids or f.about && s.ids or f.built_with && s.ids
     ),
+    dead as (
+      select x.id as repo_id
+      from (select repo_id from faceted union select home from subjects_of where home is not null) u
+      join ${repos} x on x.id = u.repo_id
+      where x.gone_at is not null or x.archived
+    ),
     roles as (
       select topic, repo_id,
         case
@@ -251,12 +277,15 @@ const members = (spelled: ReadonlyArray<Spelling>) => {
           else 'tagged'
         end::topic_role as role
       from (
-        select topic, repo_id, kinds, false as core, false as built, named as home from tagged
+        select topic, repo_id, case when strict then '{}' else kinds end as kinds, false as core, false as built,
+          named and not strict as home
+        from tagged
         union all
         select topic, repo_id, null, core, built, false from faceted
         union all
         select topic, home, null, false, false, true from subjects_of where home is not null
       ) found
+      where repo_id not in (select repo_id from dead)
       group by topic, repo_id
     ),
     wanted as (

@@ -313,7 +313,8 @@ const scoped = (scope: SearchScope): Scoped => {
     case "topic":
       return {
         from: sql`topic_repos s join repos r on r.id = s.repo_id`,
-        where: [sql`s.topic = ${scope.topic}`, sql`r.gone_at is null`],
+        // A repo archived since the last refresh still has its row until the next one.
+        where: [sql`s.topic = ${scope.topic}`, sql`r.gone_at is null`, sql`not r.archived`],
         join: (repoId: SQL) => sql`topic_repos s on s.topic = ${scope.topic} and s.repo_id = ${repoId}`,
         size: sql`(select repos from topics where topic = ${scope.topic})`,
         starred: false,

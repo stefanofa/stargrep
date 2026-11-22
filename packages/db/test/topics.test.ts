@@ -132,6 +132,7 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatab
       const untyped = repoId(60);
       const home = repoId(70);
       const archived = repoId(80);
+      const gone = repoId(81);
       const built = range(50, 6);
       yield* seedRepos([
         ...core.map((id, index) => ({
@@ -146,14 +147,19 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatab
         { id: untyped, topics: ["nextjs"] },
         { id: home, name: "next.js", topics: ["nextjs"], kinds: ["framework"] },
         { id: archived, topics: ["nextjs"], kinds: ["library"], archived: true },
+        { id: gone, kinds: ["library"] },
         ...range(90, 3).map((id) => ({ id, topics: ["astro"], kinds: ["library" as const] })),
       ]);
       yield* facets(facetCore, { forSubjects: [nextjs] });
       yield* facets(kindBeatsFacet, { builtWith: [nextjs] });
-      const everyFew = [...core, facetCore, kindBeatsFacet, ...built, home, archived, ...range(90, 3)];
+      // Facets that name the topic bring no archived or gone repo in.
+      yield* facets(archived, { forSubjects: [nextjs] });
+      yield* facets(gone, { forSubjects: [nextjs] });
+      const everyFew = [...core, facetCore, kindBeatsFacet, ...built, home, archived, gone, ...range(90, 3)];
       for (const dev of [1, 2, 3]) yield* star(accountId(dev), everyFew);
       for (const dev of [4, 5]) yield* star(accountId(dev), [...core, home]);
       yield* star(accountId(6), [repoId(2)]);
+      yield* (yield* TestDatabase.TestDatabase).query("update repos set gone_at = now() where id = $1", [gone]);
       yield* db.people.refresh(
         [1, 2, 3, 4, 5, 6].map((dev) => login(`dev-${dev}`)),
         now,
@@ -174,9 +180,9 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatab
         [
           ["dev-4", 32, 33],
           ["dev-5", 32, 33],
-          ["dev-1", 34, 45],
-          ["dev-2", 34, 45],
-          ["dev-3", 34, 45],
+          ["dev-1", 34, 46],
+          ["dev-2", 34, 46],
+          ["dev-3", 34, 46],
         ],
       );
       expect(yield* db.topics.page("astro")).toEqual(Option.none());
@@ -214,6 +220,54 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatab
       yield* (yield* TestDatabase.TestDatabase).query("delete from stars where account_id in (3, 4, 5)");
       expect((yield* db.topics.refresh()).listed).toBe(0);
       expect(yield* db.topics.page("nextjs")).toEqual(Option.none());
+    }),
+  );
+
+  test.effect("reads a strict topic by its facets alone, and leaves a topic's excluded repos out", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      yield* reset;
+      const effect = yield* subjectNamed("Effect");
+      // Repos tagged effect for visual effects, of a core kind, and one named effect.
+      const visual = range(1, 20);
+      // Repos whose facets say they are for Effect, half of them tagged.
+      const faceted = range(30, 20);
+      const named = repoId(60);
+      const astro = range(100, 20);
+      const excluded = repoId(530861050);
+      yield* seedRepos([
+        ...visual.map((id) => ({ id, topics: ["effect"], kinds: ["library" as const] })),
+        ...faceted.map((id, index) => ({ id, topics: index % 2 === 0 ? ["effect"] : [], kinds: ["library" as const] })),
+        { id: named, name: "effect", topics: ["effect"], kinds: ["framework"] },
+        ...range(70, 10).map((id) => ({ id, topics: ["effect"] })),
+        ...astro.map((id) => ({ id, topics: ["astro"], kinds: ["library" as const] })),
+        ...range(120, 10).map((id) => ({ id, topics: ["astro"] })),
+        { id: excluded, topics: ["astro"], kinds: ["library"] },
+      ]);
+      for (const id of faceted) yield* facets(id, { forSubjects: [effect] });
+      for (const dev of [1, 2, 3]) yield* star(accountId(dev), [...visual, ...faceted, named, ...astro, excluded]);
+      yield* star(accountId(4), [excluded]);
+
+      expect((yield* db.topics.refresh()).listed).toBe(2);
+
+      const strict = Option.getOrThrow(yield* db.topics.page("effect"));
+      expect(ids(strict.core)).toEqual(faceted);
+      expect(strict.home).toEqual(Option.none());
+      expect([strict.repos, strict.ranked]).toEqual([51, 20]);
+
+      // A topic gets a page at 20 ranked core repos, the excluded one not counted.
+      const page = Option.getOrThrow(yield* db.topics.page("astro"));
+      expect(ids(page.core)).toEqual(astro);
+      expect([page.repos, page.ranked]).toEqual([30, 20]);
+      const hits = yield* searchHits(
+        hybrid({ scope: { kind: "topic", topic: "astro" }, text: "owner", embedding: null, limit: 50 }),
+      );
+      expect(hits.map(({ repo }): number => repo.id)).not.toContain(excluded);
+
+      // One fewer ranked core repo, and the topic has no page.
+      yield* (yield* TestDatabase.TestDatabase).query("update repos set archived = true where id = $1", [astro[0]]);
+      expect((yield* db.topics.refresh()).listed).toBe(1);
+      expect(yield* db.topics.page("astro")).toEqual(Option.none());
     }),
   );
 };
