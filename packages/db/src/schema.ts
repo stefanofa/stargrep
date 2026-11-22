@@ -126,6 +126,8 @@ export const githubAccounts = pgTable(
     starsEtag: text("stars_etag"),
     starsSyncedAt: time("stars_synced_at"),
     starsFullSyncedAt: time("stars_full_synced_at"),
+    // The latest time the star probe found GitHub had nothing past the stored stars, or queued the sync that reads it.
+    starsCheckedAt: time("stars_checked_at"),
   },
   (table) => [
     uniqueIndex("github_accounts_claimed_by_key").on(table.claimedBy),

@@ -2,7 +2,10 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
 import type * as Embeddings from "@stargrep/ai/embeddings";
 import { FetchIcon, type IconQueue } from "@stargrep/core/icons";
 import type { EnrichQueue } from "@stargrep/core/repos";
+import type { SyncQueue } from "@stargrep/core/stars";
 import type * as Db from "@stargrep/db";
+import type * as GitHub from "@stargrep/github/github";
+import type { BudgetShare } from "@stargrep/github/schemas";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
@@ -10,12 +13,14 @@ import type { Observe } from "./analytics.ts";
 import * as KnowledgeCount from "./jobs/knowledge-count.ts";
 import * as People from "./jobs/people.ts";
 import * as Prune from "./jobs/prune.ts";
+import * as StarCheck from "./jobs/star-check.ts";
 import * as Sweeps from "./jobs/sweeps.ts";
 import * as Topics from "./jobs/topics.ts";
 
-// The enrichment sweep, the metadata sweep, and the projection sweep. The first retry delay is 10 minutes, so a repo goes
-// out again within 10 minutes of its backoff ending, a repo due a metadata embedding gets it within 10 minutes of the
-// line having room, and a stale repo_facets row is projected within 10 minutes. All three run from this one handler on
+// The enrichment sweep, the metadata sweep, the projection sweep, and the star check. The first retry delay is 10
+// minutes, so a repo goes out again within 10 minutes of its backoff ending, a repo due a metadata embedding gets it
+// within 10 minutes of the line having room, and a stale repo_facets row is projected within 10 minutes. The star check
+// probes the accounts due in StarCheck.settings, which counts on this period. All four run from this one handler on
 // the same minutes. Neon suspends a compute after 5 idle minutes, and a query at any other minute would
 // leave it no idle window, so the database would never scale to zero.
 const sweepSchedule = "*/10 * * * *";
@@ -32,14 +37,23 @@ const peopleSchedule = "50 3 * * *";
 
 export const scheduleAll = <E>(
   runtime: Layer.Layer<
-    Db.Db | EnrichQueue.EnrichQueue | IconQueue.IconQueue | Embeddings.Embeddings,
+    Db.Db | EnrichQueue.EnrichQueue | IconQueue.IconQueue | Embeddings.Embeddings | GitHub.GitHub | SyncQueue.SyncQueue,
     E,
     RuntimeContext
   >,
+  share: BudgetShare,
   observe: Observe,
 ) =>
   Effect.all([
-    Cloudflare.Workers.cron(sweepSchedule, () => Sweeps.run(runtime).pipe(observe("Sweeps"))),
+    Cloudflare.Workers.cron(sweepSchedule, () =>
+      Effect.all(
+        [Sweeps.run(runtime).pipe(observe("Sweeps")), StarCheck.run(runtime, share).pipe(observe("Star check"))],
+        {
+          concurrency: "unbounded",
+          discard: true,
+        },
+      ),
+    ),
     Cloudflare.Workers.cron(iconBackfillSchedule, () =>
       FetchIcon.startBackfill().pipe(Effect.provide(runtime), observe("Icon backfill")),
     ),

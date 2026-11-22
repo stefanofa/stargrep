@@ -1,0 +1,47 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "2c7fdd3b-f8ef-4971-84f0-0d697ea02b31",
+  "prevIds": [
+    "a04612aa-b79b-48f4-9ce1-3c728da52c6e"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "github_accounts",
+        "stars_checked_at"
+      ],
+      "writes": [
+        "s|col|public.github_accounts.stars_checked_at",
+        "n|col|public.github_accounts.stars_checked_at",
+        "e|col|public.github_accounts.stars_checked_at"
+      ],
+      "reads": [
+        "n|tbl|public.github_accounts",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_accounts",
+        "name": "stars_checked_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

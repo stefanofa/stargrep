@@ -123,6 +123,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         starredCount: null,
         starsSyncedAt: null,
         starsFullSyncedAt: null,
+        starsCheckedAt: null,
       });
       expect(Option.isNone(yield* db.accounts.get(accountId(999_999)))).toBe(true);
     }),

@@ -3,18 +3,21 @@ import type * as Embeddings from "@stargrep/ai/embeddings";
 import type * as TextGeneration from "@stargrep/ai/text-generation";
 import { FetchIcon, IconHttp, IconQueue, IconStore, Normalize } from "@stargrep/core/icons";
 import { BlobStore, EnrichQueue, SummaryAllowance } from "@stargrep/core/repos";
+import { StarSync, SyncQueue } from "@stargrep/core/stars";
 import * as GitHub from "@stargrep/github/github";
 import type * as TokenGate from "@stargrep/github/token-gate";
 import * as Ai from "@stargrep/runtime/ai-key";
 import * as DbRuntime from "@stargrep/runtime/db";
 import { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Arr from "effect/Array";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
 import type * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import { codecs } from "./icons/codecs.ts";
 import type { UserGates } from "./user-gate.ts";
 
@@ -79,6 +82,29 @@ export const layerEnrichQueue = (queue: Cloudflare.Queues.WriteQueueClient) =>
     ),
   );
 
+const encodeSyncRequest = Schema.encodeSync(StarSync.LoginSyncRequest);
+
+// Alchemy's SendOptions has no delaySeconds, so the send goes through the raw binding.
+export const layerSyncQueue = (queue: Cloudflare.Queues.WriteQueueClient) =>
+  Layer.effect(
+    SyncQueue.SyncQueue,
+    Effect.map(inRuntime, (run) =>
+      SyncQueue.SyncQueue.of({
+        send: Effect.fn("SyncQueue.send")(
+          (request: StarSync.LoginSyncRequest, delay: Duration.Duration) =>
+            run(
+              Effect.flatMap(queue.raw, (raw) =>
+                Effect.tryPromise(() =>
+                  raw.send(encodeSyncRequest(request), { delaySeconds: Math.ceil(Duration.toSeconds(delay)) }),
+                ),
+              ),
+            ),
+          Effect.mapError((cause) => new SyncQueue.SyncQueueFailed({ cause })),
+        ),
+      }),
+    ),
+  );
+
 export const layerIconQueue = (queue: Cloudflare.Queues.WriteQueueClient) =>
   Layer.effect(
     IconQueue.IconQueue,
@@ -137,6 +163,7 @@ interface Bindings {
   readonly readmes: Cloudflare.R2.ReadWriteBucketClient;
   readonly icons: Cloudflare.R2.ReadWriteBucketClient;
   readonly enrichQueue: Cloudflare.Queues.WriteQueueClient;
+  readonly syncQueue: Cloudflare.Queues.WriteQueueClient;
   readonly iconQueue: Cloudflare.Queues.WriteQueueClient;
   readonly tokenGate: Layer.Layer<TokenGate.TokenGate, never, RuntimeContext>;
   readonly userGates: Layer.Layer<UserGates, never, RuntimeContext>;
@@ -155,6 +182,7 @@ export const layerRuntime = (bindings: Bindings) =>
         bindings.userGates,
         layerBlobStore(bindings.readmes),
         layerEnrichQueue(bindings.enrichQueue),
+        layerSyncQueue(bindings.syncQueue),
         layerIconQueue(bindings.iconQueue),
         layerIconStore(bindings.icons),
         IconHttp.layer.pipe(Layer.provide(FetchHttpClient.layer)),

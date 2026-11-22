@@ -72,6 +72,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
       readmes: yield* Cloudflare.R2.ReadWriteBucket(Readmes),
       icons: yield* Cloudflare.R2.ReadWriteBucket(Icons),
       enrichQueue: yield* Cloudflare.Queues.WriteQueue(yield* Queues.EnrichRepos),
+      syncQueue: yield* Cloudflare.Queues.WriteQueue(yield* Queues.SyncStars),
       iconQueue,
       tokenGate: gate,
       userGates,
@@ -80,8 +81,9 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
       adopted: yield* Ref.make(false),
     });
     const observed = observe(yield* Effect.orDie(AnalyticsLayer.stage));
-    yield* Queues.consumeAll(runtime, yield* Effect.orDie(budgetShare), observed);
-    yield* Crons.scheduleAll(runtime, observed);
+    const share = yield* Effect.orDie(budgetShare);
+    yield* Queues.consumeAll(runtime, share, observed);
+    yield* Crons.scheduleAll(runtime, share, observed);
     return {
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest;

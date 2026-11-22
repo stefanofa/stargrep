@@ -1,6 +1,6 @@
 import type { Owner } from "@stargrep/github/owner";
 import { GitHubAccountId, Login } from "@stargrep/github/schemas";
-import { eq, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import type { PgSelect } from "drizzle-orm/pg-core";
 import * as Arr from "effect/Array";
@@ -12,8 +12,8 @@ import * as Struct from "effect/Struct";
 import { UserId } from "../auth-schema.ts";
 import { AccountNotFound, type DbQueryFailed, type DbRowInvalid } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
-import { NullableTime, requireRow, rowsDecoder, writeEncoder } from "../rows.ts";
-import { githubAccounts } from "../schema.ts";
+import { NullableTime, requireRow, rowsDecoder, timeParam, writeEncoder } from "../rows.ts";
+import { githubAccounts, people } from "../schema.ts";
 
 // stars_etag stays in the table until a cleanup migration drops it. Nothing reads or writes it.
 export const Account = Schema.Struct(
@@ -24,6 +24,7 @@ export const Account = Schema.Struct(
       claimedBy: Schema.NullOr(UserId),
       starsSyncedAt: NullableTime,
       starsFullSyncedAt: NullableTime,
+      starsCheckedAt: NullableTime,
     }).fields,
     ["starsEtag"],
   ),
@@ -31,7 +32,14 @@ export const Account = Schema.Struct(
 export type Account = typeof Account.Type;
 
 const AccountFacts = Schema.Struct(
-  Struct.omit(Account.fields, ["claimedBy", "starredCount", "ownedRepoStars", "starsSyncedAt", "starsFullSyncedAt"]),
+  Struct.omit(Account.fields, [
+    "claimedBy",
+    "starredCount",
+    "ownedRepoStars",
+    "starsSyncedAt",
+    "starsFullSyncedAt",
+    "starsCheckedAt",
+  ]),
 );
 export type AccountFacts = typeof AccountFacts.Type;
 
@@ -51,6 +59,15 @@ export interface StarredCount {
   readonly starredCount: number;
 }
 
+// A synced user the star probe asks GitHub about.
+export const StarCheckDue = Schema.Struct({
+  id: GitHubAccountId,
+  login: Login,
+  starredCount: Schema.NullOr(Schema.Int),
+  starsSyncedAt: Schema.DateTimeUtcFromDate,
+});
+export type StarCheckDue = typeof StarCheckDue.Type;
+
 export interface OwnedRepoStars {
   readonly accountId: GitHubAccountId;
   readonly stars: number;
@@ -68,6 +85,18 @@ export interface Queries {
   readonly setOwnedRepoStars: (input: OwnedRepoStars) => Effect.Effect<void, DbQueryFailed | AccountNotFound>;
   readonly setStarredCount: (input: StarredCount) => Effect.Effect<void, DbQueryFailed | AccountNotFound>;
   readonly recordStarSync: (sync: StarSync) => Effect.Effect<void, DbQueryFailed | AccountNotFound>;
+  // Synced users whose stars were never checked, or last checked before their cutoff, the oldest check first. A person
+  // on the people list has a cutoff of their own.
+  readonly dueForStarCheck: (input: {
+    readonly peopleBefore: DateTime.Utc;
+    readonly othersBefore: DateTime.Utc;
+    readonly limit: number;
+  }) => Effect.Effect<ReadonlyArray<StarCheckDue>, DbQueryFailed | DbRowInvalid>;
+  // Records a check of each account at `at`, with the starred total GitHub reported. A check never moves back.
+  readonly recordStarChecks: (input: {
+    readonly checks: ReadonlyArray<StarredCount>;
+    readonly at: DateTime.Utc;
+  }) => Effect.Effect<void, DbQueryFailed>;
 }
 
 // GitHub can give a login to a new account while an account renamed away from it keeps it here, so a login names the
@@ -79,6 +108,7 @@ export const accountNamed = <T extends PgSelect>(query: T, login: Login) =>
     .limit(1);
 
 const decodeAccounts = rowsDecoder(Account);
+const decodeDue = rowsDecoder(StarCheckDue);
 const encodeFacts = writeEncoder(AccountFacts);
 const encodeTime = writeEncoder(Schema.DateTimeUtcFromDate);
 
@@ -162,5 +192,46 @@ export const make = Effect.gen(function* () {
         ),
         Effect.flatMap(requireRow(() => new AccountNotFound({ accountId: sync.accountId }))),
       ),
+    dueForStarCheck: ({ peopleBefore, othersBefore, limit }) =>
+      run("accounts.dueForStarCheck", (db) =>
+        db
+          .select({
+            id: githubAccounts.id,
+            login: githubAccounts.login,
+            starredCount: githubAccounts.starredCount,
+            starsSyncedAt: githubAccounts.starsSyncedAt,
+          })
+          .from(githubAccounts)
+          .where(
+            and(
+              eq(githubAccounts.type, "user"),
+              isNotNull(githubAccounts.starsSyncedAt),
+              or(
+                isNull(githubAccounts.starsCheckedAt),
+                lt(
+                  githubAccounts.starsCheckedAt,
+                  sql`case when exists (select 1 from ${people} where ${people.accountId} = ${githubAccounts.id})
+                    then ${timeParam(peopleBefore)} else ${timeParam(othersBefore)} end`,
+                ),
+              ),
+            ),
+          )
+          .orderBy(sql`${githubAccounts.starsCheckedAt} asc nulls first`, asc(githubAccounts.id))
+          .limit(limit),
+      ).pipe(Effect.flatMap(decodeDue("accounts.dueForStarCheck"))),
+    recordStarChecks: ({ checks, at }) =>
+      checks.length === 0
+        ? Effect.void
+        : run("accounts.recordStarChecks", (db) =>
+            db.execute(sql`
+              update ${githubAccounts} set
+                stars_checked_at = greatest(${githubAccounts.starsCheckedAt}, ${timeParam(at)}),
+                starred_count = checked.starred_count
+              from unnest(
+                ${sql.param(checks.map((check) => check.accountId))}::bigint[],
+                ${sql.param(checks.map((check) => check.starredCount))}::int[]
+              ) as checked (id, starred_count)
+              where ${githubAccounts.id} = checked.id`),
+          ).pipe(Effect.asVoid),
   } satisfies Queries;
 });
