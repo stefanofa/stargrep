@@ -12,6 +12,7 @@ export function StarsPage({ data, error }: { data: PageData; error?: string | un
   const [pose, setPose] = useState<PipPose>("idle");
   return (
     <Page
+      dock
       header={
         <SiteHeader
           viewer={data.audience.by === "anyone" ? null : data.audience.viewer}
