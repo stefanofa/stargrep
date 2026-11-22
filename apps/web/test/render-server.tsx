@@ -5,7 +5,7 @@
 // STARGREP_PAGE_FAILURE set, the page loader fails with that message after the session loaded. With
 // STARGREP_CACHED_SEARCH set to JSON such as {"q":"phone automation","minutesAgo":6}, the API's answer cache holds the
 // demo's planned answer for q, stored that long before the render. STARGREP_HEADER_STARS sets the header's GitHub star
-// count, which is none without it.
+// count, which is none without it. With STARGREP_HELD_STARS set, the API never answers the server's reads of a library.
 //   SSR=1 bun test/render-server.tsx /path [cookie]
 import { mock } from "bun:test";
 import { disabled } from "@stargrep/api/answer-cache";
@@ -20,10 +20,13 @@ mock.module("../src/styles.css?url", () => ({ default: "/styles.css" }));
 // The Worker's app module binds Cloudflare's env. The page path needs its API handler, and a cache that keeps nothing,
 // since each render runs in its own process, unless the test filled it before the render.
 const failure = process.env.STARGREP_API_FAILURE;
-const answer = (incoming: Request) =>
-  failure !== undefined && new URL(incoming.url).pathname === "/rpc/config"
-    ? Promise.reject(new Error(failure))
-    : serveApi(incoming);
+const starsHeld = process.env.STARGREP_HELD_STARS !== undefined;
+const answer = (incoming: Request) => {
+  const { pathname } = new URL(incoming.url);
+  if (failure !== undefined && pathname === "/rpc/config") return Promise.reject(new Error(failure));
+  if (starsHeld && pathname === "/rpc/stars") return new Promise<never>(() => {});
+  return serveApi(incoming);
+};
 const filled = process.env.STARGREP_CACHED_SEARCH;
 const { q, minutesAgo } = filled === undefined ? { q: undefined, minutesAgo: 0 } : JSON.parse(filled);
 const answerCache = q === undefined ? disabled : await cacheHolding(q, minutesAgo);
