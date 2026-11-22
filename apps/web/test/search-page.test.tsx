@@ -580,12 +580,33 @@ describe("the search page in each state", () => {
 
   test("the header links to your stars, and marks the link current only on your own page", async () => {
     await open("/?q=terminal");
-    expect(page().getByRole("link", { name: "your stars" }).getAttribute("aria-current")).toBe("page");
+    const header = within(page().getAllByRole("banner")[0] as HTMLElement);
+    expect(header.getByRole("link", { name: "your stars" }).getAttribute("aria-current")).toBe("page");
+    expect(header.queryByRole("button", { name: "sign in" })).toBeNull();
     expect(page().queryByRole("tablist")).toBeNull();
     cleanup();
     server.status = status({ login: "octosync" });
     await open("/octosync", "Search @octosync's stars");
     expect(page().getByRole("link", { name: "your stars" }).getAttribute("aria-current")).toBeNull();
+  });
+
+  test("a visitor can sign in from the header on any stars page, and has no your stars link", async () => {
+    server.signedIn = false;
+    server.status = status({ login: "octosync" });
+    await open("/octosync", "Search @octosync's stars");
+    const header = within(page().getAllByRole("banner")[0] as HTMLElement);
+    expect(header.getByRole("button", { name: "sign in" })).toBeTruthy();
+    expect(header.queryByRole("link", { name: "your stars" })).toBeNull();
+    expect(header.queryByRole("navigation")).toBeNull();
+  });
+
+  test("the search box's example speaks as the viewer only on their own stars", async () => {
+    await open("/");
+    expect(page().getByRole("searchbox").getAttribute("placeholder")).toBe("the rust tui library i starred last year");
+    cleanup();
+    server.status = status({ login: "octosync" });
+    await open("/octosync", "Search @octosync's stars");
+    expect(page().getByRole("searchbox").getAttribute("placeholder")).toBe("search @octosync's stars");
   });
 
   test("a result's link keeps the query and a view this browser saved, so it opens the same way anywhere", async () => {
@@ -861,6 +882,7 @@ describe("the search page in each state", () => {
       expect(page().getByRole("heading", { name: "GitHub has no one called @nobody-here-x" })).toBeTruthy(),
     );
     expect(strip()).toContain("no such GitHub user");
+    expect(page().getByText("check the spelling, or try another username.")).toBeTruthy();
     expect(page().getAllByRole("button", { name: /Whose stars: @nobody-here-x/ }).length).toBeGreaterThan(0);
     await waitFor(() => expect(mark()).toBe("unsure"));
   });
@@ -929,7 +951,7 @@ describe("the search page in each state", () => {
     expect(
       page().getByRole("heading", { level: 1, name: "search anyone's starred GitHub repos in plain words" }),
     ).toBeTruthy();
-    expect(page().getByRole("heading", { name: "skip the line, stay synced" })).toBeTruthy();
+    expect(page().getByRole("heading", { name: "search your own stars" })).toBeTruthy();
     const owner = within(page().getByRole("main")).getByRole("link", { name: "@stefanofa" });
     expect(owner.closest("p")?.textContent).toBe("live results from @stefanofa, our demo account. try any username.");
     const hero = owner.closest("section") as HTMLElement;
@@ -982,7 +1004,7 @@ describe("the search page in each state", () => {
     await open("/octosync", "Search @octosync's stars");
     const hero = () => {
       const tile = page()
-        .getByRole("heading", { level: 2, name: /is this you|skip the line, stay synced/ })
+        .getByRole("heading", { level: 2, name: /is this you|search your own stars/ })
         .closest("[data-slot=tile]") as HTMLElement;
       const subtitle = page().getByRole("heading", { level: 1 }).nextElementSibling as HTMLElement;
       return { tile: tile.className, pip: tile.firstElementChild?.className, subtitle: subtitle.className };
@@ -991,7 +1013,7 @@ describe("the search page in each state", () => {
     const importing = hero();
     server.status = status({ login: "octosync", starredTotal: 6 });
     await poll();
-    await waitFor(() => expect(page().getByRole("heading", { name: "skip the line, stay synced" })).toBeTruthy(), {
+    await waitFor(() => expect(page().getByRole("heading", { name: "search your own stars" })).toBeTruthy(), {
       timeout: 6000,
     });
     expect(hero()).toEqual(importing);
@@ -1199,9 +1221,9 @@ describe("repos near the open one", () => {
 
     await user.click(await page().findByRole("link", { name: "bottom" }));
     const panel = within(await page().findByRole("dialog"));
-    await panel.findByRole("heading", { name: "also in these stars" });
+    await panel.findByRole("heading", { name: "also in your stars" });
     expect(panel.getByRole("link", { name: /ratatui/ }).textContent).toContain("Widgets for terminal dashboards.");
-    expect(panel.getByRole("heading", { name: "not starred yet" })).toBeDefined();
+    expect(panel.getByRole("heading", { name: "more like this" })).toBeDefined();
     expect(server.similarAsked).toEqual([2]);
 
     await user.click(panel.getByRole("link", { name: /helix/ }));
@@ -1212,8 +1234,8 @@ describe("repos near the open one", () => {
     expect(document.activeElement).toBe(page().getByRole("dialog"));
     // helix has nothing near it in either row, so neither row shows.
     await waitFor(() => expect(server.similarAsked).toEqual([2, 99]));
-    await waitFor(() => expect(panel.queryByRole("heading", { name: "also in these stars" })).toBeNull());
-    expect(panel.queryByRole("heading", { name: "not starred yet" })).toBeNull();
+    await waitFor(() => expect(panel.queryByRole("heading", { name: "also in your stars" })).toBeNull());
+    expect(panel.queryByRole("heading", { name: "more like this" })).toBeNull();
 
     // The repo replaced the one the click opened, so closing the panel goes straight back to the page.
     await user.keyboard("{Escape}");

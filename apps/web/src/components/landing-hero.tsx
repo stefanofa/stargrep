@@ -33,7 +33,7 @@ function ButterTile({ butter, pose }: { butter: Butter; pose: PipPose }) {
         />
       </div>
       <h2 className="min-w-0 flex-1 font-display text-[19px] leading-[22px] font-semibold text-ink lg:w-[190px] lg:flex-none lg:text-2xl lg:leading-[34px] lg:tracking-snug">
-        {claim ? "is this you? skip the wait" : "skip the line, stay synced"}
+        {claim ? "is this you? skip the wait" : "search your own stars"}
       </h2>
       <SignInButton
         variant="primary"

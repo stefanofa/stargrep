@@ -485,7 +485,7 @@ const troubleCopy = (trouble: Trouble, owner: string, whose: Whose): TroubleCopy
       return {
         status: { icon: "failed", label: "no such GitHub user" },
         heading: `GitHub has no one called @${owner}`,
-        detail: "check the spelling, or pick someone else from the pill.",
+        detail: "check the spelling, or try another username.",
         pose: "unsure",
         retry: undefined,
       };
@@ -566,7 +566,9 @@ const heroCopy = (stage: Stage, troubled: boolean, owner: Owner): HeroCopy => {
   };
 };
 
-const idlePlaceholder = "the rust tui library I starred last year";
+// The example speaks as the viewer, so it fits only their own stars. Anyone else's stars name whose they are.
+const idlePlaceholder = (whose: Whose) =>
+  whose.own ? "the rust tui library i starred last year" : `search ${theirs(whose)}`;
 
 export interface PageView extends SearchView {
   // The page still shows the answer the server painted.
@@ -610,7 +612,7 @@ export const pageView = ({
   const page = {
     painted,
     hero: policyOf(audience).landing ? heroCopy(stage, trouble !== undefined, audience.owner) : undefined,
-    placeholder: stage.name === "importing" ? "search what has arrived" : idlePlaceholder,
+    placeholder: stage.name === "importing" ? "search what has arrived" : idlePlaceholder(whose),
     progress: shown?.progress,
   };
   if (trouble !== undefined) {

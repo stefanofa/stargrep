@@ -1,22 +1,14 @@
 import { Tile } from "@stargrep/ui";
 import { useLoaderData } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import { GitHubStarLink } from "./github-star-link.tsx";
 import { Page } from "./page.tsx";
-import { Wordmark } from "./wordmark.tsx";
+import { SiteHeader } from "./site-header.tsx";
 
 // A page of reading, such as the privacy page, in one tile at the narrow measure.
 export function TextPage({ heading, children }: { heading: string; children: ReactNode }) {
-  const { repoStars } = useLoaderData({ from: "__root__" });
+  const { viewer, repoStars } = useLoaderData({ from: "__root__" });
   return (
-    <Page
-      header={
-        <>
-          <Wordmark />
-          <GitHubStarLink stars={repoStars} />
-        </>
-      }
-    >
+    <Page header={<SiteHeader viewer={viewer} repoStars={repoStars} />}>
       <Tile className="mx-auto flex w-full max-w-narrow flex-col gap-8 px-6 pt-tile-top pb-8 sm:px-tile-lg sm:pb-10">
         <h1 className="font-display text-3xl leading-none font-semibold tracking-snug">{heading}</h1>
         {children}

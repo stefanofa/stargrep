@@ -7,7 +7,7 @@ import { repoVisual } from "./repo-visual.ts";
 import type { LibraryRepo, SimilarRepo, SimilarRepos } from "./rpc.ts";
 import type { Params } from "./search-params.ts";
 import { factsPending } from "./search-state.ts";
-import type { Whose } from "./whose.ts";
+import { theirs, type Whose } from "./whose.ts";
 
 const day = 86_400_000;
 const relative = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
@@ -111,7 +111,7 @@ type Shown = Pick<
   | "ownerAvatarUrl"
 >;
 
-// The panel for a repo the login hasn't starred, such as one opened from its "not starred yet" row.
+// The panel for a repo the login hasn't starred, such as one opened from its "more like this" row.
 export const strayDetail = (repo: Shown, at: number): RepoDetail => ({
   owner: repo.owner,
   name: repo.name,
@@ -141,17 +141,19 @@ const similarItem = (repo: SimilarRepo, search: Params): SimilarItem => ({
   visual: repoVisual(repo, "row"),
 });
 
-// The rows under the panel's link to GitHub, from the answer once it lands. No rows when the answer failed.
+// The rows under the panel's link to GitHub, from the answer once it lands. No rows when the answer failed. The first
+// row names whose stars it searched, since on someone else's page they aren't the viewer's.
 export const similarRows = (
   answer: SimilarRepos | "loading" | undefined,
   search: Params,
+  whose: Whose,
 ): ReadonlyArray<SimilarRow<SimilarRowKey>> => {
   if (answer === undefined) return [];
   const row = (repos: ReadonlyArray<SimilarRepo> | undefined) =>
     repos === undefined ? ("loading" as const) : repos.map((repo) => similarItem(repo, search));
   const loaded = answer === "loading" ? undefined : answer;
   return [
-    { key: "in_stars", heading: "also in these stars", repos: row(loaded?.inStars) },
-    { key: "not_starred", heading: "not starred yet", repos: row(loaded?.notStarred) },
+    { key: "in_stars", heading: `also in ${theirs(whose)}`, repos: row(loaded?.inStars) },
+    { key: "not_starred", heading: "more like this", repos: row(loaded?.notStarred) },
   ];
 };

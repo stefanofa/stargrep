@@ -16,10 +16,10 @@ import {
   ViewToggle,
 } from "@stargrep/ui";
 import { useLiveQuery } from "@tanstack/react-db";
-import { Link, useHydrated, useNavigate, useRouter, useSearch } from "@tanstack/react-router";
+import { useHydrated, useNavigate, useRouter, useSearch } from "@tanstack/react-router";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { capture } from "../lib/analytics.ts";
 import { policyOf, starredOf, whoseOf } from "../lib/audience.ts";
 import { keywordTerms, normalize, searchText } from "../lib/keyword.ts";
@@ -33,7 +33,7 @@ import { rememberLogin } from "../lib/recent-logins.ts";
 import { withReply } from "../lib/results.ts";
 import { useReveal } from "../lib/reveal.ts";
 import { playSurprise } from "../lib/reveal-timing.ts";
-import type { SimilarRepo, Viewer } from "../lib/rpc.ts";
+import type { SimilarRepo } from "../lib/rpc.ts";
 import { librarySorts, type Params, searchSorts, validateParams } from "../lib/search-params.ts";
 import { type Arriving, type Body, pageView, type Retry, type Stage, stageOf } from "../lib/search-state.ts";
 import { storedView, useStoredView } from "../lib/stored-view.ts";
@@ -43,8 +43,6 @@ import { useSemanticSearch } from "../lib/use-semantic.ts";
 import { useSimilar } from "../lib/use-similar.ts";
 import { useSync } from "../lib/use-sync.ts";
 import { theirs } from "../lib/whose.ts";
-import { AccountMenu } from "./account-menu.tsx";
-import { HeaderEnd } from "./github-star-link.tsx";
 import { Hero, TryChips } from "./landing-hero.tsx";
 import { LibraryPlaceholder, LibraryView } from "./library-view.tsx";
 import { NewToYouSection } from "./new-to-you.tsx";
@@ -67,25 +65,6 @@ export const pageFor = (request: PageRequest, { viewer, config, repoStars, site 
     view: storedView(document.cookie) ?? null,
   };
 };
-
-// Until other scopes ship, the scope switch is one link to the viewer's own stars rather than a tab list of one.
-export function HeaderControls({ viewer, star }: { viewer: Viewer; star: ReactNode }) {
-  return (
-    <>
-      <nav aria-label="Scope" className="flex items-center rounded-full bg-card p-1 max-sm:hidden">
-        <Link
-          to="/{-$login}"
-          params={{ login: undefined }}
-          activeOptions={{ exact: true, includeSearch: false }}
-          className="flex h-9 items-center rounded-full px-[18px] font-sans text-meta font-medium text-muted-foreground transition-[color,background-color] duration-120 hover:text-foreground aria-[current=page]:bg-accent aria-[current=page]:font-semibold aria-[current=page]:text-ink"
-        >
-          your stars
-        </Link>
-      </nav>
-      <HeaderEnd star={star} account={<AccountMenu login={viewer.login} avatarUrl={viewer.avatarUrl} />} />
-    </>
-  );
-}
 
 const dock =
   "max-sm:fixed max-sm:inset-x-3 max-sm:bottom-[max(16px,env(safe-area-inset-bottom))] max-sm:z-30 max-sm:[&_[data-slot=tile]]:shadow-dock";
@@ -461,15 +440,16 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           if (!next) close();
         }}
         returnFocus={opener}
-        similar={<SimilarRepos rows={similarRows(similar, links)} onOpen={openSimilar} />}
+        similar={<SimilarRepos rows={similarRows(similar, links, whose)} onOpen={openSimilar} />}
       />
     </>
   );
 }
 
-// The text pages, the error pages, and the sign-in problem ride in the engine chunk, so the landing entry never reaches
-// Base UI. A second lazy chunk would make the bundler move React, the router, and the UI kit out of the landing entry
-// into a shared chunk, which costs the landing page about 2 KB gzipped.
+// The account menu, the text pages, the error pages, and the sign-in problem ride in the engine chunk, so the landing
+// entry never reaches Base UI. A second lazy chunk would make the bundler move React, the router, and the UI kit out of
+// the landing entry into a shared chunk, which costs the landing page about 2 KB gzipped.
+export { AccountMenu } from "./account-menu.tsx";
 export { DevelopersPage } from "./developers-page.tsx";
 export { PrivacyPage } from "./privacy-page.tsx";
 export { Failure, NotFound } from "./problem-page.tsx";
