@@ -23,6 +23,8 @@ const defaults = {
     setOwnedRepoStars: unexpected("accounts.setOwnedRepoStars"),
     setStarredCount: unexpected("accounts.setStarredCount"),
     recordStarSync: unexpected("accounts.recordStarSync"),
+    dueForStarCheck: unexpected("accounts.dueForStarCheck"),
+    recordStarChecks: unexpected("accounts.recordStarChecks"),
   },
   repos: {
     upsertRefs: unexpected("repos.upsertRefs"),

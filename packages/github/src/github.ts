@@ -28,6 +28,7 @@ import * as Readme from "./readme.ts";
 import * as Facts from "./repo-facts.ts";
 import type { GraphQLError, Login, ObjectId, RepoFacts, RepoName, RepoNodeId, Star } from "./schemas.ts";
 import * as StarList from "./star-list.ts";
+import * as StarProbe from "./star-probe.ts";
 import * as TokenBudget from "./token-budget.ts";
 import * as TokenGate from "./token-gate.ts";
 import * as Viewer from "./viewer.ts";
@@ -71,6 +72,10 @@ export class GitHub extends Context.Service<
     // Newest first, and never past the last page GitHub serves, so a list longer than that ends early.
     readonly starPages: (login: Login) => Stream.Stream<ReadonlyArray<Star>, GitHubError>;
     readonly stars: (login: Login) => Stream.Stream<Star, GitHubError>;
+    // Each account's starred total and newest star, up to StarProbe.maxBatch accounts to a GraphQL request. An account
+    // whose login GitHub no longer has, or that now names another account, comes back as missing, and the rest of its
+    // batch is kept.
+    readonly probeStars: (targets: ReadonlyArray<StarProbe.Target>) => Effect.Effect<StarProbe.Answer, GitHubError>;
     // Facts for the repos GitHub still serves. A repo GitHub sent in a shape the decoder refuses, or left unanswered even
     // when read alone, is logged and returned as invalid, and the rest of its batch is kept.
     readonly repoFacts: (ids: ReadonlyArray<RepoNodeId>) => Effect.Effect<
@@ -289,6 +294,32 @@ const make = Effect.gen(function* () {
 
   const stars = (login: Login) => Stream.flattenIterable(starPages(login));
 
+  const probeBatch = Effect.fn("GitHub.probeBatch")(function* (targets: ReadonlyArray<StarProbe.Target>) {
+    const query = GraphQL.operation(StarProbe.query(targets.length), StarProbe.Data);
+    const { data } = yield* graphql("probe-stars", query, StarProbe.variables(targets), StarProbe.isAliasError);
+    return StarProbe.settle(targets, data);
+  });
+
+  const combineProbes = (parts: ReadonlyArray<StarProbe.Answer>): StarProbe.Answer => ({
+    probed: parts.flatMap((part) => part.probed),
+    missing: parts.flatMap((part) => part.missing),
+    cost: parts.reduce((total, part) => total + part.cost, 0),
+  });
+
+  const readProbe = halving(
+    probeBatch,
+    (target: StarProbe.Target, error) =>
+      Effect.logWarning("GitHub left an account's star probe unanswered even alone", {
+        account: target.id,
+        error: error.message,
+      }).pipe(Effect.as({ probed: [], missing: [target.id], cost: 0 })),
+    combineProbes,
+  );
+
+  const probeStars = Effect.fn("GitHub.probeStars")(function* (targets: ReadonlyArray<StarProbe.Target>) {
+    return combineProbes(yield* Effect.forEach(Arr.chunksOf(targets, StarProbe.maxBatch), readProbe));
+  });
+
   const factsBatch = Effect.fn("GitHub.factsBatch")(function* (ids: ReadonlyArray<RepoNodeId>) {
     const body = yield* graphql("repo-facts", factsQuery, { ids }, (error) => Facts.nodeError(error) !== null);
     const { facts, forbidden, invalid } = Facts.settle(ids, body);
@@ -372,7 +403,7 @@ const make = Effect.gen(function* () {
     return new Map(batches.flatMap((batch) => [...batch]));
   });
 
-  return GitHub.of({ viewer, owner, starPages, stars, repoFacts, resolveRepos, readme, readmes });
+  return GitHub.of({ viewer, owner, starPages, stars, probeStars, repoFacts, resolveRepos, readme, readmes });
 });
 
 export const layer = Layer.effect(GitHub, make).pipe(Layer.provide(Digest.layerWebCrypto));

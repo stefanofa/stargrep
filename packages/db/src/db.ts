@@ -31,6 +31,7 @@ export type {
   AccountClaim,
   AccountFacts,
   OwnedRepoStars,
+  StarCheckDue,
   StarredCount,
   StarSync,
 } from "./queries/accounts.ts";

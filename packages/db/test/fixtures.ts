@@ -105,6 +105,7 @@ export const accountRow = (id: GitHubAccountId, overrides: Partial<Db.Account> =
   starredCount: null,
   starsSyncedAt: null,
   starsFullSyncedAt: null,
+  starsCheckedAt: null,
   ...overrides,
 });
 
