@@ -126,7 +126,7 @@ const api = (): Client => ({
     demoQuery: "terminal dashboard",
     examples: ["python package manager", "terminal recorder", "fuzzy finder"],
     featured: [Login.make("stefanofa")],
-    curated: [],
+    curated: [Login.make("karpathy"), Login.make("simonw")],
   }),
   search: async ({ q }: { q: string }) => {
     server.searches.push(q);
@@ -593,14 +593,14 @@ describe("the search page in each state", () => {
     expect(page().getByRole("link", { name: "your stars" }).getAttribute("aria-current")).toBeNull();
   });
 
-  test("a visitor can sign in from the header on any stars page, and has no your stars link", async () => {
+  test("a visitor can sign in from the header on any stars page, and has people but no your stars link", async () => {
     server.signedIn = false;
     server.status = status({ login: "octosync" });
     await open("/octosync", "Search @octosync's stars");
     const header = within(page().getAllByRole("banner")[0] as HTMLElement);
     expect(header.getByRole("button", { name: "sign in" })).toBeTruthy();
     expect(header.queryByRole("link", { name: "your stars" })).toBeNull();
-    expect(header.queryByRole("navigation")).toBeNull();
+    expect(header.getByRole("link", { name: "people" }).getAttribute("href")).toBe("/people");
   });
 
   test("the search box's example speaks as the viewer only on their own stars", async () => {
@@ -723,6 +723,23 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(router.state.location.search).toEqual({ q: "terminal" }));
     expect(page().queryByRole("dialog")).toBeNull();
     expect(router.history.length).toBe(1);
+  });
+
+  test("the landing offers the curated people under the username field, and the way to everyone", async () => {
+    server.signedIn = false;
+    server.status = status({ login: "stefanofa" });
+    await open("/", "Search @stefanofa's stars");
+    const faces = page().getByRole("navigation", { name: "Start with" });
+    expect(
+      within(faces)
+        .getAllByRole("link")
+        .map((link) => [link.textContent, link.getAttribute("href")]),
+    ).toEqual([
+      ["@karpathy", "/karpathy"],
+      ["@simonw", "/simonw"],
+      ["see everyone →", "/people"],
+    ]);
+    expect(within(page().getByRole("navigation", { name: "Main" })).getByRole("link", { name: "people" })).toBeTruthy();
   });
 
   test("on the demo page an emptied search stays empty across Back and Forward", async () => {
@@ -885,7 +902,8 @@ describe("the search page in each state", () => {
       expect(page().getByRole("heading", { name: "GitHub has no one called @nobody-here-x" })).toBeTruthy(),
     );
     expect(strip()).toContain("no such GitHub user");
-    expect(page().getByText("check the spelling, or try another username.")).toBeTruthy();
+    expect(page().getByText("check the spelling, or pick someone from people.")).toBeTruthy();
+    expect(page().getByRole("link", { name: "see people" }).getAttribute("href")).toBe("/people");
     expect(page().getAllByRole("button", { name: /Whose stars: @nobody-here-x/ }).length).toBeGreaterThan(0);
     await waitFor(() => expect(mark()).toBe("unsure"));
   });
@@ -1092,7 +1110,10 @@ describe("whose stars the page searches", () => {
     expect(accounts()).toEqual([
       ["@junodev", "you"],
       ["@stefanofa", null],
+      ["@karpathy", null],
+      ["@simonw", null],
     ]);
+    expect(page().getByRole("link", { name: "see everyone →" }).getAttribute("href")).toBe("/people");
     await user.type(page().getByRole("textbox", { name: "search anyone's stars" }), "octodone");
     await user.click(page().getByRole("button", { name: "go" }));
     await page().findByRole("searchbox", { name: "Search @octodone's stars" });
@@ -1114,7 +1135,14 @@ describe("whose stars the page searches", () => {
     server.status = status({});
     await open("/");
     await user.click(pill());
-    expect(accounts().map(([login]) => login)).toEqual(["@junodev", "@octosync", "@octodone", "@stefanofa"]);
+    expect(accounts().map(([login]) => login)).toEqual([
+      "@junodev",
+      "@octosync",
+      "@octodone",
+      "@stefanofa",
+      "@karpathy",
+      "@simonw",
+    ]);
   });
 
   test("signing in comes back to the page it started from", async () => {

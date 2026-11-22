@@ -1,5 +1,7 @@
 import {
   Button,
+  buttonVariants,
+  cn,
   EmptyTile,
   type OpenResult,
   type OpenSimilar,
@@ -18,7 +20,7 @@ import {
   ViewToggle,
 } from "@stargrep/ui";
 import { useLiveQuery } from "@tanstack/react-db";
-import { useHydrated, useNavigate, useRouter, useSearch } from "@tanstack/react-router";
+import { Link, useHydrated, useNavigate, useRouter, useSearch } from "@tanstack/react-router";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { type ReactNode, useEffect, useRef, useState } from "react";
@@ -388,6 +390,11 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
                 try again
               </Button>
             )}
+            {current.offer === "people" && (
+              <Link to="/people" className={cn(buttonVariants({ variant: "primary", size: "lg" }), "mt-2")}>
+                see people
+              </Link>
+            )}
           </EmptyTile>
         );
       case "loading":
@@ -449,7 +456,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
 
   return (
     <>
-      {page.hero && <Hero {...page.hero} pose={butterPose} />}
+      {page.hero && <Hero {...page.hero} faces={data.config.curated} pose={butterPose} />}
       {page.person && (
         <section aria-label={`@${page.person.login}`} className="flex flex-col gap-3.5 lg:flex-row lg:gap-gap">
           <PersonTile
@@ -523,11 +530,13 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   );
 }
 
-// The account menu, the text pages, the error pages, and the sign-in problem ride in the engine chunk, so the landing
-// entry never reaches Base UI. A second lazy chunk would make the bundler move React, the router, and the UI kit out of
-// the landing entry into a shared chunk, which costs the landing page about 2 KB gzipped.
+// The account menu, the text pages, the people page, the error pages, and the sign-in problem ride in the engine chunk,
+// so the landing entry never reaches Base UI. A second lazy chunk would make the bundler move React, the router, and the
+// UI kit out of the landing entry into a shared chunk, which costs the landing page about 2 KB gzipped.
+export { firstPeople } from "../lib/people.ts";
 export { AccountMenu } from "./account-menu.tsx";
 export { DevelopersPage } from "./developers-page.tsx";
+export { PeoplePage } from "./people-page.tsx";
 export { PrivacyPage } from "./privacy-page.tsx";
 export { Failure, NotFound } from "./problem-page.tsx";
 export { SignInProblem } from "./sign-in-problem.tsx";

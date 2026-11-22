@@ -164,6 +164,17 @@ test("/terms is the terms page, and a GitHub user called terms keeps a page at /
   expect(titleOf(await renderPage("/@terms"))).toBe("@terms's stars · stargrep");
 });
 
+test("/people is the people page with its own preview, and a GitHub user called people keeps /@people", async () => {
+  const people = await renderPage("/people");
+  const { tags, canonical } = previewOf(people);
+  expect(titleOf(people)).toBe("people · stargrep");
+  expect(tags["og:title"]).toBe("people · stargrep");
+  expect(tags["og:description"]).toBe("Pick a developer and search their starred GitHub repos in plain words.");
+  expect(tags["og:url"]).toBe("https://stargrep.com/people");
+  expect(canonical).toBe("https://stargrep.com/people");
+  expect(titleOf(await renderPage("/@people"))).toBe("@people's stars · stargrep");
+});
+
 test("the developers page names the MCP endpoint and every tool the server lists", async () => {
   const { anyoneCanCall, contract } = await import("@stargrep/api/contract");
   const { mcpTools, mcpUrl } = await import("../src/lib/mcp.ts");

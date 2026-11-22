@@ -16,7 +16,7 @@ interface NavLink {
   readonly phones: boolean;
 }
 
-// The header's places. People joins here for everyone, phones included, once /people exists.
+// The header's places.
 const places: ReadonlyArray<NavLink> = [
   {
     label: "your stars",
@@ -24,6 +24,7 @@ const places: ReadonlyArray<NavLink> = [
     for: "signed-in",
     phones: false,
   },
+  { label: "people", link: { to: "/people" }, for: "everyone", phones: true },
 ];
 
 function Places({ signedIn }: { signedIn: boolean }) {
@@ -74,8 +75,9 @@ export function SiteHeader({
         <Places signedIn={viewer !== null} />
       </div>
       <div className="flex items-center gap-3">
-        {/* A visitor's phone header has room for the wordmark and sign-in, so the star link waits for wider screens. */}
-        <GitHubStarLink stars={repoStars} className={viewer === null ? "max-sm:hidden" : undefined} />
+        {/* A phone header has room for the wordmark, people, and sign-in or the account, so the star link waits for wider
+            screens. */}
+        <GitHubStarLink stars={repoStars} className="max-sm:hidden" />
         {viewer === null ? (
           <SignInButton variant="primary" mark={false} label="sign in" />
         ) : (

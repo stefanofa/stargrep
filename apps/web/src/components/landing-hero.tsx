@@ -1,9 +1,10 @@
 import { Button, Chip, cn, Pip, type PipPose, ProgressRing, Tile } from "@stargrep/ui";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useId } from "react";
+import { avatarOf } from "../lib/avatar.ts";
 import type { Butter, HeroCopy } from "../lib/search-state.ts";
 import { loginPage, typedLogin, typedLoginParam } from "../lib/stars-route.ts";
-import { ExternalTextLink } from "./external-text-link.tsx";
+import { ExternalTextLink, textLinkClass } from "./external-text-link.tsx";
 import { SignInButton } from "./sign-in-button.tsx";
 
 export function ButterTile({ butter, pose }: { butter: Butter; pose: PipPose }) {
@@ -52,7 +53,7 @@ export function ButterTile({ butter, pose }: { butter: Butter; pose: PipPose }) 
 }
 
 // Before the page hydrates, the browser submits the form itself and / sends the login on to its page.
-function LoginField() {
+export function LoginField() {
   const navigate = useNavigate();
   const field = useId();
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -98,7 +99,40 @@ function LoginField() {
   );
 }
 
-export function Hero({ subtitle, butter, pose }: HeroCopy & { pose: PipPose }) {
+// The curated people under the username field, so a visitor who knows no username still has a first click, and the way
+// to everyone else.
+function Faces({ logins }: { logins: ReadonlyArray<string> }) {
+  if (logins.length === 0) return null;
+  return (
+    <nav aria-label="Start with" className="flex flex-col gap-2.5 pt-1 pl-1.5">
+      <span className="font-sans text-label font-semibold text-accent-strong uppercase">or start with</span>
+      <ul className="grid grid-cols-2 gap-x-4 gap-y-2 sm:flex sm:flex-wrap sm:gap-x-5">
+        {logins.map((login) => (
+          <li key={login} className="min-w-0">
+            <Link
+              {...loginPage(login)}
+              className="flex min-w-0 items-center gap-2 rounded-full pr-1 font-sans text-meta font-medium text-foreground hover:text-accent-strong"
+            >
+              <img
+                src={avatarOf(login, 32)}
+                alt=""
+                width={32}
+                height={32}
+                className="size-8 shrink-0 rounded-full bg-accent-soft outline-1 -outline-offset-1 outline-image-edge"
+              />
+              <span className="truncate">{`@${login}`}</span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+      <Link to="/people" className={`self-start font-sans text-meta font-medium ${textLinkClass}`}>
+        see everyone →
+      </Link>
+    </nav>
+  );
+}
+
+export function Hero({ subtitle, butter, pose, faces }: HeroCopy & { pose: PipPose; faces: ReadonlyArray<string> }) {
   return (
     <section className="flex flex-col gap-3.5 pt-1.5 sm:pt-5 lg:flex-row lg:gap-gap">
       <div className="flex min-w-0 flex-1 flex-col justify-end gap-3.5 lg:pb-1.5">
@@ -118,6 +152,7 @@ export function Hero({ subtitle, butter, pose }: HeroCopy & { pose: PipPose }) {
           )}
         </p>
         <LoginField />
+        <Faces logins={faces} />
       </div>
       <ButterTile butter={butter} pose={pose} />
     </section>
