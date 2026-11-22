@@ -11,6 +11,7 @@ import * as NodePostgres from "./node-postgres.ts";
 import * as Postgres from "./postgres.ts";
 import * as Accounts from "./queries/accounts.ts";
 import * as Facets from "./queries/facets.ts";
+import * as Follows from "./queries/follows.ts";
 import * as IconBackfill from "./queries/icon-backfill.ts";
 import * as Knowledge from "./queries/knowledge/index.ts";
 import * as MonthlyPicks from "./queries/monthly-picks.ts";
@@ -36,6 +37,17 @@ export type {
   StarSync,
 } from "./queries/accounts.ts";
 export type { FacetCount, HeldAtom, MatchingAtoms } from "./queries/facets.ts";
+export type {
+  FeedQuery,
+  FeedRepo,
+  FeedStar,
+  Follow,
+  Followed,
+  FollowedSince,
+  Followee,
+  FollowSource,
+  Known,
+} from "./queries/follows.ts";
 export type {
   Answer,
   BatchAdapter,
@@ -161,6 +173,7 @@ export class Db extends Context.Service<
     readonly starImports: StarImports.Queries;
     readonly iconBackfill: IconBackfill.Queries;
     readonly people: People.Queries;
+    readonly follows: Follows.Queries;
     readonly topics: Topics.Queries;
   }
 >()("@stargrep/db/db") {}
@@ -218,6 +231,7 @@ export const layer = (options: Options) =>
           starImports: yield* StarImports.make,
           iconBackfill: yield* IconBackfill.make,
           people: yield* People.make,
+          follows: yield* Follows.make,
           topics: yield* Topics.make,
         });
       }),

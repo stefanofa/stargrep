@@ -66,6 +66,44 @@ const reachableStrings = (root: unknown): Array<string> => {
   return strings;
 };
 
+const followingPages =
+  (total: number): Fake.Handler =>
+  (sent) => {
+    const page = Number(sent.url.searchParams.get("page"));
+    const ids = Array.from({ length: total }, (_, i) => i + 1).slice((page - 1) * 100, page * 100);
+    return {
+      body: ids.map((id) => ({ id, login: `user-${id}`, type: id % 50 === 0 ? "Organization" : "User" })),
+      headers: {
+        ...Fake.rateLimitHeaders(4000),
+        ...(page * 100 < total
+          ? { link: `<https://api.github.com/user/1/following?per_page=100&page=${page + 1}>; rel="next"` }
+          : {}),
+      },
+    };
+  };
+
+describe("following", () => {
+  effect("reads every page up to the tenth and leaves out orgs", () => {
+    const fake = Fake.layer(followingPages(1_250));
+    return Effect.gen(function* () {
+      const found = yield* (yield* GitHub.GitHub).following(login);
+      expect(fake.sent.length).toBe(10);
+      expect(fake.sent[0]?.url.pathname).toBe("/users/octocat/following");
+      expect(found.length).toBe(980);
+      expect(found[0]).toEqual({ id: 1, login: "user-1" } as never);
+      expect(found.some((user) => user.id % 50 === 0)).toBe(false);
+    }).pipe(Effect.provide(fake.layer));
+  });
+
+  effect("an account that follows nobody reads one page", () => {
+    const fake = Fake.layer(followingPages(0));
+    return Effect.gen(function* () {
+      expect(yield* (yield* GitHub.GitHub).following(login)).toEqual([]);
+      expect(fake.sent.length).toBe(1);
+    }).pipe(Effect.provide(fake.layer));
+  });
+});
+
 describe("stars", () => {
   effect("emits one element per page from starPages", () => {
     const fake = Fake.layer(starPages(250));

@@ -20,6 +20,7 @@ import {
   RateLimited,
   Unauthorized,
 } from "./errors.ts";
+import * as FollowingList from "./following-list.ts";
 import * as GraphQL from "./graphql.ts";
 import { apiHeaders } from "./headers.ts";
 import * as Owner from "./owner.ts";
@@ -76,6 +77,8 @@ export class GitHub extends Context.Service<
     // whose login GitHub no longer has, or that now names another account, comes back as missing, and the rest of its
     // batch is kept.
     readonly probeStars: (targets: ReadonlyArray<StarProbe.Target>) => Effect.Effect<StarProbe.Answer, GitHubError>;
+    // The users the login follows, as many as the first FollowingList.lastPage pages hold.
+    readonly following: (login: Login) => Effect.Effect<ReadonlyArray<FollowingList.Followed>, GitHubError>;
     // Facts for the repos GitHub still serves. A repo GitHub sent in a shape the decoder refuses, or left unanswered even
     // when read alone, is logged and returned as invalid, and the rest of its batch is kept.
     readonly repoFacts: (ids: ReadonlyArray<RepoNodeId>) => Effect.Effect<
@@ -320,6 +323,29 @@ const make = Effect.gen(function* () {
     return combineProbes(yield* Effect.forEach(Arr.chunksOf(targets, StarProbe.maxBatch), readProbe));
   });
 
+  const followingPage = Effect.fn("GitHub.followingPage")(function* (login: Login, page: number) {
+    return yield* exchange("list-following", FollowingList.request(login, page), (body, reply, endpoint) =>
+      Effect.gen(function* () {
+        const items = yield* FollowingList.decodeFollowing(body);
+        const next = StarList.nextPage(reply.headers.link);
+        if (Result.isFailure(next)) return yield* new GitHubResponseInvalid({ ...endpoint, reason: "invalid-link" });
+        return [FollowingList.toFollowed(items), next.success] as const;
+      }),
+    );
+  });
+
+  const following = Effect.fn("GitHub.following")(function* (login: Login) {
+    const pages = yield* Stream.runCollect(
+      Stream.paginate(1, (page: number) =>
+        Effect.map(
+          followingPage(login, page),
+          ([found, next]) => [[found], Option.filter(next, (number) => number <= FollowingList.lastPage)] as const,
+        ),
+      ),
+    );
+    return pages.flat();
+  });
+
   const factsBatch = Effect.fn("GitHub.factsBatch")(function* (ids: ReadonlyArray<RepoNodeId>) {
     const body = yield* graphql("repo-facts", factsQuery, { ids }, (error) => Facts.nodeError(error) !== null);
     const { facts, forbidden, invalid } = Facts.settle(ids, body);
@@ -403,7 +429,18 @@ const make = Effect.gen(function* () {
     return new Map(batches.flatMap((batch) => [...batch]));
   });
 
-  return GitHub.of({ viewer, owner, starPages, stars, probeStars, repoFacts, resolveRepos, readme, readmes });
+  return GitHub.of({
+    viewer,
+    owner,
+    starPages,
+    stars,
+    probeStars,
+    following,
+    repoFacts,
+    resolveRepos,
+    readme,
+    readmes,
+  });
 });
 
 export const layer = Layer.effect(GitHub, make).pipe(Layer.provide(Digest.layerWebCrypto));

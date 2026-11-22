@@ -13,7 +13,7 @@ import { UserId } from "../auth-schema.ts";
 import { AccountNotFound, type DbQueryFailed, type DbRowInvalid } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
 import { NullableTime, requireRow, rowsDecoder, timeParam, writeEncoder } from "../rows.ts";
-import { githubAccounts, people } from "../schema.ts";
+import { follows, githubAccounts, people } from "../schema.ts";
 
 // stars_etag stays in the table until a cleanup migration drops it. Nothing reads or writes it.
 export const Account = Schema.Struct(
@@ -86,7 +86,7 @@ export interface Queries {
   readonly setStarredCount: (input: StarredCount) => Effect.Effect<void, DbQueryFailed | AccountNotFound>;
   readonly recordStarSync: (sync: StarSync) => Effect.Effect<void, DbQueryFailed | AccountNotFound>;
   // Synced users whose stars were never checked, or last checked before their cutoff, the oldest check first. A person
-  // on the people list has a cutoff of their own.
+  // on the people list, or followed by anyone, has a cutoff of their own.
   readonly dueForStarCheck: (input: {
     readonly peopleBefore: DateTime.Utc;
     readonly othersBefore: DateTime.Utc;
@@ -211,6 +211,7 @@ export const make = Effect.gen(function* () {
                 lt(
                   githubAccounts.starsCheckedAt,
                   sql`case when exists (select 1 from ${people} where ${people.accountId} = ${githubAccounts.id})
+                    or exists (select 1 from ${follows} where ${follows.followeeId} = ${githubAccounts.id})
                     then ${timeParam(peopleBefore)} else ${timeParam(othersBefore)} end`,
                 ),
               ),

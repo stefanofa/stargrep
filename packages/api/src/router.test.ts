@@ -195,6 +195,7 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
       Viewers,
       Viewers.of({
         current: fakes.viewer ?? Effect.fail(new NotSignedIn()),
+        githubFollowing: Effect.die(new Error("unexpected GitHub following read")),
         signedIn: fakes.signedIn ?? Effect.succeedNone,
       }),
     ),

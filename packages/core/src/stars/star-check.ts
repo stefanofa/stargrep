@@ -13,7 +13,7 @@ import * as SyncQueue from "./sync-queue.ts";
 import * as SyncRequests from "./sync-requests.ts";
 
 export interface Settings {
-  // How long a person on the people list goes between checks.
+  // How long a person on the people list, or anyone someone follows, goes between checks.
   readonly peopleCadence: Duration.Duration;
   // How long any other synced user goes between checks.
   readonly cadence: Duration.Duration;
@@ -86,9 +86,10 @@ export const hasNewStars = (due: Db.StarCheckDue, probed: StarProbe.Probed) =>
 const pausing = new Set(["TokenBudgetExhausted", "RateLimited", "GitHubTokenMissing"]);
 
 // Checks the due synced users, the oldest check first, one GraphQL request a batch, on the server's token. An account
-// with no newer star is marked checked. An account with one gets an incremental sync on the server's token, which takes
-// its turn in githubAll only when the line can start it now, so a check never makes a signed-out sync wait. Only an
-// account GitHub answered for, and whose sync went out when it needed one, is marked checked.
+// with no newer star is marked checked, so stars_checked_at says its stored stars were current then. An account with one
+// gets an incremental sync on the server's token, which takes its turn in githubAll only when the line can start it now,
+// so a check never makes a signed-out sync wait. It stays unchecked: its sync moves stars_synced_at once it finishes,
+// and until then the next run asks again.
 export const run = Effect.fn("StarCheck.run")(function* (share: BudgetShare, slice: Settings = settings) {
   const db = yield* Db.Db;
   const github = yield* GitHub.GitHub;
@@ -151,13 +152,11 @@ export const run = Effect.fn("StarCheck.run")(function* (share: BudgetShare, sli
     for (const probed of answer.success.probed) {
       const account = byId.get(probed.id);
       if (account === undefined) continue;
-      if (!hasNewStars(account, probed)) report.current++;
-      else if (yield* syncNow(account, probed)) report.synced++;
-      else {
-        report.deferred++;
-        continue;
-      }
-      checks.push({ accountId: probed.id, starredCount: probed.starredTotal });
+      if (!hasNewStars(account, probed)) {
+        report.current++;
+        checks.push({ accountId: probed.id, starredCount: probed.starredTotal });
+      } else if (yield* syncNow(account, probed)) report.synced++;
+      else report.deferred++;
     }
     yield* db.accounts.recordStarChecks({ checks, at: now });
   }

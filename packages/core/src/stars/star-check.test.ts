@@ -146,7 +146,8 @@ it.layer(layer, { timeout: 30_000 })("StarCheck", (it) => {
         expect.objectContaining({ login: "ada", mode: "incremental", reserved: expect.objectContaining({ units: 2 }) }),
       ]);
       expect(syncs.delays).toEqual([Duration.zero]);
-      expect(yield* checks).toEqual({ 1: { count: 4, checkedAt: now } });
+      // The stored stars are not current until the sync finishes, so the account stays unchecked.
+      expect(yield* checks).toEqual({ 1: { count: 3, checkedAt: null } });
     }),
   );
 
@@ -189,6 +190,20 @@ it.layer(layer, { timeout: 30_000 })("StarCheck", (it) => {
       expect(yield* run).toMatchObject({ due: 3, current: 3 });
       const asked = JSON.parse(github.sent[0]?.body ?? "{}").variables;
       expect(asked).toEqual({ l0: "never", l1: "other-due", l2: "person-due" });
+    }),
+  );
+
+  it.effect("checks the people someone follows hourly, as it checks the people list", () =>
+    Effect.gen(function* () {
+      yield* reset;
+      yield* stored(1, "followed", { syncedAt: now - 2 * hour, checkedAt: now - 2 * hour });
+      yield* stored(2, "not-followed", { syncedAt: now - 2 * hour, checkedAt: now - 2 * hour });
+      yield* stored(3, "follower", { syncedAt: now - 2 * hour, checkedAt: now - 20 * minute });
+      yield* query("insert into follows (follower_id, followee_id, source) values (3, 1, 'stargrep')");
+      remote.set("followed", { id: 1, total: 0, newest: null });
+
+      expect(yield* run).toMatchObject({ due: 1, current: 1 });
+      expect(JSON.parse(github.sent[0]?.body ?? "{}").variables).toEqual({ l0: "followed" });
     }),
   );
 

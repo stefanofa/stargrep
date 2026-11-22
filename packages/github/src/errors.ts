@@ -6,6 +6,7 @@ export const Operation = Schema.Literals([
   "owner",
   "list-stars",
   "probe-stars",
+  "list-following",
   "repo-facts",
   "readme",
   "app-token",

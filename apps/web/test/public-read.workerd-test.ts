@@ -80,7 +80,14 @@ describe("the demo answer cache on the Cache API", () => {
         Layer.succeed(Db.Db, makeDb({})),
         Layer.mock(SyncRequests.SyncRequests, {}),
         Layer.succeed(RateLimiter, RateLimiter.of({ acquire: () => Effect.void })),
-        Layer.succeed(Viewers, Viewers.of({ current: Effect.fail(new NotSignedIn()), signedIn: Effect.succeedNone })),
+        Layer.succeed(
+          Viewers,
+          Viewers.of({
+            current: Effect.fail(new NotSignedIn()),
+            githubFollowing: Effect.fail(new NotSignedIn()),
+            signedIn: Effect.succeedNone,
+          }),
+        ),
         Layer.succeed(IconHost, IconHost.of({ origin: new URL(request.url).origin })),
         Layer.succeed(Caller, Caller.of({ key: Db.CallerKey.make("caller-test"), address: "192.0.2.1" })),
       );

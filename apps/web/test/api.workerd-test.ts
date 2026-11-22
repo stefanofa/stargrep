@@ -154,6 +154,19 @@ describe("search", () => {
   });
 });
 
+describe("a signed-in account's answers", () => {
+  it("tell every cache to store none, a refusal included, over REST and RPC", async () => {
+    for (const response of [
+      await call("/api/follows"),
+      await call("/api/following/feed"),
+      await call("/rpc/followedPeople", post({})),
+    ]) {
+      expect(response.status).toBe(401);
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+    }
+  });
+});
+
 describe("when the services cannot start", () => {
   const failing: Layer.Layer<ApiServices, DbQueryFailed> = Layer.unwrap(
     Effect.fail(new DbQueryFailed({ operation: "settings.adopt", reason: "transport", sqlState: null })),
