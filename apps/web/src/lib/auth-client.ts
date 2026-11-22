@@ -13,8 +13,8 @@ const here = () => {
   return `${url.pathname.replace(/^\/+/, "/")}${url.search}`;
 };
 
-export const signIn = async () => {
-  const back = here();
+// A page can ask to come back somewhere else, such as with a follow to apply.
+export const signIn = async (back = here()) => {
   const response = await post("/auth/sign-in/social", {
     provider: "github",
     callbackURL: back,

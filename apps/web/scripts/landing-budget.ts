@@ -1,7 +1,7 @@
 import { gzipSync } from "node:zlib";
 
 export const budget = 130_000;
-export const engineBudget = 355_000;
+export const engineBudget = 360_000;
 
 export const forbidden: ReadonlyArray<readonly [name: string, module: RegExp]> = [
   ["Effect", /\/node_modules\/effect\//],

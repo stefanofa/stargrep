@@ -1,5 +1,6 @@
 import { Menu } from "@base-ui/react/menu";
 import { Avatar, cn, popupSurface, SwitchMark } from "@stargrep/ui";
+import { Link } from "@tanstack/react-router";
 import { useId } from "react";
 import { signOut } from "../lib/auth-client.ts";
 import { type MonthlyPicks, useMonthlyPicks } from "../lib/monthly-picks.ts";
@@ -13,6 +14,8 @@ const pickLines: Record<MonthlyPicks["kind"], string> = {
   unreadable: "couldn't load this. try again in a bit",
   "rolled-back": "couldn't save that. try again",
 };
+
+const phoneItem = "flex h-9 items-center rounded-item px-3 outline-none data-highlighted:bg-muted sm:hidden";
 
 export function AccountMenu({ login, avatarUrl }: { login: string; avatarUrl: string | null }) {
   const { picks, read, set } = useMonthlyPicks();
@@ -31,6 +34,13 @@ export function AccountMenu({ login, avatarUrl }: { login: string; avatarUrl: st
         <Menu.Positioner sideOffset={8} align="end" className="z-50 outline-none">
           <Menu.Popup className={cn(popupSurface, "flex w-72 flex-col")}>
             <span className="px-3 pt-1.5 pb-2 text-sm text-muted-foreground">@{login}</span>
+            {/* A phone header has room for following alone, so the other places move here. */}
+            <Menu.Item render={<Link to="/{-$login}" params={{ login: undefined }} />} className={phoneItem}>
+              your stars
+            </Menu.Item>
+            <Menu.Item render={<Link to="/people" />} className={phoneItem}>
+              people
+            </Menu.Item>
             <Menu.CheckboxItem
               checked={optedIn}
               onCheckedChange={set}

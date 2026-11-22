@@ -46,6 +46,7 @@ export const reservedLogins: ReadonlyArray<string> = [
   "assets",
   "auth",
   "developers",
+  "following",
   "health",
   "icons",
   "mcp",

@@ -26,6 +26,10 @@ export type TopicCount = Topic["related"][number];
 export type TopicsList = Outputs["listTopics"];
 export type EnrichmentProgress = SyncStatus["enrichment"];
 export type OwnerType = NonNullable<LibraryRepo["ownerType"]>;
+export type FollowingFeed = Outputs["followingFeed"];
+export type FeedRepo = FollowingFeed["repos"][number];
+export type FollowedPerson = Outputs["followedPeople"]["people"][number];
+export type GitHubFollowing = Outputs["githubFollowing"];
 export type Client = ContractRouterClient<typeof contract>;
 
 let browser: Client | undefined;

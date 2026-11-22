@@ -12,8 +12,11 @@ interface NavLink {
   readonly link: LinkProps;
   // Who sees the link. A signed-out visitor's / is the demo, so "your stars" only exists once signed in.
   readonly for: "everyone" | "signed-in";
-  // Phones keep only the links the wordmark doesn't already cover.
-  readonly phones: boolean;
+  // Phones keep only the links the wordmark doesn't already cover. A signed-in phone shows following, and people moves
+  // to the account menu.
+  readonly phones: boolean | "signed-out";
+  // A place whose own pages sit under it, such as /following/people, stays current on them.
+  readonly nested?: true;
 }
 
 // The header's places.
@@ -24,12 +27,15 @@ const places: ReadonlyArray<NavLink> = [
     for: "signed-in",
     phones: false,
   },
-  { label: "people", link: { to: "/people" }, for: "everyone", phones: true },
+  { label: "following", link: { to: "/following" }, for: "signed-in", phones: true, nested: true },
+  { label: "people", link: { to: "/people" }, for: "everyone", phones: "signed-out" },
   { label: "topics", link: { to: "/topics" }, for: "everyone", phones: false },
 ];
 
 function Places({ signedIn }: { signedIn: boolean }) {
-  const shown = places.filter((place) => place.for === "everyone" || signedIn);
+  const shown = places
+    .filter((place) => place.for === "everyone" || signedIn)
+    .map((place) => ({ ...place, phones: place.phones === true || (place.phones === "signed-out" && !signedIn) }));
   if (shown.length === 0) return null;
   return (
     <nav
@@ -45,7 +51,7 @@ function Places({ signedIn }: { signedIn: boolean }) {
           <li key={place.label} className={place.phones ? undefined : "max-sm:hidden"}>
             <Link
               {...place.link}
-              activeOptions={{ exact: true, includeSearch: false }}
+              activeOptions={{ exact: place.nested !== true, includeSearch: false }}
               className="flex h-9 items-center rounded-full px-[18px] font-sans text-meta font-medium text-muted-foreground transition-[color,background-color] duration-120 hover:text-foreground aria-[current=page]:bg-accent aria-[current=page]:font-semibold aria-[current=page]:text-ink"
             >
               {place.label}

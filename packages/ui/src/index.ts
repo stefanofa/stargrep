@@ -36,7 +36,7 @@ export {
 export { type OpenSimilar, type SimilarItem, SimilarRepos, type SimilarRow } from "./components/similar-repos.tsx";
 export { Skeleton } from "./components/skeleton.tsx";
 export { type Sort, SortMenu, sorts } from "./components/sort-menu.tsx";
-export { type Stargazer, StarredBy } from "./components/starred-by.tsx";
+export { type Stargazer, type Stargazers, StarredBy } from "./components/starred-by.tsx";
 export { type StarredDay, type StarredWeek, StarredWeeks } from "./components/starred-weeks.tsx";
 export { SwitchMark } from "./components/switch.tsx";
 export { Tile, type TileVariant } from "./components/tile.tsx";

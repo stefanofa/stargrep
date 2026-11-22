@@ -1,5 +1,4 @@
 import {
-  type Activity,
   Button,
   buttonVariants,
   Chip,
@@ -14,6 +13,7 @@ import {
 import { Link, useLoaderData, useNavigate, useSearch } from "@tanstack/react-router";
 import { type FormEvent, type MouseEvent, useEffect, useId, useState } from "react";
 import { avatarOf } from "../lib/avatar.ts";
+import { plainDetail } from "../lib/plain-detail.ts";
 import { repoVisual } from "../lib/repo-visual.ts";
 import { api, type SearchResult, type Topic, type TopicRepo, wireCode } from "../lib/rpc.ts";
 import { loginPage } from "../lib/stars-route.ts";
@@ -22,6 +22,7 @@ import { topicSearch, topicSearchLimit } from "../lib/topic-search.ts";
 import { topicVisual } from "../lib/topic-visual.ts";
 import { formatCount, starCount } from "../lib/whose.ts";
 import { textLinkClass } from "./external-text-link.tsx";
+import { FollowAll } from "./follows.tsx";
 import { Page } from "./page.tsx";
 import { SiteHeader } from "./site-header.tsx";
 import { TopicChips } from "./topic-chips.tsx";
@@ -51,39 +52,8 @@ const plainClick = (event: MouseEvent) =>
 
 const line = (repo: Shown) => repo.summary ?? repo.description ?? "";
 
-const day = 86_400_000;
-const relative = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
-
-// How long ago a push was, in the largest whole unit, as the stars page says it.
-const since = (iso: string, at: number) => {
-  const days = Math.max(0, Math.floor((at - Date.parse(iso)) / day));
-  if (days < 7) return relative.format(-days, "day");
-  if (days < 30) return relative.format(-Math.floor(days / 7), "week");
-  if (days < 365) return relative.format(-Math.floor(days / 30), "month");
-  return relative.format(-Math.floor(days / 365), "year");
-};
-
-const activity = (repo: Shown, at: number): Activity => {
-  if (repo.archived) return { state: "archived" };
-  if (repo.pushedAt === null) return { state: "quiet", label: "no pushes yet" };
-  const label = `pushed ${since(repo.pushedAt, at)}`;
-  return at - Date.parse(repo.pushedAt) <= 30 * day ? { state: "alive", label } : { state: "quiet", label };
-};
-
-// The repo panel for a repo on this page. The page carries no Effect, so it reads times with the platform's own.
-const detail = (repo: Shown, at: number): RepoDetail => ({
-  owner: repo.owner,
-  name: repo.name,
-  ...(repo.language === null ? {} : { language: repo.language }),
-  description: repo.description ?? "",
-  ...(repo.summary === null || repo.summary === repo.description ? {} : { summary: repo.summary }),
-  stars: "devs" in repo ? repo.stars : null,
-  activity: activity(repo, at),
-  ...(repo.license === null ? {} : { license: repo.license }),
-  network: [],
-  githubUrl: repo.url,
-  visual: repoVisual(repo, "panel"),
-});
+// The repo panel for a repo on this page.
+const detail = (repo: Shown, at: number): RepoDetail => plainDetail(repo, "devs" in repo ? repo.stars : null, at);
 
 const sectionHeading = "font-display text-[22px] leading-7 font-semibold tracking-snug";
 
@@ -318,11 +288,14 @@ function Answer({
   );
 }
 
-function People({ topic }: { topic: Topic }) {
+function People({ topic, signedIn }: { topic: Topic; signedIn: boolean }) {
   if (topic.people.length === 0) return null;
   return (
     <Tile className="flex min-w-0 flex-col gap-4 pt-6 pr-tile-sm pb-tile-sm pl-6">
-      <h2 className={sectionHeading}>people who starred these</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className={sectionHeading}>people who starred these</h2>
+        <FollowAll logins={topic.people.map((person) => person.login)} signedIn={signedIn} />
+      </div>
       <ul className="grid gap-x-5 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
         {topic.people.map((person) => (
           <li key={person.login} className="min-w-0">
@@ -463,7 +436,7 @@ export function TopicPage() {
           />
         )}
       </div>
-      <People topic={topic} />
+      <People topic={topic} signedIn={viewer !== null} />
       <Related topic={topic} />
       <p className="font-sans text-sm text-muted-foreground">
         devs are the developers whose stars stargrep has synced. a star is a bookmark, not a review.

@@ -1,4 +1,5 @@
 import { Skeleton, Tile } from "@stargrep/ui";
+import type { ReactNode } from "react";
 import { avatarOf } from "../lib/avatar.ts";
 import { starredOn } from "../lib/present.ts";
 import { formatCount, starCount } from "../lib/whose.ts";
@@ -43,15 +44,18 @@ export function PersonTile({
   known,
   stars,
   shared,
+  action,
 }: {
   login: string;
   known: boolean;
   stars: PersonStars;
   // How many stars a signed-in viewer shares with them.
   shared?: number | undefined;
+  // The tile's own action, such as follow. It sits at the end, and under the person on phones.
+  action?: ReactNode;
 }) {
   return (
-    <Tile className="flex min-w-0 flex-1 items-center gap-4 py-5 pr-5 pl-5 sm:gap-6 sm:pt-tile-top sm:pr-6 sm:pb-6 sm:pl-tile-lg">
+    <Tile className="flex min-w-0 flex-1 flex-wrap items-center gap-4 py-5 pr-5 pl-5 sm:flex-nowrap sm:gap-6 sm:pt-tile-top sm:pr-6 sm:pb-6 sm:pl-tile-lg">
       {/* A plain image paints from the server's HTML, where an avatar that waits for its image would paint initials. */}
       {known ? (
         <img
@@ -69,7 +73,7 @@ export function PersonTile({
           {login.slice(0, 2).toLowerCase()}
         </span>
       )}
-      <div className="flex min-w-0 flex-col gap-1">
+      <div className="flex min-w-0 flex-1 basis-0 flex-col gap-1">
         <h1 className="truncate font-display text-[28px] leading-8 font-semibold tracking-snug sm:text-[40px] sm:leading-11 sm:tracking-tight">
           {`@${login}`}
         </h1>
@@ -80,6 +84,7 @@ export function PersonTile({
           </p>
         )}
       </div>
+      {action !== undefined && <div className="max-sm:w-full sm:ml-auto">{action}</div>}
     </Tile>
   );
 }
