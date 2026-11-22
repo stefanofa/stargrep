@@ -19,7 +19,7 @@ import { useLiveQuery } from "@tanstack/react-db";
 import { useHydrated, useNavigate, useRouter, useSearch } from "@tanstack/react-router";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { capture } from "../lib/analytics.ts";
 import { policyOf, starredOf, whoseOf } from "../lib/audience.ts";
 import { keywordTerms, normalize, searchText } from "../lib/keyword.ts";
@@ -45,7 +45,7 @@ import { useSync } from "../lib/use-sync.ts";
 import { theirs } from "../lib/whose.ts";
 import { ButterTile, Hero, TryChips } from "./landing-hero.tsx";
 import { LibraryPlaceholder, LibraryView } from "./library-view.tsx";
-import { NewToYouSection } from "./new-to-you.tsx";
+import { NewToYouList, NewToYouTile, type NewToYouTileState } from "./new-to-you.tsx";
 import { OwnerPill } from "./owner-pill.tsx";
 import { type PersonStars, PersonTile } from "./person-tile.tsx";
 
@@ -91,17 +91,19 @@ function Waiting({
   arriving,
   butter,
   countTile,
+  discover,
 }: {
   view: View;
   searching: boolean;
   arriving: Arriving | undefined;
   butter: boolean;
   countTile: boolean;
+  discover: ReactNode;
 }) {
   return searching ? (
     <Results view={view} groups={[{ key: "all", results: [], pending: 4 }]} hero={butter ? "butter" : "card"} />
   ) : (
-    <LibraryPlaceholder view={view} arriving={arriving} butter={butter} countTile={countTile} />
+    <LibraryPlaceholder view={view} arriving={arriving} butter={butter} countTile={countTile} discover={discover} />
   );
 }
 
@@ -267,6 +269,18 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   });
   useEffect(() => onPose(page.pose), [onPose, page.pose]);
   const newToYou = useNewToYou(audience, page.body.kind === "library");
+  // Someone else's page opens its library on the discover row, once their stars have arrived. A tile with nothing to
+  // say leaves the row to the dead stars.
+  const discover: NewToYouTileState | undefined =
+    page.person === undefined || trouble !== undefined || stage.name === "importing"
+      ? undefined
+      : audience.by === "anyone"
+        ? { kind: "signed-out" }
+        : newToYou?.kind === "failed"
+          ? undefined
+          : newToYou;
+  const everythingNew =
+    params.show === "new" && newToYou?.kind === "found" && newToYou.found.repos.length > 0 ? newToYou.found : undefined;
 
   // The page has one butter tile. The hero or the claim tile above the search takes it, or else the content does.
   const butter = page.hero === undefined && page.person?.claim === undefined;
@@ -339,6 +353,8 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     navigate({ to: ".", search: (previous) => ({ ...previous, repo: name }), replace: true, state: true });
   };
 
+  const discoverTile = discover && <NewToYouTile state={discover} login={owner} at={at} search={links} onOpen={open} />;
+
   const body = (current: Body) => {
     switch (current.kind) {
       case "trouble":
@@ -365,6 +381,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
             arriving={current.arriving}
             butter={butter}
             countTile={page.person === undefined}
+            discover={discoverTile}
           />
         );
       case "library":
@@ -381,9 +398,10 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
             butter={butter}
             countTile={page.person === undefined}
             onOpen={open}
-            aside={
-              newToYou && (
-                <NewToYouSection found={newToYou} login={owner} at={at} view={view} search={links} onOpen={open} />
+            discover={discoverTile}
+            instead={
+              everythingNew && (
+                <NewToYouList found={everythingNew} login={owner} at={at} view={view} search={links} onOpen={open} />
               )
             }
           />
@@ -417,7 +435,12 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
       {page.hero && <Hero {...page.hero} pose={butterPose} />}
       {page.person && (
         <section aria-label={`@${page.person.login}`} className="flex flex-col gap-3.5 lg:flex-row lg:gap-gap">
-          <PersonTile login={page.person.login} known={page.person.known} stars={personStars} />
+          <PersonTile
+            login={page.person.login}
+            known={page.person.known}
+            stars={personStars}
+            shared={newToYou?.kind === "found" ? newToYou.found.shared : undefined}
+          />
           {page.person.claim !== undefined && (
             <ButterTile butter={{ kind: "claim", progress: page.person.claim }} pose={butterPose} />
           )}

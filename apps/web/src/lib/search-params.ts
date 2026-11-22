@@ -9,6 +9,8 @@ export interface Params {
   readonly lang?: string | undefined;
   // The library shows only the archived repos the account starred.
   readonly archived?: true | undefined;
+  // Someone else's page shows everything new to the signed-in viewer in place of the months.
+  readonly show?: "new" | undefined;
   readonly repo?: string | undefined;
   readonly error?: string | undefined;
 }
@@ -31,6 +33,7 @@ export const validateParams = (search: Record<string, unknown>): Params => {
     ...(isSort(search.sort) ? { sort: search.sort } : {}),
     ...(lang === undefined ? {} : { lang }),
     ...(search.archived === true ? { archived: true } : {}),
+    ...(search.show === "new" ? { show: "new" } : {}),
     ...(repo === undefined ? {} : { repo }),
     ...(error === undefined ? {} : { error }),
   };

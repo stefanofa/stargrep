@@ -1,6 +1,6 @@
 import { Skeleton, Tile } from "@stargrep/ui";
 import { starredOn } from "../lib/present.ts";
-import { formatCount } from "../lib/whose.ts";
+import { formatCount, starCount } from "../lib/whose.ts";
 import { ExternalTextLink } from "./external-text-link.tsx";
 
 // What the tile says about the person's stars. It waits for the library, says the stars are arriving while they
@@ -37,7 +37,18 @@ function Facts({ stars, login }: { stars: PersonStars; login: string }) {
 
 // The person whose stars the page shows, as the share card shows them: avatar, handle, how many stars, the last one,
 // and their GitHub profile. A login GitHub doesn't know gets its handle alone.
-export function PersonTile({ login, known, stars }: { login: string; known: boolean; stars: PersonStars }) {
+export function PersonTile({
+  login,
+  known,
+  stars,
+  shared,
+}: {
+  login: string;
+  known: boolean;
+  stars: PersonStars;
+  // How many stars a signed-in viewer shares with them.
+  shared?: number | undefined;
+}) {
   return (
     <Tile className="flex min-w-0 flex-1 items-center gap-4 py-5 pr-5 pl-5 sm:gap-6 sm:pt-tile-top sm:pr-6 sm:pb-6 sm:pl-tile-lg">
       {/* A plain image paints from the server's HTML, where an avatar that waits for its image would paint initials. */}
@@ -62,6 +73,11 @@ export function PersonTile({ login, known, stars }: { login: string; known: bool
           {`@${login}`}
         </h1>
         {known && <Facts stars={stars} login={login} />}
+        {shared !== undefined && (
+          <p className="mt-1 self-start rounded-full bg-accent-soft px-3.5 py-1.5 font-sans text-meta font-medium">
+            {shared === 0 ? "you share no stars" : `you share ${starCount(shared)}`}
+          </p>
+        )}
       </div>
     </Tile>
   );

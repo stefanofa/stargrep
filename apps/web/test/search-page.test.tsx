@@ -1134,29 +1134,32 @@ describe("whose stars the page searches", () => {
 });
 
 describe("what's new to you on someone else's stars", () => {
-  const section = () => page().queryByRole("region", { name: "new to you" });
-  const names = () =>
-    within(section() as HTMLElement)
-      .getAllByRole("heading", { level: 3 })
-      .map((name) => name.textContent);
+  const tile = () =>
+    page().queryByRole("heading", { level: 2, name: "new to you" })?.closest<HTMLElement>("[data-slot=tile]") ?? null;
+  const inTile = () => within(tile() as HTMLElement);
+  const person = () => within(page().getByRole("region", { name: "@octodone" }));
   const many = () =>
     Array.from({ length: 10 }, (_, index) =>
       repo(20 + index, "someone", `close-${index}`, "A close repo.", { starredAt: "2026-09-01T00:00:00.000Z" }),
     );
 
-  test("lists their stars closest to yours, and a tile opens its repo over the page", async () => {
+  test("the butter tile lists the three closest to yours, and a repo opens over the page", async () => {
     const user = userEvent.setup();
     setHost("https://stargrep.com/octodone");
     server.status = status({ login: "octodone" });
-    const [first, second, third] = [repos()[5], repos()[4], repos()[3]] as [Repo, Repo, Repo];
-    server.newToYou = { shared: 2, repos: [first, second, third], labels: {} };
+    const [first, second, third, fourth] = [repos()[5], repos()[4], repos()[3], repos()[2]] as [Repo, Repo, Repo, Repo];
+    server.newToYou = { shared: 2, repos: [first, second, third, fourth], labels: {} };
     const router = await open("/octodone", "Search @octodone's stars");
-    await waitFor(() => expect(section()).not.toBeNull());
-    expect(within(section() as HTMLElement).getByText("you share 2 stars with @octodone")).toBeTruthy();
-    expect(names()).toEqual(["tui-textarea", "tui-rs", "cursive"]);
-    expect(within(section() as HTMLElement).queryByRole("button", { name: "see all" })).toBeNull();
+    await waitFor(() => expect(inTile().queryByRole("list", { name: "closest to yours" })).not.toBeNull());
+    expect(tile()?.className).toContain("butter");
+    expect(
+      within(inTile().getByRole("list", { name: "closest to yours" }))
+        .getAllByRole("link")
+        .map((link) => link.querySelector("span > span")?.textContent),
+    ).toEqual(["tui-textarea", "tui-rs", "cursive"]);
+    expect(person().getByText("you share 2 stars")).toBeTruthy();
     expect(server.compared).toEqual(["octodone"]);
-    await user.click(within(section() as HTMLElement).getByRole("link", { name: "tui-rs" }));
+    await user.click(inTile().getByRole("link", { name: /^tui-rs/ }));
     await page().findByRole("dialog");
     expect(router.state.location.search).toEqual({ repo: "fdehau/tui-rs" });
     await waitFor(() =>
@@ -1167,59 +1170,62 @@ describe("what's new to you on someone else's stars", () => {
     );
   });
 
-  test("shows eight at first and the rest on see all", async () => {
+  test("see all shows every one in place of the months, and the chip goes back to them", async () => {
     const user = userEvent.setup();
     server.status = status({ login: "octodone" });
     server.repos = [...repos(), ...many()];
     server.newToYou = { shared: 0, repos: many(), labels: {} };
-    await open("/octodone", "Search @octodone's stars");
-    await waitFor(() => expect(section()).not.toBeNull());
-    expect(within(section() as HTMLElement).getByText("you share no stars with @octodone")).toBeTruthy();
-    expect(names()).toHaveLength(8);
-    await user.click(within(section() as HTMLElement).getByRole("button", { name: "see all" }));
-    expect(names()).toHaveLength(10);
+    const router = await open("/octodone", "Search @octodone's stars");
+    await waitFor(() => expect(inTile().queryByRole("link", { name: "see all 10" })).not.toBeNull());
+    expect(person().getByText("you share no stars")).toBeTruthy();
+    expect(page().getByRole("region", { name: "october 2026" })).toBeTruthy();
+    await user.click(inTile().getByRole("link", { name: "see all 10" }));
+    const list = await page().findByRole("region", { name: "new to you" });
+    expect(router.state.location.search).toEqual({ show: "new" });
+    expect(within(list).getAllByRole("heading", { level: 3 })).toHaveLength(10);
+    expect(page().queryByRole("region", { name: "october 2026" })).toBeNull();
+    await user.click(within(list).getByRole("link", { name: "back to all of @octodone's stars" }));
+    await waitFor(() => expect(page().getByRole("region", { name: "october 2026" })).toBeTruthy());
+    expect(page().queryByRole("region", { name: "new to you" })).toBeNull();
   });
 
-  test("shows the shared count alone while your stars are not read yet", async () => {
-    server.status = status({ login: "octodone" });
-    server.newToYou = { shared: 4, repos: [], labels: {} };
-    await open("/octodone", "Search @octodone's stars");
-    await waitFor(() => expect(section()).not.toBeNull());
-    expect(section()?.textContent).toBe("new to youyou share 4 stars with @octodone");
-  });
-
-  test("shows nothing, and reports nothing shown, before your own stars have synced or with nothing in common", async () => {
+  test("says so when nothing is new yet, or before your own stars have synced, and reports nothing shown", async () => {
     setHost("https://stargrep.com/octodone");
     server.status = status({ login: "octodone" });
-    for (const answer of [
-      { shared: null, repos: [], labels: {} },
-      { shared: 0, repos: [], labels: {} },
-    ]) {
+    for (const [answer, line] of [
+      [{ shared: null, repos: [], labels: {} }, "new to you shows once your own stars sync."],
+      [{ shared: 0, repos: [], labels: {} }, "nothing new to you in @octodone's stars yet."],
+    ] as const) {
       server.newToYou = answer;
       server.compared = [];
       await open("/octodone", "Search @octodone's stars");
-      await waitFor(() => expect(server.compared).toEqual(["octodone"]));
-      await waitFor(() => expect(strip()).toContain("6 stars"));
-      expect(section()).toBeNull();
+      await waitFor(() => expect(inTile().queryByText(line)).not.toBeNull());
       cleanup();
     }
     expect(captured).toEqual([]);
   });
 
-  test("never asks on your own page, signed out, or while a search is on screen", async () => {
+  test("a visitor gets the sign-in ask in its place, and nobody asks on your own page or during a search", async () => {
     server.newToYou = { shared: 2, repos: [repos()[5] as Repo], labels: {} };
     await open("/");
     await waitFor(() => expect(strip()).toContain("6 stars"));
+    expect(tile()).toBeNull();
     cleanup();
     server.signedIn = false;
     server.status = status({ login: "octodone" });
     await open("/octodone", "Search @octodone's stars");
-    await waitFor(() => expect(strip()).toContain("6 stars"));
+    await waitFor(() => expect(tile()).not.toBeNull());
+    expect(
+      inTile().getByText(
+        "sign in and see which of @octodone's stars you haven't starred, closest to your taste first.",
+      ),
+    ).toBeTruthy();
+    expect(inTile().getByRole("button", { name: "sign in with GitHub" })).toBeTruthy();
     cleanup();
     server.signedIn = true;
     await open("/octodone?q=terminal", "Search @octodone's stars");
     expect(server.compared).toEqual([]);
-    expect(section()).toBeNull();
+    expect(tile()).toBeNull();
   });
 });
 
