@@ -165,7 +165,7 @@ describe("when the services cannot start", () => {
     const down = await send("/api/search", post({ scope: { kind: "stars", login: "ada" }, q: "dashboards" }));
     expect([down.status, down.body.code]).toEqual([503, "SERVICE_UNAVAILABLE"]);
     expect(down.body.data.traceId).toEqual(traceId);
-    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(10);
+    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(12);
   });
 });
 
@@ -255,7 +255,7 @@ describe("when the database is unreachable", () => {
       data: { traceId },
     });
 
-    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(10);
+    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(12);
     expect(JSON.stringify([viaRest, viaRpc, viaMcp])).not.toContain("postgres://");
   });
 });
@@ -279,6 +279,7 @@ describe("mcp", () => {
     expect(tools.map((each: { name: string }) => each.name).sort()).toEqual([
       "config",
       "getRepo",
+      "listTopics",
       "lookupFacets",
       "people",
       "search",
@@ -286,6 +287,7 @@ describe("mcp", () => {
       "similarRepos",
       "stars",
       "syncStatus",
+      "topic",
       "triggerSync",
     ]);
     const searchTool = tools.find((each: { name: string }) => each.name === "search");
@@ -480,18 +482,25 @@ describe("getRepo and the spec", () => {
       "/search",
       "/stars/{login}",
       "/sync/{login}",
+      "/topics",
+      "/topics/{topic}",
     ]);
     expect(text).not.toMatch(/Infinity|NaN/);
     expect(JSON.parse(text).security).toEqual([]);
   });
 
-  it("documents only the available search scope and the fields guaranteed by each sync state", async () => {
+  it("documents only the available search scopes and the fields guaranteed by each sync state", async () => {
     const document: Json = await (await call("/openapi.json")).json();
     const search = document.paths["/search"].post.requestBody.content["application/json"].schema;
     expect(search.required).toEqual(["q", "scope"]);
-    expect(search.properties.scope.properties.kind.enum).toEqual(["stars"]);
-    expect(search.properties.scope.required).toEqual(["kind", "login"]);
-    expect(search.properties.scope.properties.login.pattern).toBe(githubLogin.source);
+    const [stars, topic] = search.properties.scope.anyOf;
+    expect([stars.properties.kind.enum, stars.required, topic.properties.kind.enum, topic.required]).toEqual([
+      ["stars"],
+      ["kind", "login"],
+      ["topic"],
+      ["kind", "topic"],
+    ]);
+    expect(stars.properties.login.pattern).toBe(githubLogin.source);
     expect(JSON.stringify(document.paths["/search"].post.responses)).not.toMatch(
       /"(?:SIGN_IN_UNAVAILABLE|NOT_FOUND|REPO_NOT_FOUND|UNAUTHORIZED|SCOPE_UNAVAILABLE)"/,
     );

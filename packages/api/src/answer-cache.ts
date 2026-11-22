@@ -58,7 +58,7 @@ export interface AnswerContext {
 export const searchWindows = { fresh: Duration.minutes(5), stale: Duration.days(1) } as const;
 
 export interface AnswerPolicy<A> {
-  readonly procedure: "search" | "stars" | "similarRepos" | "similarPeople";
+  readonly procedure: "search" | "stars" | "similarRepos" | "similarPeople" | "topic" | "topics";
   readonly json: Schema.Codec<A, string>;
   // How long a stored answer is served as is.
   readonly fresh: Duration.Duration;

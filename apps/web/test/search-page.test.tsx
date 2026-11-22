@@ -89,6 +89,12 @@ const api = (): Client => ({
   people: async () => {
     throw new Error("Unexpected people call");
   },
+  listTopics: async () => {
+    throw new Error("Unexpected listTopics call");
+  },
+  topic: async () => {
+    throw new Error("Unexpected topic call");
+  },
   similarPeople: async ({ login, limit }: { login: string; limit?: number }) => {
     server.alikeAsked.push([login, limit]);
     return { people: server.alike[login] ?? [] };

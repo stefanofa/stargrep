@@ -448,6 +448,56 @@ export const peopleStars = pgTable(
   ],
 );
 
+// Every GitHub topic of every repo GitHub still serves that is not archived, one row each, with the repo's kinds. Triggers
+// on repos rewrite a repo's rows in the statement that changes its topics, kinds, archived, or gone_at, so the nightly
+// topics refresh reads narrow rows instead of the repos heap.
+export const repoTopics = pgTable(
+  "repo_topics",
+  {
+    repoId: githubId("repo_id")
+      .notNull()
+      .references(() => repos.id, { onDelete: "cascade" }),
+    topic: text("topic").notNull(),
+    kinds: knowledgeKind("kinds").array().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.repoId, table.topic] }),
+    index("repo_topics_topic_idx").on(table.topic, table.repoId),
+  ],
+);
+
+// How a repo belongs to a topic. core is a repo for or about it, built one built with it, tagged one that only carries
+// its tag, and home the topic's own repo, such as vercel/next.js for nextjs.
+export const topicRole = pgEnum("topic_role", ["core", "built", "tagged", "home"]);
+
+// Every repo of every topic that could get a page, with its role, as of the nightly refresh. A topic's search reads all
+// of them, and its page lists the core and built ones.
+export const topicRepos = pgTable(
+  "topic_repos",
+  {
+    topic: text("topic").notNull(),
+    repoId: githubId("repo_id").notNull(),
+    role: topicRole("role").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.topic, table.repoId] })],
+);
+
+// One row per topic that gets a page, with what the page shows, as of the nightly refresh.
+export const topics = pgTable("topics", {
+  topic: text("topic").primaryKey(),
+  // How many repos its search reads, and how many core repos enough synced developers star to rank.
+  repos: integer("repos").notNull(),
+  ranked: integer("ranked").notNull(),
+  home: githubId("home"),
+  // Repo IDs, most starred by synced developers first.
+  core: jsonb("core").notNull().default([]),
+  built: jsonb("built").notNull().default([]),
+  // The gated topics whose core repos overlap its own most, closest first.
+  related: jsonb("related").notNull().default([]),
+  // The listed people who star the most of its core repos for how many they star, as [account ID, core stars] pairs.
+  people: jsonb("people").notNull().default([]),
+});
+
 export const follows = pgTable(
   "follows",
   {

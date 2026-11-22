@@ -289,9 +289,37 @@ const atomParts = (atoms: AtomQuery, accepted: ReadonlySet<string>) => {
   return { resolution, closedFilters, facetFilters, closedBoosts, subjectBoosts, envelope };
 };
 
-// The account's current stars, read as stars s joined to repos r.
-const starredBy = (scope: SearchScope) =>
-  [sql`s.account_id = ${scope.accountId}`, sql`s.unstarred_at is null`, sql`r.gone_at is null`] as const;
+// The repos a scope searches, read as s joined to repos r: an account's current stars, or every repo of a topic. A
+// topic's repos carry no star time, so a filter by one applies only to stars. size bounds the scan the index
+// pipeline may take, and join reads one repo's row of s.
+interface Scoped {
+  readonly from: SQL;
+  readonly where: readonly [SQL, ...Array<SQL>];
+  readonly join: (repoId: SQL) => SQL;
+  readonly size: SQL;
+  readonly starred: boolean;
+}
+
+const scoped = (scope: SearchScope): Scoped => {
+  switch (scope.kind) {
+    case "stars":
+      return {
+        from: sql`stars s join repos r on r.id = s.repo_id`,
+        where: [sql`s.account_id = ${scope.accountId}`, sql`s.unstarred_at is null`, sql`r.gone_at is null`],
+        join: (repoId: SQL) => sql`stars s on s.account_id = ${scope.accountId} and s.repo_id = ${repoId}`,
+        size: sql`(select starred_count from github_accounts where id = ${scope.accountId})`,
+        starred: true,
+      };
+    case "topic":
+      return {
+        from: sql`topic_repos s join repos r on r.id = s.repo_id`,
+        where: [sql`s.topic = ${scope.topic}`, sql`r.gone_at is null`],
+        join: (repoId: SQL) => sql`topic_repos s on s.topic = ${scope.topic} and s.repo_id = ${repoId}`,
+        size: sql`(select repos from topics where topic = ${scope.topic})`,
+        starred: false,
+      };
+  }
+};
 
 // Reads s's repo_facets row by primary key and tests every facet filter, or missing when the repo has no row.
 const probeTest = (facets: Arr.NonEmptyReadonlyArray<FacetFilter>): SQL => {
@@ -300,11 +328,11 @@ const probeTest = (facets: Arr.NonEmptyReadonlyArray<FacetFilter>): SQL => {
   return sql`coalesce((select ${test} from repo_facets fc where fc.repo_id = s.repo_id), ${missing})`;
 };
 
-// The statement for one search. Every pipeline is the same: the account's stars joined to repos, full text and vectors
+// The statement for one search. Every pipeline is the same: the scope's repos joined to repos, full text and vectors
 // ranked to 100 each, and reciprocal rank fusion. Closed atoms add array tests on the repos row. Filters that read
 // repo_facets run the probe pipeline, c, which reads repo_facets by primary key once per starred repo. When the route
 // has drivers, the index pipeline, b, runs beside it, and a choice at the top picks b when the drivers' matches fit in
-// the account's star count. A boost is a third rank list over the fused candidates.
+// the scope's size. A boost is a third rank list over the fused candidates.
 const ranked = (
   search: HybridSearch,
   vector: EmbeddingVector | null,
@@ -319,7 +347,7 @@ const ranked = (
   };
   const carry = (from: string) => sql.join([...aliases.values()].map((name) => sql`, ${sql.raw(from)}.${name}`));
   const { filters, rankBy } = search;
-  const account = search.scope.accountId;
+  const scope = scoped(search.scope);
   const parts = atomParts(search.atoms, accepted);
   const lateral =
     search.metrics.length === 0
@@ -342,10 +370,14 @@ const ranked = (
       ? sql`null::float8`
       : sql`case when r.embedding_model = ${model} then r.embedding <=> ${`[${vector.join(",")}]`}::halfvec end`;
   const where = allOf([
-    ...starredBy(search.scope),
+    ...scope.where,
     ...(filters.archived === null ? [] : [sql`r.archived = ${filters.archived}`]),
-    ...(filters.starredAfter === null ? [] : [sql`s.starred_at >= ${timeParam(filters.starredAfter)}`]),
-    ...(filters.starredBefore === null ? [] : [sql`s.starred_at < ${timeParam(filters.starredBefore)}`]),
+    ...(filters.starredAfter === null || !scope.starred
+      ? []
+      : [sql`s.starred_at >= ${timeParam(filters.starredAfter)}`]),
+    ...(filters.starredBefore === null || !scope.starred
+      ? []
+      : [sql`s.starred_at < ${timeParam(filters.starredBefore)}`]),
     ...filters.metrics.map(
       (bound) => sql`metric.${alias(bound.metric)} ${sql.raw(comparison[bound.op])} ${bound.value}::float8`,
     ),
@@ -434,7 +466,7 @@ const ranked = (
   ${x("pick")} as (select * from ${x("best")} order by name_match desc, relevance desc, id limit ${search.limit})`;
   };
 
-  const starsJoin = sql`stars s join repos r on r.id = s.repo_id`;
+  const starsJoin = scope.from;
   const ctes: Array<SQL> = [...parts.resolution];
   const picks: Array<SQL> = [];
   const facets = parts.facetFilters;
@@ -463,9 +495,9 @@ const ranked = (
         sql` or `,
       );
       ctes.push(sql`account as materialized (
-    select coalesce((select starred_count from github_accounts where id = ${account}), 0) as stars
+    select coalesce(${scope.size}, 0) as stars
   )`);
-      // subjects.repo_count, the nightly count, skips a scan that would pass the account's size. The limit stays as the
+      // subjects.repo_count, the nightly count, skips a scan that would pass the scope's size. The limit stays as the
       // safety net for a stale count.
       ctes.push(sql`reach as materialized (
     select (${ready}) and (select coalesce(sum(repo_count), 0) from subjects where id = any ((${subjects})::bigint[]))
@@ -497,7 +529,7 @@ const ranked = (
           ? pipeline("_b", starsJoin, [sql`not exists (select 1 from excluded e where e.repo_id = s.repo_id)`])
           : pipeline(
               "_b",
-              sql`matched fc join stars s on s.account_id = ${account} and s.repo_id = fc.repo_id
+              sql`matched fc join ${scope.join(sql`fc.repo_id`)}
     join repos r on r.id = fc.repo_id`,
               [test],
             ),
@@ -591,8 +623,9 @@ export const nearNamesQuery = (db: Postgres.Database, word: string, search: Omit
   const spelled = (value: SQL) => sql`(length(${value}) between ${shortest} and ${longest} and ${value} ~ ${whole})`;
   const parts = atomParts({ explicit: search.explicit, stated: [] }, new Set());
   const facets = parts.facetFilters;
+  const scope = scoped(search.scope);
   const where = allOf([
-    ...starredBy(search.scope),
+    ...scope.where,
     ...parts.closedFilters,
     ...(Arr.isReadonlyArrayNonEmpty(facets) ? [probeTest(facets)] : []),
     sql`(${spelled(together(sql`r.name`))}
@@ -607,7 +640,7 @@ export const nearNamesQuery = (db: Postgres.Database, word: string, search: Omit
     })
     .as(sql`${parts.resolution.length === 0 ? sql`` : sql`with ${sql.join(parts.resolution, sql`, `)}`}
   select r.id, row_number() over (order by length(r.name), r.owner, r.name) as position
-  from stars s join repos r on r.id = s.repo_id
+  from ${scope.from}
   where ${where}
   order by position
   limit ${search.limit}`);
@@ -617,4 +650,10 @@ export const nearNamesQuery = (db: Postgres.Database, word: string, search: Omit
     .from(near)
     .innerJoin(repos, eq(repos.id, near.id))
     .orderBy(near.position);
+};
+
+// Whether any repo in the scope matches a tsquery, the one search.matchesAsPrefix builds.
+export const prefixMatchQuery = (scope: SearchScope, query: string) => {
+  const { from, where } = scoped(scope);
+  return sql`select 1 from ${from} where ${allOf([...where, sql`r.search @@ to_tsquery('english', ${query})`])} limit 1`;
 };

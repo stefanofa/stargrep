@@ -146,6 +146,7 @@ const traffic = Effect.gen(function* () {
 const Spec = Schema.Struct({ paths: Schema.Record(Schema.String, Schema.Unknown) });
 const SyncState = Schema.Struct({ state: Schema.String });
 const PeopleList = Schema.Struct({ total: Schema.Int, people: Schema.Array(Schema.Unknown) });
+const TopicList = Schema.Struct({ total: Schema.Int, topics: Schema.Array(Schema.Unknown) });
 const WireError = Schema.Struct({
   code: Schema.String,
   data: Schema.optional(Schema.Struct({ traceId: Schema.optional(Schema.String) })),
@@ -171,13 +172,17 @@ const web = Effect.gen(function* () {
   const unsyncedBody = yield* decode(WireError, unsynced.body);
   const people = yield* get("/api/people?limit=1");
   const peopleBody = yield* decode(PeopleList, people.body);
+  const topics = yield* get("/api/topics?limit=1");
+  const topicsBody = yield* decode(TopicList, topics.body);
+  const noTopic = yield* get(`/api/topics/${stranger}`);
+  const noTopicBody = yield* decode(WireError, noTopic.body);
   const tools = yield* post("/mcp", { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
   const toolList = tools.body;
   return [
     check(
       "the OpenAPI document lists every route",
       paths.join(" ") ===
-        "/config /facets /people /people/{login}/similar /repos/{id} /repos/{id}/similar /search /stars/{login} /sync/{login}",
+        "/config /facets /people /people/{login}/similar /repos/{id} /repos/{id}/similar /search /stars/{login} /sync/{login} /topics /topics/{topic}",
       {
         status: spec.status,
         paths,
@@ -201,8 +206,17 @@ const web = Effect.gen(function* () {
       status: people.status,
       total: peopleBody.total,
     }),
+    check("the topic list reads through Postgres", topics.status === 200 && topicsBody.topics.length <= 1, {
+      status: topics.status,
+      total: topicsBody.total,
+    }),
     check(
-      "MCP lists the ten tools",
+      "a topic without a page answers TOPIC_NOT_FOUND",
+      noTopic.status === 404 && noTopicBody.code === "TOPIC_NOT_FOUND",
+      { status: noTopic.status, code: noTopicBody.code },
+    ),
+    check(
+      "MCP lists the twelve tools",
       [
         "search",
         "triggerSync",
@@ -214,6 +228,8 @@ const web = Effect.gen(function* () {
         "similarRepos",
         "people",
         "similarPeople",
+        "listTopics",
+        "topic",
       ].every((name) => toolList.includes(`"name":"${name}"`)),
       { status: tools.status },
     ),
