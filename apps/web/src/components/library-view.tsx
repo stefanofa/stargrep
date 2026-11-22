@@ -165,14 +165,18 @@ export function LibraryPlaceholder({
   arriving,
   butter,
   countTile,
+  discover,
 }: {
   view: View;
   arriving?: Arriving | undefined;
   butter: boolean;
   countTile: boolean;
+  // The discover row's first tile, so the row holds its place while the library loads.
+  discover?: ReactNode;
 }) {
   return (
     <>
+      {discover}
       <div aria-busy className="grid gap-gap lg:grid-cols-2">
         {countTile && <CountTile count={undefined} arriving={arriving} pose="idle" butter={butter} />}
         <LanguagesTile shares={undefined} language={undefined} archived={undefined} wide={!countTile} />

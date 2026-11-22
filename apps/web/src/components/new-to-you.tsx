@@ -53,12 +53,14 @@ function Found({
   onOpen: OpenResult;
 }) {
   if (found.repos.length === 0)
-    return <p className="font-sans text-base text-secondary-foreground">nothing new to you in @{login}'s stars yet.</p>;
+    return (
+      <p className="font-sans text-base text-secondary-foreground">{`nothing new to you in @${login}'s stars yet.`}</p>
+    );
   const results = resultsOf(found, at, search).slice(0, firstShown);
   return (
     <>
       <p className="font-sans text-base text-secondary-foreground">
-        @{login}'s stars you haven't starred, closest to yours first
+        {`@${login}'s stars you haven't starred, closest to yours first`}
       </p>
       <ol aria-label="closest to yours" className="flex min-w-0 flex-col gap-4">
         {results.map((result, index) => (
@@ -103,7 +105,7 @@ export function NewToYouTile({
       {state.kind === "signed-out" && (
         <>
           <p className="font-sans text-base text-secondary-foreground">
-            sign in and see which of @{login}'s stars you haven't starred, closest to your taste first.
+            {`sign in and see which of @${login}'s stars you haven't starred, closest to your taste first.`}
           </p>
           <SignInButton variant="primary" size="lg" className="mt-auto self-start" />
         </>
@@ -140,11 +142,11 @@ export function NewToYouList({
       <h2 className="flex flex-wrap items-center gap-x-2.5 gap-y-2 pl-1.5">
         <span className="font-display text-2xl font-semibold tracking-snug">new to you</span>
         <span className="font-sans text-base text-muted-foreground">
-          {formatCount(results.length)} of @{login}'s stars, closest to yours first
+          {`${formatCount(results.length)} of @${login}'s stars, closest to yours first`}
         </span>
       </h2>
       <Chip className="self-start" render={<Link to="." search={(previous) => ({ ...previous, show: undefined })} />}>
-        back to all of @{login}'s stars
+        {`back to all of @${login}'s stars`}
       </Chip>
       <ResultList view={view} results={results} enter="tile-in" onOpen={open} />
     </section>

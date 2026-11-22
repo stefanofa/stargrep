@@ -346,6 +346,12 @@ describe("a stars page from the Worker to the browser", () => {
     expect(page.html.match(/<h1[^>]*>[^<]*<\/h1>/g)).toEqual([expect.stringContaining(">@stefanofa</h1>")]);
   }, 60_000);
 
+  test("a visitor on someone's synced stars gets the new-to-you sign-in ask from the server, before the library", async () => {
+    const page = await renderOnServer("/octodone");
+    expect(page.html).toContain(">new to you</h2>");
+    expect(page.html).toContain("sign in and see which of @octodone&#x27;s stars you haven&#x27;t starred");
+  }, 60_000);
+
   test("a cookie with a broken percent escape counts as no choice, not a failed page", async () => {
     const page = await renderOnServer("/stefanofa?q=terminal", "stargrep-view=%; stargrep-refused=%E0%A4%A");
     expect(page.status).toBe(200);

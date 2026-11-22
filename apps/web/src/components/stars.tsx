@@ -19,7 +19,7 @@ import { useLiveQuery } from "@tanstack/react-db";
 import { useHydrated, useNavigate, useRouter, useSearch } from "@tanstack/react-router";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { capture } from "../lib/analytics.ts";
 import { policyOf, starredOf, whoseOf } from "../lib/audience.ts";
 import { keywordTerms, normalize, searchText } from "../lib/keyword.ts";
@@ -91,17 +91,19 @@ function Waiting({
   arriving,
   butter,
   countTile,
+  discover,
 }: {
   view: View;
   searching: boolean;
   arriving: Arriving | undefined;
   butter: boolean;
   countTile: boolean;
+  discover: ReactNode;
 }) {
   return searching ? (
     <Results view={view} groups={[{ key: "all", results: [], pending: 4 }]} hero={butter ? "butter" : "card"} />
   ) : (
-    <LibraryPlaceholder view={view} arriving={arriving} butter={butter} countTile={countTile} />
+    <LibraryPlaceholder view={view} arriving={arriving} butter={butter} countTile={countTile} discover={discover} />
   );
 }
 
@@ -351,6 +353,8 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     navigate({ to: ".", search: (previous) => ({ ...previous, repo: name }), replace: true, state: true });
   };
 
+  const discoverTile = discover && <NewToYouTile state={discover} login={owner} at={at} search={links} onOpen={open} />;
+
   const body = (current: Body) => {
     switch (current.kind) {
       case "trouble":
@@ -377,6 +381,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
             arriving={current.arriving}
             butter={butter}
             countTile={page.person === undefined}
+            discover={discoverTile}
           />
         );
       case "library":
@@ -393,7 +398,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
             butter={butter}
             countTile={page.person === undefined}
             onOpen={open}
-            discover={discover && <NewToYouTile state={discover} login={owner} at={at} search={links} onOpen={open} />}
+            discover={discoverTile}
             instead={
               everythingNew && (
                 <NewToYouList found={everythingNew} login={owner} at={at} view={view} search={links} onOpen={open} />
