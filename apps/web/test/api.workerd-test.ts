@@ -165,7 +165,7 @@ describe("when the services cannot start", () => {
     const down = await send("/api/search", post({ scope: { kind: "stars", login: "ada" }, q: "dashboards" }));
     expect([down.status, down.body.code]).toEqual([503, "SERVICE_UNAVAILABLE"]);
     expect(down.body.data.traceId).toEqual(traceId);
-    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(8);
+    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(10);
   });
 });
 
@@ -255,7 +255,7 @@ describe("when the database is unreachable", () => {
       data: { traceId },
     });
 
-    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(8);
+    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(10);
     expect(JSON.stringify([viaRest, viaRpc, viaMcp])).not.toContain("postgres://");
   });
 });
@@ -280,7 +280,9 @@ describe("mcp", () => {
       "config",
       "getRepo",
       "lookupFacets",
+      "people",
       "search",
+      "similarPeople",
       "similarRepos",
       "stars",
       "syncStatus",
@@ -385,6 +387,47 @@ describe("similarRepos", () => {
   });
 });
 
+describe("people", () => {
+  it("answers over REST with paging in the query, cacheable for anyone signed out, and the same as the MCP tool", async () => {
+    const response = await call("/api/people?limit=1&sort=most-like-you");
+    const body: Json = await response.json();
+    expect([response.status, response.headers.get("cache-control"), response.headers.get("vary")]).toEqual([
+      200,
+      "public, max-age=300",
+      "cookie",
+    ]);
+    expect(body).toEqual({
+      sort: "recently-active",
+      people: [
+        {
+          login: "theo",
+          avatarUrl: null,
+          curated: true,
+          stars: 616,
+          lastStarredAt: "2026-11-06T10:05:34.000Z",
+          languages: [{ language: "TypeScript", share: 0.49 }],
+          topics: ["react"],
+          shared: null,
+        },
+      ],
+      total: 1,
+      nextOffset: null,
+    });
+    expect((await tool("people", { limit: 1 })).structuredContent).toEqual(body);
+    expect((await rest("/people?limit=0")).status).toBe(400);
+  });
+
+  it("answers the people most like a login, and ACCOUNT_NOT_SYNCED for a login never synced", async () => {
+    const { status, body } = await rest("/people/ada/similar");
+    expect([
+      status,
+      body.people.map((found: { login: string; shared: number }) => [found.login, found.shared]),
+    ]).toEqual([200, [["theo", 146]]]);
+    expect((await tool("similarPeople", { login: "ada" })).structuredContent).toEqual(body);
+    expect((await rest("/people/nobody-synced/similar")).body.code).toBe("ACCOUNT_NOT_SYNCED");
+  });
+});
+
 describe("getRepo and the spec", () => {
   it("reads a repo by ID and says when there is none", async () => {
     expect((await rest("/repos/42")).body).toMatchObject({ id: 42, url: "https://github.com/ratatui/ratatui" });
@@ -426,6 +469,8 @@ describe("getRepo and the spec", () => {
     expect(Object.keys(JSON.parse(text).paths).sort()).toEqual([
       "/config",
       "/facets",
+      "/people",
+      "/people/{login}/similar",
       "/repos/{id}",
       "/repos/{id}/similar",
       "/search",

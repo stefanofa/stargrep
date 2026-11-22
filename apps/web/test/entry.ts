@@ -108,6 +108,18 @@ const search = Search.Search.of({
   }),
 });
 
+const person: Db.Person = {
+  accountId: GitHubAccountId.make(11),
+  login: Login.make("theo"),
+  avatarUrl: null,
+  curated: true,
+  stars: 616,
+  lastStarredAt: DateTime.makeUnsafe("2026-11-06T10:05:34Z"),
+  languages: [{ language: "TypeScript", share: 0.49 }],
+  topics: ["react"],
+  shared: null,
+};
+
 const db = makeDb({
   rateLines: memoryRateLines(),
   accounts: {
@@ -126,6 +138,10 @@ const db = makeDb({
   },
   similar: {
     near: () => Effect.succeed({ inStars: [{ repo, stars: 18_000 }], notStarred: [] }),
+  },
+  people: {
+    page: ({ offset }) => Effect.succeed({ people: offset === 0 ? [person] : [], total: 1 }),
+    like: () => Effect.succeed([{ ...person, shared: 146 }]),
   },
   facets: {
     lookup: ({ limit }) =>

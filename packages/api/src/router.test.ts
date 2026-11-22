@@ -75,6 +75,9 @@ interface Fakes {
   readonly viewer?: Effect.Effect<Viewer, ViewerError>;
   readonly signedIn?: Effect.Effect<Option.Option<UserId>, ViewerUnavailable>;
   readonly newToYou?: Db.Db["Service"]["stars"]["newToYou"];
+  readonly people?: Partial<Db.Db["Service"]["people"]>;
+  // The account a signed-in user claimed, ada's by default.
+  readonly claimed?: Db.Account;
 }
 
 const ada: Viewer = {
@@ -120,7 +123,8 @@ const reading = { total: 1776, read: 412, failed: 3, queued: 0 };
 const services = (fakes: Fakes): Context.Context<ApiServices> => {
   const db = makeDb({
     accounts: {
-      claimedBy: (userId: UserId) => Effect.succeed(userId === ada.userId ? Option.some(ada.account) : Option.none()),
+      claimedBy: (userId: UserId) =>
+        Effect.succeed(userId === ada.userId ? Option.some(fakes.claimed ?? ada.account) : Option.none()),
       byLogin: (login: Login) =>
         Effect.succeed(
           login === grace.login
@@ -148,6 +152,7 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
     },
     ...(fakes.facets === undefined ? {} : { facets: fakes.facets }),
     ...(fakes.similar === undefined ? {} : { similar: fakes.similar }),
+    ...(fakes.people === undefined ? {} : { people: fakes.people }),
   });
   const requests =
     fakes.requests ??
@@ -192,6 +197,7 @@ const publicConfig: PublicConfig = {
   demoQuery: "terminal dashboards",
   examples: ["postgres for ai agents"],
   featured: [GitHubLogin.make("ada")],
+  curated: [GitHubLogin.make("grace")],
 };
 
 // Runs a background refresh before it returns, with services of its own, so a TestClock test sees what it stored.
@@ -573,6 +579,173 @@ describe("similarRepos", () => {
     expect(limits).toEqual(["search"]);
     expect(queries).toHaveLength(1);
     expect([...memory.entries.keys()]).toEqual(["similar/ada/42"]);
+  });
+});
+
+describe("people", () => {
+  const person = (login: string, shared: number | null): Db.Person => ({
+    accountId: GitHubAccountId.make(login === "grace" ? 9 : 11),
+    login: Login.make(login),
+    avatarUrl: `https://avatars.githubusercontent.com/${login}`,
+    curated: login === "grace",
+    stars: 616,
+    lastStarredAt: starredAt,
+    languages: [{ language: "TypeScript", share: 0.49 }],
+    topics: ["react", "nextjs", "ai"],
+    shared,
+  });
+  const listing = (queries: Array<Db.PeopleQuery>) => ({
+    page: (query: Db.PeopleQuery) =>
+      Effect.sync(() => {
+        queries.push(query);
+        const shared = Option.isSome(query.viewer) ? 146 : null;
+        return { people: [person("grace", shared), person("theo", shared)], total: 3 };
+      }),
+  });
+  const ask = async (fakes: Fakes, input: Parameters<ReturnType<typeof client>["api"]["people"]>[0]) => {
+    const resHeaders = new Headers();
+    const context: ApiContext = { ...contextFor("rest", Effect.succeed(services(fakes))), resHeaders };
+    const answer = await createRouterClient(router, { context }).people(input);
+    return { answer, cacheControl: resHeaders.get("cache-control") };
+  };
+  const syncedAda = { ...ada.account, starsSyncedAt: starredAt };
+
+  test("lists people for anyone, recently active first, with a page any cache may keep", async () => {
+    const queries: Array<Db.PeopleQuery> = [];
+    const limits: Array<RateLimitKind> = [];
+    const { answer, cacheControl } = await ask(
+      { people: listing(queries), limiter: (kind) => Effect.sync(() => limits.push(kind)) },
+      { limit: 2 },
+    );
+    expect(answer).toEqual({
+      sort: "recently-active",
+      people: [
+        {
+          login: "grace",
+          avatarUrl: "https://avatars.githubusercontent.com/grace",
+          curated: true,
+          stars: 616,
+          lastStarredAt: "2025-03-14T10:00:00.000Z",
+          languages: [{ language: "TypeScript", share: 0.49 }],
+          topics: ["react", "nextjs", "ai"],
+          shared: null,
+        },
+        expect.objectContaining({ login: "theo", curated: false }),
+      ],
+      total: 3,
+      nextOffset: 2,
+    });
+    expect(queries).toEqual([{ sort: "recently-active", viewer: Option.none(), offset: 0, limit: 2 }]);
+    expect([cacheControl, limits]).toEqual(["public, max-age=300", ["search"]]);
+  });
+
+  test("counts shared stars and sorts by likeness for a signed-in account whose stars have synced", async () => {
+    const queries: Array<Db.PeopleQuery> = [];
+    const { answer, cacheControl } = await ask(
+      { people: listing(queries), signedIn: Effect.succeedSome(ada.userId), claimed: syncedAda },
+      { sort: "most-like-you", offset: 1 },
+    );
+    expect([answer.sort, answer.people.map((found) => found.shared), answer.nextOffset]).toEqual([
+      "most-like-you",
+      [146, 146],
+      null,
+    ]);
+    expect(queries).toEqual([{ sort: "most-like-you", viewer: Option.some(ada.account.id), offset: 1, limit: 24 }]);
+    expect(cacheControl).toBe("private, max-age=60");
+  });
+
+  test("sorts by recent activity when no synced account is signed in, or the session cannot be read", async () => {
+    const queries: Array<Db.PeopleQuery> = [];
+    const unsynced = await ask(
+      { people: listing(queries), signedIn: Effect.succeedSome(ada.userId) },
+      { sort: "most-like-you" },
+    );
+    const unreadable = await ask(
+      { people: listing(queries), signedIn: Effect.fail(new ViewerUnavailable({ step: "session" })) },
+      { sort: "most-like-you" },
+    );
+    expect([unsynced.answer.sort, unreadable.answer.sort, unsynced.cacheControl]).toEqual([
+      "recently-active",
+      "recently-active",
+      "public, max-age=300",
+    ]);
+    expect(queries.map((query) => [query.sort, query.viewer])).toEqual([
+      ["recently-active", Option.none()],
+      ["recently-active", Option.none()],
+    ]);
+  });
+
+  test("refuses a page past the bounds before any work", async () => {
+    const { api } = client({ people: listing([]) });
+    expect((await failure(api.people({ limit: 101 }))).code).toBe("BAD_REQUEST");
+    expect((await failure(api.people({ offset: -1 }))).code).toBe("BAD_REQUEST");
+  });
+});
+
+describe("similarPeople", () => {
+  const like = (asked: Array<readonly [GitHubAccountId, number]>) => ({
+    like: (accountId: GitHubAccountId, limit: number) =>
+      Effect.sync(() => {
+        asked.push([accountId, limit]);
+        return [
+          {
+            accountId: GitHubAccountId.make(11),
+            login: Login.make("theo"),
+            avatarUrl: null,
+            curated: false,
+            stars: 616,
+            lastStarredAt: starredAt,
+            languages: [],
+            topics: [],
+            shared: 146,
+          },
+        ];
+      }),
+  });
+
+  test("answers the people most like a login, kept for the next asker", async () => {
+    const asked: Array<readonly [GitHubAccountId, number]> = [];
+    const limits: Array<RateLimitKind> = [];
+    const memory = AnswerCache.memory();
+    const ask = async () => {
+      const resHeaders = new Headers();
+      const context: ApiContext = {
+        ...contextFor(
+          "rest",
+          Effect.succeed(services({ people: like(asked), limiter: (kind) => Effect.sync(() => limits.push(kind)) })),
+        ),
+        answerCache: memory.cache,
+        resHeaders,
+      };
+      const answer = await createRouterClient(router, { context }).similarPeople({ login: "ada" });
+      return [answer, resHeaders.get("x-answer-cache"), resHeaders.get("cache-control")];
+    };
+    const answer = {
+      people: [
+        {
+          login: "theo",
+          avatarUrl: null,
+          curated: false,
+          stars: 616,
+          lastStarredAt: "2025-03-14T10:00:00.000Z",
+          languages: [],
+          topics: [],
+          shared: 146,
+        },
+      ],
+    };
+    expect(await ask()).toEqual([answer, "miss", "public, max-age=300"]);
+    expect(await ask()).toEqual([answer, "hit", "public, max-age=300"]);
+    expect([asked, limits, [...memory.entries.keys()]]).toEqual([
+      [[ada.account.id, 3]],
+      ["search"],
+      ["similar-people/ada/3"],
+    ]);
+  });
+
+  test("answers ACCOUNT_NOT_SYNCED for a login stargrep never synced", async () => {
+    const { api } = client({ people: like([]) });
+    expect((await failure(api.similarPeople({ login: "linus" }))).code).toBe("ACCOUNT_NOT_SYNCED");
   });
 });
 

@@ -145,6 +145,7 @@ const traffic = Effect.gen(function* () {
 
 const Spec = Schema.Struct({ paths: Schema.Record(Schema.String, Schema.Unknown) });
 const SyncState = Schema.Struct({ state: Schema.String });
+const PeopleList = Schema.Struct({ total: Schema.Int, people: Schema.Array(Schema.Unknown) });
 const WireError = Schema.Struct({
   code: Schema.String,
   data: Schema.optional(Schema.Struct({ traceId: Schema.optional(Schema.String) })),
@@ -168,12 +169,15 @@ const web = Effect.gen(function* () {
   const statusBody = yield* decode(SyncState, status.body);
   const unsynced = yield* post("/api/search", { scope: { kind: "stars", login: stranger }, q: "terminal dashboards" });
   const unsyncedBody = yield* decode(WireError, unsynced.body);
+  const people = yield* get("/api/people?limit=1");
+  const peopleBody = yield* decode(PeopleList, people.body);
   const tools = yield* post("/mcp", { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
   const toolList = tools.body;
   return [
     check(
       "the OpenAPI document lists every route",
-      paths.join(" ") === "/config /facets /repos/{id} /repos/{id}/similar /search /stars/{login} /sync/{login}",
+      paths.join(" ") ===
+        "/config /facets /people /people/{login}/similar /repos/{id} /repos/{id}/similar /search /stars/{login} /sync/{login}",
       {
         status: spec.status,
         paths,
@@ -193,11 +197,24 @@ const web = Effect.gen(function* () {
       unsynced.status === 404 && unsyncedBody.code === "ACCOUNT_NOT_SYNCED",
       { status: unsynced.status, code: unsyncedBody.code },
     ),
+    check("the people list reads through Postgres", people.status === 200 && peopleBody.people.length <= 1, {
+      status: people.status,
+      total: peopleBody.total,
+    }),
     check(
-      "MCP lists the eight tools",
-      ["search", "triggerSync", "syncStatus", "getRepo", "stars", "config", "lookupFacets", "similarRepos"].every(
-        (name) => toolList.includes(`"name":"${name}"`),
-      ),
+      "MCP lists the ten tools",
+      [
+        "search",
+        "triggerSync",
+        "syncStatus",
+        "getRepo",
+        "stars",
+        "config",
+        "lookupFacets",
+        "similarRepos",
+        "people",
+        "similarPeople",
+      ].every((name) => toolList.includes(`"name":"${name}"`)),
       { status: tools.status },
     ),
   ];

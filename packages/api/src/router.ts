@@ -34,6 +34,8 @@ import {
   maxStarsPage,
   type NewToYou,
   type OwnerType,
+  type People,
+  type PeopleInput,
   type PlanSource,
   type PublicConfig,
   PublicStars,
@@ -43,6 +45,8 @@ import {
   SearchInput,
   SearchOutput,
   type SimilarInput,
+  SimilarPeople,
+  type SimilarPeopleInput,
   SimilarRepos,
   StarsCursor,
   type StarsInput,
@@ -73,6 +77,7 @@ true satisfies Equals<typeof maxIconSize, typeof Db.maxIconSize>;
 true satisfies Equals<typeof OwnerType.Type, Db.OwnerType>;
 true satisfies Equals<(typeof SyncStatus.Type)["state"], SyncRequests.SyncStatus["state"]>;
 true satisfies Equals<typeof AppliedAtom.Type, Search.SearchOutcome["applied"][number]>;
+true satisfies Equals<typeof PeopleInput.Type.sort, Db.PeopleSort>;
 
 type ApiFailure =
   | Search.SearchError
@@ -404,6 +409,61 @@ const similarRepos = Effect.fnUntraced(function* (input: typeof SimilarInput.Typ
   return { inStars: inStars.map(wire), notStarred: notStarred.map(wire) };
 });
 
+const personFields = (person: Db.Person) => ({
+  login: person.login,
+  avatarUrl: person.avatarUrl,
+  curated: person.curated,
+  stars: person.stars,
+  lastStarredAt: DateTime.formatIso(person.lastStarredAt),
+  languages: person.languages,
+  topics: person.topics,
+});
+
+// The account the list counts shared stars for: the signed-in one, once its stars have synced. A session that cannot be
+// read lists people as for anyone signed out.
+const peopleViewer = Effect.gen(function* () {
+  const signedIn = yield* (yield* Viewers).signedIn.pipe(Effect.orElseSucceed(Option.none));
+  if (Option.isNone(signedIn)) return Option.none();
+  const account = yield* (yield* Db.Db).accounts.claimedBy(signedIn.value);
+  return Option.flatMap(account, (found) => (found.starsSyncedAt === null ? Option.none() : Option.some(found.id)));
+});
+
+const people = Effect.fnUntraced(function* (input: typeof PeopleInput.Type, context: AnswerContext) {
+  const viewer = yield* peopleViewer;
+  const sort = Option.isSome(viewer) ? input.sort : "recently-active";
+  const page = yield* (yield* Db.Db).people.page({ sort, viewer, offset: input.offset, limit: input.limit });
+  const next = input.offset + page.people.length;
+  // The list changes once a night, so an answer without shared counts keeps for 5 minutes in any cache. One with them
+  // is the viewer's alone.
+  context.resHeaders?.set("cache-control", Option.isSome(viewer) ? "private, max-age=60" : "public, max-age=300");
+  context.resHeaders?.set("vary", "cookie");
+  return {
+    sort,
+    people: page.people.map((person) => ({ ...personFields(person), shared: person.shared })),
+    total: page.total,
+    nextOffset: page.people.length > 0 && next < page.total ? next : null,
+  };
+});
+
+// The list and its copy of stars change once a night, so an answer keeps for 10 minutes and is then served for up to a
+// day while a refresh runs.
+const similarPeopleAnswers: AnswerPolicy<typeof SimilarPeople.Encoded> = {
+  procedure: "similarPeople",
+  json: Schema.fromJsonString(Schema.toEncoded(SimilarPeople)),
+  fresh: Duration.minutes(10),
+  stale: Duration.days(1),
+  keep: () => true,
+  refused: refusesRequest,
+};
+
+const similarPeople = Effect.fnUntraced(function* (input: typeof SimilarPeopleInput.Type) {
+  const db = yield* Db.Db;
+  const account = yield* db.accounts.byLogin(input.login);
+  if (Option.isNone(account)) return yield* new Search.AccountNotSynced({ login: input.login });
+  const found = yield* db.people.like(account.value.id, input.limit);
+  return { people: found.map((person) => ({ ...personFields(person), shared: person.shared })) };
+});
+
 const syncStatus =
   (login: Login) =>
   ([status, enrichment]: readonly [SyncRequests.SyncStatus, Db.EnrichmentProgress]): typeof SyncStatus.Type => {
@@ -464,6 +524,12 @@ const starsCache = answerCache(starsAnswers, (input: typeof StarsInput.Type, _co
 
 const similarCache = answerCache(similarAnswers, (input: typeof SimilarInput.Type, _context: ApiContext) =>
   Option.some(`similar/${loginKey(input.login)}/${input.id}`),
+);
+
+const similarPeopleCache = answerCache(
+  similarPeopleAnswers,
+  (input: typeof SimilarPeopleInput.Type, _context: ApiContext) =>
+    Option.some(`similar-people/${loginKey(input.login)}/${input.limit}`),
 );
 
 const similarResponse = middlewareGen<AnswerContext>(function* ({ context, next }) {
@@ -586,6 +652,24 @@ export const router = implementer.router({
     .use(admission("search"))
     .effect(function* ({ input }): ApiResult<"similarRepos", typeof SimilarRepos.Type> {
       return yield* similarRepos(input);
+    }),
+
+  // A database read with no model call, so it takes from the search binding. Its answer depends on the session, so the
+  // answer cache keeps none and HTTP caching does the rest.
+  people: withServices.people.use(admission("search")).effect(function* ({
+    input,
+    context,
+  }): ApiResult<"people", typeof People.Type> {
+    return yield* people(input, context);
+  }),
+
+  similarPeople: os.similarPeople
+    .use(similarResponse)
+    .use(similarPeopleCache)
+    .use(Services.services)
+    .use(admission("search"))
+    .effect(function* ({ input }): ApiResult<"similarPeople", typeof SimilarPeople.Type> {
+      return yield* similarPeople(input);
     }),
 
   lookupFacets: withServices.lookupFacets.use(admission("search")).effect(function* ({

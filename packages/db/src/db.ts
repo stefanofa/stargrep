@@ -14,6 +14,7 @@ import * as Facets from "./queries/facets.ts";
 import * as IconBackfill from "./queries/icon-backfill.ts";
 import * as Knowledge from "./queries/knowledge/index.ts";
 import * as MonthlyPicks from "./queries/monthly-picks.ts";
+import * as People from "./queries/people.ts";
 import * as RateLines from "./queries/rate-lines.ts";
 import * as Repos from "./queries/repos.ts";
 import * as Search from "./queries/search.ts";
@@ -56,6 +57,8 @@ export type {
   SubjectInfo,
   Variant,
 } from "./queries/knowledge/index.ts";
+export type { Liked, PeoplePage, PeopleQuery, PeopleSort, Person, Refreshed } from "./queries/people.ts";
+export { peopleRule } from "./queries/people.ts";
 export type { Receipt, Reservation, Reserved } from "./queries/rate-lines.ts";
 export { CallerKey, LineKey } from "./queries/rate-lines.ts";
 export type {
@@ -134,6 +137,7 @@ export class Db extends Context.Service<
     readonly monthlyPicks: MonthlyPicks.Queries;
     readonly starImports: StarImports.Queries;
     readonly iconBackfill: IconBackfill.Queries;
+    readonly people: People.Queries;
   }
 >()("@stargrep/db/db") {}
 
@@ -189,6 +193,7 @@ export const layer = (options: Options) =>
           monthlyPicks: yield* MonthlyPicks.make,
           starImports: yield* StarImports.make,
           iconBackfill: yield* IconBackfill.make,
+          people: yield* People.make,
         });
       }),
     ).pipe(Layer.provide(Digest.layerWebCrypto)),
