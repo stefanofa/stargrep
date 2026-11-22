@@ -1,10 +1,10 @@
-import { Button, EmptyTile, LanguageBar, Skeleton, Tile } from "@stargrep/ui";
+import { Button, Chip, EmptyTile, LanguageBar, Skeleton, Tile } from "@stargrep/ui";
 import { Link, useLoaderData, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { avatarOf } from "../lib/avatar.ts";
 import { type FirstPeople, usePeoplePages } from "../lib/people.ts";
 import { starredOn } from "../lib/present.ts";
-import type { People, Person } from "../lib/rpc.ts";
+import type { People, PeopleSort, Person } from "../lib/rpc.ts";
 import { loginPage } from "../lib/stars-route.ts";
 import { formatCount, starCount } from "../lib/whose.ts";
 import { LoginField } from "./landing-hero.tsx";
@@ -78,11 +78,35 @@ function CardPlaceholder() {
 
 const pageSize = 24;
 
+const sortLabels: ReadonlyArray<readonly [PeopleSort, string]> = [
+  ["most-like-you", "most like you"],
+  ["recently-active", "recently active"],
+];
+
+// A viewer whose stars have synced can put the people most like them first. Anyone else gets the latest star first.
+function Sorts({ page }: { page: People }) {
+  if (!page.people.some((person) => person.shared !== null)) return null;
+  return (
+    <nav aria-label="Sort people" className="flex flex-wrap gap-2">
+      {sortLabels.map(([sort, label]) => (
+        <Chip
+          key={sort}
+          active={page.sort === sort}
+          render={<Link to="/people" search={{ sort }} aria-current={page.sort === sort ? "true" : undefined} />}
+        >
+          {label}
+        </Chip>
+      ))}
+    </nav>
+  );
+}
+
 function List({ first }: { first: People }) {
   const { shown, showMore } = usePeoplePages(first);
   const left = first.total - shown.people.length;
   return (
     <>
+      <Sorts page={first} />
       <ol aria-label="people" aria-busy={shown.more === "asking" || undefined} className={grid}>
         {shown.people.map((person) => (
           <li key={person.login} className="flex min-w-0 flex-col *:flex-1">

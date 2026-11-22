@@ -121,6 +121,32 @@ describe("the people page", () => {
     expect(page().getByText("you share no stars")).toBeTruthy();
   });
 
+  test("a signed-in viewer sees the people most like them first, and can sort by the latest star", async () => {
+    const user = userEvent.setup();
+    server.viewer = { login: "junodev", name: null, avatarUrl: null, starredCount: 6 };
+    server.list = [person("simonw", { shared: 86 })];
+    const router = await open();
+    const sorts = within(page().getByRole("navigation", { name: "Sort people" }));
+    expect(sorts.getByRole("link", { name: "most like you" }).getAttribute("aria-current")).not.toBeNull();
+    await user.click(sorts.getByRole("link", { name: "recently active" }));
+    await waitFor(() => expect(router.state.location.search).toEqual({ sort: "recently-active" }));
+    await waitFor(() =>
+      expect(
+        within(page().getByRole("navigation", { name: "Sort people" }))
+          .getByRole("link", { name: "recently active" })
+          .getAttribute("aria-current"),
+      ).not.toBeNull(),
+    );
+    expect(server.asked.map(({ sort }) => sort)).toEqual(["most-like-you", "recently-active"]);
+  });
+
+  test("anyone else gets the latest star first, with no sort to pick", async () => {
+    server.list = [person("simonw")];
+    await open();
+    expect(page().queryByRole("navigation", { name: "Sort people" })).toBeNull();
+    expect(server.asked.map(({ sort }) => sort)).toEqual(["recently-active"]);
+  });
+
   test("show more adds the next page under the cards already shown, until the list ends", async () => {
     const user = userEvent.setup();
     server.pageSize = 2;
