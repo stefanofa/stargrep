@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from "@tanstack/react-router";
+import { cleanup, render as renderInDom, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 
 // A save the test settles by hand, so it can look at the switch while the request is still out.
 interface Pending {
@@ -34,6 +36,13 @@ const rpc = await import("../src/lib/rpc.ts");
 mock.module("../src/lib/rpc.ts", () => ({ ...rpc, api }));
 const { AccountMenu } = await import("../src/components/account-menu.tsx");
 
+// The menu links to places on phones, so it renders inside a router.
+const render = (ui: ReactNode) => {
+  const root = createRootRoute({ component: () => ui });
+  const router = createRouter({ routeTree: root, history: createMemoryHistory({ initialEntries: ["/"] }) });
+  return renderInDom(<RouterProvider router={router} />);
+};
+
 afterEach(() => {
   cleanup();
   Object.assign(server, { optedIn: false, readFails: false, reads: 0, saves: [] });
@@ -44,7 +53,7 @@ const explained = "a short email of repos you'd like, from your stars. no other 
 const openMenu = async () => {
   const user = userEvent.setup();
   render(<AccountMenu login="ada" avatarUrl={null} />);
-  await user.click(screen.getByRole("button", { name: "Account menu for ada" }));
+  await user.click(await screen.findByRole("button", { name: "Account menu for ada" }));
   const picks = await screen.findByRole("menuitemcheckbox", { name: "monthly picks" });
   return { user, picks };
 };

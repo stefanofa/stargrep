@@ -173,6 +173,13 @@ const db = makeDb({
         released: 0,
       }),
   },
+  // The page viewer follows nobody.
+  follows: {
+    list: () => Effect.succeed([]),
+    followed: () => Effect.succeed([]),
+    stars: () => Effect.succeed([]),
+    repos: () => Effect.succeed([]),
+  },
   accounts: {
     byLogin: (login: Login) => Effect.succeed(accountOf(login)),
     claimedBy: (userId) =>

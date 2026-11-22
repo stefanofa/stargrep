@@ -58,6 +58,7 @@ import { useSemanticSearch } from "../lib/use-semantic.ts";
 import { useSimilar } from "../lib/use-similar.ts";
 import { useSync } from "../lib/use-sync.ts";
 import { theirs } from "../lib/whose.ts";
+import { FollowButton, FollowedStarredBy, FollowingTile } from "./follows.tsx";
 import { ButterTile, Hero, TryChips } from "./landing-hero.tsx";
 import { type Discover, LibraryPlaceholder, LibraryView } from "./library-view.tsx";
 import { NewToYouList, NewToYouTile, type NewToYouTileState } from "./new-to-you.tsx";
@@ -395,7 +396,15 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     newToYouTile === undefined && peopleTile === undefined
       ? undefined
       : audience.by === "owner"
-        ? { lead: peopleTile, trail: undefined }
+        ? {
+            lead: (
+              <>
+                {peopleTile}
+                <FollowingTile />
+              </>
+            ),
+            trail: undefined,
+          }
         : { lead: newToYouTile, trail: peopleTile };
 
   const body = (current: Body) => {
@@ -488,6 +497,13 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
             known={page.person.known}
             stars={personStars}
             shared={newToYou?.kind === "found" ? newToYou.found.shared : undefined}
+            action={
+              page.person.known &&
+              audience.by !== "owner" &&
+              sync?.accountType !== "org" && (
+                <FollowButton login={page.person.login} signedIn={audience.by === "signed-in"} />
+              )
+            }
           />
           {page.person.claim !== undefined && (
             <ButterTile butter={{ kind: "claim", progress: page.person.claim }} pose={butterPose} />
@@ -547,7 +563,18 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           if (!next) close();
         }}
         returnFocus={opener}
-        starredBy={<StarredBy {...stargazers(similar)} onOpen={openStargazer} />}
+        starredBy={
+          audience.by === "anyone" || (opened ?? stray) === undefined ? (
+            <StarredBy {...stargazers(similar)} onOpen={openStargazer} />
+          ) : (
+            <FollowedStarredBy
+              repoId={(opened ?? stray)?.id ?? 0}
+              login={owner}
+              {...stargazers(similar)}
+              onOpen={openStargazer}
+            />
+          )
+        }
         similar={<SimilarRepos rows={similarRows(similar, links, whose)} onOpen={openSimilar} />}
         topics={<TopicChips topics={(opened ?? stray)?.topics ?? []} />}
       />

@@ -54,7 +54,10 @@ const people = async ({ sort, offset = 0 }: { sort?: People["sort"]; offset?: nu
 };
 
 const rpc = await import("../src/lib/rpc.ts");
-mock.module("../src/lib/rpc.ts", () => ({ ...rpc, api: () => ({ people }) as unknown as Client }));
+mock.module("../src/lib/rpc.ts", () => ({
+  ...rpc,
+  api: () => ({ people, followedLogins: async () => ({ follows: [] }) }) as unknown as Client,
+}));
 const { Route: PeopleRoute } = await import("../src/routes/people.tsx");
 
 beforeEach(() => {

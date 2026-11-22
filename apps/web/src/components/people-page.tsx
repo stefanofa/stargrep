@@ -9,6 +9,7 @@ import { loginPage } from "../lib/stars-route.ts";
 import { useTopicPages } from "../lib/topic-links.ts";
 import { formatCount, starCount } from "../lib/whose.ts";
 import { textLinkClass } from "./external-text-link.tsx";
+import { FollowPill } from "./follows.tsx";
 import { LoginField } from "./landing-hero.tsx";
 import { Page } from "./page.tsx";
 import { SiteHeader } from "./site-header.tsx";
@@ -42,8 +43,9 @@ function Tagged({ topics }: { topics: ReadonlyArray<string> }) {
 }
 
 // One person on the list: who, how many stars, what their stars are about, and when they last starred. The whole card
-// opens their stars.
-function PersonCard({ person }: { person: Person }) {
+// opens their stars, and its follow pill is a tab stop of its own above that link.
+function PersonCard({ person, signedIn }: { person: Person; signedIn: boolean }) {
+  const pill = <FollowPill login={person.login} signedIn={signedIn} />;
   return (
     <Tile className={cardBox}>
       <div className="flex min-w-0 items-center gap-3.5">
@@ -66,6 +68,7 @@ function PersonCard({ person }: { person: Person }) {
           </h2>
           <p className="font-sans text-meta text-muted-foreground">{starCount(person.stars)}</p>
         </div>
+        <div className="ml-auto shrink-0 sm:hidden">{pill}</div>
       </div>
       {person.languages.length > 0 && (
         <LanguageBar languages={person.languages.map(({ language, share }) => ({ name: language, share }))} />
@@ -79,6 +82,7 @@ function PersonCard({ person }: { person: Person }) {
           </p>
         )}
       </div>
+      <div className="mt-auto max-sm:hidden">{pill}</div>
     </Tile>
   );
 }
@@ -126,7 +130,7 @@ function Sorts({ page }: { page: People }) {
   );
 }
 
-function List({ first }: { first: People }) {
+function List({ first, signedIn }: { first: People; signedIn: boolean }) {
   const { shown, showMore } = usePeoplePages(first);
   const left = first.total - shown.people.length;
   return (
@@ -135,7 +139,7 @@ function List({ first }: { first: People }) {
       <ol aria-label="people" aria-busy={shown.more === "asking" || undefined} className={grid}>
         {shown.people.map((person) => (
           <li key={person.login} className="flex min-w-0 flex-col *:flex-1">
-            <PersonCard person={person} />
+            <PersonCard person={person} signedIn={signedIn} />
           </li>
         ))}
         {shown.more === "asking" &&
@@ -161,7 +165,7 @@ function List({ first }: { first: People }) {
   );
 }
 
-function Body({ first }: { first: FirstPeople }) {
+function Body({ first, signedIn }: { first: FirstPeople; signedIn: boolean }) {
   const router = useRouter();
   const [retrying, setRetrying] = useState(false);
   if (first.kind === "failed")
@@ -191,7 +195,7 @@ function Body({ first }: { first: FirstPeople }) {
         body="the people list fills in overnight. until then, type any GitHub username above."
       />
     );
-  return <List first={first.page} />;
+  return <List first={first.page} signedIn={signedIn} />;
 }
 
 // Everyone on the people list, a page at a time, under the same username field as the landing.
@@ -213,7 +217,7 @@ export function PeoplePage() {
           <LoginField />
         </div>
       </section>
-      <Body first={first} />
+      <Body first={first} signedIn={viewer !== null} />
     </Page>
   );
 }
