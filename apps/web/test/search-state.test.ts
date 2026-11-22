@@ -541,29 +541,32 @@ describe("what the page shows", () => {
   });
 });
 
-const hero = (stage: Stage, extra: Partial<PageInputs> = {}) => page({ stage, ...extra }).hero;
-const octo = { login: "octo" };
+const demo = anyone({ login: "stefanofa", demo: true });
+const hero = (stage: Stage, extra: Partial<PageInputs> = {}) => page({ stage, audience: demo, ...extra }).hero;
+const person = (stage: Stage, extra: Partial<PageInputs> = {}) => page({ stage, ...extra }).person;
+const stefanofa = { login: "stefanofa" };
 
-describe("the hero above a visitor's search", () => {
-  test("shows to visitors only", () => {
+describe("the hero above a visitor's look at the demo account", () => {
+  test("shows on the demo account to visitors only", () => {
+    expect(hero(ready, { audience: anyone() })).toBeUndefined();
     expect(hero(ready, { audience: signedIn })).toBeUndefined();
+    expect(hero(ready, { audience: { ...signedIn, owner: { login: "stefanofa", demo: true } } })).toBeUndefined();
     expect(hero(ready, { audience: ownPage })).toBeUndefined();
   });
 
   test("introduces the demo account", () => {
-    expect(hero(ready, { audience: anyone({ login: "stefanofa", demo: true }) })).toEqual({
-      subtitle: ["live results from ", { login: "stefanofa" }, ", our demo account. try any username."],
+    expect(hero(ready)).toEqual({
+      subtitle: ["live results from ", stefanofa, ", our demo account. try any username."],
       butter: { kind: "join" },
     });
   });
 
-  test("names anyone else's stars", () => {
-    expect(hero(ready)?.subtitle).toEqual([octo, "'s starred repos, searched in plain words. try any username."]);
-  });
-
-  test("asks whether the visitor is the owner while their stars import, with the import's progress", () => {
+  test("asks whether the visitor is the owner while the demo's stars import, with the import's progress", () => {
     expect(hero(importingFor())).toEqual({
-      subtitle: [octo, " is new here. their stars are on the way from GitHub, and search covers the ones that landed."],
+      subtitle: [
+        stefanofa,
+        " is new here. their stars are on the way from GitHub, and search covers the ones that landed.",
+      ],
       butter: { kind: "claim", progress: 0.5 },
     });
   });
@@ -571,7 +574,7 @@ describe("the hero above a visitor's search", () => {
   test("says a login nobody asked for yet is ready to import, as the status line does", () => {
     expect(hero(importingFor({ done: 0, total: null, phase: { kind: "not-asked" } }))).toEqual({
       subtitle: [
-        octo,
+        stefanofa,
         " is new here. their stars are ready to import from GitHub, and search covers them as they land.",
       ],
       butter: { kind: "claim", progress: 0 },
@@ -581,7 +584,7 @@ describe("the hero above a visitor's search", () => {
   test("says an import waits in line, and leaves its start time to the status line", () => {
     const waiting = importingFor({ done: 0, phase: { kind: "in-line", ahead: 3, startsAt: "2026-11-06T12:00:00Z" } });
     expect(hero(waiting)?.subtitle).toEqual([
-      octo,
+      stefanofa,
       " is new here and waits in line for GitHub. search covers their stars as they land.",
     ]);
   });
@@ -591,6 +594,33 @@ describe("the hero above a visitor's search", () => {
       subtitle: ["try any username."],
       butter: { kind: "join" },
     });
+  });
+});
+
+describe("the person above anyone else's stars", () => {
+  test("shows on every page but the landing and your own", () => {
+    expect(person(ready)).toEqual({ login: "octo", known: true, claim: undefined });
+    expect(person(ready, { audience: signedIn })).toEqual({ login: "octo", known: true, claim: undefined });
+    expect(person(ready, { audience: { ...signedIn, owner: { login: "stefanofa", demo: true } } })?.login).toBe(
+      "stefanofa",
+    );
+    expect(person(ready, { audience: demo })).toBeUndefined();
+    expect(person(ready, { audience: ownPage })).toBeUndefined();
+  });
+
+  test("a visitor watching the import gets the claim tile with its progress, a signed-in viewer doesn't", () => {
+    expect(person(importingFor())?.claim).toBe(0.5);
+    expect(person(importingFor({ done: 0, total: null, phase: { kind: "not-asked" } }))?.claim).toBe(0);
+    expect(person(importingFor(), { audience: signedIn })?.claim).toBeUndefined();
+  });
+
+  test("a login GitHub doesn't know keeps its handle but no claim and no profile", () => {
+    expect(person(importingFor({ phase: { kind: "not-asked" } }), { trouble: "missing" })).toEqual({
+      login: "octo",
+      known: false,
+      claim: undefined,
+    });
+    expect(person(ready, { trouble: "busy" })).toEqual({ login: "octo", known: true, claim: undefined });
   });
 });
 

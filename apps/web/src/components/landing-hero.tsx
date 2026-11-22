@@ -6,7 +6,7 @@ import { loginPage, typedLogin, typedLoginParam } from "../lib/stars-route.ts";
 import { ExternalTextLink } from "./external-text-link.tsx";
 import { SignInButton } from "./sign-in-button.tsx";
 
-function ButterTile({ butter, pose }: { butter: Butter; pose: PipPose }) {
+export function ButterTile({ butter, pose }: { butter: Butter; pose: PipPose }) {
   const claim = butter.kind === "claim";
   return (
     <Tile

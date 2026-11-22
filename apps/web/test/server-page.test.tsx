@@ -276,7 +276,8 @@ describe("a stars page from the Worker to the browser", () => {
 
   test("a login no import has written gets no first answer for a shared query, only its import state", async () => {
     const page = await renderOnServer("/octosync?q=fuzzy");
-    expect(page.html).toMatch(/<a href="https:\/\/github.com\/octosync"[^>]*>@octosync<\/a> is new here\./);
+    expect(page.html).toMatch(/<h1[^>]*>@octosync<\/h1>/);
+    expect(page.html).toContain("stars arriving");
     expect(page.html).not.toContain(">fzf</a>");
     expect(page.searched).toEqual([]);
   }, 60_000);
@@ -337,12 +338,12 @@ describe("a stars page from the Worker to the browser", () => {
     }
   }, 60_000);
 
-  test("a signed-in viewer on someone else's page gets no landing, and a way to switch whose stars", async () => {
+  test("a signed-in viewer on someone else's page gets the person, not the landing, and a way to switch", async () => {
     const page = await renderOnServer("/stefanofa?q=terminal", session, { STARGREP_SIGNED_IN: "octodone" });
     expect(page.html).toContain('aria-label="Search @stefanofa&#x27;s stars"');
     expect(page.html).toContain('aria-label="Whose stars: @stefanofa. Change"');
     expect(page.html).toContain('aria-label="Account menu for octodone"');
-    expect(page.html).not.toContain("<h1");
+    expect(page.html.match(/<h1[^>]*>[^<]*<\/h1>/g)).toEqual([expect.stringContaining(">@stefanofa</h1>")]);
   }, 60_000);
 
   test("a cookie with a broken percent escape counts as no choice, not a failed page", async () => {
@@ -415,7 +416,7 @@ describe("a stars page from the Worker to the browser", () => {
   test("an import under way paints the claim tile from the server's status read, and its progress once hydrated", async () => {
     const page = await renderOnServer("/octosync");
     expect(page.html).toContain("is this you? skip the wait");
-    expect(page.html).toMatch(/<a href="https:\/\/github.com\/octosync"[^>]*>@octosync<\/a> is new here\./);
+    expect(page.html).toMatch(/<h1[^>]*>@octosync<\/h1>/);
     expect(page.requested).toEqual([]);
     await hydratePage("/octosync", page.html);
     await waitFor(() => expect(statusText()).toContain("importing @octosync's stars"));
@@ -472,6 +473,6 @@ describe("a stars page from the Worker to the browser", () => {
     const reserved = await renderOnServer("/@api");
     expect(reserved.html).toContain("ready to import @api");
     const anyone = await renderOnServer("/@octosync");
-    expect(anyone.html).toMatch(/<a href="https:\/\/github.com\/octosync"[^>]*>@octosync<\/a> is new here\./);
+    expect(anyone.html).toMatch(/<h1[^>]*>@octosync<\/h1>/);
   }, 60_000);
 });
