@@ -1,7 +1,9 @@
 import { loginKey } from "@stargrep/github/login";
 import { isNotFound, isRedirect } from "@tanstack/react-router";
 import { getRequest, setResponseHeader, setResponseStatus } from "@tanstack/react-start/server";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { starredOf, whoseOf } from "../lib/audience.ts";
 import { normalize, searchText } from "../lib/keyword.ts";
 import {
@@ -115,6 +117,15 @@ const demoAnswer = async (request: Request, client: Client, sync: SyncStatus, as
   return first;
 };
 
+// A shared link's first answer and opened repo read the owner's whole library, 1,000 stars a page, one page after
+// another. A cold read of 15,000 stars kept a page from its first byte for 38 s, longer than link previews and crawlers
+// wait. So the server waits this long at most, and past it paints the page as a navigation in the browser does, which
+// then loads the library itself.
+const libraryWait = Duration.seconds(2);
+
+const withinLibraryWait = <A>(read: Promise<A>) =>
+  Effect.runPromise(Effect.promise(() => read).pipe(Effect.timeoutOption(libraryWait), Effect.map(Option.getOrNull)));
+
 // Any other query, a shared link's or a crawler's, is never searched on the server, so an HTML request spends no model
 // work. The page paints the answer by meaning when the API's answer cache already holds one, and keyword matches alone
 // when it doesn't. The browser then asks for the search by meaning through the API, unless the answer was fresh.
@@ -176,10 +187,10 @@ const loadPage = async ({ login }: PageRequest, { viewer, config, repoStars, sit
   const answer = (library: SyncStatus) =>
     audience.owner.demo && query === config.demoQuery
       ? demoAnswer(request, client, library, asking)
-      : sharedAnswer(request, config, client, library, asking);
+      : withinLibraryWait(sharedAnswer(request, config, client, library, asking));
   const [first, opened] = await Promise.all([
     imported === null || query === "" ? null : answer(imported).catch(() => null),
-    imported === null || repo === undefined ? null : findStar(client, owner, repo).catch(() => null),
+    imported === null || repo === undefined ? null : withinLibraryWait(findStar(client, owner, repo)).catch(() => null),
   ]);
   const remembered =
     first === null && (sync === null || sync.state === "unknown") ? rememberedRefusal(cookies, owner) : undefined;

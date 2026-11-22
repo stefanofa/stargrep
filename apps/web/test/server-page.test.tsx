@@ -301,6 +301,19 @@ describe("a stars page from the Worker to the browser", () => {
     expect(errors).toEqual([]);
   }, 60_000);
 
+  test("a shared link whose library the server can't read in time paints without it, and the browser loads it", async () => {
+    const path = "/stefanofa?q=terminal&repo=asciinema%2Fasciinema";
+    const page = await renderOnServer(path, undefined, { STARGREP_HELD_STARS: "1" });
+    expect(page.status).toBe(200);
+    expect(page.html).not.toContain("found 1");
+    expect(page.html).not.toContain(">asciinema</a>");
+
+    await hydratePage(path, page.html);
+    await waitFor(() => expect(statusText()).toBe("found 1!"));
+    await waitFor(() => expect(document.querySelector("[role=dialog] h2")?.textContent).toBe("asciinema"));
+    expect(errors).toEqual([]);
+  }, 60_000);
+
   test("the header's star link paints its count from the server and hydrates without a change", async () => {
     const starLink = () => document.querySelector('a[aria-label="star stargrep on GitHub"]');
     const page = await renderOnServer("/", undefined, { STARGREP_HEADER_STARS: "1234" });
