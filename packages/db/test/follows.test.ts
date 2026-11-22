@@ -3,6 +3,7 @@ import type { GitHubAccountId, RepoId } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Db from "../src/db.ts";
 import * as TestDatabase from "./database.ts";
 import { account, accountId, at, facts, iso, login, model, repoId, starred } from "./fixtures.ts";
@@ -77,6 +78,40 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatab
       const capped = yield* follow(ada, ["user-5", "user-4", "user-3"], 3);
       expect(capped).toEqual({ following: [login("user-5"), login("user-4")], added: 2, total: 3, full: true });
       expect(yield* follow(ada, ["user-3"], 3)).toEqual({ following: [], added: 0, total: 3, full: true });
+    }),
+  );
+
+  test.effect("two batches at once never pass the cap", () =>
+    Effect.gen(function* () {
+      const database = yield* TestDatabase.TestDatabase;
+      yield* reset;
+      yield* seed([
+        { id: 1, name: "ada" },
+        { id: 2, name: "grace" },
+        { id: 3, name: "linus" },
+      ]);
+      yield* database.query(
+        "insert into github_accounts (id, type, login) select 1000 + n, 'user', 'filler-' || n from generate_series(1, 999) n",
+      );
+      yield* database.query(
+        "insert into follows (follower_id, followee_id, source) select 1, 1000 + n, 'stargrep' from generate_series(1, 999) n",
+      );
+      // Holding the follower's row makes each insert wait at its foreign key check, after it has counted, so both
+      // batches would count 999 unless the follower's writes take turns.
+      const holding = yield* Effect.forkChild(
+        database.query(
+          "with held as (select id from github_accounts where id = 1 for update) select pg_sleep(0.5) from held",
+        ),
+      );
+      yield* database.query("select pg_sleep(0.1)");
+      // Each request builds its own Db, which runs one statement at a time, so the second batch comes from another.
+      const elsewhere = follow(ada, ["linus"]).pipe(Effect.provide(database.connect({ embeddingModel: model })));
+      const results = yield* Effect.all([follow(ada, ["grace"]), elsewhere], { concurrency: 2 });
+      yield* Fiber.join(holding);
+      const [count] = yield* database.query("select count(*)::int as n from follows where follower_id = 1");
+      expect(count).toEqual({ n: 1000 });
+      expect(results.map((result) => result.added).toSorted()).toEqual([0, 1]);
+      expect(results.filter((result) => result.full)).toHaveLength(1);
     }),
   );
 

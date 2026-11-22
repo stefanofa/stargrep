@@ -183,6 +183,14 @@ const session = middlewareGen<WithEffectContext<ApiServices>, { readonly viewer:
   },
 );
 
+// A signed-in account's answers are its own, so no cache may store one, an error included. The URL is the same for every
+// viewer, so a shared cache could otherwise hand one viewer's follows to another.
+const privateAnswer = middlewareGen<Pick<AnswerContext, "resHeaders">>(function* ({ procedure, context, next }) {
+  if (requiresSession(procedure)) context.resHeaders?.set("cache-control", "private, no-store");
+  // @effect-diagnostics-next-line anyUnknownInErrorContext:off - oRPC erases downstream failures to unknown.
+  return yield* next();
+});
+
 const iso = (time: DateTime.Utc | null) => (time === null ? null : DateTime.formatIso(time));
 
 const repoBase = (repo: Db.Repo, icons: IconHost["Service"]) => ({
@@ -719,7 +727,7 @@ const withProgress = <E, R>(login: Login, status: Effect.Effect<SyncRequests.Syn
 
 const implementer = implement(contract).$context<ApiContext>();
 const os = implementer.use(instrumentation).use(wireErrors);
-const withServices = os.use(Services.services).use(session);
+const withServices = os.use(privateAnswer).use(Services.services).use(session);
 
 const searchCache = answerCache(searchAnswers, (input: typeof SearchInput.Type, context: ApiContext) =>
   sharedSearchKey(input, context.publicConfig),

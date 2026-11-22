@@ -115,16 +115,21 @@ const millis = (column: string) => sql.raw(`floor(extract(epoch from ${column}) 
 const checkedAt = sql.raw("greatest(a.stars_synced_at, a.stars_checked_at)");
 
 export const make = Effect.gen(function* () {
-  const { run } = yield* Postgres.Postgres;
-  const { query } = statements(run);
+  const { run, withTransaction } = yield* Postgres.Postgres;
+  const { query, execute } = statements(run);
 
   return {
-    // A login names the account accountNamed would choose: the one synced most recently, then the lowest ID.
+    // A login names the account accountNamed would choose: the one synced most recently, then the lowest ID. The
+    // follower's writes take turns under a lock held to the end of the transaction, and the count and the insert run in a
+    // later statement, whose snapshot sees every follow committed before it, so concurrent batches never pass the cap.
     follow: Effect.fn("Db.follows.follow")(function* ({ follower, logins, source, cap }) {
-      return yield* query(
-        "follows.follow",
-        decodeFollowResult,
-        sql`
+      return yield* withTransaction(
+        execute("follows.lock", sql`select pg_advisory_xact_lock(hashtextextended(${`follows/${follower}`}, 0))`).pipe(
+          Effect.andThen(
+            query(
+              "follows.follow",
+              decodeFollowResult,
+              sql`
           with wanted as (
             select distinct on (lower(a.login)) a.id, a.login, w.ord
             from unnest(${sql.param([...logins])}::text[]) with ordinality as w(login, ord)
@@ -154,7 +159,11 @@ export const make = Effect.gen(function* () {
             (select count(*)::int from added) as added,
             (select n from had) + (select count(*)::int from added) as total,
             (select count(*) from fresh) > (select count(*) from added) as full`,
-      ).pipe(Effect.flatMap(only));
+            ),
+          ),
+          Effect.flatMap(only),
+        ),
+      );
     }),
 
     unfollow: (follower, login) =>

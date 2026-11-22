@@ -43,6 +43,7 @@ interface Session {
   readonly viewer: Option.Option<Viewer>;
   readonly github?: Effect.Effect<ReadonlyArray<Followed>, ViewerUnavailable>;
   readonly answers?: AnswerCache.AnswerCache;
+  readonly resHeaders?: Headers;
 }
 
 const unused = Effect.die(new Error("not used by follows"));
@@ -81,6 +82,7 @@ const apiFor = Effect.fnUntraced(function* (session: Session) {
     serviceLayer: Layer.succeedContext(services),
     execution: "request",
     answerCache: session.answers ?? AnswerCache.disabled,
+    ...(session.resHeaders === undefined ? {} : { resHeaders: session.resHeaders }),
     background: (run) => run,
   };
   return createRouterClient(router, { context });
@@ -90,6 +92,8 @@ const logins = (answer: unknown) =>
   typeof answer === "string"
     ? answer
     : (answer as { follows: ReadonlyArray<{ login: string }> }).follows.map((follow) => follow.login);
+
+type Api = Effect.Success<ReturnType<typeof apiFor>>;
 
 const call = <A>(run: () => Promise<A>) =>
   Effect.promise(() =>
@@ -174,6 +178,34 @@ const people: ReadonlyArray<Person> = [
 it.layer(TestDatabase.layerMemory({ embeddingModel: "test/model" as EmbeddingModelId }), { timeout: 30_000 })(
   "follows",
   (it) => {
+    it.effect("tells every cache to store no signed-in answer, an error included", () =>
+      Effect.gen(function* () {
+        yield* reset;
+        yield* seed(people);
+        const policyOf = Effect.fnUntraced(function* (
+          viewer: Option.Option<Viewer>,
+          ask: (api: Api) => Promise<unknown>,
+        ) {
+          const resHeaders = new Headers();
+          const api = yield* apiFor({ viewer, resHeaders });
+          yield* call(() => ask(api));
+          return resHeaders.get("cache-control");
+        });
+        const asks: ReadonlyArray<(api: Api) => Promise<unknown>> = [
+          (api) => api.followedLogins(),
+          (api) => api.followingFeed(),
+          (api) => api.followedPeople(),
+          (api) => api.followedStarrers({ id: 100 as RepoId, login: "ada" }),
+          (api) => api.viewer(),
+        ];
+        for (const ask of asks) {
+          expect(yield* policyOf(Option.none(), ask)).toBe("private, no-store");
+          expect(yield* policyOf(Option.some(ada), ask)).toBe("private, no-store");
+        }
+        expect(yield* policyOf(Option.some(ada), (api) => api.config())).toBe("public, max-age=300");
+      }),
+    );
+
     it.effect("asks for a session on every follows procedure", () =>
       Effect.gen(function* () {
         yield* reset;

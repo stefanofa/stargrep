@@ -111,6 +111,7 @@ export const Operation = Schema.Literals([
   "starImports.release",
   "iconBackfill.start",
   "iconBackfill.advance",
+  "follows.lock",
   "follows.follow",
   "follows.unfollow",
   "follows.list",
