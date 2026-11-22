@@ -178,7 +178,7 @@ describe("when the services cannot start", () => {
     const down = await send("/api/search", post({ scope: { kind: "stars", login: "ada" }, q: "dashboards" }));
     expect([down.status, down.body.code]).toEqual([503, "SERVICE_UNAVAILABLE"]);
     expect(down.body.data.traceId).toEqual(traceId);
-    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(13);
+    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(14);
   });
 });
 
@@ -268,7 +268,7 @@ describe("when the database is unreachable", () => {
       data: { traceId },
     });
 
-    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(13);
+    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(14);
     expect(JSON.stringify([viaRest, viaRpc, viaMcp])).not.toContain("postgres://");
   });
 });
@@ -298,6 +298,7 @@ describe("mcp", () => {
       "search",
       "similarPeople",
       "similarRepos",
+      "starLanguages",
       "stars",
       "syncStatus",
       "topic",
@@ -495,6 +496,7 @@ describe("getRepo and the spec", () => {
       "/repos/{id}/similar",
       "/search",
       "/stars/{login}",
+      "/stars/{login}/languages",
       "/sync/{login}",
       "/topics",
       "/topics/pages",

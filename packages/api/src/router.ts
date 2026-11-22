@@ -56,6 +56,7 @@ import {
   SimilarPeople,
   type SimilarPeopleInput,
   SimilarRepos,
+  type StarLanguages,
   StarsCursor,
   type StarsInput,
   type SyncStatus,
@@ -941,6 +942,16 @@ export const router = implementer.router({
     .effect(function* ({ input }): ApiResult<"stars", typeof PublicStars.Type> {
       return yield* starsPage(input.login, pageSizeFor(input.limit), Option.fromUndefinedOr(input.cursor));
     }),
+
+  // One grouped database read with no model call, so it takes from the search binding as lookupFacets does.
+  starLanguages: withServices.starLanguages.use(admission("search")).effect(function* ({
+    input,
+  }): ApiResult<"starLanguages", typeof StarLanguages.Type> {
+    const db = yield* Db.Db;
+    const account = yield* db.accounts.byLogin(input.login);
+    if (Option.isNone(account)) return yield* new Search.AccountNotSynced({ login: input.login });
+    return { login: account.value.login, ...(yield* db.stars.languages(account.value.id)) };
+  }),
 
   // A database read with no model call, so it takes from the search binding as lookupFacets does, and only on a miss.
   similarRepos: os.similarRepos

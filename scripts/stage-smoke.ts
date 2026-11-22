@@ -216,13 +216,14 @@ const web = Effect.gen(function* () {
       { status: noTopic.status, code: noTopicBody.code },
     ),
     check(
-      "MCP lists the thirteen tools",
+      "MCP lists the fourteen tools",
       [
         "search",
         "triggerSync",
         "syncStatus",
         "getRepo",
         "stars",
+        "starLanguages",
         "config",
         "lookupFacets",
         "similarRepos",

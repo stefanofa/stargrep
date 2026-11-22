@@ -50,6 +50,7 @@ export const Operation = Schema.Literals([
   "stars.library",
   "stars.page",
   "stars.enrichment",
+  "stars.languages",
   "stars.newToYou",
   "search.acceptedKeys",
   "search.hybrid",

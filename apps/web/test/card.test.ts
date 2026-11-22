@@ -3,7 +3,7 @@ import { siteCard, siteCardPath } from "../scripts/og-image.ts";
 import { themeColor } from "../scripts/theme.ts";
 import { languageShares } from "../src/lib/languages.ts";
 import { accountImage } from "../src/lib/preview.ts";
-import type { SearchResult, SyncStatus } from "../src/lib/rpc.ts";
+import type { LibraryRepo, SearchResult, SyncStatus } from "../src/lib/rpc.ts";
 import { libraryRevision } from "../src/lib/sync-status.ts";
 import { type CardSource, readAccountCard } from "../src/server/card/account.ts";
 import { cardSize } from "../src/server/card/card.tsx";
@@ -45,7 +45,23 @@ test("public/og.png is the site card the current layout draws, at the size the h
 });
 
 const login = "junodev";
-const library = libraryRepos.slice(0, 6);
+const [unnamed] = libraryRepos.slice(6);
+if (unnamed === undefined) throw new Error("short fixture");
+// Rust leads, TypeScript and Zig tie, and one repo has no language, which counts toward the whole.
+const library = [...libraryRepos.slice(0, 6), { ...unnamed, language: null }];
+
+// What the API answers: one grouped count per language GitHub names, most first and ties by name, over every star.
+const counted = (repos: ReadonlyArray<LibraryRepo>) => {
+  const counts = new Map<string, number>();
+  for (const { language } of repos) if (language !== null) counts.set(language, (counts.get(language) ?? 0) + 1);
+  return {
+    login,
+    total: repos.length,
+    languages: Array.from(counts, ([language, count]) => ({ language, count })).toSorted(
+      (a, b) => b.count - a.count || a.language.localeCompare(b.language),
+    ),
+  };
+};
 
 const source = (sync: SyncStatus, cached: ReadonlyArray<SearchResult> = []) => {
   const asked = { stars: 0 };
@@ -55,15 +71,16 @@ const source = (sync: SyncStatus, cached: ReadonlyArray<SearchResult> = []) => {
       asked.stars++;
       return library;
     },
+    languages: async () => counted(library),
     cachedResults: async () => cached,
     avatar: async () => "data:image/png;base64,AA==",
   };
   return { card, asked };
 };
 
-test("a login's card counts its starred repos and the languages of the stars it imported", async () => {
+test("a login's card counts its starred repos and the languages of the stars it imported, without reading them", async () => {
   const sync = syncStatus({ starredTotal: 1786 });
-  const { card } = source(sync);
+  const { card, asked } = source(sync);
   const read = await readAccountCard(card, login, "");
   expect(read.revision).toBe(libraryRevision(sync));
   expect(read.card).toEqual({
@@ -73,6 +90,7 @@ test("a login's card counts its starred repos and the languages of the stars it 
     languages: languageShares(library),
     search: null,
   });
+  expect(asked.stars).toBe(0);
 });
 
 test("a shared search shows the answer cache's best match and reads no library for it", async () => {

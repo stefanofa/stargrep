@@ -6,6 +6,7 @@ export const mcpTools = [
   { name: "triggerSync", does: "imports a login's stars, so search can find them" },
   { name: "syncStatus", does: "says whether a login is synced and how many of its stars stargrep has read" },
   { name: "stars", does: "lists a login's synced stars, newest first" },
+  { name: "starLanguages", does: "counts a login's synced stars by language" },
   { name: "getRepo", does: "reads one repo, with its summary" },
   {
     name: "similarRepos",

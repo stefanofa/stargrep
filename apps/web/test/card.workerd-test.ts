@@ -44,6 +44,7 @@ const source = (reads: { count: number }, fail = false, imported = true): CardSo
     } as SyncStatus;
   },
   library: async () => libraryRepos,
+  languages: async () => ({ login: "junodev", total: 2, languages: [{ language: "Rust", count: 2 }] }),
   cachedResults: async () => [],
   avatar: async () => null,
   topic: async (topic) => {

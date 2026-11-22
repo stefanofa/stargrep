@@ -134,6 +134,7 @@ export type {
   SnapshotChanges,
   Star,
   StarEvent,
+  StarLanguages,
   StarredRepo,
   StarsPage,
   StarsPosition,

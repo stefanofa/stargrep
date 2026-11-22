@@ -49,6 +49,7 @@ export const cardSource = (request: Request): CardSource & TopicCardSource => {
   return {
     status: (login) => client.syncStatus({ login }),
     library: (login) => allStars(client, login),
+    languages: (login) => client.starLanguages({ login }),
     cachedResults: (login, query) => cachedResults(request, client, { scope: { kind: "stars", login }, q: query }),
     topic: (topic) => client.topic({ topic }),
     cachedTopicResults: (topic, query) => cachedResults(request, client, topicSearch(topic, query)),

@@ -98,6 +98,9 @@ const api = (): Client => ({
   topicPages: async () => {
     throw new Error("Unexpected topicPages call");
   },
+  starLanguages: async () => {
+    throw new Error("Unexpected starLanguages call");
+  },
   similarPeople: async ({ login, limit }: { login: string; limit?: number }) => {
     server.alikeAsked.push([login, limit]);
     return { people: server.alike[login] ?? [] };

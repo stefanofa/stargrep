@@ -134,6 +134,46 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
     }),
   );
 
+  test.effect("counts current stars by language, the ones with no language in the total only", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const [id, other] = [accountId(321), accountId(322)];
+      const [go, tsOld, tsNew, unnamed, dropped, elsewhere] = [
+        repoId(3211),
+        repoId(3212),
+        repoId(3213),
+        repoId(3214),
+        repoId(3215),
+        repoId(3216),
+      ];
+      yield* db.accounts.upsert(account(id));
+      yield* db.accounts.upsert(account(other));
+      yield* db.repos.upsertRefs([go, tsOld, tsNew, unnamed, dropped, elsewhere].map((repo) => ref(repo)));
+      yield* database.query(
+        `update repos set language = case when id = ${go} then 'Go' when id = ${unnamed} then null else 'TypeScript' end where id between ${go} and ${elsewhere}`,
+      );
+      const kept = [
+        starred(go, "2026-01-01T00:00:00Z"),
+        starred(tsOld, "2026-01-02T00:00:00Z"),
+        starred(tsNew, "2026-01-03T00:00:00Z"),
+        starred(unnamed, "2026-01-04T00:00:00Z"),
+      ];
+      yield* db.stars.upsert({ accountId: id, stars: [...kept, starred(dropped, "2026-01-05T00:00:00Z")] });
+      yield* db.stars.applySnapshot({ accountId: id, stars: kept, at: at("2026-02-01T00:00:00Z"), complete: true });
+      yield* db.stars.upsert({ accountId: other, stars: [starred(elsewhere, "2026-01-01T00:00:00Z")] });
+
+      expect(yield* db.stars.languages(id)).toEqual({
+        total: 4,
+        languages: [
+          { language: "TypeScript", count: 2 },
+          { language: "Go", count: 1 },
+        ],
+      });
+      expect(yield* db.stars.languages(accountId(999_995))).toEqual({ total: 0, languages: [] });
+    }),
+  );
+
   test.effect("pages through active stars newest first, ties by repo ID, with no gap and no repeat", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
