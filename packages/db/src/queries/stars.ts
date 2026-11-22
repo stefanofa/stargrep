@@ -59,6 +59,15 @@ const EnrichmentProgress = Schema.Struct({
 });
 export type EnrichmentProgress = typeof EnrichmentProgress.Type;
 
+const LanguageCount = Schema.Struct({ language: Schema.NullOr(Schema.String), count: Schema.Int });
+
+// How many of an account's current stars each language holds, most first. total counts the stars GitHub names no
+// language for too.
+export interface StarLanguages {
+  readonly total: number;
+  readonly languages: ReadonlyArray<{ readonly language: string; readonly count: number }>;
+}
+
 export interface StarsUpsert {
   readonly accountId: GitHubAccountId;
   readonly stars: ReadonlyArray<StarEvent>;
@@ -115,12 +124,14 @@ export interface Queries {
     options: { readonly limit: number; readonly after: Option.Option<StarsPosition> },
   ) => Effect.Effect<StarsPage, DbQueryFailed | DbRowInvalid>;
   readonly enrichment: (login: Login) => Effect.Effect<EnrichmentProgress, DbQueryFailed | DbRowInvalid>;
+  readonly languages: (accountId: GitHubAccountId) => Effect.Effect<StarLanguages, DbQueryFailed | DbRowInvalid>;
   readonly newToYou: (request: NewToYouRequest) => Effect.Effect<NewToYou, DbQueryFailed | DbRowInvalid>;
 }
 
 const decodeStars = rowsDecoder(Star);
 const decodeLibrary = rowsDecoder(LibraryEntry);
 const decodeProgress = rowsDecoder(EnrichmentProgress);
+const decodeLanguages = rowsDecoder(LanguageCount);
 const decodeChanged = rowsDecoder(Schema.Struct({ repoId: RepoId }));
 const decodeCloseness = rowsDecoder(Schema.Struct({ shared: Schema.Int, ranked: Schema.Array(RepoId) }));
 const encodeEvents = writeEncoder(
@@ -452,6 +463,22 @@ export const make = Effect.fn("Db.stars.make")(function* (model: EmbeddingModelI
       }).pipe(
         Effect.flatMap(decodeProgress("stars.enrichment")),
         Effect.flatMap((rows) => Effect.orDie(Effect.fromNullishOr(rows[0]))),
+      ),
+    languages: (accountId) =>
+      run("stars.languages", (db) =>
+        db
+          .select({ language: repos.language, count: sql<number>`count(*)::int` })
+          .from(stars)
+          .innerJoin(repos, eq(repos.id, stars.repoId))
+          .where(and(eq(stars.accountId, accountId), isNull(stars.unstarredAt)))
+          .groupBy(repos.language)
+          .orderBy(desc(sql`count(*)`), repos.language),
+      ).pipe(
+        Effect.flatMap(decodeLanguages("stars.languages")),
+        Effect.map((rows) => ({
+          total: rows.reduce((sum, row) => sum + row.count, 0),
+          languages: rows.flatMap(({ language, count }) => (language === null ? [] : [{ language, count }])),
+        })),
       ),
     newToYou: Effect.fn("Db.stars.newToYou")(function* (request) {
       const [found] = yield* run("stars.newToYou", (db) => db.execute(closeness(model, request))).pipe(

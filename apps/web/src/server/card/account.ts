@@ -1,7 +1,6 @@
 import type { LanguageShare } from "@stargrep/ui";
 import { keywordTerms, matchesEvery, score, searchText } from "../../lib/keyword.ts";
-import { languageShares } from "../../lib/languages.ts";
-import type { LibraryRepo, SearchResult, SyncStatus } from "../../lib/rpc.ts";
+import type { LibraryRepo, SearchResult, StarLanguages, SyncStatus } from "../../lib/rpc.ts";
 import { libraryRevision } from "../../lib/sync-status.ts";
 
 // A card has room for a line or two, so a match shows the repo's own GitHub description before Stargrep's summary.
@@ -24,6 +23,7 @@ export interface AccountCardData {
 export interface CardSource {
   readonly status: (login: string) => Promise<SyncStatus>;
   readonly library: (login: string) => Promise<ReadonlyArray<LibraryRepo>>;
+  readonly languages: (login: string) => Promise<StarLanguages>;
   // The answer by meaning the API's answer cache already holds, or nothing. A card never starts a search.
   readonly cachedResults: (login: string, query: string) => Promise<ReadonlyArray<SearchResult>>;
   readonly avatar: (login: string) => Promise<string | null>;
@@ -42,11 +42,15 @@ const keywordTop = (repos: ReadonlyArray<LibraryRepo>, query: string) => {
   return best === undefined ? null : topOf(best.repo);
 };
 
+// Each language's share of the whole library, as languageShares gives it, from the counts the API groups.
+const sharesOf = ({ total, languages }: StarLanguages): ReadonlyArray<LanguageShare> =>
+  languages.map(({ language, count }) => ({ name: language, share: count / total }));
+
 // Reads a login's card and the library revision it describes, or null before the first import, whose revision stays
-// the same while GitHub's starred count arrives. A shared search reads the library only when the answer cache has no
-// match for it, since a card with a query shows no languages.
+// the same while GitHub's starred count arrives. A card without a query reads its languages' counts, not the library.
+// A shared search reads the library only when the answer cache has no match for it, since it shows no languages.
 export const readAccountCard = async (
-  { status, library, cachedResults, avatar }: CardSource,
+  { status, library, languages, cachedResults, avatar }: CardSource,
   login: string,
   q: string,
 ) => {
@@ -58,12 +62,12 @@ export const readAccountCard = async (
   ]);
   const imported = sync.syncedAt !== null;
   const [first] = cached;
-  const repos = imported && (query === "" || first === undefined) ? await library(sync.login) : [];
+  const repos = imported && query !== "" && first === undefined ? await library(sync.login) : [];
   const card: AccountCardData = {
     login: sync.login,
     avatar: picture,
     stars: sync.starredTotal,
-    languages: query === "" ? languageShares(repos) : [],
+    languages: imported && query === "" ? sharesOf(await languages(sync.login)) : [],
     search: query === "" ? null : { query, top: first !== undefined ? topOf(first) : keywordTop(repos, query) },
   };
   return { card, revision: imported ? libraryRevision(sync) : null };

@@ -63,6 +63,7 @@ const defaults = {
     library: unexpected("stars.library"),
     page: unexpected("stars.page"),
     enrichment: unexpected("stars.enrichment"),
+    languages: unexpected("stars.languages"),
     newToYou: unexpected("stars.newToYou"),
   },
   search: {

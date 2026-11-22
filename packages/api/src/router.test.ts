@@ -154,6 +154,12 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
     },
     stars: {
       enrichment: () => Effect.succeed(reading),
+      languages: (accountId: GitHubAccountId) =>
+        Effect.succeed(
+          accountId === ada.account.id
+            ? { total: 3, languages: [{ language: "TypeScript", count: 2 }] }
+            : { total: 0, languages: [] },
+        ),
       library: (accountId: GitHubAccountId) =>
         Effect.succeed(
           accountId === ada.account.id ? [{ repo, starredAt, stars: 16_400, read: false, gone: false }] : [],
@@ -773,6 +779,24 @@ describe("similarPeople", () => {
   test("answers ACCOUNT_NOT_SYNCED for a login stargrep never synced", async () => {
     const { api } = client({ people: like([]) });
     expect((await failure(api.similarPeople({ login: "linus" }))).code).toBe("ACCOUNT_NOT_SYNCED");
+  });
+});
+
+describe("starLanguages", () => {
+  test("counts a login's stars by language, taking a turn from the search binding", async () => {
+    const limits: Array<RateLimitKind> = [];
+    const { api } = client({ limiter: (kind) => Effect.sync(() => limits.push(kind)) });
+    expect(await api.starLanguages({ login: "ada" })).toEqual({
+      login: "ada",
+      total: 3,
+      languages: [{ language: "TypeScript", count: 2 }],
+    });
+    expect(limits).toEqual(["search"]);
+  });
+
+  test("answers ACCOUNT_NOT_SYNCED for a login stargrep never synced", async () => {
+    const { api } = client();
+    expect((await failure(api.starLanguages({ login: "linus" }))).code).toBe("ACCOUNT_NOT_SYNCED");
   });
 });
 

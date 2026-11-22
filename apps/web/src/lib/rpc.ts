@@ -11,6 +11,7 @@ export type Viewer = Outputs["viewer"];
 export type LibraryRepo = Outputs["library"]["repos"][number];
 export type SearchResult = Outputs["search"]["results"][number];
 export type SyncStatus = Outputs["syncStatus"];
+export type StarLanguages = Outputs["starLanguages"];
 export type SimilarRepos = Outputs["similarRepos"];
 export type SimilarRepo = SimilarRepos["inStars"][number];
 export type PublicConfig = Outputs["config"];

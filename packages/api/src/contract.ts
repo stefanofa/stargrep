@@ -376,6 +376,15 @@ export const PublicStars = Schema.Struct({
   labels: Labels,
 });
 
+export const StarLanguages = Schema.Struct({
+  login: Schema.String,
+  total: Schema.Int.annotate({ description: "How many repos the login stars now, with or without a language." }),
+  languages: Schema.Array(Schema.Struct({ language: Schema.String, count: Schema.Int })).annotate({
+    description:
+      "How many of the login's stars each language GitHub names holds, most first. Repos with no language count only toward total.",
+  }),
+});
+
 export const maxNewToYou = 48;
 
 export const NewToYouInput = Schema.Struct({
@@ -940,6 +949,18 @@ export const contract = {
     .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
     .input(StarsInput)
     .output(PublicStars),
+  starLanguages: withServices
+    .errors(Struct.pick(errors, ["ACCOUNT_NOT_SYNCED", "TOO_MANY_REQUESTS"]))
+    .route({
+      method: "GET",
+      path: "/stars/{login}/languages",
+      operationId: "starLanguages",
+      summary: "Count a login's stars by language",
+      description: "Counts the repos a GitHub login starred that Stargrep has synced, by each repo's main language.",
+    })
+    .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
+    .input(SyncInput)
+    .output(StarLanguages),
   // The name goes in the body, as search's query does, because it is what someone typed.
   lookupFacets: withServices
     .errors(Struct.pick(errors, ["TOO_MANY_REQUESTS"]))
