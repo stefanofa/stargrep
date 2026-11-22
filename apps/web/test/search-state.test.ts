@@ -499,6 +499,7 @@ describe("what the page shows", () => {
       heading: "stargrep couldn't load @octo's stars",
       detail: "the library didn't arrive. try again in a moment.",
       retry: "library",
+      offer: undefined,
     });
   });
 
@@ -650,6 +651,17 @@ describe("a page in trouble", () => {
       "sync",
       "library",
       "library",
+    ]);
+  });
+
+  test("sends a login GitHub doesn't know to the people list, and nothing else there", () => {
+    expect(troubles.map((trouble) => troubleBody(trouble).offer)).toEqual([
+      "people",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
     ]);
   });
 

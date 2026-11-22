@@ -1,14 +1,13 @@
 import { Popover } from "@base-ui/react/popover";
 import { Avatar, cn, popupSurface } from "@stargrep/ui";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
 import type { Audience } from "../lib/audience.ts";
+import { avatarOf } from "../lib/avatar.ts";
 import { recentLogins } from "../lib/recent-logins.ts";
 import type { PublicConfig } from "../lib/rpc.ts";
 import { loginPage, typedLogin } from "../lib/stars-route.ts";
 import { sameLogin } from "../lib/whose.ts";
-
-const avatarOf = (login: string) => `https://github.com/${login}.png?size=64`;
 
 function Chevron() {
   return (
@@ -36,7 +35,7 @@ export function OwnerPill({ audience, config }: { audience: Audience; config: Pu
   // The login that / shows this audience.
   const home = you ?? config.demoLogin;
   const login = typedLogin(typed);
-  const people = [...(you === undefined ? [] : [you]), ...recent, ...config.featured].filter(
+  const people = [...(you === undefined ? [] : [you]), ...recent, ...config.featured, ...config.curated].filter(
     (person, index, all) => all.findIndex((other) => sameLogin(other, person)) === index,
   );
 
@@ -70,7 +69,7 @@ export function OwnerPill({ audience, config }: { audience: Audience; config: Pu
         className="relative flex h-9 max-w-[150px] sm:max-w-[45%] shrink-0 items-center gap-1.5 rounded-full bg-accent-soft pr-2.5 pl-1 font-sans text-meta font-semibold text-foreground transition-[background-color,scale] duration-120 select-none after:absolute after:inset-x-0 after:-inset-y-1 hover:bg-accent/30 motion-safe:active:scale-[0.96] sm:h-11 sm:gap-2 sm:pr-3 sm:pl-1.5 sm:text-base sm:after:hidden"
       >
         <Avatar
-          person={{ login: owner, avatarUrl: avatarOf(owner) }}
+          person={{ login: owner, avatarUrl: avatarOf(owner, 32) }}
           index={0}
           className="size-7 border-0 bg-highlight sm:size-8"
         />
@@ -107,7 +106,7 @@ export function OwnerPill({ audience, config }: { audience: Audience; config: Pu
                 </button>
               </div>
             </form>
-            <ul aria-label="Synced accounts" className="flex flex-col">
+            <ul aria-label="Synced accounts" className="flex max-h-[min(50dvh,360px)] flex-col overflow-y-auto">
               {people.map((person) => (
                 <li key={person}>
                   <button
@@ -117,7 +116,7 @@ export function OwnerPill({ audience, config }: { audience: Audience; config: Pu
                     className="flex h-11 w-full items-center gap-2.5 rounded-item px-2 text-left hover:bg-accent-soft aria-[current]:bg-accent-soft"
                   >
                     <Avatar
-                      person={{ login: person, avatarUrl: avatarOf(person) }}
+                      person={{ login: person, avatarUrl: avatarOf(person, 32) }}
                       index={0}
                       className="size-7 border-0"
                     />
@@ -129,6 +128,13 @@ export function OwnerPill({ audience, config }: { audience: Audience; config: Pu
                 </li>
               ))}
             </ul>
+            <Link
+              to="/people"
+              onClick={() => setOpen(false)}
+              className="flex h-11 items-center rounded-item px-2 font-medium text-accent-strong hover:bg-accent-soft"
+            >
+              see everyone →
+            </Link>
           </Popover.Popup>
         </Popover.Positioner>
       </Popover.Portal>

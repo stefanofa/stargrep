@@ -136,7 +136,14 @@ export type Body =
   | { readonly kind: "empty-reading"; readonly copy: EmptyCopy; readonly ring: number | undefined }
   | { readonly kind: "empty"; readonly copy: EmptyCopy; readonly phrases: ReadonlyArray<string> }
   | { readonly kind: "failed"; readonly copy: EmptyCopy }
-  | { readonly kind: "trouble"; readonly heading: string; readonly detail: string; readonly retry: Retry | undefined };
+  | {
+      readonly kind: "trouble";
+      readonly heading: string;
+      readonly detail: string;
+      readonly retry: Retry | undefined;
+      // Where to go instead, when trying again can't help.
+      readonly offer: "people" | undefined;
+    };
 
 export interface SearchView {
   readonly status: Status;
@@ -473,8 +480,9 @@ interface TroubleCopy {
   readonly heading: string;
   readonly detail: string;
   readonly pose: PipPose;
-  // A login GitHub doesn't know is a dead end, so it offers nothing to try again.
+  // A login GitHub doesn't know is a dead end, so it offers nothing to try again, and the people list instead.
   readonly retry: Retry | undefined;
+  readonly offer?: "people";
 }
 
 const breather: Status = { icon: "paused", label: "taking a breather" };
@@ -485,9 +493,10 @@ const troubleCopy = (trouble: Trouble, owner: string, whose: Whose): TroubleCopy
       return {
         status: { icon: "failed", label: "no such GitHub user" },
         heading: `GitHub has no one called @${owner}`,
-        detail: "check the spelling, or try another username.",
+        detail: "check the spelling, or pick someone from people.",
         pose: "unsure",
         retry: undefined,
+        offer: "people",
       };
     case "busy":
       return {
@@ -637,8 +646,8 @@ export const pageView = ({
     progress: shown?.progress,
   };
   if (trouble !== undefined) {
-    const { status, heading, detail, pose, retry } = troubleCopy(trouble, audience.owner.login, whose);
-    return { ...page, status, pose, body: { kind: "trouble", heading, detail, retry } };
+    const { status, heading, detail, pose, retry, offer } = troubleCopy(trouble, audience.owner.login, whose);
+    return { ...page, status, pose, body: { kind: "trouble", heading, detail, retry, offer } };
   }
   const calm = (shown ?? live).pose;
   const pose = surprised && calm === "idle" ? "surprised" : calm;

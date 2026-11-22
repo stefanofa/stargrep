@@ -1,4 +1,5 @@
 import { Skeleton, Tile } from "@stargrep/ui";
+import { avatarOf } from "../lib/avatar.ts";
 import { starredOn } from "../lib/present.ts";
 import { formatCount, starCount } from "../lib/whose.ts";
 import { ExternalTextLink } from "./external-text-link.tsx";
@@ -54,7 +55,7 @@ export function PersonTile({
       {/* A plain image paints from the server's HTML, where an avatar that waits for its image would paint initials. */}
       {known ? (
         <img
-          src={`https://github.com/${login}.png?size=192`}
+          src={avatarOf(login, 96)}
           alt=""
           width={96}
           height={96}
