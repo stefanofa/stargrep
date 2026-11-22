@@ -3,6 +3,7 @@ import { previewSize } from "../../lib/preview.ts";
 import { formatCount } from "../../lib/whose.ts";
 import type { AccountCardData, TopMatch } from "./account.ts";
 import { mark, palette } from "./palette.ts";
+import type { TopicCardData } from "./topic.ts";
 
 // Link preview cards, 1200 by 630, laid out as artboard 12 in design/renders/stargrep. Satori lays them out with flexbox,
 // so every box with more than one child says display flex.
@@ -289,6 +290,100 @@ export function AccountCard({ card }: { card: AccountCardData }) {
         </div>
         {side}
         <Address path={`/${card.login}`} />
+      </div>
+    </div>
+  );
+}
+
+// A topic's name fits the butter tile at one size up to 8 letters, and steps down for longer ones.
+const topicSize = (topic: string) => (topic.length <= 8 ? 120 : topic.length <= 12 ? 92 : topic.length <= 17 ? 68 : 52);
+
+function TopicHeadline({ card }: { card: TopicCardData }) {
+  if (card.search !== null)
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ ...oneLine, fontSize: 26, fontWeight: 600, color: palette.inkSecondary }}>
+          {`searching ${card.topic} repos`}
+        </div>
+        <div style={{ ...clamped(3), fontFamily: "Fredoka", fontSize: 58, lineHeight: 1.08, letterSpacing: -1 }}>
+          {`"${card.search.query}"`}
+        </div>
+      </div>
+    );
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", fontSize: 26, fontWeight: 600, color: palette.inkSecondary }}>
+        what developers star in
+      </div>
+      <div
+        style={{
+          ...oneLine,
+          fontFamily: "Fredoka",
+          fontSize: topicSize(card.topic),
+          lineHeight: 1.05,
+          letterSpacing: -2,
+        }}
+      >
+        {card.topic}
+      </div>
+      <div style={{ display: "flex", fontSize: 26, fontWeight: 500, color: palette.inkSecondary }}>
+        {`${formatCount(card.ranked)} ranked · ${formatCount(card.repos)} repos`}
+      </div>
+    </div>
+  );
+}
+
+// The topic's three most starred core repos, each with how many developers star it.
+function TopRepos({ card }: { card: TopicCardData }) {
+  return (
+    <div
+      style={{ ...tile, flexDirection: "column", justifyContent: "center", gap: 22, height: 336, padding: "28px 32px" }}
+    >
+      {card.top.map((repo) => (
+        <div key={`${repo.owner}/${repo.name}`} style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
+            <div style={{ ...oneLine, fontFamily: "Fredoka", fontSize: 34, lineHeight: 1.15 }}>{repo.name}</div>
+            <div style={{ ...oneLine, fontSize: 20, fontWeight: 500, color: palette.mutedForeground }}>
+              {repo.owner}
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexShrink: 0 }}>
+            <div style={{ fontFamily: "Fredoka", fontSize: 34 }}>{formatCount(repo.devs)}</div>
+            <div style={{ fontSize: 20, fontWeight: 500, color: palette.mutedForeground }}>devs</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// A topic's card: its name and counts, and its three most starred repos, or the search a shared link carries and its
+// best match.
+export function TopicCard({ card }: { card: TopicCardData }) {
+  const side =
+    card.search !== null ? (
+      card.search.top !== null ? (
+        <Match top={card.search.top} />
+      ) : (
+        <Wordmark />
+      )
+    ) : card.top.length > 0 ? (
+      <TopRepos card={card} />
+    ) : (
+      <Wordmark />
+    );
+  return (
+    <div style={frame}>
+      <ButterTile>
+        <TopicHeadline card={card} />
+      </ButterTile>
+      <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, gap: 20 }}>
+        <div style={{ ...tile, alignItems: "center", gap: 14, height: 152, padding: "0 36px" }}>
+          <Mascot size={64} />
+          <div style={{ fontFamily: "Fredoka", fontSize: 56, letterSpacing: -0.5 }}>stargrep</div>
+        </div>
+        {side}
+        <Address path={`/topics/${card.topic}`} />
       </div>
     </div>
   );

@@ -35,6 +35,7 @@ export function RepoPanel({
   returnFocus,
   starredBy,
   similar,
+  topics,
 }: {
   repo: RepoDetail | undefined;
   open: boolean;
@@ -44,6 +45,8 @@ export function RepoPanel({
   starredBy?: ReactNode;
   // Repos near this one, under the link to GitHub.
   similar?: ReactNode;
+  // The repo's GitHub topics, under its summary.
+  topics?: ReactNode;
 }) {
   // A repo opened from inside the panel replaces the one it showed, so the panel starts again from its top, and focus
   // leaves the link that opened it, which is gone.
@@ -141,6 +144,8 @@ export function RepoPanel({
                   <p className="font-sans text-base text-secondary-foreground">{repo.summary}</p>
                 </section>
               )}
+
+              {topics}
 
               {repo.network.length > 0 && (
                 <section className="flex items-center gap-3">
