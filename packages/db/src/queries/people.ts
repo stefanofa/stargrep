@@ -1,4 +1,4 @@
-import { GitHubAccountId, Login } from "@stargrep/github/schemas";
+import { GitHubAccountId, Login, type RepoId } from "@stargrep/github/schemas";
 import { type SQL, sql } from "drizzle-orm";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -40,6 +40,14 @@ export type Person = typeof Person.Type;
 const Liked = Schema.Struct({ ...Person.fields, shared: Schema.Int });
 export type Liked = typeof Liked.Type;
 
+const Stargazer = Schema.Struct({ login: Login, avatarUrl: Schema.NullOr(Schema.String), total: Schema.Int });
+
+export interface Stargazers {
+  readonly people: ReadonlyArray<{ readonly login: Login; readonly avatarUrl: string | null }>;
+  // How many listed people star the repo, the ones past the limit included.
+  readonly total: number;
+}
+
 export type PeopleSort = "recently-active" | "most-like-you";
 
 export interface PeopleQuery {
@@ -75,11 +83,19 @@ export interface Queries {
     accountId: GitHubAccountId,
     limit: number,
   ) => Effect.Effect<ReadonlyArray<Liked>, DbQueryFailed | DbRowInvalid>;
+  // The listed people who star the repo now, curated first, then most followed. The account is left out, so a person's
+  // own page doesn't name them.
+  readonly starredBy: (query: {
+    readonly repoId: RepoId;
+    readonly except: GitHubAccountId;
+    readonly limit: number;
+  }) => Effect.Effect<Stargazers, DbQueryFailed | DbRowInvalid>;
 }
 
 const decodeCount = rowsDecoder(Schema.Struct({ count: Schema.Int }));
 const decodePeople = rowsDecoder(Person);
 const decodeLiked = rowsDecoder(Liked);
+const decodeStargazers = rowsDecoder(Stargazer);
 
 // How many current stars the account shares with each person, from the copy, one index probe per star of the account.
 const sharedWith = (accountId: GitHubAccountId) => sql`
@@ -276,5 +292,25 @@ export const make = Effect.gen(function* () {
           order by ${likeness} desc, s.n desc, p.account_id
           limit ${limit}`,
       ),
+
+    // One probe of people_stars_repo_idx, so a repo every listed person stars reads a few hundred entries.
+    starredBy: Effect.fn("Db.people.starredBy")(function* ({ repoId, except, limit }) {
+      const found = yield* query(
+        "people.starredBy",
+        decodeStargazers,
+        sql`
+          select a.login, a.avatar_url as "avatarUrl", count(*) over ()::int as total
+          from ${peopleStars} ps
+          join ${people} p on p.account_id = ps.account_id
+          join ${githubAccounts} a on a.id = ps.account_id
+          where ps.repo_id = ${repoId} and ps.account_id <> ${except}
+          order by p.curated desc, a.followers desc nulls last, ps.account_id
+          limit ${limit}`,
+      );
+      return {
+        people: found.map(({ login, avatarUrl }) => ({ login, avatarUrl })),
+        total: found[0]?.total ?? 0,
+      };
+    }),
   } satisfies Queries;
 });

@@ -17,6 +17,9 @@ export const loginPage = (login: string) =>
     ? { to: "/@{$login}" as const, params: { login } }
     : { to: "/{-$login}" as const, params: { login } };
 
+// The path of loginPage, for a plain link.
+export const loginHref = (login: string) => (reservedLogin(login) ? `/@${login}` : `/${login}`);
+
 // A stars page answers only for a GitHub login.
 export const guardLogin = (login: string, search: Params, pathname: string) => {
   if (!isGitHubLogin(login)) throw notFound();

@@ -142,6 +142,7 @@ const db = makeDb({
   people: {
     page: ({ offset }) => Effect.succeed({ people: offset === 0 ? [person] : [], total: 1 }),
     like: () => Effect.succeed([{ ...person, shared: 146 }]),
+    starredBy: () => Effect.succeed({ people: [{ login: person.login, avatarUrl: null }], total: 1 }),
   },
   facets: {
     lookup: ({ limit }) =>

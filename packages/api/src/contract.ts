@@ -263,14 +263,32 @@ const SimilarRepo = Schema.Struct({
   stars: Schema.NullOr(Schema.Int).annotate({ description: "The repo's star count, when Stargrep has read it." }),
 });
 
+// How many people similarRepos' starredBy names, at most.
+export const starredByLimit = 6;
+
 export const SimilarRepos = Schema.Struct({
+  starredBy: Schema.Struct({
+    people: Schema.Array(
+      Schema.Struct({
+        login: Schema.String,
+        avatarUrl: Schema.NullOr(Schema.String).annotate({
+          description: "The account's GitHub avatar, or null before Stargrep has read it.",
+        }),
+      }),
+    ).annotate({
+      description: `Up to ${starredByLimit} of them, the config's curated accounts first, then the most followed.`,
+    }),
+    total: Schema.Int.annotate({ description: "How many people on the list star the repo." }),
+  }).annotate({
+    description: "The people on the people list who star the repo now, as of the nightly refresh, the login left out.",
+  }),
   inStars: Schema.Array(SimilarRepo).annotate({
     description: `Up to ${similarLimit} of the login's own stars nearest the repo by meaning, nearest first, the repo itself left out.`,
   }),
   notStarred: Schema.Array(SimilarRepo).annotate({
     description: `Up to ${similarLimit} repos across Stargrep nearest the repo by meaning that the login hasn't starred, nearest first. Only repos Stargrep has summarized, leaving out archived repos and repos GitHub no longer serves.`,
   }),
-}).annotate({ description: "Both lists are empty when Stargrep has no embedding of the repo yet." });
+}).annotate({ description: "inStars and notStarred are empty when Stargrep has no embedding of the repo yet." });
 
 export const Viewer = Schema.Struct({
   login: Schema.String,
@@ -551,7 +569,7 @@ export const contract = {
       operationId: "similarRepos",
       summary: "Find repos like one repo",
       description:
-        "Returns the repos nearest one repo by meaning, in two lists: those among a login's stars, and those across Stargrep the login hasn't starred.",
+        "Returns the repos nearest one repo by meaning, in two lists: those among a login's stars, and those across Stargrep the login hasn't starred. Also names the people on the people list who star the repo.",
     })
     .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
     .input(SimilarInput)

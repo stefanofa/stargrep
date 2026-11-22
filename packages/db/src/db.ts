@@ -57,7 +57,15 @@ export type {
   SubjectInfo,
   Variant,
 } from "./queries/knowledge/index.ts";
-export type { Liked, PeoplePage, PeopleQuery, PeopleSort, Person, Refreshed } from "./queries/people.ts";
+export type {
+  Liked,
+  PeoplePage,
+  PeopleQuery,
+  PeopleSort,
+  Person,
+  Refreshed,
+  Stargazers,
+} from "./queries/people.ts";
 export { peopleRule } from "./queries/people.ts";
 export type { Receipt, Reservation, Reserved } from "./queries/rate-lines.ts";
 export { CallerKey, LineKey } from "./queries/rate-lines.ts";

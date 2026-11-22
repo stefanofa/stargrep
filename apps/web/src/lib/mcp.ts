@@ -7,7 +7,10 @@ export const mcpTools = [
   { name: "syncStatus", does: "says whether a login is synced and how many of its stars stargrep has read" },
   { name: "stars", does: "lists a login's synced stars, newest first" },
   { name: "getRepo", does: "reads one repo, with its summary" },
-  { name: "similarRepos", does: "finds the repos nearest one repo, in a login's stars and ones it hasn't starred" },
+  {
+    name: "similarRepos",
+    does: "finds the repos nearest one repo, in a login's stars and ones it hasn't starred, and who on the people list starred it",
+  },
   { name: "lookupFacets", does: "finds languages, kinds, and subjects to narrow a search with" },
   { name: "people", does: "lists well-known developers whose stars stargrep has synced" },
   { name: "similarPeople", does: "finds the people on that list with stars most like a login's" },

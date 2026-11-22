@@ -513,6 +513,14 @@ describe("getRepo", () => {
 
 describe("similarRepos", () => {
   const near = { repo: unchecked, stars: 1200 };
+  const starredBy = { people: [{ login: Login.make("theo"), avatarUrl: null }], total: 9 };
+  const stargazers = (asked: Array<unknown>) => ({
+    starredBy: (query: unknown) =>
+      Effect.sync(() => {
+        asked.push(query);
+        return starredBy;
+      }),
+  });
   const similar = (queries: Array<Db.SimilarQuery>) => ({
     near: (query: Db.SimilarQuery) =>
       Effect.sync(() => {
@@ -523,8 +531,11 @@ describe("similarRepos", () => {
 
   test("answers the login's nearest stars and the nearest repos it hasn't starred, five at most", async () => {
     const queries: Array<Db.SimilarQuery> = [];
-    const { api } = client({ similar: similar(queries) });
+    const asked: Array<unknown> = [];
+    const { api } = client({ similar: similar(queries), people: stargazers(asked) });
     const answer = await api.similarRepos({ id: 42 as RepoId, login: "ada" });
+    expect(answer.starredBy).toEqual(starredBy);
+    expect(asked).toEqual([{ repoId: 42 as RepoId, except: ada.account.id, limit: 6 }]);
     expect(answer.inStars).toEqual([
       {
         id: 42 as RepoId,
@@ -550,7 +561,7 @@ describe("similarRepos", () => {
   });
 
   test("answers ACCOUNT_NOT_SYNCED for a login stargrep never synced and REPO_NOT_FOUND for an unknown repo", async () => {
-    const { api } = client({ similar: similar([]) });
+    const { api } = client({ similar: similar([]), people: stargazers([]) });
     expect((await failure(api.similarRepos({ id: 42 as RepoId, login: "linus" }))).code).toBe("ACCOUNT_NOT_SYNCED");
     expect((await failure(api.similarRepos({ id: 43 as RepoId, login: "ada" }))).code).toBe("REPO_NOT_FOUND");
   });
@@ -565,7 +576,11 @@ describe("similarRepos", () => {
         ...contextFor(
           "rest",
           Effect.succeed(
-            services({ similar: similar(queries), limiter: (kind) => Effect.sync(() => limits.push(kind)) }),
+            services({
+              similar: similar(queries),
+              people: stargazers([]),
+              limiter: (kind) => Effect.sync(() => limits.push(kind)),
+            }),
           ),
         ),
         answerCache: memory.cache,

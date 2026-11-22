@@ -143,6 +143,7 @@ const defaults = {
     refresh: unexpected("people.refresh"),
     page: unexpected("people.page"),
     like: unexpected("people.like"),
+    starredBy: unexpected("people.starredBy"),
   },
 } satisfies Db.Db["Service"];
 
