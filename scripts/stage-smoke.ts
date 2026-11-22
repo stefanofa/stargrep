@@ -182,7 +182,7 @@ const web = Effect.gen(function* () {
     check(
       "the OpenAPI document lists every route",
       paths.join(" ") ===
-        "/config /facets /people /people/{login}/similar /repos/{id} /repos/{id}/similar /search /stars/{login} /sync/{login} /topics /topics/pages /topics/{topic}",
+        "/config /facets /people /people/{login}/similar /repos/{id} /repos/{id}/similar /search /stars/{login} /stars/{login}/languages /sync/{login} /topics /topics/pages /topics/{topic}",
       {
         status: spec.status,
         paths,
