@@ -43,10 +43,11 @@ import { useSemanticSearch } from "../lib/use-semantic.ts";
 import { useSimilar } from "../lib/use-similar.ts";
 import { useSync } from "../lib/use-sync.ts";
 import { theirs } from "../lib/whose.ts";
-import { Hero, TryChips } from "./landing-hero.tsx";
+import { ButterTile, Hero, TryChips } from "./landing-hero.tsx";
 import { LibraryPlaceholder, LibraryView } from "./library-view.tsx";
 import { NewToYouSection } from "./new-to-you.tsx";
 import { OwnerPill } from "./owner-pill.tsx";
+import { type PersonStars, PersonTile } from "./person-tile.tsx";
 
 // A navigation in the browser starts from the session the server loaded. The page reads the rest once it mounts.
 export const pageFor = (request: PageRequest, { viewer, config, repoStars, site }: Session): PageData => {
@@ -88,19 +89,27 @@ function Waiting({
   view,
   searching,
   arriving,
-  landing,
+  butter,
+  countTile,
 }: {
   view: View;
   searching: boolean;
   arriving: Arriving | undefined;
-  landing: boolean;
+  butter: boolean;
+  countTile: boolean;
 }) {
   return searching ? (
-    <Results view={view} groups={[{ key: "all", results: [], pending: 4 }]} hero={landing ? "card" : "butter"} />
+    <Results view={view} groups={[{ key: "all", results: [], pending: 4 }]} hero={butter ? "butter" : "card"} />
   ) : (
-    <LibraryPlaceholder view={view} arriving={arriving} butter={!landing} />
+    <LibraryPlaceholder view={view} arriving={arriving} butter={butter} countTile={countTile} />
   );
 }
+
+const lastStarred = (entries: ReadonlyArray<{ readonly starredAt: string }>) =>
+  entries.reduce<string | undefined>(
+    (last, entry) => (last === undefined || entry.starredAt > last ? entry.starredAt : last),
+    undefined,
+  );
 
 const measured = (stage: Stage) => {
   if (stage.name === "importing") return { done: stage.done, total: stage.total };
@@ -233,6 +242,8 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   const trouble: Trouble | undefined =
     watch.kind !== "watching" ? watch.kind : isLoadingError ? libraryTrouble(library?.failure()) : undefined;
   const surprised = useSurprise(query, semantic.kind === "answered" && hits.length > 0);
+  // A login with nothing synced has nothing to load, so its page shows its import before the library loads.
+  const libraryReady = (collection !== undefined && queried) || (empty && entries.length === 0);
   const page = pageView({
     audience,
     query,
@@ -250,13 +261,23 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
       whose,
     }),
     first: first ?? undefined,
-    // A login with nothing synced has nothing to load, so its page shows its import before the library loads.
-    library: { ready: (collection !== undefined && queried) || (empty && entries.length === 0), whole },
+    library: { ready: libraryReady, whole },
     trouble,
     surprised,
   });
   useEffect(() => onPose(page.pose), [onPose, page.pose]);
   const newToYou = useNewToYou(audience, page.body.kind === "library");
+
+  // The page has one butter tile. The hero or the claim tile above the search takes it, or else the content does.
+  const butter = page.hero === undefined && page.person?.claim === undefined;
+  const personStars: PersonStars =
+    trouble !== undefined
+      ? { kind: "unsaid" }
+      : stage.name === "importing"
+        ? { kind: "arriving" }
+        : libraryReady
+          ? { kind: "count", count: entries.length, last: lastStarred(entries) }
+          : { kind: "loading" };
 
   const reveal = useReveal(query, page.painted);
   const butterPose = reveal.phase === "typing" ? "thinking" : reveal.phase === "settled" ? "happy" : "idle";
@@ -338,7 +359,13 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
         );
       case "loading":
         return (
-          <Waiting view={view} searching={current.searching} arriving={current.arriving} landing={policy.landing} />
+          <Waiting
+            view={view}
+            searching={current.searching}
+            arriving={current.arriving}
+            butter={butter}
+            countTile={page.person === undefined}
+          />
         );
       case "library":
         return (
@@ -351,7 +378,8 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
             whose={whose}
             arriving={current.arriving}
             pose={page.pose}
-            butter={!policy.landing}
+            butter={butter}
+            countTile={page.person === undefined}
             onOpen={open}
             aside={
               newToYou && (
@@ -365,7 +393,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           <Results
             view={view}
             groups={withLinks(current.groups, links)}
-            hero={policy.landing ? "card" : "butter"}
+            hero={butter ? "butter" : "card"}
             onOpen={open}
           />
         );
@@ -387,6 +415,14 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   return (
     <>
       {page.hero && <Hero {...page.hero} pose={butterPose} />}
+      {page.person && (
+        <section aria-label={`@${page.person.login}`} className="flex flex-col gap-3.5 lg:flex-row lg:gap-gap">
+          <PersonTile login={page.person.login} known={page.person.known} stars={personStars} />
+          {page.person.claim !== undefined && (
+            <ButterTile butter={{ kind: "claim", progress: page.person.claim }} pose={butterPose} />
+          )}
+        </section>
+      )}
       <div data-reveal-tile className="contents">
         <SearchTile
           query={reveal.typed ?? query}
@@ -424,7 +460,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           }
         />
       </div>
-      {policy.landing && audience.owner.demo && (
+      {page.hero && (
         <TryChips
           examples={data.config.examples.filter((example) => normalize(example) !== normalize(query))}
           onPick={search}

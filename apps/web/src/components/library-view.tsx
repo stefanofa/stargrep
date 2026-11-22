@@ -30,7 +30,8 @@ const pageSize = 48;
 
 const columns = 4;
 
-// A visitor's page already has the butter tile in its hero, so their count tile stays white.
+// The count tile on the landing and on your own stars. The landing's hero already has the butter tile, so its count
+// tile stays white. A person page has the person tile instead.
 function CountTile({
   count,
   arriving,
@@ -79,15 +80,23 @@ function CountTile({
 
 const waitingChips = ["w-[92px]", "w-[118px]", "w-[78px]"];
 
+// The filters of the library: a language, and the archived repos as one more chip, so filtering lives in one place.
+// "all" takes every filter off.
 function LanguagesTile({
   shares,
   language,
+  archived,
+  wide,
 }: {
   shares: ReadonlyArray<LanguageShare> | undefined;
   language: string | undefined;
+  archived: { readonly count: number; readonly on: boolean } | undefined;
+  wide: boolean;
 }) {
   return (
-    <Tile className="flex flex-col justify-between gap-6 pt-tile-top pb-6 pl-tile-lg">
+    <Tile
+      className={cn("flex flex-col justify-between gap-6 pt-tile-top pr-6 pb-6 pl-tile-lg", wide && "lg:col-span-2")}
+    >
       <h2 className="font-display text-2xl font-semibold tracking-snug">languages</h2>
       {shares === undefined ? (
         <div className="flex flex-col gap-3">
@@ -99,11 +108,11 @@ function LanguagesTile({
       )}
       <nav aria-label="Filter by language" className="flex flex-wrap gap-2">
         <Chip
-          active={language === undefined}
+          active={language === undefined && archived?.on !== true}
           render={
             <Link
               to="."
-              search={(previous) => ({ ...previous, lang: undefined })}
+              search={(previous) => ({ ...previous, lang: undefined, archived: undefined })}
               activeOptions={{ explicitUndefined: true }}
             />
           }
@@ -120,6 +129,12 @@ function LanguagesTile({
             {share.name} {Math.round(share.share * 100)}%
           </Chip>
         ))}
+        {/* The chip stays while its filter is on, so a shared link to the filter shows it. */}
+        {archived !== undefined && (archived.count > 0 || archived.on) && (
+          <Chip active={archived.on} render={<Link to="." search={(previous) => ({ ...previous, archived: true })} />}>
+            archived {formatCount(archived.count)}
+          </Chip>
+        )}
       </nav>
     </Tile>
   );
@@ -149,16 +164,18 @@ export function LibraryPlaceholder({
   view,
   arriving,
   butter,
+  countTile,
 }: {
   view: View;
   arriving?: Arriving | undefined;
   butter: boolean;
+  countTile: boolean;
 }) {
   return (
     <>
       <div aria-busy className="grid gap-gap lg:grid-cols-2">
-        <CountTile count={undefined} arriving={arriving} pose="idle" butter={butter} />
-        <LanguagesTile shares={undefined} language={undefined} />
+        {countTile && <CountTile count={undefined} arriving={arriving} pose="idle" butter={butter} />}
+        <LanguagesTile shares={undefined} language={undefined} archived={undefined} wide={!countTile} />
       </div>
       <section className="flex flex-col gap-gap pt-3">
         <div aria-hidden className="flex items-baseline gap-2.5 pl-1.5">
@@ -182,6 +199,7 @@ export function LibraryView({
   arriving,
   pose,
   butter,
+  countTile,
   onOpen,
   aside,
 }: {
@@ -194,6 +212,8 @@ export function LibraryView({
   arriving: Arriving | undefined;
   pose: PipPose;
   butter: boolean;
+  // A person page shows the count in the person tile above the search.
+  countTile: boolean;
   onOpen: OpenResult;
   // A section between the summary tiles and the months, such as what's new to a signed-in viewer.
   aside?: ReactNode;
@@ -225,8 +245,13 @@ export function LibraryView({
   return (
     <>
       <div className="grid gap-gap lg:grid-cols-2">
-        <CountTile count={entries.length} arriving={arriving} pose={pose} butter={butter} />
-        <LanguagesTile shares={shares} language={language} />
+        {countTile && <CountTile count={entries.length} arriving={arriving} pose={pose} butter={butter} />}
+        <LanguagesTile
+          shares={shares}
+          language={language}
+          archived={{ count: graveyard.count, on: archived }}
+          wide={!countTile}
+        />
         {/* The tile stays while its filter is on, so its chip can take the filter back off. */}
         {(graveyard.count > 0 || archived) && (
           <DeadStarsTile dead={graveyard} whose={whose} at={at} search={search} onOpen={onOpen} />

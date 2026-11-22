@@ -15,9 +15,6 @@ export type Audience =
   | { readonly by: "owner"; readonly viewer: Viewer; readonly owner: Owner };
 
 export interface Policy {
-  // The hero with its butter sign-in tile. The hero owns the page's one butter tile, so the count tile and the first
-  // result stay white.
-  readonly landing: boolean;
   // The owner's library comes from the session-only library, anyone else's from the public stars pages.
   readonly library: "session" | "public";
   // The owner's page asks for a sync on every open. Other pages ask only for a login with nothing synced.
@@ -25,12 +22,22 @@ export interface Policy {
 }
 
 const policies = {
-  anyone: { landing: true, library: "public", syncOnOpen: false },
-  "signed-in": { landing: false, library: "public", syncOnOpen: false },
-  owner: { landing: false, library: "session", syncOnOpen: true },
+  anyone: { library: "public", syncOnOpen: false },
+  "signed-in": { library: "public", syncOnOpen: false },
+  owner: { library: "session", syncOnOpen: true },
 } as const satisfies Record<Audience["by"], Policy>;
 
 export const policyOf = (audience: Audience): Policy => policies[audience.by];
+
+// What a stars page puts above its search. The landing is a visitor's look at the demo account, under the hero and its
+// butter sign-in tile. A person page is anyone else's stars, under that person's tile. The own page is the viewer's
+// stars, with nothing above the search.
+export type PageKind = "landing" | "person" | "own";
+
+export const pageKindOf = (audience: Audience): PageKind => {
+  if (audience.by === "owner") return "own";
+  return audience.by === "anyone" && audience.owner.demo ? "landing" : "person";
+};
 
 // A visitor lands on the demo account. A signed-in viewer lands on their own stars. The demo account keeps its own
 // spelling whatever case the address uses.

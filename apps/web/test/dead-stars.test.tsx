@@ -82,6 +82,7 @@ const show = (entries: ReadonlyArray<LibraryEntry>, whose: Whose = { own: true }
         arriving={undefined}
         pose="idle"
         butter
+        countTile={whose.own}
         onOpen={onOpen}
       />
     );
@@ -155,5 +156,31 @@ describe("the dead stars tile", () => {
   test("a shared link to the archived filter lands on it", async () => {
     const { view } = show(library, { own: true }, "/?archived=true");
     await waitFor(() => expect(shownRepos(view)).toEqual(["atom", "moment", "tui-rs", "request"]));
+  });
+});
+
+describe("the archived chip among the language filters", () => {
+  const filters = (view: ReturnType<typeof render>) =>
+    within(view.getByRole("navigation", { name: "Filter by language" }));
+
+  test("filters to the archived repos, and all takes every filter off", async () => {
+    const user = userEvent.setup();
+    const { view, router } = show(library, { own: true }, "/?lang=Rust");
+    await view.findByRole("heading", { name: "dead stars" });
+    await user.click(filters(view).getByRole("link", { name: "archived 4" }));
+    await waitFor(() => expect(router.state.location.search).toEqual({ lang: "Rust", archived: true }));
+    await waitFor(() =>
+      expect(filters(view).getByRole("link", { name: "archived 4" }).getAttribute("aria-current")).toBe("page"),
+    );
+    expect(filters(view).getByRole("link", { name: "all" }).getAttribute("aria-current")).toBeNull();
+    await user.click(filters(view).getByRole("link", { name: "all" }));
+    await waitFor(() => expect(router.state.location.search).toEqual({}));
+    await waitFor(() => expect(shownRepos(view)).toHaveLength(7));
+  });
+
+  test("is left out when nothing is archived", async () => {
+    const { view } = show([entry(1, "alive")]);
+    await view.findByRole("heading", { name: "languages" });
+    expect(filters(view).queryByRole("link", { name: /^archived/ })).toBeNull();
   });
 });

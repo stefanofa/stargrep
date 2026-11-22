@@ -979,7 +979,9 @@ describe("the search page in each state", () => {
     await user.click(within(page().getByRole("form", { name: "Whose stars" })).getByRole("button", { name: "go" }));
     await page().findByRole("searchbox", { name: "Search @octodone's stars" });
     expect(router.state.location.pathname).toBe("/octodone");
-    expect((page().getByRole("textbox", { name: "github.com/ username" }) as HTMLInputElement).value).toBe("");
+    // A person page has the person in place of the hero, so the field leaves with it.
+    expect(page().getByRole("heading", { level: 1, name: "@octodone" })).toBeTruthy();
+    expect(page().queryByRole("textbox", { name: "github.com/ username" })).toBeNull();
   });
 
   test("the hero's username field stays put on something GitHub could not call a login", async () => {
@@ -992,7 +994,7 @@ describe("the search page in each state", () => {
     expect(page().getByRole("searchbox", { name: "Search @stefanofa's stars" })).toBeTruthy();
   });
 
-  test("the hero keeps its boxes when an import finishes in front of a visitor", async () => {
+  test("a visitor watching an import gets the claim tile beside the person until the stars land", async () => {
     server.signedIn = false;
     server.status = status({
       login: "octosync",
@@ -1002,22 +1004,36 @@ describe("the search page in each state", () => {
       enrichment: arriving,
     });
     await open("/octosync", "Search @octosync's stars");
-    const hero = () => {
-      const tile = page()
-        .getByRole("heading", { level: 2, name: /is this you|search your own stars/ })
-        .closest("[data-slot=tile]") as HTMLElement;
-      const subtitle = page().getByRole("heading", { level: 1 }).nextElementSibling as HTMLElement;
-      return { tile: tile.className, pip: tile.firstElementChild?.className, subtitle: subtitle.className };
-    };
-    await waitFor(() => expect(page().getByRole("heading", { name: "is this you? skip the wait" })).toBeTruthy());
-    const importing = hero();
+    const person = page().getByRole("region", { name: "@octosync" });
+    await waitFor(() =>
+      expect(within(person).getByRole("heading", { name: "is this you? skip the wait" })).toBeTruthy(),
+    );
+    expect(within(person).getByRole("heading", { level: 1, name: "@octosync" })).toBeTruthy();
+    expect(person.textContent).toContain("stars arriving");
+    expect(page().queryByRole("heading", { name: "search anyone's starred GitHub repos in plain words" })).toBeNull();
     server.status = status({ login: "octosync", starredTotal: 6 });
     await poll();
-    await waitFor(() => expect(page().getByRole("heading", { name: "search your own stars" })).toBeTruthy(), {
-      timeout: 6000,
-    });
-    expect(hero()).toEqual(importing);
-    expect(importing.subtitle).toContain("h-[2lh]");
+    await waitFor(
+      () => expect(within(person).queryByRole("heading", { name: "is this you? skip the wait" })).toBeNull(),
+      {
+        timeout: 6000,
+      },
+    );
+    await waitFor(() => expect(person.textContent).toContain("6 stars · last starred Oct 16, 2026 · on GitHub ↗"));
+    expect(within(person).getByRole("link", { name: "on GitHub ↗" }).getAttribute("href")).toBe(
+      "https://github.com/octosync",
+    );
+  });
+
+  test("a person page shows the count in the person tile, so the library has no count tile", async () => {
+    server.signedIn = false;
+    server.status = status({ login: "octodone" });
+    await open("/octodone", "Search @octodone's stars");
+    const person = page().getByRole("region", { name: "@octodone" });
+    await waitFor(() => expect(person.textContent).toContain("6 stars"));
+    expect(person.querySelector("img")?.getAttribute("src")).toBe("https://github.com/octodone.png?size=192");
+    await page().findByRole("heading", { name: "languages" });
+    expect(page().queryByText("stars", { selector: "main p.font-display" })).toBeNull();
   });
 
   test("someone else's stars say whose they are", async () => {
