@@ -187,7 +187,7 @@ export const make = Effect.fn("Db.search.make")(function* (
   configuredModel: EmbeddingModelId,
   acceptedKeys: Ref.Ref<Option.Option<AcceptedKeys>>,
 ) {
-  const { run } = yield* Postgres.Postgres;
+  const { run, withTransaction } = yield* Postgres.Postgres;
   const decodeResolution = Schema.decodeUnknownEffect(Resolution);
 
   // Every key that names exactly one accepted public subject, the rule knowledge_key_meanings applies, so an ambiguous
@@ -215,7 +215,17 @@ export const make = Effect.fn("Db.search.make")(function* (
     hybrid: Effect.fnUntraced(function* (search: HybridSearch) {
       const vector = search.embedding === null ? null : yield* requireModel(configuredModel, search.embedding);
       const keys = search.atoms.stated.some((group) => group._tag === "Subject") ? yield* accepted() : noKeys;
-      const rows = yield* run("search.hybrid", (db) => hybridQuery(db, search, vector, configuredModel, keys));
+      const statement = run("search.hybrid", (db) => hybridQuery(db, search, vector, configuredModel, keys));
+      // A big topic reads its nearest members from an HNSW index. Without an iterative scan the index hands over its
+      // nearest 40 across stargrep, and the few of them in the topic are all the vector ranks get.
+      const rows = yield* search.scope.kind === "topic" && vector !== null
+        ? withTransaction(
+            Effect.andThen(
+              run("search.hybrid", (db) => db.execute(sql`set local hnsw.iterative_scan = relaxed_order`)),
+              statement,
+            ),
+          )
+        : statement;
       const resolution = yield* decodeResolution(rows[0]?.envelope).pipe(
         Effect.mapError(() => new DbRowInvalid({ operation: "search.hybrid", column: "envelope" })),
       );

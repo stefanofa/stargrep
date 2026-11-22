@@ -322,6 +322,35 @@ const scoped = (scope: SearchScope): Scoped => {
   }
 };
 
+// Scoring every member of a big topic reads one repos row per member, 33k rows for python, which takes seconds while
+// the rows are out of cache. So a topic the nightly refresh counted over bigTopic members scores only the members whose
+// text matches, through repos_search_idx, and the nearest members with a summary, through the HNSW index on
+// similar_candidates. A member without a summary has no row there, so it reaches the vector ranks only through its
+// text. A smaller topic scores every member. Each guard holds no column, so Postgres tests it once and skips the
+// branch it rules out.
+export const bigTopic = 10_000;
+
+const topicCandidates = (topic: string, text: string, vector: SQL | null): SQL => {
+  const big = sql`coalesce((select repos > ${bigTopic} from topics where topic = ${topic}), false)`;
+  const nearest =
+    vector === null
+      ? sql``
+      : sql`union
+    select ${topic}::text, n.repo_id from (
+      select c.repo_id from similar_candidates c
+      where ${big} and exists (select 1 from topic_repos t where t.topic = ${topic} and t.repo_id = c.repo_id)
+      order by c.embedding <=> ${vector}
+      limit ${rankDepth}
+    ) n`;
+  return sql`(
+    select t.topic, t.repo_id from topic_repos t where t.topic = ${topic} and not ${big}
+    union
+    select t.topic, t.repo_id from topic_repos t join repos r on r.id = t.repo_id
+    where t.topic = ${topic} and ${big} and r.search @@ websearch_to_tsquery('english', ${text})
+    ${nearest}
+  ) s join repos r on r.id = s.repo_id`;
+};
+
 // Reads s's repo_facets row by primary key and tests every facet filter, or missing when the repo has no row.
 const probeTest = (facets: Arr.NonEmptyReadonlyArray<FacetFilter>): SQL => {
   const test = allOf(Arr.map(facets, (filter) => filter.test));
@@ -366,10 +395,11 @@ const ranked = (
     search.name === null
       ? sql`false`
       : sql`(lower(r.name) = lower(${search.name}) or lower(r.owner || '/' || r.name) = lower(${search.name}))`;
+  const queryVector = vector === null ? null : sql`${`[${vector.join(",")}]`}::halfvec`;
   const distance =
-    vector === null
+    queryVector === null
       ? sql`null::float8`
-      : sql`case when r.embedding_model = ${model} then r.embedding <=> ${`[${vector.join(",")}]`}::halfvec end`;
+      : sql`case when r.embedding_model = ${model} then r.embedding <=> ${queryVector} end`;
   const where = allOf([
     ...scope.where,
     ...(filters.archived === null ? [] : [sql`r.archived = ${filters.archived}`]),
@@ -467,7 +497,8 @@ const ranked = (
   ${x("pick")} as (select * from ${x("best")} order by name_match desc, relevance desc, id limit ${search.limit})`;
   };
 
-  const starsJoin = scope.from;
+  const starsJoin =
+    search.scope.kind === "topic" ? topicCandidates(search.scope.topic, search.text, queryVector) : scope.from;
   const ctes: Array<SQL> = [...parts.resolution];
   const picks: Array<SQL> = [];
   const facets = parts.facetFilters;

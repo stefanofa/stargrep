@@ -10,16 +10,19 @@ import {
   account,
   accountId,
   at,
+  embedding,
   facts,
   hybrid,
   login,
   model,
+  ref,
   repoId,
   repoName,
   searchHits,
   starred,
 } from "./fixtures.ts";
 import { decide, key, newSubjectId, nextRevision } from "./knowledge-fixtures.ts";
+import { summarize } from "./summaries.ts";
 
 const now = at("2026-11-22T00:00:00Z");
 
@@ -277,6 +280,47 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatab
       yield* (yield* TestDatabase.TestDatabase).query("update repos set archived = true where id = $1", [astro[0]]);
       expect((yield* db.topics.refresh()).listed).toBe(1);
       expect(yield* db.topics.page("astro")).toEqual(Option.none());
+    }),
+  );
+
+  test.effect("searches a big topic's members that match the text or sit nearest with a summary", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      yield* reset;
+      const [summarized, waiting, worded, outside] = [repoId(700), repoId(701), repoId(702), repoId(703)];
+      const near = embedding({ 0: 1, 1: 0.1 });
+      yield* db.repos.upsertRefs([summarized, waiting, worded, outside].map((id) => ref(id)));
+      for (const id of [summarized, outside]) {
+        yield* db.repos.saveFacts(facts(id));
+        yield* summarize({ id, readmeOid: null, summary: `repo ${id}`, keywords: [] });
+        yield* db.repos.saveEmbedding({
+          ...ref(id),
+          keywords: [],
+          description: null,
+          embedding: near,
+          summary: `repo ${id}`,
+          readmeOid: null,
+        });
+      }
+      // A member that waits for its summary has an embedding of its metadata, and no row in similar_candidates.
+      yield* db.repos.saveFacts(facts(waiting));
+      yield* database.query(
+        "update repos set embedding = $1::halfvec, embedding_model = $2, embedding_source = 'metadata' where id = $3",
+        [`[${near.vector.join(",")}]`, model, waiting],
+      );
+      yield* db.repos.saveFacts({ ...facts(worded), description: "a kettle that whistles" });
+      yield* database.query("insert into topics (topic, repos, ranked) values ('kettles', $1, 0)", [Db.bigTopic + 1]);
+      yield* database.query(
+        "insert into topic_repos (topic, repo_id, role) select 'kettles', unnest($1::bigint[]), 'tagged'",
+        [[summarized, waiting, worded]],
+      );
+      const search = hybrid({ scope: { kind: "topic", topic: "kettles" }, text: "kettle", embedding: near, limit: 50 });
+      const found = Effect.map(searchHits(search), (hits) => hits.map(({ repo }): number => repo.id).toSorted());
+
+      expect(yield* found).toEqual([summarized, worded].toSorted());
+      yield* database.query("update topics set repos = $1 where topic = 'kettles'", [Db.bigTopic]);
+      expect(yield* found).toEqual([summarized, waiting, worded].toSorted());
     }),
   );
 };

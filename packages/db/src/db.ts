@@ -112,6 +112,7 @@ export type {
   SubjectGroup,
 } from "./queries/search.ts";
 export { acceptedKeysTtl, MetricFamily, MetricVariant, noAtoms, noFilters } from "./queries/search.ts";
+export { bigTopic } from "./queries/search-statement.ts";
 export type { SimilarQuery, SimilarRepo, SimilarRows } from "./queries/similar.ts";
 export type {
   EnrichmentProgress,
