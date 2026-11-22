@@ -20,6 +20,7 @@ import type {
   LibraryRepo,
   NewToYou,
   SearchResult,
+  SimilarPerson,
   SimilarRepo,
   SimilarRepos,
   SyncStatus,
@@ -51,6 +52,9 @@ interface Server {
   similar: (id: number) => SimilarRepos;
   // The repo IDs the page asked for similar repos of.
   similarAsked: Array<number>;
+  // The people most like each login, and every login and limit the page asked about.
+  alike: Record<string, ReadonlyArray<SimilarPerson>>;
+  alikeAsked: Array<[string, number | undefined]>;
 }
 
 let server: Server;
@@ -85,8 +89,9 @@ const api = (): Client => ({
   people: async () => {
     throw new Error("Unexpected people call");
   },
-  similarPeople: async () => {
-    throw new Error("Unexpected similarPeople call");
+  similarPeople: async ({ login, limit }: { login: string; limit?: number }) => {
+    server.alikeAsked.push([login, limit]);
+    return { people: server.alike[login] ?? [] };
   },
   monthlyPicks: async () => {
     throw new Error("Unexpected monthlyPicks call");
@@ -227,6 +232,8 @@ beforeEach(() => {
     compared: [],
     similar: () => nothingNear,
     similarAsked: [],
+    alike: {},
+    alikeAsked: [],
   };
   library = real.makeLibrary(() =>
     real.onePage(
@@ -1257,6 +1264,71 @@ describe("what's new to you on someone else's stars", () => {
     await open("/octodone?q=terminal", "Search @octodone's stars");
     expect(server.compared).toEqual([]);
     expect(tile()).toBeNull();
+  });
+});
+
+describe("people with stars like these", () => {
+  const alike = (login: string, shared: number): SimilarPerson => ({
+    login,
+    avatarUrl: null,
+    curated: true,
+    stars: 600,
+    lastStarredAt: "2026-11-01T00:00:00.000Z",
+    languages: [],
+    topics: [],
+    shared,
+  });
+  const tileOf = (heading: string) =>
+    page().queryByRole("heading", { level: 2, name: heading })?.closest<HTMLElement>("[data-slot=tile]") ?? null;
+  const rowHeadings = (heading: string) =>
+    Array.from(
+      tileOf(heading)?.parentElement?.querySelectorAll(":scope > [data-slot=tile] h2") ?? [],
+      (title) => title.textContent,
+    );
+
+  test("someone else's stars end the discover row with the people most like theirs", async () => {
+    server.signedIn = false;
+    server.status = status({ login: "octodone" });
+    server.repos = [...repos(), repo(9, "old", "archived-one", "Gone quiet.", { archived: true })];
+    server.alike = { octodone: [alike("mattpocock", 32), alike("leerob", 10)] };
+    await open("/octodone", "Search @octodone's stars");
+    await waitFor(() => expect(tileOf("stars like @octodone's")).not.toBeNull());
+    expect(rowHeadings("stars like @octodone's")).toEqual(["new to you", "dead stars", "stars like @octodone's"]);
+    const tile = within(tileOf("stars like @octodone's") as HTMLElement);
+    expect(tile.getAllByRole("link").map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
+      ["@mattpocock32 stars in common", "/mattpocock"],
+      ["@leerob10 stars in common", "/leerob"],
+      ["more people", "/people"],
+    ]);
+    expect(server.alikeAsked).toEqual([["octodone", 3]]);
+  });
+
+  test("the tile stays out when nobody's stars are alike", async () => {
+    server.status = status({ login: "octodone" });
+    await open("/octodone", "Search @octodone's stars");
+    await waitFor(() => expect(server.alikeAsked).toEqual([["octodone", 3]]));
+    await waitFor(() => expect(tileOf("new to you")).not.toBeNull());
+    expect(tileOf("stars like @octodone's")).toBeNull();
+  });
+
+  test("your own stars lead with the people most like yours, and nobody asks during a search or on the landing", async () => {
+    server.alike = { junodev: [alike("t3dotgg", 146)] };
+    await open("/?q=terminal");
+    expect(server.alikeAsked).toEqual([]);
+    cleanup();
+    await open("/");
+    await waitFor(() => expect(tileOf("people with stars like yours")).not.toBeNull());
+    const tile = within(tileOf("people with stars like yours") as HTMLElement);
+    expect(tile.getByRole("link", { name: /@t3dotgg/ }).getAttribute("href")).toBe("/t3dotgg");
+    expect(tile.getByRole("link", { name: "see everyone" }).getAttribute("href")).toBe("/people");
+    expect(server.alikeAsked).toEqual([["junodev", 6]]);
+    cleanup();
+    server.alikeAsked = [];
+    server.signedIn = false;
+    server.status = status({ login: "stefanofa" });
+    await open("/", "Search @stefanofa's stars");
+    await waitFor(() => expect(strip()).toContain("found"));
+    expect(server.alikeAsked).toEqual([]);
   });
 });
 

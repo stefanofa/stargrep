@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { api, type People, type PeopleSort, type Person } from "./rpc.ts";
+import { loginKey } from "@stargrep/github/login";
+import { useEffect, useRef, useState } from "react";
+import { api, type People, type PeopleSort, type Person, type SimilarPerson } from "./rpc.ts";
 
 // What /people knows when it paints: the first page of the list, or that the API refused it.
 export type FirstPeople = { readonly kind: "found"; readonly page: People } | { readonly kind: "failed" };
@@ -48,4 +49,28 @@ export const usePeoplePages = (first: People) => {
       );
   };
   return { shown, showMore };
+};
+
+// The people whose stars are most like a login's, asked once per login when the page first shows its library. Undefined
+// until the answer lands. A login with no one alike, one that hasn't synced, or a refused ask has no one.
+export const useSimilarPeople = (
+  login: string,
+  limit: number,
+  visible: boolean,
+): ReadonlyArray<SimilarPerson> | undefined => {
+  const key = `${loginKey(login)}:${limit}`;
+  const [answer, setAnswer] = useState<{ readonly key: string; readonly people: ReadonlyArray<SimilarPerson> }>();
+  const asked = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!visible || asked.current === key) return;
+    asked.current = key;
+    api()
+      .similarPeople({ login, limit })
+      .then(
+        ({ people }) => people,
+        (): ReadonlyArray<SimilarPerson> => [],
+      )
+      .then((people) => setAnswer({ key, people }));
+  }, [login, limit, key, visible]);
+  return answer?.key === key ? answer.people : undefined;
 };

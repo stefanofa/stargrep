@@ -32,6 +32,7 @@ import { useNewToYou } from "../lib/new-to-you.ts";
 import { askedPage, type PageData, type PageRequest, type Session } from "../lib/page-data.ts";
 import { hitsOf, liveView } from "../lib/page-view.ts";
 import { closesBack } from "../lib/panel-history.ts";
+import { useSimilarPeople } from "../lib/people.ts";
 import {
   now,
   type SimilarRowKey,
@@ -58,9 +59,10 @@ import { useSimilar } from "../lib/use-similar.ts";
 import { useSync } from "../lib/use-sync.ts";
 import { theirs } from "../lib/whose.ts";
 import { ButterTile, Hero, TryChips } from "./landing-hero.tsx";
-import { LibraryPlaceholder, LibraryView } from "./library-view.tsx";
+import { type Discover, LibraryPlaceholder, LibraryView } from "./library-view.tsx";
 import { NewToYouList, NewToYouTile, type NewToYouTileState } from "./new-to-you.tsx";
 import { OwnerPill } from "./owner-pill.tsx";
+import { PeopleTile } from "./people-tile.tsx";
 import { type PersonStars, PersonTile } from "./person-tile.tsx";
 
 // A navigation in the browser starts from the session the server loaded. The page reads the rest once it mounts.
@@ -293,6 +295,13 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
         : newToYou?.kind === "failed"
           ? undefined
           : newToYou;
+  // The people whose stars are most like these, once the library shows: on someone else's stars after theirs arrive, on
+  // your own after your first sync.
+  const alike = useSimilarPeople(
+    owner,
+    audience.by === "owner" ? 6 : 3,
+    page.body.kind === "library" && trouble === undefined && stage.name !== "importing" && page.hero === undefined,
+  );
   const everythingNew =
     params.show === "new" && newToYou?.kind === "found" && newToYou.found.repos.length > 0 ? newToYou.found : undefined;
 
@@ -372,7 +381,21 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     navigate(loginPage(person.login));
   };
 
-  const discoverTile = discover && <NewToYouTile state={discover} login={owner} at={at} search={links} onOpen={open} />;
+  const newToYouTile = discover && <NewToYouTile state={discover} login={owner} at={at} search={links} onOpen={open} />;
+  const peopleTile =
+    alike !== undefined && alike.length > 0 ? (
+      audience.by === "owner" ? (
+        <PeopleTile heading="people with stars like yours" people={alike} more="see everyone" wide />
+      ) : (
+        <PeopleTile heading={`stars like @${owner}'s`} people={alike} more="more people" />
+      )
+    ) : undefined;
+  const discoverRow: Discover | undefined =
+    newToYouTile === undefined && peopleTile === undefined
+      ? undefined
+      : audience.by === "owner"
+        ? { lead: peopleTile, trail: undefined }
+        : { lead: newToYouTile, trail: peopleTile };
 
   const body = (current: Body) => {
     switch (current.kind) {
@@ -405,7 +428,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
             arriving={current.arriving}
             butter={butter}
             countTile={page.person === undefined}
-            discover={discoverTile}
+            discover={newToYouTile}
           />
         );
       case "library":
@@ -422,7 +445,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
             butter={butter}
             countTile={page.person === undefined}
             onOpen={open}
-            discover={discoverTile}
+            discover={discoverRow}
             instead={
               everythingNew && (
                 <NewToYouList found={everythingNew} login={owner} at={at} view={view} search={links} onOpen={open} />

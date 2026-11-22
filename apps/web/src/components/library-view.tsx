@@ -28,6 +28,11 @@ import { DeadStarsTile } from "./dead-stars-tile.tsx";
 
 const pageSize = 48;
 
+export interface Discover {
+  readonly lead: ReactNode;
+  readonly trail: ReactNode;
+}
+
 const columns = 4;
 
 // The count tile on the landing and on your own stars. The landing's hero already has the butter tile, so its count
@@ -171,7 +176,7 @@ export function LibraryPlaceholder({
   arriving?: Arriving | undefined;
   butter: boolean;
   countTile: boolean;
-  // The discover row's first tile, so the row holds its place while the library loads.
+  // The discover row's lead tile, so the row holds its place while the library loads.
   discover?: ReactNode;
 }) {
   return (
@@ -220,9 +225,9 @@ export function LibraryView({
   // A person page shows the count in the person tile above the search.
   countTile: boolean;
   onOpen: OpenResult;
-  // The first tile of the discover row on someone else's stars, which then holds the dead stars too. The row's third
-  // place, the people whose stars are most like this person's, waits for the people list.
-  discover?: ReactNode;
+  // The discover row: its lead tile, the dead stars, then its trail tile. On someone else's stars new to you leads and
+  // the people with stars like theirs trail. On your own the people with stars like yours lead.
+  discover?: Discover | undefined;
   // What shows in place of the months, such as everything new to the viewer.
   instead?: ReactNode;
 }) {
@@ -265,8 +270,9 @@ export function LibraryView({
     <>
       {discover !== undefined && (
         <div className="flex flex-col gap-gap lg:flex-row">
-          {discover}
+          {discover.lead}
           {graveTile}
+          {discover.trail}
         </div>
       )}
       <div className="grid gap-gap lg:grid-cols-2">

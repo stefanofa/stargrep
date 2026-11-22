@@ -18,6 +18,7 @@ export type NewToYou = Outputs["newToYou"];
 export type People = Outputs["people"];
 export type Person = People["people"][number];
 export type PeopleSort = People["sort"];
+export type SimilarPerson = Outputs["similarPeople"]["people"][number];
 export type EnrichmentProgress = SyncStatus["enrichment"];
 export type OwnerType = NonNullable<LibraryRepo["ownerType"]>;
 export type Client = ContractRouterClient<typeof contract>;
