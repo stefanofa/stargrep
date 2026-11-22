@@ -16,6 +16,8 @@ import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as SearchRouteImport } from './routes/search'
 import { Route as TermsRouteImport } from './routes/terms'
 import { Route as Char123LoginChar125RouteImport } from './routes/{-$login}'
+import { Route as TopicsIndexRouteImport } from './routes/topics.index'
+import { Route as TopicsTopicRouteImport } from './routes/topics.$topic'
 
 const AtChar123loginChar125Route = AtChar123loginChar125RouteImport.update({
   id: '/@{$login}',
@@ -52,6 +54,16 @@ const Char123LoginChar125Route = Char123LoginChar125RouteImport.update({
   path: '/{-$login}',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TopicsIndexRoute = TopicsIndexRouteImport.update({
+  id: '/topics/',
+  path: '/topics/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TopicsTopicRoute = TopicsTopicRouteImport.update({
+  id: '/topics/$topic',
+  path: '/topics/$topic',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/@{$login}': typeof AtChar123loginChar125Route
@@ -61,6 +73,8 @@ export interface FileRoutesByFullPath {
   '/search': typeof SearchRoute
   '/terms': typeof TermsRoute
   '/{-$login}': typeof Char123LoginChar125Route
+  '/topics/$topic': typeof TopicsTopicRoute
+  '/topics/': typeof TopicsIndexRoute
 }
 export interface FileRoutesByTo {
   '/@{$login}': typeof AtChar123loginChar125Route
@@ -70,6 +84,8 @@ export interface FileRoutesByTo {
   '/search': typeof SearchRoute
   '/terms': typeof TermsRoute
   '/{-$login}': typeof Char123LoginChar125Route
+  '/topics/$topic': typeof TopicsTopicRoute
+  '/topics': typeof TopicsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -80,6 +96,8 @@ export interface FileRoutesById {
   '/search': typeof SearchRoute
   '/terms': typeof TermsRoute
   '/{-$login}': typeof Char123LoginChar125Route
+  '/topics/$topic': typeof TopicsTopicRoute
+  '/topics/': typeof TopicsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -91,6 +109,8 @@ export interface FileRouteTypes {
     | '/search'
     | '/terms'
     | '/{-$login}'
+    | '/topics/$topic'
+    | '/topics/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/@{$login}'
@@ -100,6 +120,8 @@ export interface FileRouteTypes {
     | '/search'
     | '/terms'
     | '/{-$login}'
+    | '/topics/$topic'
+    | '/topics'
   id:
     | '__root__'
     | '/@{$login}'
@@ -109,6 +131,8 @@ export interface FileRouteTypes {
     | '/search'
     | '/terms'
     | '/{-$login}'
+    | '/topics/$topic'
+    | '/topics/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -119,6 +143,8 @@ export interface RootRouteChildren {
   SearchRoute: typeof SearchRoute
   TermsRoute: typeof TermsRoute
   Char123LoginChar125Route: typeof Char123LoginChar125Route
+  TopicsTopicRoute: typeof TopicsTopicRoute
+  TopicsIndexRoute: typeof TopicsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -172,6 +198,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof Char123LoginChar125RouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/topics/': {
+      id: '/topics/'
+      path: '/topics'
+      fullPath: '/topics/'
+      preLoaderRoute: typeof TopicsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/topics/$topic': {
+      id: '/topics/$topic'
+      path: '/topics/$topic'
+      fullPath: '/topics/$topic'
+      preLoaderRoute: typeof TopicsTopicRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -183,6 +223,8 @@ const rootRouteChildren: RootRouteChildren = {
   SearchRoute: SearchRoute,
   TermsRoute: TermsRoute,
   Char123LoginChar125Route: Char123LoginChar125Route,
+  TopicsTopicRoute: TopicsTopicRoute,
+  TopicsIndexRoute: TopicsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

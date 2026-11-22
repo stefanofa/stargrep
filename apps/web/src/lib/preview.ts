@@ -32,6 +32,14 @@ export const accountImage = (login: string, revision: string | null, query: stri
   return { path: `${cardPath}${login}.png${search}`, alt: `@${login}'s starred GitHub repos on stargrep` };
 };
 
+// A topic's card, and the card of a search a shared link carries on it.
+export const topicImage = (topic: string, query: string | undefined): PreviewImage => ({
+  path: `${cardPath}topics/${topic}.png${query ? `?${new URLSearchParams({ q: query })}` : ""}`,
+  alt: query
+    ? `searching ${topic} repos on stargrep for "${query}"`
+    : `the ${topic} repos developers star, on stargrep`,
+});
+
 interface Preview {
   readonly title: string;
   readonly description: string;

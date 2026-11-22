@@ -3,7 +3,9 @@ import { cardPath } from "./lib/preview.ts";
 import { bindings, reportFailure, serveApi, serveAuth } from "./server/app.ts";
 import { withHealth } from "./server/health.ts";
 import { serveIcon, workerCache } from "./server/icons.ts";
+import { inProcessFor } from "./server/in-process.ts";
 import { withRobots } from "./server/robots.ts";
+import { robots, sitemap } from "./server/sitemap.ts";
 
 // A page's first byte waits on its loaders, so each page answers with its time to the response, as the API does.
 const renderPage = async (request: Request) => {
@@ -28,6 +30,30 @@ const serveCard = (request: Request, context: ExecutionContext) =>
       )
     : undefined;
 
+// The sitemap reads the topic list, which changes once a night, so it keeps an hour in the Worker's cache.
+const serveCrawlers = (request: Request, context: ExecutionContext) => {
+  const url = new URL(request.url);
+  if (url.pathname === "/robots.txt")
+    return Promise.resolve(
+      new Response(robots(request.url), {
+        headers: { "content-type": "text/plain", "cache-control": "public, max-age=3600" },
+      }),
+    );
+  if (url.pathname !== "/sitemap.xml") return undefined;
+  const key = new Request(new URL("/sitemap.xml", url.origin));
+  return workerCache()
+    .match(key)
+    .then(async (cached) => {
+      if (cached !== undefined) return cached;
+      const body = await sitemap(inProcessFor(request), url.origin);
+      const response = new Response(body, {
+        headers: { "content-type": "application/xml", "cache-control": "public, max-age=3600" },
+      });
+      context.waitUntil(workerCache().put(key, response.clone()));
+      return response;
+    });
+};
+
 const serve = (request: Request, context: ExecutionContext) =>
   withHealth(
     bindings,
@@ -38,6 +64,7 @@ const serve = (request: Request, context: ExecutionContext) =>
         waitUntil: (promise) => context.waitUntil(promise),
       }) ??
       serveCard(incoming, context) ??
+      serveCrawlers(incoming, context) ??
       serveAuth(incoming) ??
       serveApi(incoming) ??
       renderPage(incoming),

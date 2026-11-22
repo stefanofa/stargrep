@@ -15,6 +15,11 @@ export function Page({ header, children }: { header: ReactNode; children: ReactN
         <nav aria-label="about stargrep">
           <ul className="flex flex-wrap gap-x-5 gap-y-2">
             <li>
+              <Link to="/topics" className={textLinkClass}>
+                topics
+              </Link>
+            </li>
+            <li>
               <ExternalTextLink href={stargrepRepoUrl}>source</ExternalTextLink>
             </li>
             <li>

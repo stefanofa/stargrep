@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { SyncStatus } from "../src/lib/rpc.ts";
+import type { SyncStatus, Topic } from "../src/lib/rpc.ts";
 import type { CardSource } from "../src/server/card/account.ts";
 import { serveCard } from "../src/server/card/serve.tsx";
+import type { TopicCardSource } from "../src/server/card/topic.ts";
 import { workerCache } from "../src/server/icons.ts";
 import { libraryRepos } from "./library-fixture.ts";
 
@@ -12,7 +13,21 @@ const revision = `${syncedAt}/2/2/0`;
 const pending: Array<Promise<unknown>> = [];
 const settled = () => Promise.all(pending.splice(0));
 
-const source = (reads: { count: number }, fail = false, imported = true): CardSource => ({
+const [libraryRepo] = libraryRepos;
+if (libraryRepo === undefined) throw new Error("the library fixture holds no repo");
+const { atoms, keywords, starredAt, read, gone, stars, ...listed } = libraryRepo;
+const topicPage: Topic = {
+  topic: "nextjs",
+  repos: 8145,
+  ranked: 1057,
+  home: null,
+  core: [1, 2, 3].map((place) => ({ ...listed, name: `repo-${place}`, devs: 800 - place, stars: 1000 })),
+  built: [],
+  related: [],
+  people: [],
+};
+
+const source = (reads: { count: number }, fail = false, imported = true): CardSource & TopicCardSource => ({
   status: async () => {
     reads.count++;
     if (fail) throw new Error("refused");
@@ -30,11 +45,17 @@ const source = (reads: { count: number }, fail = false, imported = true): CardSo
   library: async () => libraryRepos,
   cachedResults: async () => [],
   avatar: async () => null,
+  topic: async (topic) => {
+    reads.count++;
+    if (topic !== "nextjs") throw new Error("TOPIC_NOT_FOUND");
+    return topicPage;
+  },
+  cachedTopicResults: async () => [],
 });
 
 const reported: Array<unknown> = [];
 
-const get = (path: string, card: CardSource, init?: RequestInit) =>
+const get = (path: string, card: CardSource & TopicCardSource, init?: RequestInit) =>
   serveCard(new Request(`${origin}${path}`, init), {
     cache: workerCache(),
     waitUntil: (promise) => void pending.push(promise),
@@ -46,6 +67,26 @@ const sizeOf = (png: Uint8Array) => {
   const view = new DataView(png.buffer, png.byteOffset);
   return { width: view.getUint32(16), height: view.getUint32(20) };
 };
+
+describe("GET /og/topics/<topic>.png", () => {
+  it("draws a topic's card and a shared search's, keeps each 10 minutes, and sends a topic without a page to the site's card", async () => {
+    const reads = { count: 0 };
+    const card = await get("/og/topics/nextjs.png", source(reads));
+    expect([card.status, card.headers.get("content-type"), card.headers.get("cache-control")]).toEqual([
+      200,
+      "image/png",
+      "public, max-age=600",
+    ]);
+    expect(sizeOf(new Uint8Array(await card.arrayBuffer()))).toEqual({ width: 1200, height: 630 });
+    const searched = await get("/og/topics/nextjs.png?q=auth%20libraries", source(reads));
+    expect(searched.status).toBe(200);
+    const missing = await get("/og/topics/no-such-topic.png", source(reads));
+    expect([missing.status, missing.headers.get("location")]).toEqual([302, `${origin}/og.png`]);
+    await settled();
+    expect((await get("/og/topics/Next.png", source(reads))).status).toBe(404);
+    expect(reported.splice(0).map((error) => (error as Error).message)).toEqual(["TOPIC_NOT_FOUND"]);
+  });
+});
 
 describe("GET /og/<login>.png", () => {
   it("draws a 1200 by 630 PNG on workerd, keeps it a day under the revision it drew, then answers from the cache", async () => {
