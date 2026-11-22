@@ -194,7 +194,8 @@ export const metadataEmbeddingDue = (table: MetadataColumns) =>
 
 // Which repos get a paid summary. One with at least `stars` GitHub stars, one a signed-in user starred, or one with
 // neither a description nor topics and at least `bareStars`, since only a summary lets search find that one by meaning.
-// The sweep's partial index names both numbers, so a change to either ships with a migration that rebuilds it.
+// The sweep's partial index and repo_reading_state name both numbers, so a change to either ships with a migration that
+// rebuilds the one and replaces the other.
 export const summaryPolicy = { stars: 200, bareStars: 50 } as const;
 
 // A repo whose star count is unknown is wanted, so its first facts read can learn the count.
@@ -213,6 +214,25 @@ export const retryableEnrichment = (table: EnrichmentColumns) =>
 // What the sweep may send: retryable enrichment that needs no summary, or whose summary the policy wants.
 export const sweepableEnrichment = (table: PolicyColumns) =>
   sql<boolean>`${retryableEnrichment(table)} and (not (${summaryDue(table)}) or ${summaryWanted(table)})`;
+
+interface ProgressColumns extends PolicyColumns {
+  readonly summaryDeferred: AnyPgColumn;
+}
+
+// Where a repo stands in a library's progress: read, failed at the failure cap, queued for a summary Stargrep reads later
+// on its own, because the daily cap deferred it or the summary policy holds it back, or unread. A gone repo is never
+// queued. Triggers on repos keep repo_reading to this through repo_reading_state, the same case written in SQL, and a
+// test holds that function to this one. So a change here or to a predicate it reads, a recipe bump included, ships with
+// a migration that replaces the function.
+export const readingStates = ["read", "failed", "queued", "unread"] as const;
+export type ReadingState = (typeof readingStates)[number];
+export const readingState = (table: ProgressColumns) =>
+  sql<ReadingState>`(case
+    when not ${unreadEnrichment(table)} then 'read'
+    when ${table.enrichFailures} >= ${sql.raw(String(enrichFailureCap))} then 'failed'
+    when (${table.summaryDeferred} or ${summaryUnwanted(table)}) and ${table.goneAt} is null then 'queued'
+    else 'unread'
+  end)::reading_state`;
 
 interface SimilarColumns {
   readonly embedding: AnyPgColumn;
@@ -358,6 +378,18 @@ export const similarCandidates = pgTable(
   },
   (table) => [index("similar_candidates_embedding_idx").using("hnsw", table.embedding.op("halfvec_cosine_ops"))],
 );
+
+export const readingStateType = pgEnum("reading_state", readingStates);
+
+// Every repo's readingState, so a library's progress reads one narrow row per star instead of the repos heap. Triggers
+// on repos write a row when a repo is inserted and when its state changes. `bun run --cwd packages/db backfill-reading`
+// fills it for the repos that existed before, and a library's progress reads repos for any repo still missing here.
+export const repoReading = pgTable("repo_reading", {
+  repoId: githubId("repo_id")
+    .primaryKey()
+    .references(() => repos.id, { onDelete: "cascade" }),
+  state: readingStateType("state").notNull(),
+});
 
 export const repoMetrics = pgTable("repo_metrics", {
   repoId: githubId("repo_id")

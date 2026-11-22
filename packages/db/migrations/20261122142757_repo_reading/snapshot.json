@@ -1,0 +1,161 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "a04612aa-b79b-48f4-9ce1-3c728da52c6e",
+  "prevIds": [
+    "b705493b-4934-44bd-b3cc-52490e569305"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "reading_state"
+      ],
+      "writes": [
+        "s|enum|public.reading_state",
+        "n|enum|public.reading_state",
+        "e|enum|public.reading_state",
+        "n|type|public.reading_state"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "repo_reading"
+      ],
+      "writes": [
+        "s|tbl|public.repo_reading",
+        "n|tbl|public.repo_reading",
+        "e|tbl|public.repo_reading",
+        "n|rel|public.repo_reading",
+        "n|type|public.repo_reading",
+        "n|rel|public.repo_reading_pkey"
+      ],
+      "reads": [
+        "n|sch|public",
+        "n|enum|public.reading_state"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "repo_reading"
+      ],
+      "writes": [
+        "s|fk|public.repo_reading.repo_reading_repo_id_repos_id_fkey",
+        "n|fk|public.repo_reading.repo_reading_repo_id_repos_id_fkey",
+        "e|fk|public.repo_reading.repo_reading_repo_id_repos_id_fkey",
+        "n|con|public.repo_reading.repo_reading_repo_id_repos_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.repo_reading",
+        "n|sch|public",
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.repo_reading.repo_id",
+        "n|col|public.repos.id",
+        "e|uniqueness|public.repos.id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "repo_reading",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "reading_state",
+        "values": [
+          "read",
+          "failed",
+          "queued",
+          "unread"
+        ],
+        "entityType": "enums"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_reading",
+        "name": "repo_id",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_reading",
+        "name": "state",
+        "type": "reading_state",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_reading",
+        "name": "repo_reading_repo_id_repos_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "repo_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "repos",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_reading",
+        "name": "repo_reading_pkey",
+        "columns": [
+          "repo_id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    }
+  ]
+}

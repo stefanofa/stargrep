@@ -13,12 +13,13 @@ import { AccountNotFound, type DbQueryFailed, type DbRowInvalid } from "../error
 import * as Postgres from "../postgres.ts";
 import { excluded, NullableTime, requireRow, resultRows, rowsDecoder, writeEncoder } from "../rows.ts";
 import {
-  enrichFailureCap,
   githubAccounts,
+  type ReadingState,
+  readingState,
   repoMetrics,
+  repoReading,
   repos,
   stars,
-  summaryUnwanted,
   unreadEnrichment,
 } from "../schema.ts";
 import { accountNamed } from "./accounts.ts";
@@ -415,18 +416,19 @@ export const make = Effect.fn("Db.stars.make")(function* (model: EmbeddingModelI
           };
         }),
       ),
-    // The progress and the sync status describe the account accountNamed chooses.
+    // The progress and the sync status describe the account accountNamed chooses. A repo the backfill has not reached
+    // yet has no repo_reading row, so its state comes from its repos row.
     enrichment: (login) =>
-      run("stars.enrichment", (db) =>
-        db
+      run("stars.enrichment", (db) => {
+        const library = db
           .select({
-            total: sql<number>`count(*)::int`,
-            read: sql<number>`(count(*) filter (where not ${unread}))::int`,
-            failed: sql<number>`(count(*) filter (where ${unread} and ${repos.enrichFailures} >= ${enrichFailureCap}))::int`,
-            queued: sql<number>`(count(*) filter (where ${unread} and (${repos.summaryDeferred} or ${summaryUnwanted(repos)}) and ${repos.enrichFailures} < ${enrichFailureCap} and ${repos.goneAt} is null))::int`,
+            state:
+              sql<ReadingState>`coalesce(${repoReading.state}, (select ${readingState(repos)} from ${repos} where ${repos.id} = ${stars.repoId}))`.as(
+                "state",
+              ),
           })
           .from(stars)
-          .innerJoin(repos, eq(repos.id, stars.repoId))
+          .leftJoin(repoReading, eq(repoReading.repoId, stars.repoId))
           .where(
             and(
               eq(
@@ -435,8 +437,19 @@ export const make = Effect.fn("Db.stars.make")(function* (model: EmbeddingModelI
               ),
               isNull(stars.unstarredAt),
             ),
-          ),
-      ).pipe(
+          )
+          .as("library");
+        const counted = (state: ReadingState) =>
+          sql<number>`(count(*) filter (where ${library.state} = ${state}))::int`;
+        return db
+          .select({
+            total: sql<number>`count(*)::int`,
+            read: counted("read"),
+            failed: counted("failed"),
+            queued: counted("queued"),
+          })
+          .from(library);
+      }).pipe(
         Effect.flatMap(decodeProgress("stars.enrichment")),
         Effect.flatMap((rows) => Effect.orDie(Effect.fromNullishOr(rows[0]))),
       ),
