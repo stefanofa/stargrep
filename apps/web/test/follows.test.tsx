@@ -11,7 +11,14 @@ const server = {
   refuse: false,
   followed: [] as Array<ReadonlyArray<string>>,
   unfollowed: [] as Array<string>,
+  // Every save as it starts and ends, to see their order.
+  calls: [] as Array<string>,
+  // How long an unfollow takes, and whether it fails.
+  unfollowTakes: 0,
+  refuseUnfollow: false,
 };
+
+const wait = (millis: number) => new Promise((resolve) => after(millis, () => resolve(undefined)));
 
 const api = () => ({
   // The list answers as it stood when asked, after a while, so a follow made meanwhile is newer than it.
@@ -22,13 +29,18 @@ const api = () => ({
   },
   follow: async ({ logins }: { logins: ReadonlyArray<string> }) => {
     server.followed.push(logins);
-    await new Promise((resolve) => after(0, () => resolve(undefined)));
+    server.calls.push(`follow ${logins.join(",")}`);
+    await wait(0);
     if (server.refuse) throw new Error("offline");
     for (const login of logins) server.following.push({ login, followedAt: "2026-11-22T10:00:00.000Z" });
     return { following: [...logins], total: server.following.length, full: false };
   },
   unfollow: async ({ login }: { login: string }) => {
     server.unfollowed.push(login);
+    server.calls.push(`unfollow ${login}`);
+    await wait(server.unfollowTakes);
+    server.calls.push(`unfollowed ${login}`);
+    if (server.refuseUnfollow) throw new Error("offline");
     server.following = server.following.filter((follow) => follow.login !== login);
     return { unfollowed: true };
   },
@@ -45,6 +57,8 @@ spyOn(location, "assign").mockImplementation(() => {});
 const rpc = await import("../src/lib/rpc.ts");
 mock.module("../src/lib/rpc.ts", () => ({ ...rpc, api }));
 const { FollowAll, FollowButton, FollowPill } = await import("../src/components/follows.tsx");
+const { follow, intentParam, unfollow, useFollows } = await import("../src/lib/follows.ts");
+const { useLeaving } = await import("../src/lib/leaving.ts");
 
 // The toast links to the feed, so every control renders inside a router.
 const render = (ui: ReactNode) => {
@@ -63,17 +77,49 @@ afterEach(() => {
   server.refuse = false;
   server.followed = [];
   server.unfollowed = [];
+  server.calls = [];
+  server.unfollowTakes = 0;
+  server.refuseUnfollow = false;
   signedInto.length = 0;
+  sessionStorage.clear();
 });
 
-// A page applies a follow it came back with once per load, so this runs before any other follow control mounts.
+const intentKey = "stargrep-follow-intent";
+
 describe("coming back from sign-in", () => {
-  test("applies the follow once, drops it from the address, and says so", async () => {
-    history.replaceState(null, "", "/margaret?follow=margaret");
+  test("a link alone follows nobody, whatever it names", async () => {
+    for (const path of [
+      "/people?follow=attacker",
+      `/people?${intentParam}=forged`,
+      "/people?follow=attacker&follow-intent=x",
+    ]) {
+      history.replaceState(null, "", path);
+      render(<FollowPill login="mallory" signedIn />);
+      await screen.findByRole("button", { name: /mallory/ });
+      await wait(20);
+      cleanup();
+    }
+    expect(server.followed).toEqual([]);
+  });
+
+  test("a nonce applies only the intent this tab saved under it, once", async () => {
+    sessionStorage.setItem(intentKey, JSON.stringify({ nonce: "saved", logins: ["eve"] }));
+    history.replaceState(null, "", `/people?${intentParam}=other`);
+    render(<FollowPill login="eve" signedIn />);
+    await screen.findByRole("button", { name: /eve/ });
+    await wait(20);
+    expect(server.followed).toEqual([]);
+    expect(sessionStorage.getItem(intentKey)).toBeNull();
+  });
+
+  test("applies the follow it came back to apply, drops the nonce, and says so", async () => {
+    sessionStorage.setItem(intentKey, JSON.stringify({ nonce: "n-1", logins: ["margaret"] }));
+    history.replaceState(null, "", `/margaret?${intentParam}=n-1`);
     render(<FollowButton login="margaret" signedIn />);
     expect(await screen.findByText("you follow @margaret now. their new stars show in following.")).toBeDefined();
     expect(server.followed).toEqual([["margaret"]]);
     expect(location.search).toBe("");
+    expect(sessionStorage.getItem(intentKey)).toBeNull();
     expect(await screen.findByRole("button", { name: "following @margaret, change" })).toBeDefined();
     expect(screen.getByRole("link", { name: "open following" }).getAttribute("href")).toBe("/following");
   });
@@ -85,7 +131,10 @@ describe("the follow button", () => {
     render(<FollowButton login="grace" signedIn={false} />);
     await user.click(await screen.findByRole("button", { name: "+ follow" }));
     await waitFor(() => expect(signedInto).toHaveLength(1));
-    expect(new URL(signedInto[0] ?? "", "http://x").searchParams.get("follow")).toBe("grace");
+    const nonce = new URL(signedInto[0] ?? "", "http://x").searchParams.get(intentParam);
+    expect(nonce).toMatch(/^[0-9a-f-]{36}$/);
+    expect(JSON.parse(sessionStorage.getItem(intentKey) ?? "{}")).toEqual({ nonce, logins: ["grace"] });
+    expect(new URL(signedInto[0] ?? "", "http://x").searchParams.get("follow")).toBeNull();
     expect(server.followed).toEqual([]);
   });
 
@@ -93,7 +142,7 @@ describe("the follow button", () => {
     const user = userEvent.setup();
     render(<FollowButton login="linus" signedIn />);
     await user.click(await screen.findByRole("button", { name: "+ follow" }));
-    expect(server.followed).toEqual([["linus"]]);
+    await waitFor(() => expect(server.followed).toEqual([["linus"]]));
     await user.click(await screen.findByRole("button", { name: "following @linus, change" }));
     expect(await screen.findByText("they aren't told")).toBeDefined();
     await user.click(screen.getByRole("menuitem", { name: "unfollow @linus" }));
@@ -118,7 +167,7 @@ describe("the follow pill", () => {
     const pill = await screen.findByRole("button", { name: "following @ada, unfollow" });
     expect(pill.getAttribute("aria-pressed")).toBe("true");
     await user.click(pill);
-    expect(server.unfollowed).toEqual(["ada"]);
+    await waitFor(() => expect(server.unfollowed).toEqual(["ada"]));
     await waitFor(() => expect(screen.getByRole("button", { name: "follow @ada" })).toBeDefined());
   });
 });
@@ -128,13 +177,13 @@ describe("follow all", () => {
     const user = userEvent.setup();
     render(<FollowAll logins={["ken", "dennis"]} signedIn />);
     await user.click(await screen.findByRole("button", { name: "+ follow all 2" }));
-    expect(server.followed).toEqual([["ken", "dennis"]]);
+    await waitFor(() => expect(server.followed).toEqual([["ken", "dennis"]]));
     expect(await screen.findByText("following all 2")).toBeDefined();
     cleanup();
 
     render(<FollowAll logins={["ken", "dennis", "bjarne"]} signedIn />);
     await user.click(await screen.findByRole("button", { name: "+ follow the other 1" }));
-    expect(server.followed.at(-1)).toEqual(["bjarne"]);
+    await waitFor(() => expect(server.followed.at(-1)).toEqual(["bjarne"]));
   });
 
   test("signed out, it signs in to follow the people it lists", async () => {
@@ -142,6 +191,57 @@ describe("follow all", () => {
     render(<FollowAll logins={["alan", "edsger"]} signedIn={false} />);
     await user.click(await screen.findByRole("button", { name: "+ follow all 2" }));
     await waitFor(() => expect(signedInto).toHaveLength(1));
-    expect(new URL(signedInto[0] ?? "", "http://x").searchParams.get("follow")).toBe("alan,edsger");
+    expect(JSON.parse(sessionStorage.getItem(intentKey) ?? "{}").logins).toEqual(["alan", "edsger"]);
+  });
+});
+
+describe("saves for one login", () => {
+  test("reach the API one after another, so a quick refollow ends following on both sides", async () => {
+    server.unfollowTakes = 30;
+    await Promise.all([unfollow("rob"), follow(["rob"])]);
+    expect(server.calls).toEqual(["unfollow rob", "unfollowed rob", "follow rob"]);
+    expect(server.following.some((entry) => entry.login === "rob")).toBe(true);
+  });
+});
+
+function Leaving({ logins }: { logins: ReadonlyArray<string> }) {
+  const follows = useFollows(true);
+  const { leaving, leave, undo } = useLeaving(() => {}, 30);
+  return (
+    <ul>
+      {logins.map((login) => (
+        <li key={login}>
+          {leaving.has(login) ? (
+            <button type="button" onClick={() => undo(login)}>{`undo ${login}`}</button>
+          ) : (
+            <button type="button" onClick={() => leave(login)}>{`unfollow ${login}`}</button>
+          )}
+          {follows.refusal(login) !== undefined && <span>{`refused ${login}`}</span>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+describe("unfollowing from the list", () => {
+  test("waits for the undo window, so undo reaches no API at all", async () => {
+    const user = userEvent.setup();
+    renderInDom(<Leaving logins={["ken"]} />);
+    await user.click(screen.getByRole("button", { name: "unfollow ken" }));
+    await user.click(screen.getByRole("button", { name: "undo ken" }));
+    await wait(60);
+    expect(server.calls).toEqual([]);
+    expect(screen.getByRole("button", { name: "unfollow ken" })).toBeDefined();
+  });
+
+  test("saves once the window closes, and a refused save puts the row back saying so", async () => {
+    server.refuseUnfollow = true;
+    const user = userEvent.setup();
+    renderInDom(<Leaving logins={["dennis"]} />);
+    await user.click(screen.getByRole("button", { name: "unfollow dennis" }));
+    expect(server.calls).toEqual([]);
+    expect(await screen.findByText("refused dennis")).toBeDefined();
+    expect(server.calls).toEqual(["unfollow dennis", "unfollowed dennis"]);
+    expect(screen.getByRole("button", { name: "unfollow dennis" })).toBeDefined();
   });
 });

@@ -22,6 +22,8 @@ export const Route = createFileRoute("/following/")({
     meta: previewMeta(loaderData?.site, { title, description, path }),
     links: canonicalLinks(loaderData?.site, path),
   }),
+  // The page carries one viewer's follows in its HTML, so no cache may store it.
+  headers: () => ({ "cache-control": "private, no-store" }),
   pendingComponent: lazyRouteComponent(loadFollowing, "FollowingLoading"),
   component: lazyRouteComponent(loadFollowing, "FollowingPage"),
   errorComponent: Failure,

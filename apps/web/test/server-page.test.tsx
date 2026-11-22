@@ -25,6 +25,7 @@ interface Rendered {
   readonly requested: ReadonlyArray<string>;
   readonly searched: ReadonlyArray<string>;
   readonly headers: Readonly<Record<string, string>>;
+  readonly cacheControl: string | null;
 }
 
 const renderOnServer = async (path: string, cookie?: string, env: Record<string, string> = {}): Promise<Rendered> => {
@@ -493,5 +494,19 @@ describe("a stars page from the Worker to the browser", () => {
     expect(reserved.html).toContain("ready to import @api");
     const anyone = await renderOnServer("/@octosync");
     expect(anyone.html).toMatch(/<h1[^>]*>@octosync<\/h1>/);
+  }, 60_000);
+});
+
+describe("the following pages", () => {
+  test("tell every cache to store none of them, signed out or in", async () => {
+    for (const [path, cookie, env] of [
+      ["/following", undefined, {}],
+      ["/following", session, { STARGREP_SIGNED_IN: "octodone" }],
+      ["/following/people", session, { STARGREP_SIGNED_IN: "octodone" }],
+    ] as const) {
+      const page = await renderOnServer(path, cookie, env);
+      expect([path, page.status, page.cacheControl]).toEqual([path, 200, "private, no-store"]);
+    }
+    expect((await renderOnServer("/people")).cacheControl).not.toBe("private, no-store");
   }, 60_000);
 });

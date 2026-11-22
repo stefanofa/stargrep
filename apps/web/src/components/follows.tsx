@@ -30,7 +30,7 @@ import { after } from "../lib/wall-clock.ts";
 
 export { FollowingTile } from "./following-tile.tsx";
 
-const refusals: Record<Refusal, string> = {
+export const refusals: Record<Refusal, string> = {
   failed: "couldn't save that. try again",
   limited: "that's a lot of changes at once. try again in a minute",
   full: "you follow 1,000 people, the most stargrep keeps",

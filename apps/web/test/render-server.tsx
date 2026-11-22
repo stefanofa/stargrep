@@ -75,6 +75,7 @@ process.stdout.write(
     requested,
     searched,
     headers,
+    cacheControl: response.headers.get("cache-control"),
   }),
 );
 process.stdout.write("\n");

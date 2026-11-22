@@ -15,11 +15,12 @@ interface State {
   readonly load: Load;
   // Lowercase login to when the follow started, the newest first.
   readonly following: ReadonlyMap<string, string>;
-  readonly pending: ReadonlySet<string>;
+  // How many saves each login has in flight.
+  readonly pending: ReadonlyMap<string, number>;
   readonly refused: ReadonlyMap<string, Refusal>;
 }
 
-let state: State = { load: "idle", following: new Map(), pending: new Set(), refused: new Map() };
+let state: State = { load: "idle", following: new Map(), pending: new Map(), refused: new Map() };
 const listeners = new Set<() => void>();
 
 const set = (next: Partial<State>) => {
@@ -32,10 +33,28 @@ const subscribe = (listener: () => void) => {
   return () => listeners.delete(listener);
 };
 
-const toggled = <A>(from: ReadonlySet<A>, items: ReadonlyArray<A>, add: boolean) => {
-  const next = new Set(from);
-  for (const item of items) add ? next.add(item) : next.delete(item);
+const counted = (from: ReadonlyMap<string, number>, keys: ReadonlyArray<string>, by: 1 | -1) => {
+  const next = new Map(from);
+  for (const key of keys) {
+    const count = (next.get(key) ?? 0) + by;
+    if (count > 0) next.set(key, count);
+    else next.delete(key);
+  }
   return next;
+};
+
+// Each login's saves reach the API one after another, in the order asked, so the server ends where the last change
+// left it. A quick unfollow and follow again can't land in the other order and leave the two disagreeing.
+const queues = new Map<string, Promise<void>>();
+
+const inTurn = <A>(keys: ReadonlyArray<string>, save: () => Promise<A>): Promise<A> => {
+  const turn = Promise.all(keys.map((key) => queues.get(key))).then(save);
+  const settled = turn.then(
+    () => undefined,
+    () => undefined,
+  );
+  for (const key of keys) queues.set(key, settled);
+  return turn;
 };
 
 const refusalOf = (error: unknown): Refusal => (wireCode(error) === "TOO_MANY_REQUESTS" ? "limited" : "failed");
@@ -79,34 +98,32 @@ export const follow = (logins: ReadonlyArray<string>, source: "stargrep" | "gith
   for (const key of keys) if (!following.has(key)) following.set(key, now);
   const refused = new Map(state.refused);
   for (const key of keys) refused.delete(key);
-  set({ following, pending: toggled(state.pending, keys, true), refused });
-  return api()
-    .follow({ logins: [...logins], source })
-    .then(
-      (result): FollowResult => {
-        const kept = new Set(result.following.map(loginKey));
-        const next = new Map(state.following);
-        const refusals = new Map(state.refused);
-        for (const key of keys)
-          if (!kept.has(key) && !before.has(key)) {
-            next.delete(key);
-            if (result.full) refusals.set(key, "full");
-          }
-        set({ following: next, pending: toggled(state.pending, keys, false), refused: refusals });
-        return result;
-      },
-      (error: unknown) => {
-        const next = new Map(state.following);
-        const refusals = new Map(state.refused);
-        for (const key of keys)
-          if (!before.has(key)) {
-            next.delete(key);
-            refusals.set(key, refusalOf(error));
-          }
-        set({ following: next, pending: toggled(state.pending, keys, false), refused: refusals });
-        return undefined;
-      },
-    );
+  set({ following, pending: counted(state.pending, keys, 1), refused });
+  return inTurn(keys, () => api().follow({ logins: [...logins], source })).then(
+    (result): FollowResult => {
+      const kept = new Set(result.following.map(loginKey));
+      const next = new Map(state.following);
+      const refusals = new Map(state.refused);
+      for (const key of keys)
+        if (!kept.has(key) && !before.has(key)) {
+          next.delete(key);
+          if (result.full) refusals.set(key, "full");
+        }
+      set({ following: next, pending: counted(state.pending, keys, -1), refused: refusals });
+      return result;
+    },
+    (error: unknown) => {
+      const next = new Map(state.following);
+      const refusals = new Map(state.refused);
+      for (const key of keys)
+        if (!before.has(key)) {
+          next.delete(key);
+          refusals.set(key, refusalOf(error));
+        }
+      set({ following: next, pending: counted(state.pending, keys, -1), refused: refusals });
+      return undefined;
+    },
+  );
 };
 
 export const unfollow = (login: string) => {
@@ -117,50 +134,71 @@ export const unfollow = (login: string) => {
   following.delete(key);
   const refused = new Map(state.refused);
   refused.delete(key);
-  set({ following, pending: toggled(state.pending, [key], true), refused });
-  return api()
-    .unfollow({ login })
-    .then(
-      () => {
-        set({ pending: toggled(state.pending, [key], false) });
-        return true;
-      },
-      (error: unknown) => {
-        const back = new Map(state.following);
-        if (since !== undefined) back.set(key, since);
-        set({
-          following: back,
-          pending: toggled(state.pending, [key], false),
-          refused: new Map(state.refused).set(key, refusalOf(error)),
-        });
-        return false;
-      },
-    );
+  set({ following, pending: counted(state.pending, [key], 1), refused });
+  return inTurn([key], () => api().unfollow({ login })).then(
+    () => {
+      set({ pending: counted(state.pending, [key], -1) });
+      return true;
+    },
+    (error: unknown) => {
+      const back = new Map(state.following);
+      if (since !== undefined) back.set(key, since);
+      set({
+        following: back,
+        pending: counted(state.pending, [key], -1),
+        refused: new Map(state.refused).set(key, refusalOf(error)),
+      });
+      return false;
+    },
+  );
 };
 
-// The page asks GitHub to sign in and comes back with ?follow= naming whom to follow, so the follow applies on return.
-export const followParam = "follow";
+// A follow a signed-out visitor asked for waits in this tab's sessionStorage under a random single-use nonce, and the
+// sign-in comes back with only the nonce in the address. A link can name a nonce but not plant the intent, so an address
+// alone never changes anyone's follows.
+const intentKey = "stargrep-follow-intent";
+export const intentParam = "follow-intent";
+
+interface Intent {
+  readonly nonce: string;
+  readonly logins: ReadonlyArray<string>;
+}
 
 export const signInToFollow = (logins: ReadonlyArray<string>) => {
+  // @effect-diagnostics-next-line cryptoRandomUUID:off - the browser's own random ID, for a nonce no server sees.
+  const nonce = crypto.randomUUID();
+  try {
+    sessionStorage.setItem(intentKey, JSON.stringify({ nonce, logins } satisfies Intent));
+  } catch {}
   const url = new URL(location.href);
-  url.searchParams.set(followParam, logins.join(","));
+  url.searchParams.set(intentParam, nonce);
   return signIn(`${url.pathname}${url.search}`);
 };
 
-let returned = false;
+// The intent saved under the nonce, removed whether or not it matches, so it applies at most once.
+const takeIntent = (nonce: string): ReadonlyArray<string> | undefined => {
+  try {
+    const raw = sessionStorage.getItem(intentKey);
+    sessionStorage.removeItem(intentKey);
+    if (raw === null) return undefined;
+    const intent = JSON.parse(raw) as Partial<Intent>;
+    return intent.nonce === nonce && Array.isArray(intent.logins) ? intent.logins : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
-// Applies the follow a sign-in came back with, once per page load, and drops the parameter from the address. Answers
-// whom it followed, or nothing.
+// Applies the follow a sign-in came back with, when the address names the nonce this tab saved before it left. The first
+// follow control to mount takes the nonce and the intent, so it applies once. It drops the nonce from the address either
+// way, and answers whom it followed, or nothing.
 export const followOnReturn = async (): Promise<ReadonlyArray<string> | undefined> => {
-  if (returned) return undefined;
-  returned = true;
   const url = new URL(location.href);
-  const asked = url.searchParams.get(followParam);
-  if (asked === null) return undefined;
-  url.searchParams.delete(followParam);
+  const nonce = url.searchParams.get(intentParam);
+  if (nonce === null) return undefined;
+  url.searchParams.delete(intentParam);
   history.replaceState(history.state, "", `${url.pathname}${url.search}${url.hash}`);
-  const logins = asked.split(",").filter((login) => login !== "");
-  if (logins.length === 0) return undefined;
+  const logins = takeIntent(nonce)?.filter((login) => typeof login === "string" && login !== "");
+  if (logins === undefined || logins.length === 0) return undefined;
   const result = await follow(logins.slice(0, 100));
   return result?.following;
 };

@@ -1,15 +1,16 @@
 import { Button, buttonVariants, Chip, cn, EmptyTile, Pip, Skeleton, Tile } from "@stargrep/ui";
 import { Link, useLoaderData, useNavigate, useRouter, useSearch } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { avatarOf } from "../lib/avatar.ts";
 import { checkedAgo, when } from "../lib/follow-time.ts";
-import { follow, unfollow, useFollows } from "../lib/follows.ts";
+import { follow, type Refusal, useFollows } from "../lib/follows.ts";
 import { useGitHubFollowing } from "../lib/github-following.ts";
+import { useLeaving } from "../lib/leaving.ts";
 import { api, type FollowedPerson } from "../lib/rpc.ts";
 import { loginPage } from "../lib/stars-route.ts";
-import { after, wallNow } from "../lib/wall-clock.ts";
+import { wallNow } from "../lib/wall-clock.ts";
 import { formatCount } from "../lib/whose.ts";
-import { FollowPill } from "./follows.tsx";
+import { FollowPill, refusals } from "./follows.tsx";
 import { Page } from "./page.tsx";
 import { SiteHeader } from "./site-header.tsx";
 
@@ -42,8 +43,6 @@ const sorted = (people: ReadonlyArray<FollowedPerson>, order: PeopleOrder) =>
     return starredAt(b) - starredAt(a);
   });
 
-const undoFor = 5_000;
-
 function Lock() {
   return (
     <svg viewBox="0 0 16 16" aria-hidden className="size-3.5 shrink-0">
@@ -68,12 +67,14 @@ function Row({
   person,
   at,
   unfollowed,
+  refusal,
   onUnfollow,
   onUndo,
 }: {
   person: FollowedPerson;
   at: number;
   unfollowed: boolean;
+  refusal: Refusal | undefined;
   onUnfollow: () => void;
   onUndo: () => void;
 }) {
@@ -103,6 +104,11 @@ function Row({
               unfollowed && "text-muted-foreground",
             )}
           >{`@${person.login}`}</span>
+          {refusal !== undefined && (
+            <span role="status" className="font-sans text-sm text-destructive">
+              {refusals[refusal]}
+            </span>
+          )}
           <span className="truncate font-sans text-sm text-muted-foreground sm:text-base">
             {line ?? (
               <>
@@ -237,36 +243,10 @@ function List({ people, at, login }: { people: ReadonlyArray<FollowedPerson>; at
   const follows = useFollows(true);
   const [order, setOrder] = useState<PeopleOrder>("recent");
   const [shown, setShown] = useState(people);
-  // Each row unfollowed in the last 5 seconds, with how to cancel its leaving.
-  const [leaving, setLeaving] = useState<ReadonlyMap<string, () => void>>(new Map());
-  const timers = useRef(leaving);
-  timers.current = leaving;
   useEffect(() => setShown(people), [people]);
-  useEffect(
-    () => () => {
-      for (const cancel of timers.current.values()) cancel();
-    },
-    [],
+  const { leaving, leave, undo } = useLeaving((login) =>
+    setShown((current) => current.filter((other) => other.login !== login)),
   );
-  const settle = (login: string) =>
-    setLeaving((current) => {
-      const next = new Map(current);
-      next.delete(login);
-      return next;
-    });
-  const unfollowOne = (person: FollowedPerson) => {
-    void unfollow(person.login);
-    const cancel = after(undoFor, () => {
-      setShown((current) => current.filter((other) => other.login !== person.login));
-      settle(person.login);
-    });
-    setLeaving((current) => new Map(current).set(person.login, cancel));
-  };
-  const undo = (person: FollowedPerson) => {
-    leaving.get(person.login)?.();
-    settle(person.login);
-    void follow([person.login], person.source);
-  };
   const count = follows.ready ? follows.count : shown.length;
   return (
     <>
@@ -308,8 +288,9 @@ function List({ people, at, login }: { people: ReadonlyArray<FollowedPerson>; at
                   person={person}
                   at={at}
                   unfollowed={leaving.has(person.login)}
-                  onUnfollow={() => unfollowOne(person)}
-                  onUndo={() => undo(person)}
+                  refusal={follows.refusal(person.login)}
+                  onUnfollow={() => leave(person.login)}
+                  onUndo={() => undo(person.login)}
                 />
               ))}
             </ul>
