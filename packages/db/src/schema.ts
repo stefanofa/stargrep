@@ -415,6 +415,39 @@ export const stars = pgTable(
   ],
 );
 
+// The people list: every account the public rule or the curated list picks, with its card computed from its synced
+// stars. The nightly refresh rewrites it.
+export const people = pgTable("people", {
+  accountId: githubId("account_id")
+    .primaryKey()
+    .references(() => githubAccounts.id, { onDelete: "cascade" }),
+  curated: boolean("curated").notNull(),
+  stars: integer("stars").notNull(),
+  lastStarredAt: time("last_starred_at").notNull(),
+  // The top languages of the account's current stars, each with its share of them, most first.
+  languages: jsonb("languages").notNull().default([]),
+  // The topics most of the account's current stars carry, most first.
+  topics: jsonb("topics").notNull().default([]),
+  // The account's stars_synced_at when the refresh last read its stars, so it reads them again only after a sync.
+  syncedAt: time("synced_at"),
+});
+
+// A copy of every listed person's current stars, keyed by repo, so a count of the stars an account shares with each
+// person reads one entry per star of that account instead of every star of every person.
+export const peopleStars = pgTable(
+  "people_stars",
+  {
+    accountId: githubId("account_id")
+      .notNull()
+      .references(() => people.accountId, { onDelete: "cascade" }),
+    repoId: githubId("repo_id").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.accountId, table.repoId] }),
+    index("people_stars_repo_idx").on(table.repoId, table.accountId),
+  ],
+);
+
 export const follows = pgTable(
   "follows",
   {

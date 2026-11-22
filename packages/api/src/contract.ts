@@ -2,24 +2,15 @@ import "@orpc/effect/extensions/schema";
 import "@orpc/openapi/extensions/route";
 import { type AnyContractProcedure, oc } from "@orpc/contract";
 import { mcp } from "@orpc/mcp";
-import { githubLogin, isGitHubLogin } from "@stargrep/github/login";
 import { SelectionKey } from "@stargrep/knowledge/atom";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Struct from "effect/Struct";
 import { errors } from "./errors.ts";
+import { GitHubLogin } from "./login.ts";
 
-export const GitHubLogin = Schema.String.check(
-  Schema.makeFilter(isGitHubLogin, {
-    expected: "a GitHub login",
-    toJsonSchema: () => ({ pattern: githubLogin.source }),
-  }),
-)
-  .pipe(Schema.brand("Login"))
-  .annotate({
-    description: "A GitHub login, such as octocat.",
-  });
+export { GitHubLogin };
 
 const Timestamp = Schema.String.annotate({ description: "An ISO 8601 time in UTC." });
 
@@ -404,8 +395,92 @@ export const PublicConfig = Schema.Struct({
   featured: Schema.Array(GitHubLogin).annotate({
     description: "Accounts to offer when someone picks whose stars to search.",
   }),
+  curated: Schema.Array(GitHubLogin).annotate({
+    description:
+      "A short pick of well-known accounts to show first. Each is on the people list whatever its rule says, once its stars are synced.",
+  }),
 });
 export type PublicConfig = typeof PublicConfig.Type;
+
+export const maxPeoplePage = 100;
+export const maxPeopleOffset = 10_000;
+
+export const PeopleSort = Schema.Literals(["recently-active", "most-like-you"]);
+
+export const PeopleInput = Schema.Struct({
+  sort: PeopleSort.annotate({
+    description:
+      "recently-active puts the latest star first. most-like-you puts first the people who share the most stars with the signed-in account for how many they star, and sorts as recently-active for anyone else. recently-active when left out.",
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed("recently-active" as const))),
+  limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: maxPeoplePage }))
+    .annotate({ description: `How many people to return, at most. 24 when left out.` })
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed(24))),
+  offset: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: maxPeopleOffset }))
+    .annotate({ description: "How many people to skip, from nextOffset. 0 when left out." })
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed(0))),
+});
+
+const personFields = {
+  login: Schema.String,
+  avatarUrl: Schema.NullOr(Schema.String).annotate({
+    description: "The account's GitHub avatar, or null before Stargrep has read it.",
+  }),
+  curated: Schema.Boolean.annotate({ description: "Whether the account is one of the config's curated accounts." }),
+  stars: Schema.Int.annotate({ description: "How many repos the account stars now, as Stargrep last synced them." }),
+  lastStarredAt: Timestamp.annotate({ description: "When the account starred its newest repo." }),
+  languages: Schema.Array(
+    Schema.Struct({
+      language: Schema.String,
+      share: Schema.Finite.annotate({ description: "The share of the account's stars in this language, from 0 to 1." }),
+    }),
+  ).annotate({ description: "Up to 3 languages most of the account's stars are written in, most first." }),
+  topics: Schema.Array(Schema.String).annotate({
+    description: "Up to 3 GitHub topics most of the account's stars carry, most first.",
+  }),
+};
+
+export const Person = Schema.Struct({
+  ...personFields,
+  shared: Schema.NullOr(Schema.Int).annotate({
+    description:
+      "How many repos the account and the signed-in account both star, or null when no one is signed in or the signed-in account's stars have not synced yet.",
+  }),
+});
+
+export const People = Schema.Struct({
+  sort: PeopleSort.annotate({ description: "The order the people come in." }),
+  people: Schema.Array(Person),
+  total: Schema.Int.annotate({ description: "How many people the list holds." }),
+  nextOffset: Schema.NullOr(Schema.Int).annotate({
+    description: "Pass as offset to read the next page, or null when this page is the last.",
+  }),
+}).annotate({
+  description:
+    "Users with at least 5,000 followers and 40 current stars who starred something in the last 90 days, plus the curated accounts, as of the nightly refresh. A signed-in account is left out of its own list.",
+});
+
+export const maxSimilarPeople = 12;
+
+export const SimilarPeopleInput = Schema.Struct({
+  login: GitHubLogin.annotate({
+    description: "Whose stars to compare with the people list's. The login must be synced first.",
+  }),
+  limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: maxSimilarPeople }))
+    .annotate({ description: "How many people to return, at most. 3 when left out." })
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed(3))),
+});
+
+export const SimilarPeople = Schema.Struct({
+  people: Schema.Array(
+    Schema.Struct({
+      ...personFields,
+      shared: Schema.Int.annotate({ description: "How many repos the person and the login both star." }),
+    }),
+  ).annotate({
+    description:
+      "The people on the list who share the most stars with the login for how many they star, most alike first. The login itself and anyone who shares none are left out.",
+  }),
+});
 
 const sessionRequired = {
   name: "session",
@@ -566,6 +641,32 @@ export const contract = {
     .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
     .input(LookupInput)
     .output(FacetMatches),
+  people: withServices
+    .errors(Struct.pick(errors, ["TOO_MANY_REQUESTS"]))
+    .route({
+      method: "GET",
+      path: "/people",
+      operationId: "people",
+      summary: "List people whose stars to explore",
+      description:
+        "Lists well-known GitHub users whose stars Stargrep has synced, with what their stars are about, a page at a time. Signed in, each person also says how many stars they share with you.",
+    })
+    .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
+    .input(PeopleInput)
+    .output(People),
+  similarPeople: withServices
+    .errors(Struct.pick(errors, ["ACCOUNT_NOT_SYNCED", "TOO_MANY_REQUESTS"]))
+    .route({
+      method: "GET",
+      path: "/people/{login}/similar",
+      operationId: "similarPeople",
+      summary: "Find people with stars like a login's",
+      description:
+        "Returns the people on the people list whose stars overlap the most with a login's, for how many they star.",
+    })
+    .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
+    .input(SimilarPeopleInput)
+    .output(SimilarPeople),
   config: procedure
     .route({
       method: "GET",

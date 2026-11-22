@@ -82,6 +82,12 @@ const api = (): Client => ({
   lookupFacets: async () => {
     throw new Error("Unexpected lookupFacets call");
   },
+  people: async () => {
+    throw new Error("Unexpected people call");
+  },
+  similarPeople: async () => {
+    throw new Error("Unexpected similarPeople call");
+  },
   monthlyPicks: async () => {
     throw new Error("Unexpected monthlyPicks call");
   },
@@ -120,6 +126,7 @@ const api = (): Client => ({
     demoQuery: "terminal dashboard",
     examples: ["python package manager", "terminal recorder", "fuzzy finder"],
     featured: [Login.make("stefanofa")],
+    curated: [],
   }),
   search: async ({ q }: { q: string }) => {
     server.searches.push(q);

@@ -10,6 +10,7 @@ import {
   AiUnavailable,
 } from "@stargrep/ai/errors";
 import * as AiFake from "@stargrep/ai/fake";
+import { curated } from "@stargrep/api/public-config";
 import { FetchIcon, IconQueue, IconStore } from "@stargrep/core/icons";
 import { BlobStore, EnrichQueue, EnrichRepo } from "@stargrep/core/repos";
 import { StarSync } from "@stargrep/core/stars";
@@ -49,6 +50,7 @@ import * as Settle from "../src/consumers/settle.ts";
 import * as SyncStarsConsumer from "../src/consumers/sync-stars.ts";
 import * as EnrichSweep from "../src/jobs/enrich-sweep.ts";
 import * as KnowledgeCount from "../src/jobs/knowledge-count.ts";
+import * as People from "../src/jobs/people.ts";
 import * as ProjectionSweep from "../src/jobs/projection-sweep.ts";
 import * as Sweeps from "../src/jobs/sweeps.ts";
 import * as Layers from "../src/layers.ts";
@@ -864,6 +866,36 @@ describe("knowledge crons", () => {
     expect(logs[0]?.message[1]).toEqual({ changed: 3 });
     expect(logs[1]?.message[1]).toEqual({ accepted: 0 });
     expect(logs[2]?.message[1]).toEqual({ changed: 22 });
+  });
+
+  it("refreshes the people list with the curated logins and logs a refresh that fails", async () => {
+    const { logs, layer } = capture();
+    const asked: Array<ReadonlyArray<string>> = [];
+    const people = (refresh: Db.Db["Service"]["people"]["refresh"]) =>
+      Layer.succeed(Db.Db, makeDb({ people: { refresh } }));
+    await Effect.runPromise(
+      People.run(
+        people((curated) =>
+          Effect.sync(() => {
+            asked.push(curated);
+            return { listed: 361, recounted: 12 };
+          }),
+        ),
+      ).pipe(Effect.provide(layer)),
+    );
+    await Effect.runPromise(
+      People.run(
+        people(() =>
+          Effect.fail(new DbQueryFailed({ operation: "people.recount", reason: "timeout", sqlState: null })),
+        ),
+      ).pipe(Effect.provide(layer)),
+    );
+    expect(asked).toEqual([curated]);
+    expect(logs.map((log) => [log.level, log.message[0]])).toEqual([
+      ["Info", "People refreshed"],
+      ["Error", "People refresh failed"],
+    ]);
+    expect(logs[0]?.message[1]).toEqual({ listed: 361, recounted: 12 });
   });
 });
 
