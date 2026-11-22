@@ -42,6 +42,18 @@ export class AccountNotSynced extends Schema.TaggedError<AccountNotSynced, { rea
   }
 }
 
+// The topic has no page, so there is no set of its repos to search.
+export class TopicNotFound extends Schema.TaggedError<TopicNotFound, { readonly brand: unique symbol }>()(
+  "TopicNotFound",
+  {
+    topic: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Stargrep has no page for the topic '${this.topic}'`;
+  }
+}
+
 // A filter named a subject that does not exist, is private, or was rejected. It is never dropped silently.
 export class FacetUnavailable extends Schema.TaggedError<FacetUnavailable, { readonly brand: unique symbol }>()(
   "FacetUnavailable",
@@ -61,14 +73,16 @@ export type SearchError =
   | DbRowInvalid
   | EmbeddingModelMismatch
   | FacetUnavailable
-  | SearchScopeUnavailable;
+  | SearchScopeUnavailable
+  | TopicNotFound;
 
 export const ScopeKind = Schema.Literals(["stars", "network", "global"]);
 export type ScopeKind = typeof ScopeKind.Type;
 
 export type Scope =
   | { readonly _tag: Exclude<ScopeKind, "global">; readonly login: Login }
-  | { readonly _tag: "global" };
+  | { readonly _tag: "global" }
+  | { readonly _tag: "topic"; readonly topic: string };
 
 export interface SearchRequest {
   readonly scope: Scope;
@@ -174,6 +188,11 @@ export const make = Effect.gen(function* () {
   );
 
   const dbScope = Effect.fn("Search.dbScope")(function* (scope: Scope) {
+    if (scope._tag === "topic") {
+      const topic = yield* db.topics.resolve(scope.topic);
+      if (Option.isNone(topic)) return yield* new TopicNotFound({ topic: scope.topic });
+      return { kind: "topic", topic: topic.value } satisfies Db.SearchScope;
+    }
     if (scope._tag !== "stars") return yield* new SearchScopeUnavailable({ scope: scope._tag });
     const account = yield* db.accounts.byLogin(scope.login);
     if (Option.isNone(account)) return yield* new AccountNotSynced({ login: scope.login });

@@ -88,6 +88,7 @@ const search = Search.Search.of({
     if (request.query === "database down") {
       return yield* new DbQueryFailed({ operation: "search.hybrid", reason: "transport", sqlState: null });
     }
+    if (request.scope._tag === "topic") return yield* new Search.TopicNotFound({ topic: request.scope.topic });
     if (request.scope._tag !== "stars") return yield* new Search.SearchScopeUnavailable({ scope: request.scope._tag });
     if (request.scope.login !== ada.login) return yield* new Search.AccountNotSynced({ login: request.scope.login });
     return {

@@ -145,6 +145,14 @@ const defaults = {
     like: unexpected("people.like"),
     starredBy: unexpected("people.starredBy"),
   },
+  topics: {
+    refresh: unexpected("topics.refresh"),
+    page: unexpected("topics.page"),
+    resolve: unexpected("topics.resolve"),
+    pages: unexpected("topics.pages"),
+    size: unexpected("topics.size"),
+    list: unexpected("topics.list"),
+  },
 } satisfies Db.Db["Service"];
 
 export const makeDb = (overrides: Overrides = {}): Db.Db["Service"] =>
@@ -163,6 +171,7 @@ export const makeDb = (overrides: Overrides = {}): Db.Db["Service"] =>
     starImports: { ...defaults.starImports, ...overrides.starImports },
     iconBackfill: { ...defaults.iconBackfill, ...overrides.iconBackfill },
     people: { ...defaults.people, ...overrides.people },
+    topics: { ...defaults.topics, ...overrides.topics },
   });
 
 // The reservation rule of the rate_lines upsert, kept in a map, for a fake database behind procedures that meter.

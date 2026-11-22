@@ -2,7 +2,7 @@ import type { GitHubAccountId } from "@stargrep/github/schemas";
 import { type AtomRole, type ClosedAtom, everything, type Selection } from "@stargrep/knowledge/atom";
 import { SubjectId } from "@stargrep/knowledge/ids";
 import type { LabelKey } from "@stargrep/knowledge/label-key";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import * as Clock from "effect/Clock";
 import type * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -14,9 +14,8 @@ import { type Embedding, type EmbeddingModelId, type EmbeddingModelMismatch, req
 import { type DbQueryFailed, DbRowInvalid } from "../errors.ts";
 import * as Postgres from "../postgres.ts";
 import { resultRows, rowsDecoder } from "../rows.ts";
-import { repos, stars } from "../schema.ts";
 import { Repo } from "./repos.ts";
-import { hybridQuery, nearNamesQuery } from "./search-statement.ts";
+import { hybridQuery, nearNamesQuery, prefixMatchQuery } from "./search-statement.ts";
 
 export const MetricFamily = Schema.Literals([
   "stars",
@@ -88,10 +87,10 @@ export interface AtomQuery {
 
 export const noAtoms: AtomQuery = { explicit: everything, stated: [] };
 
-export interface SearchScope {
-  readonly kind: "stars";
-  readonly accountId: GitHubAccountId;
-}
+// An account's current stars, or every repo of a listed topic, by its canonical name.
+export type SearchScope =
+  | { readonly kind: "stars"; readonly accountId: GitHubAccountId }
+  | { readonly kind: "topic"; readonly topic: string };
 
 export interface HybridSearch {
   readonly scope: SearchScope;
@@ -226,20 +225,12 @@ export const make = Effect.fn("Db.search.make")(function* (
     matchesAsPrefix: ({ scope, text }) => {
       const query = prefixQuery(text);
       if (query === null) return Effect.succeed(false);
-      return run("search.matchesAsPrefix", (db) =>
-        db
-          .select({ id: stars.repoId })
-          .from(stars)
-          .innerJoin(repos, eq(repos.id, stars.repoId))
-          .where(
-            and(
-              eq(stars.accountId, scope.accountId),
-              isNull(stars.unstarredAt),
-              sql`${repos.search} @@ to_tsquery('english', ${query})`,
-            ),
-          )
-          .limit(1),
-      ).pipe(Effect.map((rows) => rows.length > 0));
+      return run("search.matchesAsPrefix", (db) => db.execute(prefixMatchQuery(scope, query))).pipe(
+        Effect.map((result) => {
+          const rows = resultRows(result);
+          return Array.isArray(rows) && rows.length > 0;
+        }),
+      );
     },
     nearNames: ({ text, ...search }) => {
       const word = text.toLowerCase().replace(/[^a-z0-9]/g, "");

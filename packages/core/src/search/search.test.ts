@@ -468,6 +468,18 @@ const fixture = () => {
       }),
     );
 
+    test.effect("says a topic without a page is not found, before asking the planner", () =>
+      Effect.gen(function* () {
+        calls.prompts.length = 0;
+        calls.embedded.length = 0;
+        const error = yield* search({ scope: { _tag: "topic", topic: "nextjs" }, query: "auth", limit: 10 }).pipe(
+          Effect.flip,
+        );
+        expect(error).toMatchObject({ _tag: "TopicNotFound", topic: "nextjs" });
+        expect([calls.prompts, calls.embedded]).toEqual([[], []]);
+      }),
+    );
+
     test.effect("sends a short query that names a filter to the planner and keeps only repos that match it", () =>
       Effect.gen(function* () {
         const scope = yield* seed(910, [
