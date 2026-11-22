@@ -238,12 +238,18 @@ const clientOf = (serve: (request: Request) => Promise<Response> | undefined): C
 // The browser's client, answered by the same API in this process.
 export const browserClient = (): Client => clientOf(serveApi);
 
+// An answer cache that holds the planned answer to one search, as the API stored it.
+export const cacheAfter = async (input: Parameters<Client["search"]>[0]): Promise<AnswerCache.AnswerCache> => {
+  const { cache } = AnswerCache.memory();
+  const filling = testServer(layerWith(searchWith("model", () => {})), { answerCache: () => cache });
+  await clientOf(filling).search(input);
+  return cache;
+};
+
 // An answer cache that holds the demo's planned answer for q, as a search stored it minutesAgo minutes ago. That search
 // ran before the page, so it records nothing in searched.
 export const cacheHolding = async (q: string, minutesAgo: number): Promise<AnswerCache.AnswerCache> => {
-  const { cache } = AnswerCache.memory();
-  const filling = testServer(layerWith(searchWith("model", () => {})), { answerCache: () => cache });
-  await clientOf(filling).search({ scope: { kind: "stars", login: "stefanofa" }, q });
+  const cache = await cacheAfter({ scope: { kind: "stars", login: "stefanofa" }, q });
   const ago = (stored: AnswerCache.StoredAnswer) => ({ ...stored, storedAt: stored.storedAt - minutesAgo * 60_000 });
   return { ...cache, get: (key) => Effect.map(cache.get(key), Option.map(ago)) };
 };

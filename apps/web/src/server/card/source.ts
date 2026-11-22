@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import { allStars } from "../../lib/stars-pages.ts";
+import { topicSearch } from "../../lib/topic-search.ts";
 import { inProcessFor } from "../in-process.ts";
 import type { CardSource } from "./account.ts";
 import type { TopicCardSource } from "./topic.ts";
@@ -24,21 +25,20 @@ const githubAvatar = async (login: string) => {
   return body === undefined ? null : `data:${type};base64,${base64(new Uint8Array(body))}`;
 };
 
-// The answer by meaning the answer cache holds for a search, or nothing.
+// The answer by meaning the answer cache holds for a search, or nothing. A topic's card reads the search its page asks.
 const cachedResults = async (
   request: Request,
   client: ReturnType<typeof inProcessFor>,
-  scope: { readonly kind: "stars"; readonly login: string } | { readonly kind: "topic"; readonly topic: string },
-  query: string,
+  input:
+    | { readonly scope: { readonly kind: "stars"; readonly login: string }; readonly q: string }
+    | ReturnType<typeof topicSearch>,
 ) => {
   const [{ answers }, { cachedSearch }, publicConfig] = await Promise.all([
     import("../app.ts"),
     import("@stargrep/api/router"),
     client.config(),
   ]);
-  const cached = await Effect.runPromise(
-    cachedSearch({ scope, q: query }, { answerCache: answers(request), publicConfig }),
-  );
+  const cached = await Effect.runPromise(cachedSearch(input, { answerCache: answers(request), publicConfig }));
   return cached.outcome === "miss" ? [] : cached.answer.results;
 };
 
@@ -49,9 +49,9 @@ export const cardSource = (request: Request): CardSource & TopicCardSource => {
   return {
     status: (login) => client.syncStatus({ login }),
     library: (login) => allStars(client, login),
-    cachedResults: (login, query) => cachedResults(request, client, { kind: "stars", login }, query),
+    cachedResults: (login, query) => cachedResults(request, client, { scope: { kind: "stars", login }, q: query }),
     topic: (topic) => client.topic({ topic }),
-    cachedTopicResults: (topic, query) => cachedResults(request, client, { kind: "topic", topic }, query),
+    cachedTopicResults: (topic, query) => cachedResults(request, client, topicSearch(topic, query)),
     avatar: githubAvatar,
   };
 };

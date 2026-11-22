@@ -17,6 +17,7 @@ import { repoVisual } from "../lib/repo-visual.ts";
 import { api, type SearchResult, type Topic, type TopicRepo, wireCode } from "../lib/rpc.ts";
 import { loginPage } from "../lib/stars-route.ts";
 import { topicExamples } from "../lib/topic-examples.ts";
+import { topicSearch, topicSearchLimit } from "../lib/topic-search.ts";
 import { formatCount, starCount } from "../lib/whose.ts";
 import { textLinkClass } from "./external-text-link.tsx";
 import { Page } from "./page.tsx";
@@ -179,7 +180,7 @@ const useTopicSearch = (topic: string, q: string | undefined) => {
     let current = true;
     setAsked({ state: "asking", q });
     api()
-      .search({ scope: { kind: "topic", topic }, q, limit: 24 })
+      .search(topicSearch(topic, q))
       .then(
         ({ results }) => current && setAsked({ state: "found", q, results }),
         (error: unknown) =>
@@ -273,7 +274,7 @@ function Answer({
     );
   return (
     <RepoList
-      heading={`found ${asked.results.length}${asked.results.length === 24 ? "+" : ""}`}
+      heading={`found ${asked.results.length}${asked.results.length === topicSearchLimit ? "+" : ""}`}
       repos={asked.results}
       ranked={false}
       onOpen={onOpen}
