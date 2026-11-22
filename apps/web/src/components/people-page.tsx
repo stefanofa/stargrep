@@ -174,7 +174,8 @@ function Body({ first }: { first: FirstPeople }) {
           disabled={retrying}
           onClick={() => {
             setRetrying(true);
-            router.invalidate().finally(() => setRetrying(false));
+            // Only this page's loader runs again. The root's session loader runs only on the server.
+            router.invalidate({ filter: (match) => match.routeId === "/people" }).finally(() => setRetrying(false));
           }}
         >
           try again

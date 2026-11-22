@@ -1,5 +1,5 @@
 import { createFileRoute, lazyRouteComponent, notFound, redirect } from "@tanstack/react-router";
-import { loadEngine } from "../lib/engine.ts";
+import { Failure } from "../components/problem-page.tsx";
 import { canonicalLinks, pagePath, previewMeta, siteTitle, topicImage } from "../lib/preview.ts";
 import { topicPattern } from "../lib/topic-examples.ts";
 
@@ -48,5 +48,5 @@ export const Route = createFileRoute("/topics/$topic")({
   },
   component: lazyRouteComponent(loadTopic, "TopicPage"),
   notFoundComponent: lazyRouteComponent(loadTopic, "TopicMissing"),
-  errorComponent: lazyRouteComponent(loadEngine, "Failure"),
+  errorComponent: Failure,
 });

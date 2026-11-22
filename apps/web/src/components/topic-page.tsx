@@ -8,6 +8,7 @@ import {
   type RepoDetail,
   RepoIcon,
   RepoPanel,
+  Skeleton,
   Tile,
 } from "@stargrep/ui";
 import { Link, useLoaderData, useNavigate, useSearch } from "@tanstack/react-router";
@@ -172,6 +173,7 @@ type Asked =
 // The topic's search: the query lives in ?q=, so a search is a link to share, and each one asks the server once.
 const useTopicSearch = (topic: string, q: string | undefined) => {
   const [asked, setAsked] = useState<Asked>({ state: "idle" });
+  const [round, setRound] = useState(0);
   useEffect(() => {
     if (q === undefined || q.trim() === "") {
       setAsked({ state: "idle" });
@@ -189,8 +191,8 @@ const useTopicSearch = (topic: string, q: string | undefined) => {
     return () => {
       current = false;
     };
-  }, [topic, q]);
-  return asked;
+  }, [topic, q, round]);
+  return { asked, retry: () => setRound((count) => count + 1) };
 };
 
 function SearchField({ topic, q }: { topic: string; q: string | undefined }) {
@@ -243,26 +245,59 @@ function SearchField({ topic, q }: { topic: string; q: string | undefined }) {
   );
 }
 
+const placeholders = 4;
+
+// The answer's tile while the search runs, with rows the size of the ones that replace them.
+function Searching() {
+  return (
+    <Tile aria-busy className="flex min-w-0 flex-col gap-2 pt-6 pr-tile-sm pb-tile-sm pl-6 max-sm:px-3">
+      <p role="status" className={`${sectionHeading} max-sm:px-3`}>
+        searching…
+      </p>
+      <ul aria-hidden className="-mx-3 flex flex-col max-sm:mx-0">
+        {Array.from({ length: placeholders }, (_, index) => (
+          <li key={index} className="flex items-center gap-3 px-3 py-2.5">
+            <Skeleton className="size-9 shrink-0 squircle rounded-sm" />
+            <span className="flex flex-1 flex-col gap-1.5">
+              <Skeleton className="h-4 w-36" />
+              <Skeleton className="h-3.5 w-4/5" />
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Tile>
+  );
+}
+
+// The stars page's words for a search that didn't answer, and for a network that asked too often.
+const missed = {
+  failed: {
+    pose: "scared",
+    heading: "stargrep couldn't search that",
+    body: "the search didn't answer. try again in a moment.",
+  },
+  limited: { pose: "unsure", heading: "lots of searches from your network", body: "give it a minute, then try again." },
+} as const;
+
 function Answer({
   topic,
   asked,
   onOpen,
+  retry,
 }: {
   topic: string;
   asked: Exclude<Asked, { state: "idle" }>;
   onOpen: (repo: Shown, opener: HTMLElement) => void;
+  retry: () => void;
 }) {
-  if (asked.state === "asking")
-    return (
-      <p role="status" className="font-sans text-meta text-muted-foreground">
-        searching…
-      </p>
-    );
+  if (asked.state === "asking") return <Searching />;
   if (asked.state === "failed")
     return (
-      <p role="status" className="font-sans text-meta text-muted-foreground">
-        {asked.limited ? "too many searches from your network. try again in a minute." : "couldn't search just now."}
-      </p>
+      <EmptyTile {...missed[asked.limited ? "limited" : "failed"]}>
+        <Button variant="primary" size="lg" className="mt-2" onClick={retry}>
+          try again
+        </Button>
+      </EmptyTile>
     );
   if (asked.results.length === 0)
     return (
@@ -342,7 +377,7 @@ export function TopicPage() {
   const { viewer, repoStars } = useLoaderData({ from: "__root__" });
   const { topic } = useLoaderData({ from: "/topics/$topic" });
   const { q } = useSearch({ from: "/topics/$topic" });
-  const asked = useTopicSearch(topic.topic, q);
+  const { asked, retry } = useTopicSearch(topic.topic, q);
   const [coreShown, setCoreShown] = useState(coreStep);
   const [builtShown, setBuiltShown] = useState(builtStep);
   const [open, setOpen] = useState<{ readonly repo: Shown; readonly opener: HTMLElement } | undefined>();
@@ -378,7 +413,7 @@ export function TopicPage() {
         </p>
         <SearchField topic={topic.topic} q={q} />
       </section>
-      {asked.state !== "idle" && <Answer topic={topic.topic} asked={asked} onOpen={onOpen} />}
+      {asked.state !== "idle" && <Answer topic={topic.topic} asked={asked} onOpen={onOpen} retry={retry} />}
       <div className="grid items-start gap-gap lg:grid-cols-2">
         <RepoList
           heading="most starred by developers"

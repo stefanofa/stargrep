@@ -1,6 +1,6 @@
-import { createFileRoute, lazyRouteComponent } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
+import { Failure } from "../components/problem-page.tsx";
 import { StarsPage } from "../components/stars-page.tsx";
-import { loadEngine } from "../lib/engine.ts";
 import { loadPage, pageHead } from "../lib/load-page.ts";
 import { validateParams } from "../lib/search-params.ts";
 import { guardLogin } from "../lib/stars-route.ts";
@@ -16,5 +16,5 @@ export const Route = createFileRoute("/@{$login}")({
   component: function Stars() {
     return <StarsPage data={Route.useLoaderData()} error={Route.useSearch().error} />;
   },
-  errorComponent: lazyRouteComponent(loadEngine, "Failure"),
+  errorComponent: Failure,
 });

@@ -66,14 +66,23 @@ afterEach(cleanup);
 const page = () => within(document.body);
 
 const open = async () => {
+  let sessions = 0;
   const root = createRootRoute({
     component: Outlet,
-    loader: async () => ({
-      viewer: server.viewer,
-      config: { demoLogin: Login.make("stefanofa"), demoQuery: "", examples: [], featured: [], curated: [] },
-      repoStars: null,
-      site: { origin: "https://stargrep.com", indexable: true },
-    }),
+    // As the real root, the session loads once and never reloads, and a second run throws, since it runs only on the
+    // server.
+    staleTime: Number.POSITIVE_INFINITY,
+    shouldReload: false,
+    loader: async () => {
+      sessions += 1;
+      if (sessions > 1) throw new Error("a server-only function ran in the browser");
+      return {
+        viewer: server.viewer,
+        config: { demoLogin: Login.make("stefanofa"), demoQuery: "", examples: [], featured: [], curated: [] },
+        repoStars: null,
+        site: { origin: "https://stargrep.com", indexable: true },
+      };
+    },
   });
   const route = PeopleRoute.update({ id: "/people", path: "/people", getParentRoute: () => root } as never);
   const router = createRouter({

@@ -5,10 +5,11 @@ export { buttonVariants } from "./components/button-variants.ts";
 export { Chip } from "./components/chip.tsx";
 export { DeepSearch } from "./components/deep-search.tsx";
 export { Digits } from "./components/digits.tsx";
-export { EmptyTile, RephraseChips } from "./components/empty-tile.tsx";
+export { EmptyTile } from "./components/empty-tile.tsx";
 export { LanguageBar, type LanguageShare } from "./components/language-bar.tsx";
 export { popupSurface } from "./components/popup.ts";
 export { ProgressRing } from "./components/progress-ring.tsx";
+export { RephraseChips } from "./components/rephrase-chips.tsx";
 export { Monogram, type Plate, RepoIcon, type RepoIconSize, type RepoVisual } from "./components/repo-icon.tsx";
 export { type RepoDetail, RepoPanel } from "./components/repo-panel.tsx";
 export {

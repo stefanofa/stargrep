@@ -1,5 +1,5 @@
 import { createFileRoute, lazyRouteComponent } from "@tanstack/react-router";
-import { loadEngine } from "../lib/engine.ts";
+import { Failure } from "../components/problem-page.tsx";
 import { canonicalLinks, previewMeta, siteTitle } from "../lib/preview.ts";
 
 const path = "/topics";
@@ -20,5 +20,5 @@ export const Route = createFileRoute("/topics/")({
     links: canonicalLinks(loaderData?.site, path),
   }),
   component: lazyRouteComponent(loadTopics, "TopicsPage"),
-  errorComponent: lazyRouteComponent(loadEngine, "Failure"),
+  errorComponent: Failure,
 });

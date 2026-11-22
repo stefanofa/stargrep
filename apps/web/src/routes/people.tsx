@@ -1,4 +1,5 @@
 import { createFileRoute, lazyRouteComponent } from "@tanstack/react-router";
+import { Failure } from "../components/problem-page.tsx";
 import { loadEngine } from "../lib/engine.ts";
 import { canonicalLinks, previewMeta, siteTitle } from "../lib/preview.ts";
 import type { PeopleSort } from "../lib/rpc.ts";
@@ -29,5 +30,5 @@ export const Route = createFileRoute("/people")({
     links: canonicalLinks(loaderData?.site, path),
   }),
   component: lazyRouteComponent(loadEngine, "PeoplePage"),
-  errorComponent: lazyRouteComponent(loadEngine, "Failure"),
+  errorComponent: Failure,
 });
