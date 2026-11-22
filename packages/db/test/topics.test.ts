@@ -94,6 +94,13 @@ const rows = Effect.fn("rows")(function* (id: RepoId) {
 
 const ids = (listed: ReadonlyArray<Db.TopicRepo>) => listed.map(({ repo }): number => repo.id);
 
+const homeIcon = {
+  key: "v2/git/0000000000000000000000000000000000000000.webp",
+  source: "repo-file",
+  plate: "light",
+  size: 64,
+} as const;
+
 const cases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatabase> }) => {
   test.effect("keeps each repo's topics, kinds, and name as its row changes, and none once archived or gone", () =>
     Effect.gen(function* () {
@@ -160,6 +167,7 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatab
       for (const dev of [4, 5]) yield* star(accountId(dev), [...core, home]);
       yield* star(accountId(6), [repoId(2)]);
       yield* (yield* TestDatabase.TestDatabase).query("update repos set gone_at = now() where id = $1", [gone]);
+      yield* db.repos.saveIcon({ id: home, icon: homeIcon });
       yield* db.people.refresh(
         [1, 2, 3, 4, 5, 6].map((dev) => login(`dev-${dev}`)),
         now,
@@ -175,7 +183,7 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatab
       expect(ids(page.core)).toEqual([2, 1, ...range(3, 30), facetCore, kindBeatsFacet]);
       expect(page.core.slice(0, 2).map(({ devs }) => devs)).toEqual([6, 5]);
       expect(ids(page.built)).toEqual(built);
-      expect(page.related).toEqual([{ topic: "react", repos: 32, ranked: 32 }]);
+      expect(page.related).toEqual([{ topic: "react", repos: 32, ranked: 32, home: null }]);
       expect(page.people.map((person): [string, number, number] => [person.login, person.repos, person.stars])).toEqual(
         [
           ["dev-4", 32, 33],
@@ -198,8 +206,9 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatab
       ]);
       expect(yield* db.topics.list({ q: "", offset: 0, limit: 10 })).toEqual({
         topics: [
-          { topic: "nextjs", repos: 42, ranked: 34 },
-          { topic: "react", repos: 32, ranked: 32 },
+          // A topic's home repo comes with its owner and icon, which may stand for the topic.
+          { topic: "nextjs", repos: 42, ranked: 34, home: { owner: "owner", icon: homeIcon } },
+          { topic: "react", repos: 32, ranked: 32, home: null },
         ],
         total: 2,
       });

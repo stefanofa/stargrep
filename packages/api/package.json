@@ -8,14 +8,18 @@
     "./contract": "./src/contract.ts",
     "./errors": "./src/errors.ts",
     "./icon-host": "./src/icon-host.ts",
+    "./logo-svgs": "./src/logo-svgs.gen.ts",
     "./middleware/instrumentation": "./src/middleware/instrumentation.ts",
     "./public-config": "./src/public-config.ts",
     "./rate-limiter": "./src/rate-limiter.ts",
     "./router": "./src/router.ts",
     "./services": "./src/services.ts",
+    "./topic-icons": "./src/topic-icons.ts",
+    "./topic-logos": "./src/topic-logos.gen.ts",
     "./viewers": "./src/viewers.ts"
   },
   "scripts": {
+    "bake:logos": "bun scripts/bake-topic-logos.ts && biome format --write src/topic-logos.gen.ts",
     "typecheck": "effect-tsgo tsc -p ."
   },
   "dependencies": {
@@ -38,6 +42,7 @@
     "@stargrep/telemetry": "workspace:*",
     "@stargrep/testing": "workspace:*",
     "@types/bun": "catalog:",
+    "simple-icons": "16.37.0",
     "typescript": "catalog:"
   }
 }

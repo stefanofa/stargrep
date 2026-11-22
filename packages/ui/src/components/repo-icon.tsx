@@ -25,7 +25,7 @@ const shownSide = (visual: RepoVisual) =>
 
 const slot = "flex shrink-0 items-center justify-center overflow-clip squircle rounded-sm";
 
-export type RepoIconSize = "card" | "row" | "panel";
+export type RepoIconSize = "card" | "row" | "panel" | "heading";
 
 const sizes: Record<RepoIconSize, { slot: string; letters: string; side: number }> = {
   card: {
@@ -35,6 +35,7 @@ const sizes: Record<RepoIconSize, { slot: string; letters: string; side: number 
   },
   row: { slot: "size-9", letters: "text-base leading-[18px]", side: 36 },
   panel: { slot: "size-14", letters: "text-title leading-[26px]", side: 56 },
+  heading: { slot: "size-10 sm:size-14", letters: "text-lg leading-[20px] sm:text-title sm:leading-[26px]", side: 56 },
 };
 
 export function Monogram({ letters, size = "card" }: { letters: string; size?: RepoIconSize }) {
