@@ -3,7 +3,7 @@ import { previewSize } from "../../lib/preview.ts";
 import { formatCount } from "../../lib/whose.ts";
 import type { AccountCardData, TopMatch } from "./account.ts";
 import { mark, palette } from "./palette.ts";
-import type { TopicCardData } from "./topic.ts";
+import type { CardLogo, TopicCardData } from "./topic.ts";
 
 // Link preview cards, 1200 by 630, laid out as artboard 12 in design/renders/stargrep. Satori lays them out with flexbox,
 // so every box with more than one child says display flex.
@@ -33,8 +33,8 @@ function Mascot({ size }: { size: number }) {
   return <img src={mark} width={size} height={size} alt="" />;
 }
 
-// The one butter tile, with the mascot on its white plate in the corner.
-function ButterTile({ children }: { children: ReactNode }) {
+// The one butter tile, with the mascot on its white plate in the corner, or a topic's logo on its own plate.
+function ButterTile({ children, logo = null }: { children: ReactNode; logo?: CardLogo | null }) {
   return (
     <div
       style={{
@@ -59,10 +59,10 @@ function ButterTile({ children }: { children: ReactNode }) {
           alignItems: "center",
           justifyContent: "center",
           borderRadius: 130,
-          background: palette.card,
+          background: logo?.plate === "dark" ? palette.ink : palette.card,
         }}
       >
-        <Mascot size={210} />
+        {logo === null ? <Mascot size={210} /> : <img src={logo.src} width={260} height={260} alt="" />}
       </div>
       {children}
     </div>
@@ -374,7 +374,7 @@ export function TopicCard({ card }: { card: TopicCardData }) {
     );
   return (
     <div style={frame}>
-      <ButterTile>
+      <ButterTile logo={card.logo}>
         <TopicHeadline card={card} />
       </ButterTile>
       <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, gap: 20 }}>

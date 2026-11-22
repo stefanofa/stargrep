@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { topicLogos } from "@stargrep/api/topic-logos";
 import { describe, expect, it } from "vitest";
 import { serveIcon, workerCache } from "../src/server/icons.ts";
 
@@ -47,6 +48,18 @@ describe("GET /icons/<key>", () => {
       expect([versioned, served.status, served.headers.get("content-type")]).toEqual([versioned, 200, "image/webp"]);
     }
     await settled();
+  });
+
+  it("serves a topic's logo as an immutable SVG, and an old logo name 404 for a short time", async () => {
+    const served = await get(`/icons/logos/${topicLogos.nextjs?.key}`);
+    expect([served.status, served.headers.get("content-type"), served.headers.get("cache-control")]).toEqual([
+      200,
+      "image/svg+xml",
+      "public, max-age=31536000, immutable",
+    ]);
+    expect(await served.text()).toMatch(/^<svg /);
+    const old = await get("/icons/logos/nextdotjs.0000000000.svg");
+    expect([old.status, old.headers.get("cache-control")]).toEqual([404, "public, max-age=300"]);
   });
 
   it("answers a well-formed key with no object 404, cacheable for a short time", async () => {

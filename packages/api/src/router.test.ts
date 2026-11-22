@@ -33,6 +33,7 @@ import type { Transport } from "./middleware/instrumentation.ts";
 import { RateLimited, RateLimiter, RateLimiterUnavailable, type RateLimitKind } from "./rate-limiter.ts";
 import { type ApiContext, cachedSearch, router } from "./router.ts";
 import { type ApiServices, ApiServicesUnavailable } from "./services.ts";
+import { topicLogos } from "./topic-logos.gen.ts";
 import { NotSignedIn, type Viewer, type ViewerError, Viewers, ViewerUnavailable } from "./viewers.ts";
 
 const canary = "PRIVATE_QUERY_CANARY";
@@ -776,6 +777,13 @@ describe("similarPeople", () => {
 
 describe("topics", () => {
   const listed = { repo, devs: 775, stars: 16_400 };
+  const logoUrl = (topic: string) => `https://stargrep.test/icons/logos/${topicLogos[topic]?.key}`;
+  const homeIcon = {
+    key: "v2/git/0000000000000000000000000000000000000000.webp",
+    source: "repo-file",
+    plate: "none",
+    size: 64,
+  } as const;
   const page: Db.TopicPage = {
     topic: "nextjs",
     repos: 8145,
@@ -783,7 +791,12 @@ describe("topics", () => {
     home: Option.none(),
     core: [listed],
     built: [],
-    related: [{ topic: "react", repos: 6830, ranked: 6830 }],
+    related: [
+      { topic: "react", repos: 6830, ranked: 6830, home: null },
+      { topic: "frida", repos: 120, ranked: 40, home: { owner: "frida", icon: homeIcon } },
+      { topic: "docker", repos: 9000, ranked: 9855, home: { owner: "jenkinsci", icon: homeIcon } },
+      { topic: "tui", repos: 900, ranked: 300, home: { owner: "someone", icon: homeIcon } },
+    ],
     people: [{ login: Login.make("theo"), avatarUrl: null, repos: 37, stars: 616 }],
   };
   const topics = (asked: Array<string>): Partial<Db.Db["Service"]["topics"]> => ({
@@ -797,7 +810,7 @@ describe("topics", () => {
     list: ({ q, offset, limit }) =>
       Effect.sync(() => {
         asked.push(`${q}/${offset}/${limit}`);
-        return { topics: [{ topic: "nextjs", repos: 8145, ranked: 1058 }], total: 2 };
+        return { topics: [{ topic: "nextjs", repos: 8145, ranked: 1058, home: null }], total: 2 };
       }),
   });
 
@@ -819,6 +832,21 @@ describe("topics", () => {
     expect([asked, [...memory.entries.keys()]]).toEqual([["nextjs"], ["topic/next-js"]]);
   });
 
+  test("gives a topic and its related topics their logo, else an icon their own org's home repo carries", async () => {
+    const { api } = client({ topics: topics([]) });
+    const answer = await api.topic({ topic: "nextjs" });
+    const homeUrl = `https://stargrep.test/icons/${homeIcon.key}`;
+    expect([answer.icon, answer.related.map(({ topic, icon }) => [topic, icon])]).toEqual([
+      { url: logoUrl("nextjs"), plate: "light", size: 128 },
+      [
+        ["react", { url: logoUrl("react"), plate: "light", size: 128 }],
+        ["frida", { url: homeUrl, plate: "none", size: 64 }],
+        ["docker", { url: logoUrl("docker"), plate: "light", size: 128 }],
+        ["tui", null],
+      ],
+    ]);
+  });
+
   test("answers TOPIC_NOT_FOUND for a topic without a page", async () => {
     const { api } = client({ topics: topics([]) });
     expect((await failure(api.topic({ topic: "astro" }))).code).toBe("TOPIC_NOT_FOUND");
@@ -829,7 +857,9 @@ describe("topics", () => {
     const asked: Array<string> = [];
     const { api } = client({ topics: topics(asked) });
     expect(await api.listTopics({ q: "next", limit: 1 })).toEqual({
-      topics: [{ topic: "nextjs", repos: 8145, ranked: 1058 }],
+      topics: [
+        { topic: "nextjs", repos: 8145, ranked: 1058, icon: { url: logoUrl("nextjs"), plate: "light", size: 128 } },
+      ],
       total: 2,
       nextOffset: 1,
     });

@@ -42,6 +42,7 @@ const tui: Topic = {
   topic: "tui",
   repos: 1204,
   ranked: 2,
+  icon: null,
   home: null,
   core: [repo(1, "ratatui"), repo(2, "tui-textarea")],
   built: [],
@@ -57,7 +58,7 @@ const hit = (id: number, name: string): SearchResult => ({
   metrics: [],
 });
 
-const count = (topic: string): TopicCount => ({ topic, repos: 100, ranked: 10 });
+const count = (topic: string): TopicCount => ({ topic, repos: 100, ranked: 10, icon: null });
 
 type Refusal = "unavailable" | "limited" | "zone";
 

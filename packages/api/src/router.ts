@@ -66,6 +66,7 @@ import { instrumentation, type ProcedureTime, type Transport } from "./middlewar
 import { RateLimited, RateLimiter, type RateLimiterUnavailable, type RateLimitKind } from "./rate-limiter.ts";
 import type { ApiServices, ApiServicesUnavailable } from "./services.ts";
 import * as Services from "./services.ts";
+import { topicIcon } from "./topic-icons.ts";
 import { NotSignedIn, type Viewer, type ViewerError, Viewers } from "./viewers.ts";
 
 export interface ApiContext extends WithEffectContext<never>, AnswerContext {
@@ -503,10 +504,20 @@ const topicAnswers: AnswerPolicy<typeof Topic.Encoded> = {
   refused: refusesRequest,
 };
 
+const topicCount = ({ home, ...count }: Db.TopicCount, icons: IconHost["Service"]) => ({
+  ...count,
+  icon: topicIcon(icons, count.topic, home),
+});
+
 const listTopics = Effect.fnUntraced(function* (input: typeof TopicsInput.Type) {
   const page = yield* (yield* Db.Db).topics.list({ q: input.q ?? "", offset: input.offset, limit: input.limit });
+  const icons = yield* IconHost;
   const next = input.offset + page.topics.length;
-  return { ...page, nextOffset: page.topics.length > 0 && next < page.total ? next : null };
+  return {
+    topics: page.topics.map((count) => topicCount(count, icons)),
+    total: page.total,
+    nextOffset: page.topics.length > 0 && next < page.total ? next : null,
+  };
 });
 
 // A spelling of a topic answers with the page of the topic it means, under that topic's own name.
@@ -519,8 +530,16 @@ const topicPage = Effect.fnUntraced(function* (input: typeof TopicInput.Type) {
   if (Option.isNone(page)) return yield* notFound;
   const icons = yield* IconHost;
   const wire = (listed: Db.TopicRepo) => ({ ...repoBase(listed.repo, icons), devs: listed.devs, stars: listed.stars });
-  const { home, core, built, ...rest } = page.value;
-  return { ...rest, home: Option.getOrNull(Option.map(home, wire)), core: core.map(wire), built: built.map(wire) };
+  const { home, core, built, related, ...rest } = page.value;
+  const own = Option.getOrNull(home);
+  return {
+    ...rest,
+    icon: topicIcon(icons, rest.topic, own && { owner: own.repo.owner, icon: own.repo.icon }),
+    home: own && wire(own),
+    core: core.map(wire),
+    built: built.map(wire),
+    related: related.map((count) => topicCount(count, icons)),
+  };
 });
 
 const syncStatus =

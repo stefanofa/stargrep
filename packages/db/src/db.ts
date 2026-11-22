@@ -130,6 +130,7 @@ export type { Settlement, SyncClaim, SyncRequest } from "./queries/sync-requests
 export type {
   Refreshed as TopicsRefreshed,
   TopicCount,
+  TopicHome,
   TopicPage,
   TopicPageLink,
   TopicPerson,

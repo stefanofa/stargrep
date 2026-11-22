@@ -13,7 +13,8 @@
       "!evals/fixtures",
       "!packages/core/seeds",
       "!packages/config/fixtures",
-      "!apps/web/src/routeTree.gen.ts"
+      "!apps/web/src/routeTree.gen.ts",
+      "!packages/api/src/logo-svgs.gen.ts"
     ]
   },
   "formatter": {

@@ -8,6 +8,7 @@ import { libraryRevision } from "../src/lib/sync-status.ts";
 import { type CardSource, readAccountCard } from "../src/server/card/account.ts";
 import { cardSize } from "../src/server/card/card.tsx";
 import { palette } from "../src/server/card/palette.ts";
+import { readTopicCard } from "../src/server/card/topic.ts";
 import { libraryRepos } from "./library-fixture.ts";
 import { syncStatus } from "./sync-status.fixture.ts";
 
@@ -110,4 +111,30 @@ test("a stars page names its own card, with the library revision it read and its
     alt: "@octo's starred GitHub repos on stargrep",
   });
   expect(accountImage("octo", null, undefined).path).toBe("/og/octo.png");
+});
+
+test("a topic's card carries its curated logo on its plate, and a topic without one carries none", async () => {
+  const card = (topic: string) =>
+    readTopicCard(
+      {
+        topic: async () => ({
+          topic,
+          repos: 10,
+          ranked: 5,
+          icon: null,
+          home: null,
+          core: [],
+          built: [],
+          related: [],
+          people: [],
+        }),
+        cachedTopicResults: async () => [],
+      },
+      topic,
+      "",
+    );
+  const [nextjs, javascript, testing] = await Promise.all([card("nextjs"), card("javascript"), card("testing")]);
+  expect(nextjs.logo?.src).toStartWith("data:image/svg+xml,");
+  expect(decodeURIComponent(nextjs.logo?.src ?? "")).toContain('fill="#000000"');
+  expect([nextjs.logo?.plate, javascript.logo?.plate, testing.logo]).toEqual(["light", "dark", null]);
 });

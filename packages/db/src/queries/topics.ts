@@ -19,7 +19,7 @@ import {
   topicRepos,
   topics,
 } from "../schema.ts";
-import { Repo, repoColumns } from "./repos.ts";
+import { Repo, RepoIcon, repoColumns } from "./repos.ts";
 
 // Which topics get a page and what each page keeps. A topic is read once it tags `considered` repos, and gets a page
 // once `gate` of its core repos have `devs` synced developers who star them, the count it ranks by.
@@ -109,7 +109,16 @@ export const canonicalTopic = (topic: string): string => {
   return topicAliases[typed] ?? typed;
 };
 
-const TopicCount = Schema.Struct({ topic: Schema.String, repos: Schema.Int, ranked: Schema.Int });
+// A topic's own repo, by its owner and icon, which may stand for the topic. Gone and archived repos stand for none.
+const TopicHome = Schema.Struct({ owner: Schema.String, icon: Schema.NullOr(RepoIcon) });
+export type TopicHome = typeof TopicHome.Type;
+
+const TopicCount = Schema.Struct({
+  topic: Schema.String,
+  repos: Schema.Int,
+  ranked: Schema.Int,
+  home: Schema.NullOr(TopicHome),
+});
 export type TopicCount = typeof TopicCount.Type;
 
 const TopicRow = Schema.Struct({
@@ -200,6 +209,12 @@ const decodePages = rowsDecoder(TopicPageLink);
 const decodeSize = rowsDecoder(Schema.Struct({ repos: Schema.Int }));
 
 const textArray = (values: ReadonlyArray<string>) => sql`${sql.param(values)}::text[]`;
+
+// The home repo of the topic row t, joined as h, as a TopicHome.
+const homeJoin = (t: SQL) => sql`left join ${repos} h on h.id = ${t}.home and h.gone_at is null and not h.archived`;
+const homeObject = sql`case when h.id is null then null else jsonb_build_object('owner', h.owner, 'icon',
+  case when h.icon_key is null then null
+  else jsonb_build_object('key', h.icon_key, 'source', h.icon_source, 'plate', h.icon_plate, 'size', h.icon_size) end) end`;
 const aliasPairs = Object.entries(topicAliases);
 const aliases = sql`unnest(${textArray(aliasPairs.map(([alias]) => alias))}, ${textArray(aliasPairs.map(([, canonical]) => canonical))}) as a (alias, canonical)`;
 
@@ -508,9 +523,12 @@ export const make = Effect.gen(function* () {
         sql`
           select t.topic, t.repos, t.ranked, t.home::float8 as home, t.core, t.built,
             coalesce((
-              select jsonb_agg(jsonb_build_object('topic', o.topic, 'repos', o.repos, 'ranked', o.ranked) order by r.place)
+              select jsonb_agg(
+                jsonb_build_object('topic', o.topic, 'repos', o.repos, 'ranked', o.ranked, 'home', ${homeObject})
+                order by r.place)
               from jsonb_array_elements_text(t.related) with ordinality as r (topic, place)
               join ${topics} o on o.topic = r.topic
+              ${homeJoin(sql`o`)}
             ), '[]'::jsonb) as related
           from ${topics} t where t.topic = ${topic}`,
       );
@@ -562,12 +580,18 @@ export const make = Effect.gen(function* () {
         "topics.list",
         decodeTopicCounts,
         sql`
-          select topic, repos, ranked, count(*) over ()::int as total from ${topics}
-          where ${text === "" ? sql`true` : sql`topic like ${`%${text}%`}`}
-          order by ${text === "" ? sql`` : sql`(topic like ${`${text}%`}) desc,`} ranked desc, topic
-          limit ${limit} offset ${offset}`,
+          select p.topic, p.repos, p.ranked, ${homeObject} as home, p.total
+          from (
+            select topic, repos, ranked, home, ${text === "" ? sql`false` : sql`topic like ${`${text}%`}`} as starts,
+              count(*) over ()::int as total
+            from ${topics}
+            where ${text === "" ? sql`true` : sql`topic like ${`%${text}%`}`}
+            order by starts desc, ranked desc, topic
+            limit ${limit} offset ${offset}
+          ) p ${homeJoin(sql`p`)}
+          order by p.starts desc, p.ranked desc, p.topic`,
       );
-      return { topics: rows.map(({ topic, repos, ranked }) => ({ topic, repos, ranked })), total: rows[0]?.total ?? 0 };
+      return { topics: rows.map(({ total: _, ...count }) => count), total: rows[0]?.total ?? 0 };
     }),
   } satisfies Queries;
 });

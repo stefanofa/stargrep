@@ -19,6 +19,7 @@ import { api, type SearchResult, type Topic, type TopicRepo, wireCode } from "..
 import { loginPage } from "../lib/stars-route.ts";
 import { topicExamples } from "../lib/topic-examples.ts";
 import { topicSearch, topicSearchLimit } from "../lib/topic-search.ts";
+import { topicVisual } from "../lib/topic-visual.ts";
 import { formatCount, starCount } from "../lib/whose.ts";
 import { textLinkClass } from "./external-text-link.tsx";
 import { Page } from "./page.tsx";
@@ -348,6 +349,23 @@ function People({ topic }: { topic: Topic }) {
   );
 }
 
+const chipPlates = { none: "bg-card", light: "bg-[#ffffff]", dark: "bg-ink" } as const;
+
+// A related topic's logo, as a round face at the start of its chip.
+function ChipLogo({ icon }: { icon: NonNullable<Topic["icon"]> }) {
+  return (
+    <img
+      src={icon.url}
+      alt=""
+      width={24}
+      height={24}
+      loading="lazy"
+      decoding="async"
+      className={`size-6 shrink-0 rounded-full object-cover outline-1 -outline-offset-1 outline-image-edge ${chipPlates[icon.plate]}`}
+    />
+  );
+}
+
 function Related({ topic }: { topic: Topic }) {
   return (
     <nav aria-label="related topics" className="flex flex-col gap-3">
@@ -355,7 +373,13 @@ function Related({ topic }: { topic: Topic }) {
       <ul className="flex flex-wrap gap-2">
         {topic.related.map((related) => (
           <li key={related.topic}>
-            <Chip render={<Link to="/topics/$topic" params={{ topic: related.topic }} />}>{related.topic}</Chip>
+            <Chip
+              render={<Link to="/topics/$topic" params={{ topic: related.topic }} />}
+              className={related.icon === null ? undefined : "gap-2 pl-1.5"}
+            >
+              {related.icon !== null && <ChipLogo icon={related.icon} />}
+              {related.topic}
+            </Chip>
           </li>
         ))}
         <li>
@@ -391,9 +415,16 @@ export function TopicPage() {
     <Page header={<SiteHeader viewer={viewer} repoStars={repoStars} />}>
       <section className="flex flex-col gap-3.5 pt-1.5 sm:pt-5">
         <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
-          <h1 className="font-display text-3xl leading-10 font-semibold tracking-tight break-all sm:text-[52px] sm:leading-[56px]">
-            {topic.topic}
-          </h1>
+          <div className="flex min-w-0 items-baseline gap-3 sm:gap-4">
+            {topic.icon !== null && (
+              <span className="self-center">
+                <RepoIcon visual={topicVisual(topic)} size="heading" />
+              </span>
+            )}
+            <h1 className="min-w-0 font-display text-3xl leading-10 font-semibold tracking-tight break-all sm:text-[52px] sm:leading-[56px]">
+              {topic.topic}
+            </h1>
+          </div>
           {home !== null && (
             <a
               href={home.url}

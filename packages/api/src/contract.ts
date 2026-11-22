@@ -86,6 +86,19 @@ export const Facet = Schema.Struct({
   }),
 });
 
+const Icon = Schema.Struct({
+  url: Schema.String.annotate({
+    description: "A square WebP or SVG on this API's origin, served as immutable, so the URL never shows other bytes.",
+  }),
+  plate: IconPlate.annotate({
+    description:
+      "The tile to draw behind the icon. dark for white ink on transparent, light for black ink on transparent.",
+  }),
+  size: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: maxIconSize })).annotate({
+    description: `The icon's width and height in pixels, at most ${maxIconSize}. Smaller when the source was smaller.`,
+  }),
+});
+
 const repoFields = {
   id: RepoId,
   owner: Schema.String,
@@ -101,20 +114,9 @@ const repoFields = {
   }),
   archived: Schema.Boolean,
   pushedAt: Schema.NullOr(Timestamp),
-  icon: Schema.NullOr(
-    Schema.Struct({
-      url: Schema.String.annotate({
-        description: "A square WebP on this API's origin, served as immutable, so the URL never shows other bytes.",
-      }),
-      plate: IconPlate.annotate({
-        description:
-          "The tile to draw behind the icon. dark for white ink on transparent, light for black ink on transparent.",
-      }),
-      size: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: maxIconSize })).annotate({
-        description: `The icon's width and height in pixels, at most ${maxIconSize}. Smaller when the source was smaller.`,
-      }),
-    }),
-  ).annotate({ description: "The repo's own icon, or null when Stargrep found none or has not looked yet." }),
+  icon: Schema.NullOr(Icon).annotate({
+    description: "The repo's own icon, or null when Stargrep found none or has not looked yet.",
+  }),
   ownerType: Schema.NullOr(OwnerType).annotate({
     description: "Whether a user or an org owns the repo, or null before Stargrep has read it.",
   }),
@@ -532,6 +534,9 @@ const topicCountFields = {
   repos: Schema.Int.annotate({ description: "How many repos the topic's search reads." }),
   ranked: Schema.Int.annotate({
     description: "How many repos for or about the topic at least 3 of the developers Stargrep synced star.",
+  }),
+  icon: Schema.NullOr(Icon).annotate({
+    description: "The topic's logo, or its own repo's icon, or null when it has neither.",
   }),
 };
 

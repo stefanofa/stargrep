@@ -1,7 +1,8 @@
-import { Button, EmptyTile, Tile } from "@stargrep/ui";
+import { Button, EmptyTile, RepoIcon, Tile } from "@stargrep/ui";
 import { Link, useLoaderData, useRouter } from "@tanstack/react-router";
 import { useEffect, useId, useState } from "react";
 import { api, type TopicCount, type TopicsList } from "../lib/rpc.ts";
+import { topicVisual } from "../lib/topic-visual.ts";
 import { formatCount } from "../lib/whose.ts";
 import { Page } from "./page.tsx";
 import { SiteHeader } from "./site-header.tsx";
@@ -107,16 +108,19 @@ function TopicGrid({ topics, busy = false }: { topics: ReadonlyArray<TopicCount>
     <ol aria-busy={busy || undefined} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {topics.map((topic) => (
         <li key={topic.topic} className="flex min-w-0">
-          <Tile className="relative flex min-w-0 flex-1 flex-col gap-0.5 px-5 py-4">
-            <Link
-              to="/topics/$topic"
-              params={{ topic: topic.topic }}
-              className="truncate font-display text-[19px] leading-6 font-semibold tracking-snug outline-none after:absolute after:inset-0 after:squircle after:rounded-tile focus-visible:after:outline-2 focus-visible:after:outline-offset-2 focus-visible:after:outline-ring"
-            >
-              {topic.topic}
-            </Link>
-            <span className="font-sans text-sm text-muted-foreground tabular-nums">
-              {`${formatCount(topic.ranked)} ranked · ${formatCount(topic.repos)} repos`}
+          <Tile className="relative flex min-w-0 flex-1 items-center gap-3 py-4 pr-5 pl-4">
+            <RepoIcon visual={topicVisual(topic)} size="row" />
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <Link
+                to="/topics/$topic"
+                params={{ topic: topic.topic }}
+                className="truncate font-display text-[19px] leading-6 font-semibold tracking-snug outline-none after:absolute after:inset-0 after:squircle after:rounded-tile focus-visible:after:outline-2 focus-visible:after:outline-offset-2 focus-visible:after:outline-ring"
+              >
+                {topic.topic}
+              </Link>
+              <span className="font-sans text-sm text-muted-foreground tabular-nums">
+                {`${formatCount(topic.ranked)} ranked · ${formatCount(topic.repos)} repos`}
+              </span>
             </span>
           </Tile>
         </li>
