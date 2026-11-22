@@ -1,18 +1,45 @@
 import { Button, Chip, EmptyTile, LanguageBar, Skeleton, Tile } from "@stargrep/ui";
 import { Link, useLoaderData, useRouter } from "@tanstack/react-router";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { avatarOf } from "../lib/avatar.ts";
 import { type FirstPeople, usePeoplePages } from "../lib/people.ts";
 import { starredOn } from "../lib/present.ts";
 import type { People, PeopleSort, Person } from "../lib/rpc.ts";
 import { loginPage } from "../lib/stars-route.ts";
+import { useTopicPages } from "../lib/topic-links.ts";
 import { formatCount, starCount } from "../lib/whose.ts";
+import { textLinkClass } from "./external-text-link.tsx";
 import { LoginField } from "./landing-hero.tsx";
 import { Page } from "./page.tsx";
 import { SiteHeader } from "./site-header.tsx";
 
 const grid = "grid gap-gap sm:grid-cols-2 lg:grid-cols-4";
 const cardBox = "flex min-w-0 flex-col gap-4 pt-6 pr-tile-sm pb-tile-sm pl-6";
+
+// The topics most of a person's stars carry. One with a page links to it, above the link that covers the card.
+function Tagged({ topics }: { topics: ReadonlyArray<string> }) {
+  const pageOf = useTopicPages(topics);
+  return (
+    <p className="truncate text-secondary-foreground">
+      {"mostly tagged "}
+      {topics.map((topic, index) => {
+        const page = pageOf(topic);
+        return (
+          <Fragment key={topic}>
+            {index > 0 && " · "}
+            {page === null ? (
+              topic
+            ) : (
+              <Link to="/topics/$topic" params={{ topic: page }} className={`relative z-10 ${textLinkClass}`}>
+                {topic}
+              </Link>
+            )}
+          </Fragment>
+        );
+      })}
+    </p>
+  );
+}
 
 // One person on the list: who, how many stars, what their stars are about, and when they last starred. The whole card
 // opens their stars.
@@ -44,9 +71,7 @@ function PersonCard({ person }: { person: Person }) {
         <LanguageBar languages={person.languages.map(({ language, share }) => ({ name: language, share }))} />
       )}
       <div className="flex flex-col gap-1.5 font-sans text-sm text-muted-foreground">
-        {person.topics.length > 0 && (
-          <p className="truncate text-secondary-foreground">{`mostly tagged ${person.topics.join(" · ")}`}</p>
-        )}
+        {person.topics.length > 0 && <Tagged topics={person.topics} />}
         <p>{`last starred ${starredOn(person.lastStarredAt)}`}</p>
         {person.shared !== null && (
           <p className="font-semibold text-accent-strong">

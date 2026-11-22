@@ -64,6 +64,7 @@ import { NewToYouList, NewToYouTile, type NewToYouTileState } from "./new-to-you
 import { OwnerPill } from "./owner-pill.tsx";
 import { PeopleTile } from "./people-tile.tsx";
 import { type PersonStars, PersonTile } from "./person-tile.tsx";
+import { TopicChips } from "./topic-chips.tsx";
 
 // A navigation in the browser starts from the session the server loaded. The page reads the rest once it mounts.
 export const pageFor = (request: PageRequest, { viewer, config, repoStars, site }: Session): PageData => {
@@ -548,6 +549,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
         returnFocus={opener}
         starredBy={<StarredBy {...stargazers(similar)} onOpen={openStargazer} />}
         similar={<SimilarRepos rows={similarRows(similar, links, whose)} onOpen={openSimilar} />}
+        topics={<TopicChips topics={(opened ?? stray)?.topics ?? []} />}
       />
     </>
   );

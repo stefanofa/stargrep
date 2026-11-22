@@ -25,6 +25,7 @@ const places: ReadonlyArray<NavLink> = [
     phones: false,
   },
   { label: "people", link: { to: "/people" }, for: "everyone", phones: true },
+  { label: "topics", link: { to: "/topics" }, for: "everyone", phones: false },
 ];
 
 function Places({ signedIn }: { signedIn: boolean }) {
