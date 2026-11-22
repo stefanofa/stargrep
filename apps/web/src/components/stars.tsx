@@ -537,7 +537,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           onPick={search}
         />
       )}
-      <div data-reveal-results className="flex flex-col gap-gap max-sm:pb-44">
+      <div data-reveal-results className="flex flex-col gap-gap">
         {body(page.body)}
       </div>
       <RepoPanel
