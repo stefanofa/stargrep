@@ -1,4 +1,4 @@
-import type { Activity, RepoDetail, Result, ResultGroup, SimilarItem, SimilarRow } from "@stargrep/ui";
+import type { Activity, RepoDetail, Result, ResultGroup, SimilarItem, SimilarRow, Stargazer } from "@stargrep/ui";
 import { defaultStringifySearch } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import { highlights } from "./keyword.ts";
@@ -7,6 +7,7 @@ import { repoVisual } from "./repo-visual.ts";
 import type { LibraryRepo, SimilarRepo, SimilarRepos } from "./rpc.ts";
 import type { Params } from "./search-params.ts";
 import { factsPending } from "./search-state.ts";
+import { loginHref } from "./stars-route.ts";
 import { theirs, type Whose } from "./whose.ts";
 
 const day = 86_400_000;
@@ -156,4 +157,27 @@ export const similarRows = (
     { key: "in_stars", heading: `also in ${theirs(whose)}`, repos: row(loaded?.inStars) },
     { key: "not_starred", heading: "more like this", repos: row(loaded?.notStarred) },
   ];
+};
+
+// GitHub serves an avatar at any size, and the panel's faces are 32px.
+const faceUrl = (avatarUrl: string) => {
+  const url = URL.parse(avatarUrl);
+  url?.searchParams.set("s", "64");
+  return url?.href ?? avatarUrl;
+};
+
+// The people the panel says also star the repo, once the answer lands. No one while it loads or when it failed.
+export const stargazers = (
+  answer: SimilarRepos | "loading" | undefined,
+): { readonly people: ReadonlyArray<Stargazer>; readonly total: number } => {
+  if (answer === undefined || answer === "loading") return { people: [], total: 0 };
+  const { people, total } = answer.starredBy;
+  return {
+    people: people.map((person) => ({
+      login: person.login,
+      ...(person.avatarUrl === null ? {} : { avatarUrl: faceUrl(person.avatarUrl) }),
+      href: loginHref(person.login),
+    })),
+    total,
+  };
 };

@@ -72,6 +72,8 @@ interface ClientEvents {
   readonly new_to_you_opened: { readonly position: number };
   // Which of the repo panel's rows held the repo the visitor opened.
   readonly similar_repo_opened: { readonly row: "in_stars" | "not_starred" };
+  // A person's place among the repo panel's "also starred by" faces, from 1.
+  readonly starred_by_person_opened: { readonly position: number };
 }
 
 export type ClientEvent = keyof ClientEvents;

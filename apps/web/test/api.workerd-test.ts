@@ -379,7 +379,11 @@ describe("similarRepos", () => {
   it("answers over REST with the login in the query, and the same as the MCP tool", async () => {
     const { status, body } = await rest("/repos/42/similar?login=ada");
     expect(status).toBe(200);
-    expect([body.inStars.map((found: { id: number }) => found.id), body.notStarred]).toEqual([[42], []]);
+    expect([body.inStars.map((found: { id: number }) => found.id), body.notStarred, body.starredBy]).toEqual([
+      [42],
+      [],
+      { people: [{ login: "theo", avatarUrl: null }], total: 1 },
+    ]);
     const viaMcp = await tool("similarRepos", { id: 42, login: "ada" });
     expect(viaMcp.structuredContent).toEqual(body);
     expect((await rest("/repos/42/similar?login=nobody-synced")).body.code).toBe("ACCOUNT_NOT_SYNCED");

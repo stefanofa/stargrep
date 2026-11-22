@@ -213,6 +213,36 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatab
       expect(logins(yield* db.people.like(subject.id, 1))).toEqual(["small"]);
     }),
   );
+
+  test.effect("starredBy names the listed people who star a repo, curated first, then most followed", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      yield* reset;
+      const repos = range(5000, 41);
+      yield* seedRepos(repos.map((id) => ({ id })));
+      const [shared, other] = [repoId(5000), repoId(5040)];
+      yield* star({ id: accountId(41), name: "famous", followers: 90_000 }, repos.slice(0, 40));
+      yield* star({ id: accountId(42), name: "known", followers: 20_000 }, repos.slice(0, 40));
+      yield* star({ id: accountId(43), name: "chosen", followers: 10 }, [shared]);
+      yield* star({ id: accountId(44), name: "owner", followers: 50_000 }, repos.slice(0, 40));
+      yield* star({ id: accountId(45), name: "unlisted", followers: 10 }, repos);
+      yield* db.people.refresh([login("chosen")], now);
+
+      const found = yield* db.people.starredBy({ repoId: shared, except: accountId(44), limit: 2 });
+
+      expect(found).toEqual({
+        people: [
+          { login: login("chosen"), avatarUrl: null },
+          { login: login("famous"), avatarUrl: null },
+        ],
+        total: 3,
+      });
+      expect(yield* db.people.starredBy({ repoId: other, except: accountId(44), limit: 2 })).toEqual({
+        people: [],
+        total: 0,
+      });
+    }),
+  );
 };
 
 it.layer(TestDatabase.layerMemory({ embeddingModel: model }), { timeout: 30_000 })("PGlite people", cases);

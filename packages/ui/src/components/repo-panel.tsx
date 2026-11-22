@@ -33,12 +33,15 @@ export function RepoPanel({
   open,
   onOpenChange,
   returnFocus,
+  starredBy,
   similar,
 }: {
   repo: RepoDetail | undefined;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   returnFocus?: HTMLElement | null;
+  // Well-known people who star the repo, under its star count.
+  starredBy?: ReactNode;
   // Repos near this one, under the link to GitHub.
   similar?: ReactNode;
 }) {
@@ -129,6 +132,8 @@ export function RepoPanel({
                   )}
                 </dl>
               </div>
+
+              {starredBy}
 
               {repo.summary !== undefined && (
                 <section className="flex flex-col gap-2">

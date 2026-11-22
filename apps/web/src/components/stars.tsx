@@ -11,6 +11,8 @@ import {
   SimilarRepos,
   type Sort,
   SortMenu,
+  type Stargazer,
+  StarredBy,
   StatusLine,
   type View,
   ViewToggle,
@@ -28,7 +30,16 @@ import { useNewToYou } from "../lib/new-to-you.ts";
 import { askedPage, type PageData, type PageRequest, type Session } from "../lib/page-data.ts";
 import { hitsOf, liveView } from "../lib/page-view.ts";
 import { closesBack } from "../lib/panel-history.ts";
-import { now, type SimilarRowKey, similarRows, startsIn, strayDetail, toDetail, withLinks } from "../lib/present.ts";
+import {
+  now,
+  type SimilarRowKey,
+  similarRows,
+  stargazers,
+  startsIn,
+  strayDetail,
+  toDetail,
+  withLinks,
+} from "../lib/present.ts";
 import { rememberLogin } from "../lib/recent-logins.ts";
 import { withReply } from "../lib/results.ts";
 import { useReveal } from "../lib/reveal.ts";
@@ -36,6 +47,7 @@ import { playSurprise } from "../lib/reveal-timing.ts";
 import type { SimilarRepo } from "../lib/rpc.ts";
 import { librarySorts, type Params, searchSorts, validateParams } from "../lib/search-params.ts";
 import { type Arriving, type Body, pageView, type Retry, type Stage, stageOf } from "../lib/search-state.ts";
+import { loginPage } from "../lib/stars-route.ts";
 import { storedView, useStoredView } from "../lib/stored-view.ts";
 import { libraryRevision, nothingSynced } from "../lib/sync-status.ts";
 import { libraryTrouble, type Trouble } from "../lib/trouble.ts";
@@ -353,6 +365,11 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     navigate({ to: ".", search: (previous) => ({ ...previous, repo: name }), replace: true, state: true });
   };
 
+  const openStargazer = (person: Stargazer, index: number) => {
+    capture("starred_by_person_opened", { position: index + 1 });
+    navigate(loginPage(person.login));
+  };
+
   const discoverTile = discover && <NewToYouTile state={discover} login={owner} at={at} search={links} onOpen={open} />;
 
   const body = (current: Body) => {
@@ -499,6 +516,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           if (!next) close();
         }}
         returnFocus={opener}
+        starredBy={<StarredBy {...stargazers(similar)} onOpen={openStargazer} />}
         similar={<SimilarRepos rows={similarRows(similar, links, whose)} onOpen={openSimilar} />}
       />
     </>

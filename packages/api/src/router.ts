@@ -52,6 +52,7 @@ import {
   type StarsInput,
   type SyncStatus,
   similarLimit,
+  starredByLimit,
   type Viewer as WireViewer,
 } from "./contract.ts";
 import { errorStatus, type WireCode, wireError } from "./errors.ts";
@@ -403,10 +404,16 @@ const similarRepos = Effect.fnUntraced(function* (input: typeof SimilarInput.Typ
   if (Option.isNone(account)) return yield* new Search.AccountNotSynced({ login: input.login });
   yield* db.repos.require(input.id);
   const query = { accountId: account.value.id, repoId: input.id, limit: similarLimit };
-  const { inStars, notStarred } = yield* db.similar.near(query);
+  const [{ inStars, notStarred }, starredBy] = yield* Effect.all(
+    [
+      db.similar.near(query),
+      db.people.starredBy({ repoId: input.id, except: account.value.id, limit: starredByLimit }),
+    ],
+    { concurrency: 2 },
+  );
   const icons = yield* IconHost;
   const wire = (found: Db.SimilarRepo) => ({ ...repoBase(found.repo, icons), stars: found.stars });
-  return { inStars: inStars.map(wire), notStarred: notStarred.map(wire) };
+  return { starredBy, inStars: inStars.map(wire), notStarred: notStarred.map(wire) };
 });
 
 const personFields = (person: Db.Person) => ({

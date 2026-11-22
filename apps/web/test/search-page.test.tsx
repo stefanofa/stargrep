@@ -207,6 +207,9 @@ const inLine = () =>
     enrichment: arriving,
   });
 const near = ({ atoms, keywords, starredAt, read, ...rest }: Repo): SimilarRepo => rest;
+
+const nobody = { people: [], total: 0 };
+const nothingNear: SimilarRepos = { starredBy: nobody, inStars: [], notStarred: [] };
 const hit = (repo: Repo): SearchResult => ({ ...repo, facets: [], reason: "meaning match", rankedBy: [], metrics: [] });
 
 beforeEach(() => {
@@ -222,7 +225,7 @@ beforeEach(() => {
     calls: { library: 0, syncStatus: 0 },
     newToYou: { shared: null, repos: [], labels: {} },
     compared: [],
-    similar: () => ({ inStars: [], notStarred: [] }),
+    similar: () => nothingNear,
     similarAsked: [],
   };
   library = real.makeLibrary(() =>
@@ -1237,7 +1240,7 @@ describe("repos near the open one", () => {
   test("load once the panel opens, leave an empty row out, and open a repo the login hasn't starred in place", async () => {
     const user = userEvent.setup();
     server.similar = (id) =>
-      id === 2 ? { inStars: [near(repos()[0] as Repo)], notStarred: [helix] } : { inStars: [], notStarred: [] };
+      id === 2 ? { starredBy: nobody, inStars: [near(repos()[0] as Repo)], notStarred: [helix] } : nothingNear;
     const router = await open("/?q=terminal");
     expect(server.similarAsked).toEqual([]);
 
@@ -1264,5 +1267,41 @@ describe("repos near the open one", () => {
     await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(router.state.location.search).toEqual({ q: "terminal" }));
     expect(router.history.canGoBack()).toBe(false);
+  });
+
+  test("name the listed people who star the repo high in the panel, and a face opens their stars", async () => {
+    const user = userEvent.setup();
+    const people = [
+      { login: "karpathy", avatarUrl: "https://avatars.githubusercontent.com/u/241138?v=4" },
+      { login: "api", avatarUrl: null },
+    ];
+    server.similar = (id) => (id === 2 ? { ...nothingNear, starredBy: { people, total: 9 } } : nothingNear);
+    const router = await open("/?q=terminal");
+
+    await user.click(await page().findByRole("link", { name: "bottom" }));
+    const panel = within(await page().findByRole("dialog"));
+    const row = (await panel.findByRole("heading", { name: "also starred by" })).closest("section");
+    if (row === null) throw new Error("no also starred by row");
+    const faces = ["@karpathy", "@api"].map((name) => within(row).getByRole("link", { name }));
+    expect(faces.map((face) => face.getAttribute("href"))).toEqual(["/karpathy", "/@api"]);
+    expect(within(row).getAllByRole("link")).toHaveLength(2);
+    expect(within(row).getByText("+7 more")).toBeDefined();
+    // It sits above the link to GitHub, where it shows without scrolling.
+    const github = panel.getByRole("link", { name: /open on GitHub/ });
+    expect(row.compareDocumentPosition(github) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await user.click(faces[0] as HTMLElement);
+    await waitFor(() => expect(router.state.location.pathname).toBe("/karpathy"));
+  });
+
+  test("leave the row out when no listed person stars the repo", async () => {
+    const user = userEvent.setup();
+    server.similar = (id) => (id === 2 ? { ...nothingNear, inStars: [near(repos()[0] as Repo)] } : nothingNear);
+    await open("/?q=terminal");
+
+    await user.click(await page().findByRole("link", { name: "bottom" }));
+    const panel = within(await page().findByRole("dialog"));
+    await panel.findByRole("heading", { name: "also in your stars" });
+    expect(panel.queryByRole("heading", { name: "also starred by" })).toBeNull();
   });
 });

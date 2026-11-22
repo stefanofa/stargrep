@@ -113,6 +113,7 @@ export const Operation = Schema.Literals([
   "people.recount",
   "people.page",
   "people.like",
+  "people.starredBy",
 ]);
 export type Operation = typeof Operation.Type;
 
