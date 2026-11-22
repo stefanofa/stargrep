@@ -201,7 +201,8 @@ export function LibraryView({
   butter,
   countTile,
   onOpen,
-  aside,
+  discover,
+  instead,
 }: {
   entries: ReadonlyArray<LibraryEntry>;
   at: number;
@@ -215,8 +216,11 @@ export function LibraryView({
   // A person page shows the count in the person tile above the search.
   countTile: boolean;
   onOpen: OpenResult;
-  // A section between the summary tiles and the months, such as what's new to a signed-in viewer.
-  aside?: ReactNode;
+  // The first tile of the discover row on someone else's stars, which then holds the dead stars too. The row's third
+  // place, the people whose stars are most like this person's, waits for the people list.
+  discover?: ReactNode;
+  // What shows in place of the months, such as everything new to the viewer.
+  instead?: ReactNode;
 }) {
   const language = search.lang;
   const archived = search.archived === true;
@@ -242,8 +246,25 @@ export function LibraryView({
   useEffect(() => {
     for (const entry of page) seen.current.add(`${entry.owner}/${entry.name}`);
   });
+  // The tile stays while its filter is on, so its chip can take the filter back off.
+  const graveTile = (graveyard.count > 0 || archived) && (
+    <DeadStarsTile
+      dead={graveyard}
+      whose={whose}
+      at={at}
+      search={search}
+      onOpen={onOpen}
+      narrow={discover !== undefined}
+    />
+  );
   return (
     <>
+      {discover !== undefined && (
+        <div className="flex flex-col gap-gap lg:flex-row">
+          {discover}
+          {graveTile}
+        </div>
+      )}
       <div className="grid gap-gap lg:grid-cols-2">
         {countTile && <CountTile count={entries.length} arriving={arriving} pose={pose} butter={butter} />}
         <LanguagesTile
@@ -252,33 +273,31 @@ export function LibraryView({
           archived={{ count: graveyard.count, on: archived }}
           wide={!countTile}
         />
-        {/* The tile stays while its filter is on, so its chip can take the filter back off. */}
-        {(graveyard.count > 0 || archived) && (
-          <DeadStarsTile dead={graveyard} whose={whose} at={at} search={search} onOpen={onOpen} />
-        )}
+        {discover === undefined && graveTile}
       </div>
-      {aside}
-      {Array.from(groups, ([heading, members]) => {
-        const pending =
-          arriving !== undefined && heading === last && visible.length <= shown
-            ? Math.min(remaining, columns - (members.length % columns))
-            : 0;
-        const size = byMonth ? (counts.get(heading)?.length ?? 0) : visible.length;
-        return (
-          <section key={heading} aria-label={heading} className="flex flex-col gap-gap pt-3">
-            <MonthHeading heading={heading} size={size} arriving={arriving !== undefined} />
-            <ResultList
-              view={view}
-              results={members.map((entry) => toResult(entry, at, { search, flagUnread: false }))}
-              pending={pending}
-              enter="tile-in"
-              entering={(key) => !seen.current.has(key)}
-              onOpen={onOpen}
-            />
-          </section>
-        );
-      })}
-      {visible.length > shown && (
+      {instead}
+      {instead === undefined &&
+        Array.from(groups, ([heading, members]) => {
+          const pending =
+            arriving !== undefined && heading === last && visible.length <= shown
+              ? Math.min(remaining, columns - (members.length % columns))
+              : 0;
+          const size = byMonth ? (counts.get(heading)?.length ?? 0) : visible.length;
+          return (
+            <section key={heading} aria-label={heading} className="flex flex-col gap-gap pt-3">
+              <MonthHeading heading={heading} size={size} arriving={arriving !== undefined} />
+              <ResultList
+                view={view}
+                results={members.map((entry) => toResult(entry, at, { search, flagUnread: false }))}
+                pending={pending}
+                enter="tile-in"
+                entering={(key) => !seen.current.has(key)}
+                onOpen={onOpen}
+              />
+            </section>
+          );
+        })}
+      {instead === undefined && visible.length > shown && (
         <Button variant="ghost" size="lg" className="self-center" onClick={() => setShown((count) => count + pageSize)}>
           show more
         </Button>
