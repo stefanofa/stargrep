@@ -1,9 +1,9 @@
 import fredoka from "@stargrep/ui/fonts/fredoka-latin-600-normal.woff2?url";
 import inter from "@stargrep/ui/fonts/inter-latin-wght-normal.woff2?url";
-import { createRootRoute, HeadContent, lazyRouteComponent, Scripts } from "@tanstack/react-router";
+import { createRootRoute, HeadContent, Scripts, useRouterState } from "@tanstack/react-router";
 import { type ReactNode, useEffect } from "react";
+import { Failure, NotFound } from "../components/problem-page.tsx";
 import { startAnalytics } from "../lib/analytics.ts";
-import { loadEngine } from "../lib/engine.ts";
 import { loadSession } from "../lib/load-page.ts";
 import { previewMeta, siteDescription, siteTitle } from "../lib/preview.ts";
 import styles from "../styles.css?url";
@@ -30,8 +30,8 @@ export const Route = createRootRoute({
   }),
   // The shell wraps the error and not-found pages too, so they keep the head, the styles and the scripts.
   shellComponent: Shell,
-  notFoundComponent: lazyRouteComponent(loadEngine, "NotFound"),
-  errorComponent: lazyRouteComponent(loadEngine, "Failure"),
+  notFoundComponent: NotFound,
+  errorComponent: Failure,
 });
 
 function Shell({ children }: { children: ReactNode }) {
@@ -46,9 +46,26 @@ function Shell({ children }: { children: ReactNode }) {
         <meta name="theme-color" content="#15131f" media="(prefers-color-scheme: dark)" />
       </head>
       <body>
+        <Navigating />
         {children}
         <Scripts />
       </body>
     </html>
+  );
+}
+
+// A navigation whose loader takes a moment, such as a topic's page on a slow network, shows a rail along the top of the
+// page until the next page paints. styles.css holds it back for 300ms, so a quick navigation shows nothing.
+function Navigating() {
+  const navigating = useRouterState({ select: (state) => state.isLoading });
+  return (
+    navigating && (
+      <div
+        role="progressbar"
+        aria-label="loading the page"
+        data-slot="navigating"
+        className="fixed inset-x-0 top-0 z-50 h-[3px] overflow-hidden bg-accent-soft"
+      />
+    )
   );
 }

@@ -1,5 +1,5 @@
-import { EmptyTile, Tile } from "@stargrep/ui";
-import { Link, useLoaderData } from "@tanstack/react-router";
+import { Button, EmptyTile, Tile } from "@stargrep/ui";
+import { Link, useLoaderData, useRouter } from "@tanstack/react-router";
 import { useEffect, useId, useState } from "react";
 import { api, type TopicCount, type TopicsList } from "../lib/rpc.ts";
 import { formatCount } from "../lib/whose.ts";
@@ -19,9 +19,15 @@ export const firstTopics = (): Promise<FirstTopics> =>
       (): FirstTopics => ({ kind: "failed" }),
     );
 
-// The topics whose names hold the typed text, asked a moment after the typing stops. Undefined while nothing is typed.
+type Found =
+  | { readonly q: string; readonly kind: "found"; readonly topics: ReadonlyArray<TopicCount> }
+  | { readonly q: string; readonly kind: "failed" };
+
+// The topics whose names hold the typed text, asked a moment after the typing stops. The last answer stays on screen
+// until the next one lands, so the grid doesn't flash on every keystroke. Undefined while nothing is typed.
 const useFound = (typed: string) => {
-  const [found, setFound] = useState<{ readonly q: string; readonly topics: ReadonlyArray<TopicCount> }>();
+  const [found, setFound] = useState<Found>();
+  const [round, setRound] = useState(0);
   const q = typed.trim().toLowerCase();
   useEffect(() => {
     if (q === "") return;
@@ -31,22 +37,74 @@ const useFound = (typed: string) => {
       api()
         .listTopics({ q, limit: 60 })
         .then(
-          ({ topics }) => current && setFound({ q, topics }),
-          () => current && setFound({ q, topics: [] }),
+          ({ topics }) => current && setFound({ q, kind: "found", topics }),
+          () => current && setFound({ q, kind: "failed" }),
         );
     }, 200);
     return () => {
       current = false;
       clearTimeout(timer);
     };
-  }, [q]);
+  }, [q, round]);
   if (q === "") return undefined;
-  return found?.q === q ? found.topics : "asking";
+  const retry = () => {
+    setFound(undefined);
+    setRound((count) => count + 1);
+  };
+  return { found, asking: found?.q !== q, retry };
 };
 
-function TopicGrid({ topics }: { topics: ReadonlyArray<TopicCount> }) {
+function Finding({ found, asking, retry }: NonNullable<ReturnType<typeof useFound>>) {
+  if (found?.kind === "found" && found.topics.length > 0) return <TopicGrid topics={found.topics} busy={asking} />;
+  if (found === undefined || asking)
+    return (
+      <p role="status" className="font-sans text-meta text-muted-foreground">
+        looking…
+      </p>
+    );
+  if (found.kind === "failed")
+    return (
+      <EmptyTile pose="scared" heading="couldn't look that up" body="stargrep couldn't search the topics just now.">
+        <Button variant="primary" size="lg" className="mt-2" onClick={retry}>
+          try again
+        </Button>
+      </EmptyTile>
+    );
   return (
-    <ol className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <EmptyTile
+      pose="unsure"
+      heading="no topic like that"
+      body="a topic gets a page once enough developers star its repos."
+    />
+  );
+}
+
+// The most ranked topics didn't load. Trying again runs this page's loader alone, since the root's runs only on the
+// server.
+function Unloaded() {
+  const router = useRouter();
+  const [retrying, setRetrying] = useState(false);
+  return (
+    <EmptyTile pose="scared" heading="couldn't load topics" body="stargrep couldn't read the topics just now.">
+      <Button
+        variant="primary"
+        size="lg"
+        className="mt-2"
+        disabled={retrying}
+        onClick={() => {
+          setRetrying(true);
+          router.invalidate({ filter: (match) => match.routeId === "/topics/" }).finally(() => setRetrying(false));
+        }}
+      >
+        try again
+      </Button>
+    </EmptyTile>
+  );
+}
+
+function TopicGrid({ topics, busy = false }: { topics: ReadonlyArray<TopicCount>; busy?: boolean }) {
+  return (
+    <ol aria-busy={busy || undefined} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {topics.map((topic) => (
         <li key={topic.topic} className="flex min-w-0">
           <Tile className="relative flex min-w-0 flex-1 flex-col gap-0.5 px-5 py-4">
@@ -72,7 +130,7 @@ export function TopicsPage() {
   const { viewer, repoStars } = useLoaderData({ from: "__root__" });
   const { first } = useLoaderData({ from: "/topics/" });
   const [typed, setTyped] = useState("");
-  const found = useFound(typed);
+  const finding = useFound(typed);
   const field = useId();
   return (
     <Page header={<SiteHeader viewer={viewer} repoStars={repoStars} />}>
@@ -108,22 +166,10 @@ export function TopicsPage() {
           </form>
         </search>
       </section>
-      {found !== undefined ? (
-        found === "asking" ? (
-          <p role="status" className="font-sans text-meta text-muted-foreground">
-            looking…
-          </p>
-        ) : found.length === 0 ? (
-          <EmptyTile
-            pose="unsure"
-            heading="no topic like that"
-            body="a topic gets a page once enough developers star its repos."
-          />
-        ) : (
-          <TopicGrid topics={found} />
-        )
+      {finding !== undefined ? (
+        <Finding {...finding} />
       ) : first.kind === "failed" ? (
-        <EmptyTile pose="scared" heading="couldn't load topics" body="stargrep couldn't read the topics just now." />
+        <Unloaded />
       ) : first.list.topics.length === 0 ? (
         <EmptyTile pose="unsure" heading="no topics yet" body="topic pages fill in overnight." />
       ) : (
