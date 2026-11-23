@@ -20,7 +20,7 @@ import { describe, expect, it } from "vitest";
 import { layerSearchCache } from "../src/server/adapters.ts";
 import { layerRequest } from "../src/server/layers.ts";
 import { requested, waitingStart } from "./entry.ts";
-import { testServer } from "./serve.ts";
+import { afterResponse, testServer } from "./serve.ts";
 
 const share = BudgetShare.make(0.5);
 
@@ -217,6 +217,7 @@ describe("when the database is unreachable", () => {
         env,
         { ai: { provider: "gateway", key: Option.none() }, budgetShare: share, auth: Option.none() },
         request,
+        afterResponse,
       ),
     ),
   );

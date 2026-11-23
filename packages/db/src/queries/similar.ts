@@ -75,13 +75,14 @@ export const make = Effect.fn("Db.similar.make")(function* (configuredModel: Emb
         .where(and(eq(repos.id, repoId), eq(repos.embeddingModel, configuredModel), isNotNull(repos.embedding))),
     ).pipe(Effect.flatMap(decode("similar.opened")));
 
+  // Ranks the account's stars by distance alone, then reads the columns and metrics of the nearest, so the sort carries
+  // two columns per star rather than whole rows.
   const inStars = ({ accountId, repoId }: SimilarQuery) =>
-    run("similar.inStars", (db) =>
-      db
-        .select(fields(repoId))
+    run("similar.inStars", (db) => {
+      const ranked = db
+        .select({ id: repos.id, distance: sql<number>`${repos.embedding} <=> ${source(repoId)}`.as("distance") })
         .from(stars)
         .innerJoin(repos, eq(repos.id, stars.repoId))
-        .leftJoin(repoMetrics, eq(repoMetrics.repoId, repos.id))
         .where(
           and(
             eq(stars.accountId, accountId),
@@ -92,9 +93,16 @@ export const make = Effect.fn("Db.similar.make")(function* (configuredModel: Emb
             sql`${source(repoId)} is not null`,
           ),
         )
-        .orderBy(sql`${repos.embedding} <=> ${source(repoId)}`)
-        .limit(nearest),
-    ).pipe(Effect.flatMap(decode("similar.inStars")), Effect.map(nearestFirst));
+        .orderBy(sql`distance`)
+        .limit(nearest)
+        .as("ranked");
+      return db
+        .select({ repo: repoColumns, stars: repoMetrics.stars, distance: sql<number>`${ranked.distance}::float8` })
+        .from(ranked)
+        .innerJoin(repos, eq(repos.id, ranked.id))
+        .leftJoin(repoMetrics, eq(repoMetrics.repoId, ranked.id))
+        .orderBy(ranked.distance);
+    }).pipe(Effect.flatMap(decode("similar.inStars")), Effect.map(nearestFirst));
 
   // Without an iterative scan, the index hands over its nearest 40 and the account's own stars among them are dropped
   // after, which can leave none for an account that starred the whole neighborhood.
