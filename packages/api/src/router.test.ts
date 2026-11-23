@@ -52,7 +52,6 @@ const repo = repoRow(RepoId.make(42), {
   summary: `A Rust library for dashboards. ${canary}`,
   keywords: ["tui"],
   icon: { key: "v1/git/abc.webp", source: "repo-file", plate: "dark", size: 96 },
-  iconCheckedAt: pushedAt,
   ownerType: "org",
   ownerAvatarUrl: "https://avatars.githubusercontent.com/u/1",
 });
@@ -61,7 +60,6 @@ const unchecked: Db.Repo = {
   ...repo,
   id: 44 as RepoId,
   icon: null,
-  iconCheckedAt: null,
   ownerType: null,
   ownerAvatarUrl: null,
 };

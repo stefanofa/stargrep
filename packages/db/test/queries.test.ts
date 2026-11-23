@@ -1153,7 +1153,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       for (const id of [found, stale]) yield* db.repos.saveIcon({ id, icon });
       yield* db.repos.saveIcon({ id: missing, icon: null });
       yield* db.repos.saveIcon({ id: repoId(2899), icon });
-      yield* database.query("update repos set icon_checked_at = '2019-06-01' where id = $1", [stale]);
+      yield* database.query("update repo_icon_checks set checked_at = '2019-06-01' where repo_id = $1", [stale]);
 
       expect(yield* page(2800)).toEqual([unchecked, stale]);
       expect(yield* page(2800, "v2")).toEqual([found, unchecked, stale]);
@@ -1161,7 +1161,7 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
       expect(stored).toMatchObject({ icon, summary: summaryOf(found) });
       expect(stored).not.toHaveProperty("iconKey");
       expect(Option.getOrThrow(yield* db.repos.get(missing))).toMatchObject({ icon: null });
-      expect(Option.getOrThrow(yield* db.repos.get(missing)).iconCheckedAt).not.toBeNull();
+      expect((yield* db.repos.getMany([missing]))[0]?.iconCheckedAt).not.toBeNull();
       expect((yield* db.repos.getMany([found]))[0]).toMatchObject({ icon, pending: false });
       expect(yield* db.repos.pendingEnrichment([found])).toEqual([]);
       const torn = yield* database.query("update repos set icon_size = null where id = $1", [found]).pipe(
@@ -1169,6 +1169,56 @@ const sharedCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions 
         Effect.catchCause(() => Effect.succeed("refused")),
       );
       expect(torn).toBe("refused");
+    }),
+  );
+
+  test.effect("records a check that changes nothing without rewriting the repos row", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const id = repoId(2821);
+      yield* db.repos.upsertRefs([ref(id)]);
+      const version = Effect.map(
+        database.query("select xmin::text as version from repos where id = $1", [id]),
+        (rows) => (rows[0] as { readonly version: string }).version,
+      );
+      const due = (keyVersion: string) =>
+        Effect.map(
+          db.repos.dueIcons({ after: id - 1, limit: 1, checkedBefore: at("2020-01-01T00:00:00Z"), keyVersion }),
+          (rows) => rows.map((row) => row.id),
+        );
+      const icon = { key: "v1/git/abc.webp", source: "repo-file", plate: "dark", size: 96 } as const;
+      const owner = { id, ownerType: "org", ownerAvatarUrl: "https://avatars.githubusercontent.com/u/3" } as const;
+      yield* db.repos.saveIcon({ id, icon });
+      yield* db.repos.saveOwners([owner]);
+      const saved = yield* version;
+
+      yield* database.query("update repo_icon_checks set checked_at = '2019-06-01' where repo_id = $1", [id]);
+      expect(yield* due("v1")).toEqual([id]);
+      yield* db.repos.saveIcon({ id, icon });
+      yield* db.repos.saveOwners([owner]);
+      expect(yield* version).toBe(saved);
+      expect(yield* due("v1")).toEqual([]);
+
+      yield* database.query("update repo_icon_checks set checked_at = '2019-06-01' where repo_id = $1", [id]);
+      yield* db.repos.markIconChecked(id);
+      expect(yield* version).toBe(saved);
+      expect(yield* due("v1")).toEqual([]);
+      expect(yield* due("v2")).toEqual([id]);
+      expect(Option.getOrThrow(yield* db.repos.get(id))).toMatchObject({
+        icon,
+        ownerType: "org",
+        ownerAvatarUrl: owner.ownerAvatarUrl,
+      });
+
+      yield* db.repos.saveIcon({ id, icon: null });
+      yield* db.repos.saveOwners([{ ...owner, ownerAvatarUrl: "https://avatars.githubusercontent.com/u/4" }]);
+      expect(yield* version).not.toBe(saved);
+      expect(Option.getOrThrow(yield* db.repos.get(id))).toMatchObject({
+        icon: null,
+        ownerAvatarUrl: "https://avatars.githubusercontent.com/u/4",
+      });
+      expect(yield* due("v2")).toEqual([]);
     }),
   );
 

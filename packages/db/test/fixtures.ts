@@ -118,6 +118,5 @@ export const repo = (id: RepoId, overrides: Partial<Db.Repo> = {}): Db.Repo => (
   keywords: [],
   embeddingModel: null,
   icon: null,
-  iconCheckedAt: null,
   ...overrides,
 });

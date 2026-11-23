@@ -370,7 +370,8 @@ import * as EnrichRetry from "./enrich-retry.ts";
           expect(
             yield* f.enrich(52).pipe(Effect.provide(Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(failing)))),
           ).toMatchObject({ _tag: "Summarized" });
-          expect(yield* f.get(52)).toMatchObject({ readmeOid: wideOid(5201), iconCheckedAt: null, embeddingModel });
+          expect(yield* f.get(52)).toMatchObject({ readmeOid: wideOid(5201), embeddingModel });
+          expect((yield* (yield* Db.Db).repos.getMany([id(52)]))[0]?.iconCheckedAt).toBeNull();
         }),
       );
 

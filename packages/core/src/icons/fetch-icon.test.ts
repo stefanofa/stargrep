@@ -6,6 +6,7 @@ import { blobOid } from "@stargrep/github/blob-oid";
 import * as GitHubFake from "@stargrep/github/github.fixture";
 import { ObjectId, Repo, type RepoFile, type RepoId } from "@stargrep/github/schemas";
 import * as it from "@stargrep/testing";
+import * as Arr from "effect/Array";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -133,7 +134,8 @@ const fixture = () => {
       yield* (yield* Db.Db).repos.upsertRefs(numbers.map(repo));
     });
 
-  const stored = (id: RepoId) => Effect.flatMap(Db.Db, (db) => Effect.map(db.repos.get(id), Option.getOrThrow));
+  const stored = (id: RepoId) =>
+    Effect.flatMap(Db.Db, (db) => Effect.map(db.repos.getMany([id]), (rows) => Option.getOrThrow(Arr.head(rows))));
 
   const raw = (n: number, path: string) => `https://raw.githubusercontent.com/acme/kit-${n}/HEAD/${path}`;
 
@@ -527,7 +529,7 @@ const fixture = () => {
         const icon = { key: Keys.gitKey(oid("e")), source: "repo-file", plate: "none", size: 64 } as const;
         yield* db.repos.saveIcon({ id: idOf(5001), icon });
         yield* (yield* TestDatabase.TestDatabase).query(
-          "update repos set icon_checked_at = now() - interval '40 days' where id = $1",
+          "update repo_icon_checks set checked_at = now() - interval '40 days' where repo_id = $1",
           [idOf(5001)],
         );
 
@@ -546,7 +548,7 @@ const fixture = () => {
         const icon = { key: Keys.gitKey(oid("c")), source: "repo-file", plate: "none", size: 64 } as const;
         yield* db.repos.saveIcon({ id: idOf(3001), icon });
         yield* (yield* TestDatabase.TestDatabase).query(
-          "update repos set icon_checked_at = now() - interval '40 days' where id = $1",
+          "update repo_icon_checks set checked_at = now() - interval '40 days' where repo_id = $1",
           [idOf(3001)],
         );
         yield* db.repos.markIconChecked(idOf(3001));
