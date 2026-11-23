@@ -12,7 +12,7 @@ const visitor = async (): Promise<Session> => ({
   viewer: null,
   config: { demoLogin: "demo", demoQuery: "", examples: [], featured: [] } as unknown as Session["config"],
   repoStars: null,
-  site: { origin: "https://stargrep.com", indexable: true },
+  site: { origin: "https://stargrep.com", indexable: true, engine: [] },
 });
 let loadSession = visitor;
 const loads = await import("../src/lib/load-page.ts");
@@ -85,7 +85,10 @@ test("a shared stars page previews with its own title, description, address and 
 });
 
 test("the home page previews as the site, and a page on a preview host names no canonical address", async () => {
-  loadSession = async () => ({ ...(await visitor()), site: { origin: "https://pr-7.stargrep.com", indexable: false } });
+  loadSession = async () => ({
+    ...(await visitor()),
+    site: { origin: "https://pr-7.stargrep.com", indexable: false, engine: [] },
+  });
   try {
     const { tags, canonical } = previewOf(await renderPage("/"));
     expect(tags["og:title"]).toBe("stargrep");
@@ -104,6 +107,22 @@ test("a page that is no stars page still previews as the site", async () => {
   expect(tags["og:image"]).toBe("https://stargrep.com/og.png");
   expect(tags["og:url"]).toBeUndefined();
   expect(canonical).toBeUndefined();
+});
+
+test("a stars page preloads the engine's chunks with its HTML, and a page without the engine doesn't", async () => {
+  const engine = ["/assets/stars-abc.js", "/assets/rpc-def.js"];
+  loadSession = async () => ({ ...(await visitor()), site: { ...(await visitor()).site, engine } });
+  const preloads = (html: string) =>
+    [...(html.split("</head>")[0] ?? "").matchAll(/<link rel="modulepreload" href="([^"]*)"\/>/g)].map(
+      ([, href]) => href,
+    );
+  try {
+    expect(preloads(await renderPage("/octo"))).toEqual(engine);
+    expect(preloads(await renderPage("/"))).toEqual(engine);
+    expect(preloads(await renderPage("/not.a.login"))).toEqual([]);
+  } finally {
+    loadSession = visitor;
+  }
 });
 
 test("the home page a visitor lands on keeps the site's title", async () => {

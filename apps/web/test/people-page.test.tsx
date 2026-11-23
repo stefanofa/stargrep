@@ -83,7 +83,7 @@ const open = async () => {
         viewer: server.viewer,
         config: { demoLogin: Login.make("stefanofa"), demoQuery: "", examples: [], featured: [], curated: [] },
         repoStars: null,
-        site: { origin: "https://stargrep.com", indexable: true },
+        site: { origin: "https://stargrep.com", indexable: true, engine: [] },
       };
     },
   });

@@ -62,6 +62,7 @@ const defaults = {
     list: unexpected("stars.list"),
     library: unexpected("stars.library"),
     page: unexpected("stars.page"),
+    pageStarts: unexpected("stars.pageStarts"),
     enrichment: unexpected("stars.enrichment"),
     languages: unexpected("stars.languages"),
     newToYou: unexpected("stars.newToYou"),

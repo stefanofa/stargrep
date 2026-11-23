@@ -211,6 +211,10 @@ const db = makeDb({
             return { entries: entries.slice(perPage), next: Option.none() };
           });
     },
+    pageStarts: (id: number) => {
+      const last = entriesOf(id).length > perPage ? entriesOf(id)[perPage - 1] : undefined;
+      return Effect.succeed(last === undefined ? [] : [{ starredAt: last.starredAt, repoId: last.repo.id }]);
+    },
     enrichment: (login: Login) => {
       const found = accounts[login.toLowerCase()];
       const total = found?.synced === false ? 2 : (found?.repos.length ?? 0);

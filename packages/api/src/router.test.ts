@@ -1640,7 +1640,11 @@ const starsApi = Effect.gen(function* () {
   return { stars, limits, memory, builds: () => builds };
 });
 
-type StarsPage = { readonly repos: ReadonlyArray<{ readonly id: number }>; readonly nextCursor: string | null };
+type StarsPage = {
+  readonly repos: ReadonlyArray<{ readonly id: number }>;
+  readonly nextCursor: string | null;
+  readonly cursors?: ReadonlyArray<string>;
+};
 
 const ids = (page: unknown) => (page as StarsPage).repos.map((repo) => repo.id);
 
@@ -1701,6 +1705,26 @@ it.layer(TestDatabase.layerMemory({ embeddingModel: "test/model" as EmbeddingMod
         yield* TestClock.adjust("2 seconds");
         const next = yield* stars({ login: "ada", limit: 2 });
         expect([next.cache, ids(next.page)]).toEqual(["miss", [504, 503]]);
+      }),
+    );
+
+    it.effect("names every later page's cursor on a first page, so the pages can load at once", () =>
+      Effect.gen(function* () {
+        yield* seedStars(Array.from({ length: 250 }, (_, index) => 1001 + index));
+        const { stars } = yield* starsApi;
+        const first = (yield* stars({ login: "ada", limit: 100 })).page as StarsPage;
+        const walked: Array<string> = [];
+        for (let page = first; page.nextCursor !== null; ) {
+          walked.push(page.nextCursor);
+          page = (yield* stars({ login: "ada", limit: 100, cursor: page.nextCursor })).page as StarsPage;
+          expect(page.cursors).toBeUndefined();
+        }
+        expect(walked).toHaveLength(2);
+        expect(first.cursors).toEqual(walked);
+
+        // A limit below the page size answers part of a page, whose later pages start elsewhere.
+        expect(((yield* stars({ login: "ada", limit: 2 })).page as StarsPage).cursors).toBeUndefined();
+        expect(((yield* stars({ login: "ada" })).page as StarsPage).cursors).toEqual([]);
       }),
     );
 

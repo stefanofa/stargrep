@@ -373,6 +373,10 @@ export const PublicStars = Schema.Struct({
   nextCursor: Schema.NullOr(StarsCursorText).annotate({
     description: "Pass as cursor to read the next page, or null when this page is the last.",
   }),
+  cursors: Schema.optionalKey(Schema.Array(StarsCursorText)).annotate({
+    description:
+      "On a first page read at a limit of 100 or 1000, the cursor of every later page in order, so a client can read them all at once with the same limit.",
+  }),
   labels: Labels,
 });
 

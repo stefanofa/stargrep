@@ -3,7 +3,15 @@ import { serverLoads } from "../server/page-data.ts";
 import { whoseOf } from "./audience.ts";
 import { loadEngine } from "./engine.ts";
 import type { PageData, PageRequest, Session } from "./page-data.ts";
-import { accountImage, canonicalLinks, pagePath, previewMeta, siteDescription, siteTitle } from "./preview.ts";
+import {
+  accountImage,
+  canonicalLinks,
+  engineLinks,
+  pagePath,
+  previewMeta,
+  siteDescription,
+  siteTitle,
+} from "./preview.ts";
 import { revealScript } from "./reveal-script.ts";
 import { libraryRevision } from "./sync-status.ts";
 import { theirs } from "./whose.ts";
@@ -56,7 +64,7 @@ export const pageHead = (
             query,
           ),
     }),
-    links: canonicalLinks(loaderData.site, path),
+    links: [...canonicalLinks(loaderData.site, path), ...engineLinks(loaderData.site)],
     scripts:
       loaderData.first != null && loaderData.first.query === loaderData.defaultQuery
         ? [{ children: revealScript }]
