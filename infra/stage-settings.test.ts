@@ -20,6 +20,7 @@ test("production retains its database, region, placement, and resource lifetime 
       pgVersion: 17,
       historyRetentionSeconds: 21600,
       expiryDays: undefined,
+      compute: { minCu: 1, maxCu: 8 },
     },
     placement: { region: "aws:us-east-1" },
     retain: true,

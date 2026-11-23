@@ -34,11 +34,24 @@ const StageBranch = Effect.gen(function* () {
     stage: "shared",
   });
   const expiry = database.expiryDays === undefined ? {} : { expiresAt: yield* expiresIn(database.expiryDays) };
+  const endpoints =
+    database.compute === undefined
+      ? {}
+      : {
+          endpoints: [
+            {
+              type: "read_write" as const,
+              autoscalingLimitMinCu: database.compute.minCu,
+              autoscalingLimitMaxCu: database.compute.maxCu,
+            },
+          ],
+        };
   return yield* Neon.Branch("Branch", {
     project,
     migrations: migrationsFolder,
     importFiles: [extensions],
     ...expiry,
+    ...endpoints,
   }).pipe(RemovalPolicy.retain(retain));
 });
 
