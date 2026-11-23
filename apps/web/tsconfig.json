@@ -12,6 +12,7 @@
     "rate-limit-policy.ts",
     "zone-rate-limit.ts",
     "vite.config.ts",
+    "topic-logos.ts",
     "vitest.config.ts"
   ],
   "exclude": ["test/**/*.test.ts", "test/**/*.test.tsx"]

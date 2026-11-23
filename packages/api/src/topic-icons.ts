@@ -1,13 +1,7 @@
 import type * as Db from "@stargrep/db";
 import { maxIconSize } from "./contract.ts";
-import { type IconHost, iconUrl } from "./icon-host.ts";
+import { type IconHost, iconUrl, logoPrefix } from "./icon-host.ts";
 import { topicLogos } from "./topic-logos.gen.ts";
-
-// Logo files live under /icons/logos/, beside the repo icons, and each name carries a hash of its bytes.
-export const logoPrefix = "logos/";
-const logoKeyPattern = /^logos\/[a-z0-9]+\.[0-9a-f]{10}\.svg$/;
-
-export const isLogoKey = (key: string) => logoKeyPattern.test(key);
 
 const normalized = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
 const ownerPrefixes = ["get", "with", "the", "use"];

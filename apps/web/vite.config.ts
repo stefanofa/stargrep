@@ -2,6 +2,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import { defineConfig, type Plugin, type Rollup } from "vite";
+import { topicLogos } from "./topic-logos.ts";
 
 const engineModule = /\/src\/components\/stars\.tsx(\?|$)/;
 
@@ -41,7 +42,7 @@ const engineChunks = (): Plugin => {
 };
 
 export default defineConfig({
-  plugins: [engineChunks(), tailwindcss(), tanstackStart(), viteReact()],
+  plugins: [engineChunks(), topicLogos(), tailwindcss(), tanstackStart(), viteReact()],
   // A build keeps its cached first answers apart from older builds', whose page model may render them differently.
   // @effect-diagnostics-next-line cryptoRandomUUID:off - Vite reads this config outside any Effect program.
   define: { "import.meta.env.STARGREP_BUILD": JSON.stringify(crypto.randomUUID()) },

@@ -1,5 +1,4 @@
 import { env } from "cloudflare:workers";
-import { topicLogos } from "@stargrep/api/topic-logos";
 import { describe, expect, it } from "vitest";
 import { serveIcon, workerCache } from "../src/server/icons.ts";
 
@@ -50,18 +49,6 @@ describe("GET /icons/<key>", () => {
     await settled();
   });
 
-  it("serves a topic's logo as an immutable SVG, and an old logo name 404 for a short time", async () => {
-    const served = await get(`/icons/logos/${topicLogos.nextjs?.key}`);
-    expect([served.status, served.headers.get("content-type"), served.headers.get("cache-control")]).toEqual([
-      200,
-      "image/svg+xml",
-      "public, max-age=31536000, immutable",
-    ]);
-    expect(await served.text()).toMatch(/^<svg /);
-    const old = await get("/icons/logos/nextdotjs.0000000000.svg");
-    expect([old.status, old.headers.get("cache-control")]).toEqual([404, "public, max-age=300"]);
-  });
-
   it("answers a well-formed key with no object 404, cacheable for a short time", async () => {
     const missing = await get(`/icons/v1/sha256/${"b".repeat(64)}.webp`);
     expect(missing.status).toBe(404);
@@ -79,6 +66,8 @@ describe("GET /icons/<key>", () => {
       `/icons/v1/git/..%2F..%2Freadmes%2Fsecret`,
       `/icons/v1/../readmes/secret`,
       `/icons/v1/sha256/${"c".repeat(63)}.webp`,
+      // Topic logos are static assets, so a logo name that reaches the Worker matches no asset.
+      "/icons/logos/nextdotjs.0000000000.svg",
     ]) {
       const refused = await get(path);
       expect([path, refused.status, refused.headers.get("cache-control")]).toEqual([path, 404, "no-store"]);

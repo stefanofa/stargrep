@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bakeTopicLogos } from "../scripts/bake-topic-logos.ts";
 import { logoSvgs } from "./logo-svgs.gen.ts";
-import { isLogoKey, ownsTopic, topicIcon } from "./topic-icons.ts";
+import { ownsTopic, topicIcon } from "./topic-icons.ts";
 import { topicLogos } from "./topic-logos.gen.ts";
 
 const host = { origin: "https://stargrep.test" };
@@ -17,12 +17,6 @@ describe("topic logos", () => {
     const baked = bakeTopicLogos();
     expect(baked.topics).toEqual({ ...topicLogos });
     expect(baked.svgs).toEqual({ ...logoSvgs });
-  });
-
-  test("every topic's logo file is servable", () => {
-    for (const { key } of Object.values(topicLogos))
-      expect([key, isLogoKey(`logos/${key}`), key in logoSvgs]).toEqual([key, true, true]);
-    expect(isLogoKey("logos/../v2/git/x.webp")).toBe(false);
   });
 
   test("a pale brand color sits on ink, and any other on white", () => {
