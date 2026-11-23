@@ -347,6 +347,8 @@ export const repos = pgTable(
       .where(sweepableEnrichment(table)),
     // The metadata sweep's, which holds every repo due a metadata embedding, the ones the policy holds back included.
     index("repos_metadata_sweep_idx").on(table.id).where(metadataEmbeddingDue(table)),
+    // An account's languages read each starred repo's language from this small index, not the wide heap rows.
+    index("repos_language_idx").on(table.id, table.language),
     check(
       "repos_icon_complete",
       sql`(${table.iconKey} is null) = (${table.iconSource} is null) and (${table.iconKey} is null) = (${table.iconPlate} is null) and (${table.iconKey} is null) = (${table.iconSize} is null)`,
