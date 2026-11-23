@@ -29,19 +29,20 @@ export async function* starsPages(client: Pick<Client, "stars">, login: string) 
   const { cursors } = first;
   const reading: Array<Promise<Page>> = [];
   let next = 0;
+  // Each page that lands starts the next, until the reader stops. A page that fails surfaces when its turn comes, as
+  // it did when each page waited for the one before.
   const read = () => {
     const cursor = cursors[next++];
     if (cursor === undefined) return;
     const page = client.stars({ login, cursor });
-    // A page that fails surfaces when its turn comes, as it did when each page waited for the one before.
-    page.catch(() => {});
+    page.then(read, () => {});
     reading.push(page);
   };
-  while (next < concurrency) read();
-  for (let page = reading.shift(); page !== undefined; page = reading.shift()) {
-    const answered = await page;
-    read();
-    yield fresh(answered);
+  try {
+    while (next < concurrency) read();
+    for (let page = reading.shift(); page !== undefined; page = reading.shift()) yield fresh(await page);
+  } finally {
+    next = cursors.length;
   }
 }
 

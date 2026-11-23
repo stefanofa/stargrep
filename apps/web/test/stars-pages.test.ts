@@ -44,7 +44,7 @@ describe("a login's stars", () => {
     expect(asked).toEqual([undefined]);
   });
 
-  test("later pages load four at a time and arrive in page order", async () => {
+  test("later pages load four at a time, each landing page starting the next, and arrive in page order", async () => {
     const { client, asked, answer } = server(7);
     const pages = starsPages(client, "ada");
     expect(ids((await pages.next()).value ?? [])).toEqual([1, 2, 3]);
@@ -53,11 +53,12 @@ describe("a login's stars", () => {
     expect(asked).toEqual([undefined, "2000-1", "3000-1", "4000-1", "5000-1"]);
 
     answer(2);
+    await settled();
+    expect(asked).toHaveLength(6);
     answer(1);
     expect(ids((await second).value ?? [])).toEqual([11, 12, 13]);
-    expect(asked).toHaveLength(6);
-    expect(ids((await pages.next()).value ?? [])).toEqual([21, 22, 23]);
     expect(asked).toHaveLength(7);
+    expect(ids((await pages.next()).value ?? [])).toEqual([21, 22, 23]);
     answer(3);
     answer(4);
     answer(5);
@@ -122,10 +123,15 @@ describe("a login's stars", () => {
     } as unknown as Pick<Client, "stars">;
     expect(await allStars(unsynced, "nobody")).toEqual([]);
 
-    const { client, answer } = server(3);
+    const { client, asked, answer } = server(9);
     const found = findStar(client, "ada", "owner/repo-12");
     await settled();
     answer(1);
     expect((await found)?.id as number | undefined).toBe(12);
+    const started = asked.length;
+    answer(2);
+    answer(3);
+    await settled();
+    expect(asked).toHaveLength(started);
   });
 });
