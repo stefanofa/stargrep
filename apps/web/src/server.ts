@@ -1,6 +1,7 @@
 import start from "@tanstack/react-start/server-entry";
 import { cardPath } from "./lib/preview.ts";
 import { bindings, reportFailure, serveApi, serveAuth } from "./server/app.ts";
+import { compressJson } from "./server/compress.ts";
 import { withHealth } from "./server/health.ts";
 import { serveIcon, workerCache } from "./server/icons.ts";
 import { inProcessFor } from "./server/in-process.ts";
@@ -72,8 +73,10 @@ const serve = (request: Request, context: ExecutionContext) =>
 
 export default {
   fetch: (request: Request, _env: unknown, context: ExecutionContext) =>
-    Promise.resolve(serve(request, context)).catch(async (error: unknown) => {
-      await reportFailure("Web request failed", {}, error, request);
-      throw error;
-    }),
+    Promise.resolve(serve(request, context))
+      .then((response) => compressJson(request, response))
+      .catch(async (error: unknown) => {
+        await reportFailure("Web request failed", {}, error, request);
+        throw error;
+      }),
 };

@@ -51,7 +51,7 @@ TanStack DB holds the browser library. React holds view and request state. The s
 
 App code talks to Postgres through Hyperdrive with a standard driver and uses no Neon-only APIs, so moving to another Postgres host is a dump and restore. Development and preview branches scale to zero. Production does not scale to zero, because a woken compute starts with an empty cache and the first vector searches then read from remote storage.
 
-Every stage's database runs in `aws-us-east-1`, and the main Worker and the web Worker have the placement hint `aws:us-east-1`, so Cloudflare runs their `fetch` handlers in the data center nearest that region. A request crosses the distance to the caller once, and its queries stay near the database. Placement moves only `fetch` handlers. Cron triggers, queue consumers, and Durable Objects run where Cloudflare starts them, and the debug Worker has no placement.
+Every stage's database runs in `aws-us-east-1`, and the main Worker and the web Worker have the placement hint `aws:us-east-1`, so Cloudflare runs their `fetch` handlers in the data center nearest that region. A request crosses the distance to the caller once, and its queries stay near the database. The edge compresses an answer only once it arrives from the placed Worker, so the web Worker sends JSON gzipped itself to a client that accepts gzip (`apps/web/src/server/compress.ts`). From Warsaw, a 9-page library loaded in a median 2.2 s that way instead of 3.0 s. Placement moves only `fetch` handlers. Cron triggers, queue consumers, and Durable Objects run where Cloudflare starts them, and the debug Worker has no placement.
 
 ## Repo layout
 
