@@ -3,6 +3,8 @@
 export interface Site {
   readonly origin: string;
   readonly indexable: boolean;
+  // The engine's chunks the entry doesn't load, which a page that hydrates the engine preloads with its HTML.
+  readonly engine: ReadonlyArray<string>;
 }
 
 export const siteTitle = "stargrep";
@@ -79,3 +81,6 @@ export const pagePath = (pathname: string, query: string | undefined) =>
 
 export const canonicalLinks = (site: Site | undefined, path: string) =>
   site?.indexable ? [{ rel: "canonical", href: `${site.origin}${path}` }] : [];
+
+export const engineLinks = (site: Site | undefined) =>
+  (site?.engine ?? []).map((href) => ({ rel: "modulepreload", href }));

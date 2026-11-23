@@ -159,7 +159,12 @@ const loadSession = async (): Promise<Session> => {
     viewer,
     config,
     repoStars,
-    site: { origin: new URL(request.url).origin, indexable: indexable(request.url) },
+    site: {
+      origin: new URL(request.url).origin,
+      indexable: indexable(request.url),
+      // The build names the engine's chunks as JSON. Run from source, there are none to preload.
+      engine: JSON.parse(import.meta.env.STARGREP_ENGINE ?? "[]"),
+    },
   };
 };
 

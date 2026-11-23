@@ -56,7 +56,7 @@ const open = async (path: string) => {
       viewer: null,
       config: { demoLogin: Login.make("stefanofa"), demoQuery: "", examples: [], featured: [], curated: [] },
       repoStars: null,
-      site: { origin: "https://stargrep.com", indexable: true },
+      site: { origin: "https://stargrep.com", indexable: true, engine: [] },
     }),
   });
   const topics = TopicsRoute.update({ id: "/topics/", path: "/topics/", getParentRoute: () => root } as never);

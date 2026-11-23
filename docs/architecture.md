@@ -47,7 +47,7 @@ oRPC 2.0 and Alchemy 2.0 are betas, and Drizzle 1.0 is a release candidate. Pin 
 
 The `Db` service uses `pg` because Hyperdrive documents `pg` and because Better Auth's Drizzle adapter awaits queries, which only the promise-based driver supports. One driver then serves both core and auth. Drizzle's JIT row mapping stays off, because Workers block `new Function`.
 
-TanStack DB holds the browser library. React holds view and request state. The server renders the stars page, and hydration loads the stars engine, including Effect and TanStack DB. The browser uses an Effect `Stream` to debounce search and cancel stale requests. API imports in client code are type-only, so the oRPC contract adds no runtime dependency.
+TanStack DB holds the browser library. React holds view and request state. The server renders the stars page, and hydration loads the stars engine, including Effect and TanStack DB. The engine loads through `import()`, which Start's manifest doesn't preload, so `engineChunks` in `apps/web/vite.config.ts` hands the server the engine's chunks from the client build, and the pages that hydrate it list them as `modulepreload` links in their HTML. The browser uses an Effect `Stream` to debounce search and cancel stale requests. API imports in client code are type-only, so the oRPC contract adds no runtime dependency.
 
 App code talks to Postgres through Hyperdrive with a standard driver and uses no Neon-only APIs, so moving to another Postgres host is a dump and restore. Development and preview branches scale to zero. Production does not scale to zero, because a woken compute starts with an empty cache and the first vector searches then read from remote storage.
 
