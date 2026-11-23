@@ -178,11 +178,20 @@ describe("the search limit", () => {
       exports.default.fetch(
         new Request("http://web/api/search", post({ scope: { kind: "stars", login: "ada" }, q: "dashboards" }, ip)),
       );
-    const statuses: Array<number> = [];
-    for (let attempt = 0; attempt < 121; attempt++) statuses.push((await search("192.0.2.121")).status);
-    expect(statuses.slice(0, 120).every((status) => status === 200)).toBe(true);
-    const refused: Json = await (await search("192.0.2.121")).json();
-    expect([statuses[120], refused.code]).toEqual([429, "TOO_MANY_REQUESTS"]);
+    // The local limiter counts in windows aligned to the wall clock's minutes, so a burst that crosses a minute starts a
+    // new count partway. Such a burst runs again from another network, and the second can't cross one too.
+    // @effect-diagnostics-next-line globalDate:off - the limiter reads the platform's clock, so the test reads it too.
+    const minute = () => Math.floor(Date.now() / 60_000);
+    const burst = async (ip: string) => {
+      const started = minute();
+      const statuses: Array<number> = [];
+      for (let attempt = 0; attempt < 121; attempt++) statuses.push((await search(ip)).status);
+      const refused: Json = await (await search(ip)).json();
+      return minute() === started ? { statuses, refused } : undefined;
+    };
+    const { statuses, refused } = (await burst("192.0.2.121")) ?? (await burst("192.0.2.123")) ?? {};
+    expect(statuses?.slice(0, 120).every((status) => status === 200)).toBe(true);
+    expect([statuses?.[120], refused?.code]).toEqual([429, "TOO_MANY_REQUESTS"]);
     expect((await search("192.0.2.122")).status).toBe(200);
   });
 });
