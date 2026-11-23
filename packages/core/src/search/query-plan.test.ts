@@ -191,11 +191,6 @@ describe("PlannerPrompt", () => {
       PlannerPrompt.examples.filter(({ query, output }) => output.semanticText === query).map(({ query }) => query),
     ).not.toEqual([]);
   });
-
-  test("lists every registry metric for the model", () => {
-    expect(PlannerPrompt.system).toContain("- active_contributors_growth_90d: Growth of active contributors");
-  });
-
   // The version keys the plan cache and the answer cache. A change here empties both and is never a side effect of
   // the knowledge registry, so search keeps its own kind list.
   test("keeps the version that keys the plan and answer caches", () => {

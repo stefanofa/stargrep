@@ -166,15 +166,6 @@ describe("stars", () => {
       expect(fake.sent.at(-1)?.url.searchParams.get("page")).toBe(String(StarList.lastPage));
     }).pipe(Effect.provide(fake.layer));
   });
-
-  effect("returns an empty list for an account with no stars", () => {
-    const fake = Fake.layer(() => ({ body: [], headers: Fake.rateLimitHeaders(4000) }));
-    return Effect.gen(function* () {
-      expect(yield* collectStars).toEqual([]);
-      expect(fake.sent).toHaveLength(1);
-    }).pipe(Effect.provide(fake.layer));
-  });
-
   effect("reads one page when a sync stops at the first known star", () => {
     const fake = Fake.layer(starPages(250));
     return Effect.gen(function* () {

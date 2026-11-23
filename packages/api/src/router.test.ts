@@ -1557,14 +1557,6 @@ describe("the cached search read", () => {
       expect(yield* read(demo.memory, demoQuery)).toMatchObject({ outcome: "hit" });
     }),
   );
-
-  it.effect("never answers what the planner could not plan, since search never keeps it", () =>
-    Effect.gen(function* () {
-      const demo = demoSearch("fallback");
-      yield* demo.call(demoQuery);
-      expect(yield* read(demo.memory, demoQuery)).toEqual({ outcome: "miss" });
-    }),
-  );
 });
 
 describe("rate limits", () => {

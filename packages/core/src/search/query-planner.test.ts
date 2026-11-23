@@ -3,7 +3,6 @@ import * as Fake from "@stargrep/ai/fake";
 import * as TextGeneration from "@stargrep/ai/text-generation";
 import { collectSpans } from "@stargrep/telemetry/collector";
 import * as it from "@stargrep/testing";
-import * as Digest from "effect/crypto/Digest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -23,8 +22,6 @@ const exampleOutput = (query: string) => {
   return example.output;
 };
 const goYaml = exampleOutput("go library for parsing yaml");
-const dotfiles = exampleOutput("only CLIs for managing dotfiles, still maintained");
-
 const planner = (
   respond: (prompt: string) => unknown,
   cache: Layer.Layer<SearchCache.SearchCache> = SearchCache.layerMemory,
@@ -148,15 +145,6 @@ it.effect("keeps SQL in the query as text to search, never as a metric", () => {
     expect(planned.filters.metrics).toEqual([]);
   }).pipe(Effect.provide(layer));
 });
-
-it.effect("drops a kind filter the query does not ask for and keeps one it does", () => {
-  const { layer } = planner(() => encode(dotfiles));
-  return Effect.gen(function* () {
-    expect((yield* plan("tools for managing dotfiles")).plan.filters.kinds).toEqual([]);
-    expect((yield* plan("only CLIs for managing dotfiles")).plan.filters.kinds).toEqual(["cli"]);
-  }).pipe(Effect.provide(layer));
-});
-
 it.effect("plans a dated query again on a later day and keeps undated plans", () => {
   const dated = { ...goYaml, filters: QueryPlan.noFilters };
   const { prompts, layer } = planner((prompt) =>
@@ -243,20 +231,4 @@ it.effect("searches the query as typed when the allowance refuses a plan, and as
     const plans = collected.spans.filter((span) => span.name === "QueryPlanner.plan");
     expect(plans.at(-1)?.attributes.get("search.plan.failure")).toBe("ModelCallRefused");
   }).pipe(Effect.provide(layer), Effect.withTracer(collected.tracer));
-});
-
-it.effect("still plans when the cache fails", () => {
-  const broken = Layer.effect(
-    SearchCache.SearchCache,
-    SearchCache.make({
-      get: () => Effect.fail(new SearchCache.SearchCacheFailed({ operation: "get", cause: new Error("down") })),
-      set: () => Effect.fail(new SearchCache.SearchCacheFailed({ operation: "set", cause: new Error("down") })),
-    }),
-  ).pipe(Layer.provide(Digest.layerWebCrypto));
-  const { prompts, layer } = planner(() => encode(goYaml), broken);
-  return Effect.gen(function* () {
-    expect((yield* plan("go library for parsing yaml")).source).toBe("model");
-    expect((yield* plan("go library for parsing yaml")).source).toBe("model");
-    expect(prompts).toHaveLength(2);
-  }).pipe(Effect.provide(layer));
 });

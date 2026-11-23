@@ -502,6 +502,8 @@ Deployed stages keep Alchemy state in the Cloudflare account through `Cloudflare
 
 ## Testing
 
+`AGENTS.md` holds the rules for what to test and how to review new tests. This section says how the suites run.
+
 - `packages/core` tests use `bun test` with in-memory layers. They cover behavior, such as "an unstarred repo gets `unstarred_at`", not internal calls. Time runs on `TestClock`, so tests never sleep. `packages/testing` provides `it.effect`, `it.live`, and `it.layer` for Bun Effect tests. Transport and runtime tests also run Effects at their framework boundaries. Typed database fixtures live under `@stargrep/db/testing`. `docs/effect.md` section 7 shows how to use it.
 - `packages/db` runs each query test twice, on PGlite and on Postgres 17 with pgvector through `pg`. The `pg` run creates and migrates a database for each test file in the local container from the root `compose.yaml`, and CI starts the same container. The PGlite run starts each database from a migrated data directory that the first test process builds and keeps in the temp directory, keyed by the PGlite and pgvector versions and the migration files, because initdb takes seconds on a busy machine.
 - `apps/web` and `apps/worker` tests run on workerd through `@cloudflare/vitest-plugin`. Both apps set `testTimeout` to 30 seconds to allow for workerd module loading. Workerd test files are named `*.workerd-test.ts`, which `bun test` never matches from any folder, and the vitest config includes only that pattern. `bunfig.toml` ignores `repos/`, so a root `bun test` runs the other `*.test.ts` and `*.test.tsx` files in the repo.

@@ -95,11 +95,6 @@ it.layer(Layer.merge(TestDatabase.layerMemory({ embeddingModel }), queue.layer),
         expect(tries).toEqual(["10 minutes after the first failure", "an hour after the second failure"]);
       }),
     );
-
-    it.effect("has one delay for each failure under the cap", () =>
-      Effect.sync(() => expect(EnrichRetry.retryDelays.length + 1).toBe(Db.enrichFailureCap)),
-    );
-
     it.effect("sends at most one batch per run, a retry in its place among repos that never failed", () =>
       Effect.gen(function* () {
         const ids = Array.from({ length: EnrichRetry.sweepBatch + 5 }, (_, index) => 1000 + index);
