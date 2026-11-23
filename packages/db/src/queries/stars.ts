@@ -123,6 +123,11 @@ export interface Queries {
     accountId: GitHubAccountId,
     options: { readonly limit: number; readonly after: Option.Option<StarsPosition> },
   ) => Effect.Effect<StarsPage, DbQueryFailed | DbRowInvalid>;
+  // Where each later page of size stars continues, in page order, so a client can read every page at once.
+  readonly pageStarts: (
+    accountId: GitHubAccountId,
+    size: number,
+  ) => Effect.Effect<ReadonlyArray<StarsPosition>, DbQueryFailed | DbRowInvalid>;
   readonly enrichment: (login: Login) => Effect.Effect<EnrichmentProgress, DbQueryFailed | DbRowInvalid>;
   readonly languages: (accountId: GitHubAccountId) => Effect.Effect<StarLanguages, DbQueryFailed | DbRowInvalid>;
   readonly newToYou: (request: NewToYouRequest) => Effect.Effect<NewToYou, DbQueryFailed | DbRowInvalid>;
@@ -132,6 +137,7 @@ const decodeStars = rowsDecoder(Star);
 const decodeLibrary = rowsDecoder(LibraryEntry);
 const decodeProgress = rowsDecoder(EnrichmentProgress);
 const decodeLanguages = rowsDecoder(LanguageCount);
+const decodePositions = rowsDecoder(Schema.Struct({ starredAt: Schema.DateTimeUtcFromMillis, repoId: RepoId }));
 const decodeChanged = rowsDecoder(Schema.Struct({ repoId: RepoId }));
 const decodeCloseness = rowsDecoder(Schema.Struct({ shared: Schema.Int, ranked: Schema.Array(RepoId) }));
 const encodeEvents = writeEncoder(
@@ -427,6 +433,19 @@ export const make = Effect.fn("Db.stars.make")(function* (model: EmbeddingModelI
           };
         }),
       ),
+    // Every size-th star in page order but the last star, which no page follows. It reads only stars_page_idx.
+    pageStarts: (accountId, size) =>
+      run("stars.pageStarts", (db) =>
+        db.execute(sql`
+          select floor(extract(epoch from starred_at) * 1000)::float8 as "starredAt", repo_id::float8 as "repoId"
+          from (
+            select starred_at, repo_id, count(*) over () as total,
+              row_number() over (order by starred_at desc, repo_id) as n
+            from ${stars} where account_id = ${accountId} and unstarred_at is null
+          ) ranked
+          where n % ${size}::int = 0 and n < total
+          order by n`),
+      ).pipe(Effect.flatMap((result) => decodePositions("stars.pageStarts")(resultRows(result)))),
     // The progress and the sync status describe the account accountNamed chooses. A repo the backfill has not reached
     // yet has no repo_reading row, so its state comes from its repos row.
     enrichment: (login) =>

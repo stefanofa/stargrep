@@ -117,10 +117,10 @@ const demoAnswer = async (request: Request, client: Client, sync: SyncStatus, as
   return first;
 };
 
-// A shared link's first answer and opened repo read the owner's whole library, 1,000 stars a page, one page after
-// another. A cold read of 15,000 stars kept a page from its first byte for 38 s, longer than link previews and crawlers
-// wait. So the server waits this long at most, and past it paints the page as a navigation in the browser does, which
-// then loads the library itself.
+// A shared link's first answer and opened repo read the owner's whole library, 1,000 stars a page. Read one page after
+// another, a cold 15,000 stars kept a page from its first byte for 38 s, longer than link previews and crawlers wait.
+// So the server waits this long at most, and past it paints the page as a navigation in the browser does, which then
+// loads the library itself.
 const libraryWait = Duration.seconds(2);
 
 const withinLibraryWait = <A>(read: Promise<A>) =>

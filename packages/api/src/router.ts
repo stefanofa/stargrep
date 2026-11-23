@@ -397,11 +397,24 @@ const starsPage = Effect.fnUntraced(function* (login: Login, size: number, after
   if (Option.isNone(turn)) return yield* new RateLimited({ limit: "network" });
   const account = yield* db.accounts.byLogin(login);
   if (Option.isNone(account)) return yield* new Search.AccountNotSynced({ login });
-  const page = yield* db.stars.page(account.value.id, { limit: size, after });
+  const id = account.value.id;
+  // A first page also says where every later page starts, so a client can read them all at once.
+  const [page, cursors] = yield* Effect.all(
+    [
+      db.stars.page(id, { limit: size, after }),
+      Option.isNone(after)
+        ? Effect.map(db.stars.pageStarts(id, size), (starts) => ({
+            cursors: starts.map((start) => encodeCursor(start)),
+          }))
+        : Effect.succeed({}),
+    ],
+    { concurrency: 2 },
+  );
   return {
     login: account.value.login,
     ...(yield* libraryRepos(page.entries)),
     nextCursor: Option.getOrNull(Option.map(page.next, encodeCursor)),
+    ...cursors,
   };
 });
 
@@ -411,8 +424,10 @@ const firstOf = (page: typeof PublicStars.Encoded, limit: number): typeof Public
   if (page.repos.length <= limit || last === undefined) return page;
   const repos = page.repos.slice(0, limit);
   const kept = new Set(repos.flatMap((repo) => repo.atoms));
+  // Later pages start at the page size's cursors, not this limit's.
+  const { cursors: _cursors, ...rest } = page;
   return {
-    ...page,
+    ...rest,
     repos,
     labels: Object.fromEntries(Object.entries(page.labels).filter(([atom]) => kept.has(atom))),
     nextCursor: encodeCursor({ starredAt: DateTime.makeUnsafe(last.starredAt), repoId: RepoId.make(last.id) }),

@@ -215,6 +215,18 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
         entries: [],
         next: Option.none(),
       });
+
+      // Where each later page starts is where a walk through the pages continues, so the pages can load at once.
+      for (const size of [1, 2, 3, 4, 5]) {
+        const walked: Array<Db.StarsPosition> = [];
+        let at = Option.none<Db.StarsPosition>();
+        do {
+          at = (yield* db.stars.page(id, { limit: size, after: at })).next;
+          if (Option.isSome(at)) walked.push(at.value);
+        } while (Option.isSome(at));
+        expect(yield* db.stars.pageStarts(id, size)).toEqual(walked);
+      }
+      expect(yield* db.stars.pageStarts(accountId(999_996), 2)).toEqual([]);
     }),
   );
 
