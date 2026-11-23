@@ -151,14 +151,16 @@ export const make = Effect.gen(function* () {
 
   // A repo's keys come from its repo_matching_keys row, and a subject key shows only while its subject is listed. The
   // subjects are read as one array, which Postgres sorts and reads in index order, so subjects that share an index
-  // page cost one read. A repo the backfill has not reached yet has no row, so its keys come from matching_atoms.
+  // page cost one read. A repo the backfill has not reached yet has no row, and a repo whose keys a decision cleared
+  // has null keys until the projection sweep fills them, so the keys of both come from matching_atoms.
   const stored = (ids: ReadonlyArray<RepoId>) =>
     query(
       "facets.matching",
       decodeStored,
       sql`
         with stored as (
-          select repo_id, keys from repo_matching_keys where repo_id = any(${sql.param([...ids])}::bigint[])
+          select repo_id, keys from repo_matching_keys
+          where repo_id = any(${sql.param([...ids])}::bigint[]) and keys is not null
         ),
         held as (
           select s.repo_id, k.atom from stored s cross join unnest(s.keys) as k (atom)

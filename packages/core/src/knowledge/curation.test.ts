@@ -49,8 +49,11 @@ const matchesAgree = Effect.gen(function* () {
   return { kept, rebuilt: yield* read };
 });
 
-// repo_matching_keys as the triggers left it, then as its rule gives it for every repo.
+// repo_matching_keys once the sweep fills the rows decisions cleared, then as its rule gives it for every repo. Filling
+// writes only cleared rows, so a row a trigger left wrong stays wrong.
 const keysAgree = Effect.gen(function* () {
+  const db = yield* Db.Db;
+  while ((yield* db.knowledge.refillKeys(1000)) === 1000);
   return {
     kept: yield* rows("select repo_id::float8 as id, keys from repo_matching_keys order by repo_id"),
     rebuilt: yield* rows(

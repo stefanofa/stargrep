@@ -7,9 +7,9 @@ import { ignoreError } from "../src/node-postgres.ts";
 
 // Writes every repo's keys into repo_matching_keys, for a database that held repos before the migration
 // 20261123163925_matching_keys added the triggers that keep the table. Each batch inserts the next repos by ID and skips
-// any a trigger already wrote. A trigger writes in the statement that changes an input, so a row it wrote is never
-// older than the keys a batch read, and a batch that reads keys a trigger is about to change waits on that trigger's row
-// and then skips it. A rerun writes only what is missing, so a run that stops can start again from the beginning.
+// any a trigger already wrote. A trigger writes in the statement that changes an input, keys or the null a decision
+// leaves for the projection sweep to fill, so a row it wrote is never older than the keys a batch read, and a batch that
+// reads keys a trigger is about to change waits on that trigger's row and then skips it. A rerun writes only what is missing, so a run that stops can start again from the beginning.
 // Workers fill ranges of IDs at once, and repo IDs bunch up, so the IDs are cut into many more ranges than workers.
 const batch = 1000;
 const workers = Number(process.env.WORKERS ?? 4);

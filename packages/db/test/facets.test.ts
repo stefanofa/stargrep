@@ -40,23 +40,33 @@ const subjectNamed = Effect.fn("subjectNamed")(function* (
 
 const subject = (role: Db.StoredAtom["role"], id: SubjectId) => atom(role, { dim: "subject", id });
 
-// The keys each repo's repo_matching_keys row holds, held to the rule the triggers keep: every row equals what
-// knowledge_matching_keys computes now, and every repo has a row.
+// The keys each repo's repo_matching_keys row holds, held to the rule the triggers keep: a row a decision cleared waits
+// for the sweep, every other row equals what knowledge_matching_keys computes now, a page reads the same chips before
+// and after the sweep fills the cleared rows, and then every repo has a row equal to the rule.
 const storedKeys = Effect.fn("storedKeys")(function* (ids: ReadonlyArray<RepoId>) {
+  const db = yield* Db.Db;
   const database = yield* TestDatabase.TestDatabase;
   const read = (text: string) =>
     database.query(text, [ids]) as Effect.Effect<
-      ReadonlyArray<{ readonly id: number; readonly keys: ReadonlyArray<string> }>,
+      ReadonlyArray<{ readonly id: number; readonly keys: ReadonlyArray<string> | null }>,
       never
     >;
-  const kept = yield* read(
-    "select repo_id::float8 as id, keys from repo_matching_keys where repo_id = any($1::bigint[]) order by repo_id",
+  const kept = () =>
+    read(
+      "select repo_id::float8 as id, keys from repo_matching_keys where repo_id = any($1::bigint[]) order by repo_id",
+    );
+  const rule = yield* read(
+    "select repo_id::float8 as id, keys from knowledge_matching_keys($1::bigint[]) order by repo_id",
   );
-  expect(kept).toEqual(
-    yield* read("select repo_id::float8 as id, keys from knowledge_matching_keys($1::bigint[]) order by repo_id"),
-  );
-  expect(kept.map((row) => row.id)).toEqual([...ids].sort((a, b) => a - b));
-  return new Map(kept.map((row) => [row.id, row.keys]));
+  const filled = (yield* kept()).filter((row) => row.keys !== null);
+  expect(filled).toEqual(rule.filter((row) => filled.some((stored) => stored.id === row.id)));
+  const page = yield* db.facets.matching(ids);
+  while ((yield* db.knowledge.refillKeys(100)) === 100);
+  const refilled = yield* kept();
+  expect(refilled).toEqual(rule);
+  expect(refilled.map((row) => row.id)).toEqual([...ids].sort((a, b) => a - b));
+  expect(yield* db.facets.matching(ids)).toEqual(page);
+  return new Map(refilled.map((row) => [row.id, row.keys]));
 });
 
 const closedColumns = Object.values(atomColumns).flatMap((columns) =>

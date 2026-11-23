@@ -110,6 +110,7 @@ const defaults = {
     labels: unexpected("knowledge.labels"),
     project: unexpected("knowledge.project"),
     stale: unexpected("knowledge.stale"),
+    refillKeys: unexpected("knowledge.refillKeys"),
     count: unexpected("knowledge.count")(),
     countAtoms: unexpected("knowledge.countAtoms")(),
     allocate: unexpected("knowledge.allocate"),

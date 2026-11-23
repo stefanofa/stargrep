@@ -91,6 +91,9 @@ export interface Queries {
     compute: (repos: ReadonlyArray<LockedRepo>, revision: Revision) => Effect.Effect<Computed<A>, E, R>,
   ) => Effect.Effect<Projected & { readonly carry: A }, E | DbQueryFailed | DbRowInvalid, R>;
   readonly stale: (limit: number) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
+  // Under the shared lock, writes the matching keys of up to limit repos whose keys a decision cleared, lowest ID
+  // first, and returns how many it wrote.
+  readonly refillKeys: (limit: number) => Effect.Effect<number, DbQueryFailed | DbRowInvalid>;
 }
 
 const columnsOf = (role: RoleId): Partial<Record<Dim, string>> => atomColumns[role];
@@ -167,6 +170,7 @@ const decodeLocked = rowsDecoder(
   }),
 );
 const decodeIds = rowsDecoder(Schema.Struct({ id: RepoId }));
+const decodeCount = rowsDecoder(Schema.Struct({ count: Schema.Int }));
 
 export const make = Effect.gen(function* () {
   const { run, withTransaction } = yield* Postgres.Postgres;
@@ -302,5 +306,32 @@ export const make = Effect.gen(function* () {
         decodeIds,
         sql`select repo_id::float8 as id from repo_facets where stale order by repo_id limit ${limit}`,
       ).pipe(Effect.map((rows) => rows.map((row) => row.id))),
+    // The shared lock keeps every decision out between the read of the keys and their write, and a decision is the only
+    // writer that clears keys. A row a projection is writing is skipped, since that projection writes its keys, and a
+    // row a projection wrote since this statement read the keys is no longer null, so it is not overwritten.
+    refillKeys: (limit) =>
+      withTransaction(
+        Effect.gen(function* () {
+          yield* execute("knowledge.refillKeys", sharedLock);
+          const [row] = yield* query(
+            "knowledge.refillKeys",
+            decodeCount,
+            sql`
+              with cleared as (
+                select repo_id from repo_matching_keys where keys is null
+                order by repo_id limit ${limit}
+                for update skip locked
+              ),
+              written as (
+                update repo_matching_keys k set keys = r.keys
+                from knowledge_matching_keys(array(select repo_id from cleared)) as r
+                where k.repo_id = r.repo_id
+                returning 1
+              )
+              select count(*)::integer as count from written`,
+          );
+          return row?.count ?? 0;
+        }),
+      ),
   } satisfies Queries;
 });
