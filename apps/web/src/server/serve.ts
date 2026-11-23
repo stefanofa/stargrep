@@ -239,8 +239,9 @@ export interface ServerOptions {
 
 const refreshTimeout = Duration.seconds(25);
 
-const background =
-  (options: ServerOptions): ApiContext["background"] =>
+// Runs work after the response under waitUntil, with its own analytics and tracer, for 25 seconds at most.
+export const background =
+  (options: Pick<ServerOptions, "waitUntil" | "analytics" | "tracer">): ApiContext["background"] =>
   (run) =>
     Effect.sync(() =>
       options.waitUntil(

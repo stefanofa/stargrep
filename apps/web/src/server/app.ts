@@ -17,7 +17,7 @@ import type { DeclaredEnv } from "./env.ts";
 import { workerCache } from "./icons.ts";
 import { layerAuthRequest, layerRequest, type RequestConfig } from "./layers.ts";
 import { repoStars } from "./repo-stars.ts";
-import { type AnalyticsFor, makeAuthServer, makeServer } from "./serve.ts";
+import { type AnalyticsFor, background, makeAuthServer, makeServer } from "./serve.ts";
 
 export const bindings = env as DeclaredEnv;
 
@@ -40,6 +40,8 @@ const sendAfterResponse = (send: Effect.Effect<void>) => Effect.sync(() => waitU
 const analyticsFor: AnalyticsFor = (request) =>
   layerAnalytics(readConfig().stage, bindings.CALLER_KEY, sendAfterResponse)(request);
 
+const afterResponse = background({ waitUntil, analytics: analyticsFor, tracer: Tracing.tracer });
+
 // Logs a failure no Effect handler caught, such as a page loader's, which also sends it to analytics as an exception.
 export const reportFailure = (
   message: string,
@@ -51,14 +53,16 @@ export const reportFailure = (
 export const serveAuth = makeAuthServer(
   (request) => {
     const { ai, budgetShare, auth } = readConfig();
-    return Option.map(auth, (signIn) => layerAuthRequest(bindings, { ai, budgetShare, auth: signIn }, request));
+    return Option.map(auth, (signIn) =>
+      layerAuthRequest(bindings, { ai, budgetShare, auth: signIn }, request, afterResponse),
+    );
   },
   Tracing.tracer,
   analyticsFor,
 );
 
 const layerForRequest = (request: Request) => {
-  return layerRequest(bindings, readConfig(), request);
+  return layerRequest(bindings, readConfig(), request, afterResponse);
 };
 
 // The page keeps its first answers beside the API's answers.

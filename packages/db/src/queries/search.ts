@@ -7,6 +7,7 @@ import * as Clock from "effect/Clock";
 import type * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -175,29 +176,34 @@ const prefixQuery = (text: string) => {
 export interface AcceptedKeys {
   readonly keys: ReadonlySet<string>;
   readonly readAt: number;
+  // Whether a read of a newer set runs in the background.
+  readonly refreshing: boolean;
 }
 
 // A subject accepted since the last read applies to stated words within this long.
 export const acceptedKeysTtl = Duration.minutes(5);
 
+// Where searches keep the accepted keys. With `refresh`, a search that finds the set stale starts one read of a newer set
+// through it and goes on with the stale one. Without it, that search waits for the read.
+export interface KeyCache {
+  readonly cache: Ref.Ref<Option.Option<AcceptedKeys>>;
+  readonly refresh: Option.Option<(read: Effect.Effect<void, never, Postgres.Postgres>) => Effect.Effect<void>>;
+}
+
 const decodeKeys = rowsDecoder(Schema.Struct({ key: Schema.String }));
 const noKeys: ReadonlySet<string> = new Set();
 
-export const make = Effect.fn("Db.search.make")(function* (
-  configuredModel: EmbeddingModelId,
-  acceptedKeys: Ref.Ref<Option.Option<AcceptedKeys>>,
-) {
-  const { run, withTransaction } = yield* Postgres.Postgres;
+export const make = Effect.fn("Db.search.make")(function* (configuredModel: EmbeddingModelId, keyCache: KeyCache) {
+  const postgres = yield* Postgres.Postgres;
+  const { run, withTransaction } = postgres;
   const decodeResolution = Schema.decodeUnknownEffect(Resolution);
+  const { cache } = keyCache;
 
   // Every key that names exactly one accepted public subject, the rule knowledge_key_meanings applies, so an ambiguous
   // key never reaches the statement.
-  const accepted = Effect.fnUntraced(function* () {
-    const now = yield* Clock.currentTimeMillis;
-    const cached = yield* Ref.get(acceptedKeys);
-    if (Option.isSome(cached) && now - cached.value.readAt < Duration.toMillis(acceptedKeysTtl)) {
-      return cached.value.keys;
-    }
+  const read = Effect.gen(function* () {
+    const readAt = yield* Clock.currentTimeMillis;
+    const { run } = yield* Postgres.Postgres;
     const rows = yield* run("search.acceptedKeys", (db) =>
       db.execute(sql`select l.key from knowledge_labels l
         left join subject_canonical c on c.origin_id = l.subject_id
@@ -207,8 +213,40 @@ export const make = Effect.fn("Db.search.make")(function* (
         having count(distinct s.id) = 1`),
     ).pipe(Effect.flatMap((result) => decodeKeys("search.acceptedKeys")(resultRows(result))));
     const keys: ReadonlySet<string> = new Set(rows.map(({ key }) => key));
-    yield* Ref.set(acceptedKeys, Option.some({ keys, readAt: now }));
+    yield* Ref.set(cache, Option.some({ keys, readAt, refreshing: false }));
     return keys;
+  });
+  const readNow = Effect.provideService(read, Postgres.Postgres, postgres);
+
+  // A refresh that fails or stops keeps the stale set, and the next search starts another.
+  const settle = Effect.onExit(read, (exit) =>
+    Exit.isSuccess(exit)
+      ? Effect.void
+      : Ref.update(
+          cache,
+          Option.map((held) => ({ ...held, refreshing: false })),
+        ),
+  ).pipe(
+    Effect.asVoid,
+    Effect.catchTags({
+      DbQueryFailed: (error) => Effect.logWarning("Accepted keys refresh failed", { reason: error.reason }),
+      DbRowInvalid: () => Effect.logWarning("Accepted keys refresh failed", { reason: "row" }),
+    }),
+  );
+
+  const accepted = Effect.fnUntraced(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const cached = yield* Ref.get(cache);
+    if (Option.isNone(cached)) return yield* readNow;
+    if (now - cached.value.readAt < Duration.toMillis(acceptedKeysTtl)) return cached.value.keys;
+    if (Option.isNone(keyCache.refresh)) return yield* readNow;
+    const claimed = yield* Ref.modify(cache, (held) =>
+      Option.isSome(held) && !held.value.refreshing
+        ? [true, Option.some({ ...held.value, refreshing: true })]
+        : [false, held],
+    );
+    if (claimed) yield* keyCache.refresh.value(settle);
+    return cached.value.keys;
   });
 
   return {

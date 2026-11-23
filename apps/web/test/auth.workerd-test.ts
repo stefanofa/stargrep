@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { layerAuthRequest, layerRequest } from "../src/server/layers.ts";
 import { makeAuthServer } from "../src/server/serve.ts";
 import { ada, type TokenExchange } from "./fake-github.ts";
-import { testServer } from "./serve.ts";
+import { afterResponse, testServer } from "./serve.ts";
 
 const share = BudgetShare.make(0.5);
 
@@ -42,6 +42,7 @@ const stage = (origin: string, database: Hyperdrive, github: GitHubSignIn) => {
           stageEnv,
           { ai: { provider: "gateway", key: Option.none() }, budgetShare: share, auth: config },
           request,
+          afterResponse,
         ),
       ),
     Layer.empty,
@@ -51,6 +52,7 @@ const stage = (origin: string, database: Hyperdrive, github: GitHubSignIn) => {
       stageEnv,
       { ai: { provider: "gateway", key: Option.none() }, budgetShare: share, auth: Option.some(config) },
       request,
+      afterResponse,
     ),
   );
   const cookies = new Map<string, string>();

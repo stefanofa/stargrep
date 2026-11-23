@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
+import { flow } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -191,7 +192,13 @@ export interface Options {
   /** Skips the embedding_settings read once a build that shares this Ref has passed it. */
   readonly adopted?: Ref.Ref<boolean>;
   /** Shares the accepted label keys a build last read across builds. Each build keeps its own when this is left out. */
-  readonly acceptedKeys?: Ref.Ref<Option.Option<Search.AcceptedKeys>>;
+  readonly acceptedKeys?: SharedKeys;
+}
+
+export interface SharedKeys {
+  readonly cache: Ref.Ref<Option.Option<Search.AcceptedKeys>>;
+  /** Runs a refresh of a stale set after the response, so no search waits for it. */
+  readonly background: (refresh: Effect.Effect<void>) => Effect.Effect<void>;
 }
 
 export interface NodePostgresOptions extends Options {
@@ -208,20 +215,32 @@ const adopt = (options: Options) => {
   );
 };
 
-export const layer = (options: Options) =>
+const keyCache = (
+  shared: SharedKeys | undefined,
+  connect: (read: Effect.Effect<void, never, Postgres.Postgres>) => Effect.Effect<void>,
+) =>
+  shared === undefined
+    ? Effect.map(Ref.make(Option.none<Search.AcceptedKeys>()), (cache) => ({ cache, refresh: Option.none() }))
+    : Effect.succeed({ cache: shared.cache, refresh: Option.some(flow(connect, shared.background)) });
+
+// A refresh of the accepted keys outlives the request whose search started it, so it reads through `refreshConnection`
+// when one is given, or else through the build's own Postgres.
+const layerWith = (options: Options, refreshConnection: Option.Option<Layer.Layer<Postgres.Postgres>>) =>
   Layer.mergeAll(
     Layer.effect(
       Db,
       Effect.gen(function* () {
         const embeddingModel = yield* adopt(options);
+        const postgres = yield* Postgres.Postgres;
+        const connect = Option.match(refreshConnection, {
+          onNone: () => Effect.provideService(Postgres.Postgres, postgres),
+          onSome: (own) => Effect.provide(own),
+        });
         return Db.of({
           accounts: yield* Accounts.make,
           repos: yield* Repos.make(embeddingModel),
           stars: yield* Stars.make(embeddingModel),
-          search: yield* Search.make(
-            embeddingModel,
-            options.acceptedKeys ?? (yield* Ref.make(Option.none<Search.AcceptedKeys>())),
-          ),
+          search: yield* Search.make(embeddingModel, yield* keyCache(options.acceptedKeys, connect)),
           similar: yield* Similar.make(embeddingModel),
           syncRequests: yield* SyncRequests.make,
           rateLines: yield* RateLines.make,
@@ -254,5 +273,8 @@ const nodePostgres = (options: NodePostgresOptions) =>
     ),
   );
 
+export const layer = (options: Options) => layerWith(options, Option.none());
+
+// The request's pool closes with its response, so a refresh after it opens a pool of its own.
 export const layerNodePostgres = (options: NodePostgresOptions) =>
-  layer(options).pipe(Layer.provide(nodePostgres(options)));
+  layerWith(options, Option.some(nodePostgres(options))).pipe(Layer.provide(nodePostgres(options)));
