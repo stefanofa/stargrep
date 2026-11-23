@@ -9,6 +9,9 @@ export const databases = {
     pgVersion: 17,
     historyRetentionSeconds: 21600,
     expiryDays: undefined,
+    // Its compute never scales below 1 CU, so the file cache that holds repos stays large. Each deploy that changes the
+    // branch resets its endpoint to these, so a limit set only in the Neon console would last until the next migration.
+    compute: { minCu: 1, maxCu: 8 },
   },
   previews: {
     logicalId: "ProjectPreviewsUsEast",
@@ -17,6 +20,7 @@ export const databases = {
     pgVersion: 17,
     historyRetentionSeconds: 0,
     expiryDays: 14,
+    compute: undefined,
   },
 } as const;
 
