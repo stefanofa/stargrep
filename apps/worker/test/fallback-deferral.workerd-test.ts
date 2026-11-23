@@ -66,6 +66,7 @@ it("shares the server token's rate-limit deferral across users who spent their o
                 enrichFailures: 0,
                 summaryRecipe: 0,
                 summaryInputHash: null,
+                iconCheckedAt: null,
               })),
             ),
           ),

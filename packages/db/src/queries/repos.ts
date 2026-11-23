@@ -12,7 +12,7 @@ import {
 import { InputHash } from "@stargrep/knowledge/ids";
 import { inputHash } from "@stargrep/knowledge/input-hash";
 import { KindId } from "@stargrep/knowledge/registry";
-import { and, asc, eq, getColumns, gt, isNotNull, type SQL, sql } from "drizzle-orm";
+import { and, asc, eq, getColumns, gt, type SQL, type SQLWrapper, sql } from "drizzle-orm";
 import { createSelectSchema } from "drizzle-orm/effect-schema";
 import * as Arr from "effect/Array";
 import * as Digest from "effect/crypto/Digest";
@@ -35,6 +35,7 @@ import {
   iconSource,
   metadataEmbeddingDue,
   pendingEnrichment,
+  repoIconChecks,
   repoMetrics,
   repos,
   retryableEnrichment,
@@ -58,7 +59,6 @@ const RepoRow = createSelectSchema(repos, {
   keywords: Schema.Array(Schema.String),
   embeddingModel: Schema.NullOr(EmbeddingModelId),
   enrichRetryAt: NullableTime,
-  iconCheckedAt: NullableTime,
   inputHash: Schema.NullOr(InputHash),
   summaryInputHash: Schema.NullOr(InputHash),
 });
@@ -83,8 +83,10 @@ export const RepoIcon = Schema.Struct({
 export type RepoIcon = typeof RepoIcon.Type;
 
 // Columns a Repo leaves out: the vector and the text it was made from, the full-text column, the retry state, the summary
-// cap's mark, the recipe that made the summary, and the knowledge columns, which only queries/knowledge/ reads and writes.
+// cap's mark, the recipe that made the summary, the old icon check, and the knowledge columns, which only
+// queries/knowledge/ reads and writes.
 const internalColumns = [
+  "iconCheckedAt",
   "embedding",
   "embeddingSource",
   "search",
@@ -131,6 +133,10 @@ const iconOf = ({ iconKey, iconSource, iconPlate, iconSize }: IconColumns): Repo
   iconKey === null || iconSource === null || iconPlate === null || iconSize === null
     ? null
     : { key: iconKey, source: iconSource, plate: iconPlate, size: iconSize };
+
+// The version an icon key names, the part before its first slash, null with no icon. The trigger that adds a repo's
+// check row and the backfill of the checks compute it the same way.
+const keyVersionOf = (key: SQLWrapper) => sql`split_part(${key}, '/', 1)`;
 
 const iconColumnsOf = (icon: RepoIcon | null): IconColumns => ({
   iconKey: icon?.key ?? null,
@@ -239,8 +245,14 @@ const enrichFields = Struct.pick(RepoRow.fields, [
   "summaryInputHash",
 ]);
 
-// unwanted says the summary policy holds back the repo's due summary.
-const plannedFields = { ...enrichFields, pending: Schema.Boolean, unwanted: Schema.Boolean };
+// unwanted says the summary policy holds back the repo's due summary. iconCheckedAt is when the icon job last checked
+// the repo, null before its first check.
+const plannedFields = {
+  ...enrichFields,
+  pending: Schema.Boolean,
+  unwanted: Schema.Boolean,
+  iconCheckedAt: NullableTime,
+};
 
 const StoredRepo = Schema.Struct({ ...rowFields, ...plannedFields }).pipe(
   Schema.decodeTo(
@@ -368,10 +380,14 @@ export interface Queries {
   // The repos due an embedding of their metadata, lowest ID first, at most limit, whatever the summary policy and the
   // failure cap say.
   readonly metadataSweepable: (limit: number) => Effect.Effect<ReadonlyArray<RepoId>, DbQueryFailed | DbRowInvalid>;
+  // Records an icon check and the icon it found, and writes the repos row only when the icon changed.
   readonly saveIcon: (check: IconCheck) => Effect.Effect<void, DbQueryFailed>;
   // Records an icon check that found nothing new and keeps the icon the repo has, so it waits for the next refresh.
   readonly markIconChecked: (id: RepoId) => Effect.Effect<void, DbQueryFailed>;
+  // Writes only the repos whose owner facts changed.
   readonly saveOwners: (owners: ReadonlyArray<RepoOwner>) => Effect.Effect<void, DbQueryFailed>;
+  // The repos after the given ID that were never checked, were last checked before checkedBefore, or hold an icon key
+  // of another version, lowest ID first, at most limit.
   readonly dueIcons: (page: {
     readonly after: number;
     readonly limit: number;
@@ -820,15 +836,28 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
         Effect.flatMap(decodeIds("repos.metadataSweepable")),
         Effect.map((rows) => rows.map((row) => row.id)),
       ),
-    saveIcon: ({ id, icon }) =>
-      run("repos.saveIcon", (db) =>
-        db
-          .update(repos)
-          .set({ ...iconColumnsOf(icon), iconCheckedAt: sql`now()` })
-          .where(eq(repos.id, id)),
-      ),
+    saveIcon: ({ id, icon }) => {
+      const { iconKey, iconSource, iconPlate, iconSize } = iconColumnsOf(icon);
+      const found = sql`(${iconKey}::text, ${iconSource}::icon_source, ${iconPlate}::icon_plate, ${iconSize}::integer)`;
+      return run("repos.saveIcon", (db) =>
+        db.execute(sql`
+          with saved as (
+            update ${repos} set icon_key = ${iconKey}, icon_source = ${iconSource}, icon_plate = ${iconPlate},
+              icon_size = ${iconSize}
+            where id = ${id} and (icon_key, icon_source, icon_plate, icon_size) is distinct from ${found}
+          )
+          insert into ${repoIconChecks} (repo_id, checked_at, key_version)
+          select id, now(), ${keyVersionOf(sql`${iconKey}::text`)} from ${repos} where id = ${id}
+          on conflict (repo_id) do update set checked_at = excluded.checked_at, key_version = excluded.key_version`),
+      );
+    },
     markIconChecked: (id) =>
-      run("repos.markIconChecked", (db) => db.update(repos).set({ iconCheckedAt: sql`now()` }).where(eq(repos.id, id))),
+      run("repos.markIconChecked", (db) =>
+        db.execute(sql`
+          insert into ${repoIconChecks} (repo_id, checked_at, key_version)
+          select id, now(), ${keyVersionOf(repos.iconKey)} from ${repos} where id = ${id}
+          on conflict (repo_id) do update set checked_at = excluded.checked_at`),
+      ),
     saveOwners: (owners) => {
       const sorted = inIdOrder(owners);
       return sorted.length === 0
@@ -840,24 +869,33 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
               .from(
                 sql`(select * from unnest(${sql.param(sorted.map((owner) => owner.id))}::bigint[], ${sql.param(sorted.map((owner) => owner.ownerType))}::text[], ${sql.param(sorted.map((owner) => owner.ownerAvatarUrl))}::text[]) as owners(id, owner_type, owner_avatar_url)) as owners`,
               )
-              .where(sql`${repos.id} = owners.id`),
+              .where(
+                sql`${repos.id} = owners.id and (${repos.ownerType}, ${repos.ownerAvatarUrl}) is distinct from (owners.owner_type::account_type, owners.owner_avatar_url)`,
+              ),
           );
     },
-    dueIcons: ({ after, limit, checkedBefore, keyVersion }) =>
-      run("repos.dueIcons", (db) =>
+    // The page walks repo_icon_checks by ID and reads repos only for a due row. A join lets the planner merge-join
+    // both keys in ID order, which reads the repos heap from the cursor to the first due repo, so the node ID comes
+    // from a scalar subquery, which the planner never turns into a join.
+    dueIcons: ({ after, limit, checkedBefore, keyVersion }) => {
+      const nodeId = sql<
+        string | null
+      >`(select ${repos.nodeId} from ${repos} where ${repos.id} = ${repoIconChecks.repoId})`;
+      return run("repos.dueIcons", (db) =>
         db
-          .select({ id: repos.id, nodeId: repos.nodeId })
-          .from(repos)
+          .select({ id: repoIconChecks.repoId, nodeId })
+          .from(repoIconChecks)
           .where(
             and(
-              sql`(${repos.iconCheckedAt} is null or ${repos.iconCheckedAt} < ${timeParam(checkedBefore)} or ${repos.iconKey} not like ${`${keyVersion}/%`})`,
-              isNotNull(repos.nodeId),
-              gt(repos.id, after),
+              gt(repoIconChecks.repoId, after),
+              sql`(${repoIconChecks.checkedAt} is null or ${repoIconChecks.checkedAt} < ${timeParam(checkedBefore)} or ${repoIconChecks.keyVersion} <> ${keyVersion})`,
+              sql`${nodeId} is not null`,
             ),
           )
-          .orderBy(asc(repos.id))
+          .orderBy(asc(repoIconChecks.repoId))
           .limit(limit),
-      ).pipe(Effect.flatMap(decodeDue("repos.dueIcons"))),
+      ).pipe(Effect.flatMap(decodeDue("repos.dueIcons")));
+    },
     get: (id) =>
       run("repos.get", (db) => db.select(repoColumns).from(repos).where(eq(repos.id, id))).pipe(
         Effect.flatMap(decodeRepos("repos.get")),
@@ -881,8 +919,10 @@ export const make = Effect.fn("Db.repos.make")(function* (configuredModel: Embed
             enrichRetryAt: repos.enrichRetryAt,
             summaryRecipe: repos.summaryRecipe,
             summaryInputHash: repos.summaryInputHash,
+            iconCheckedAt: repoIconChecks.checkedAt,
           })
           .from(repos)
+          .leftJoin(repoIconChecks, eq(repoIconChecks.repoId, repos.id))
           .where(sql`${repos.id} = any(${sql.param([...ids])}::bigint[])`),
       ).pipe(Effect.flatMap(decodeStored("repos.getMany"))),
     // A copy of an attempt already counted, such as a second message for the same repo, finds the retry time in

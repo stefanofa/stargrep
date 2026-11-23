@@ -298,6 +298,8 @@ export const repos = pgTable(
     iconSource: iconSource("icon_source"),
     iconPlate: iconPlate("icon_plate"),
     iconSize: integer("icon_size"),
+    // Where each icon check was recorded before repo_icon_checks. Only `backfill-icon-checks` reads it, and a later
+    // migration drops it.
     iconCheckedAt: time("icon_checked_at"),
     ownerType: accountType("owner_type"),
     ownerAvatarUrl: text("owner_avatar_url"),
@@ -393,6 +395,18 @@ export const repoReading = pgTable("repo_reading", {
     .primaryKey()
     .references(() => repos.id, { onDelete: "cascade" }),
   state: readingStateType("state").notNull(),
+});
+
+// When the icon job last checked each repo, and the version of the icon key the repo held then, kept off the wide repos
+// row so a check that changes nothing writes only here. checked_at is null until the first check. A trigger on repos
+// adds a row when a repo is inserted, and `bun run --cwd packages/db backfill-icon-checks` writes one for each repo that
+// existed before.
+export const repoIconChecks = pgTable("repo_icon_checks", {
+  repoId: githubId("repo_id")
+    .primaryKey()
+    .references(() => repos.id, { onDelete: "cascade" }),
+  checkedAt: time("checked_at"),
+  keyVersion: text("key_version"),
 });
 
 export const repoMetrics = pgTable("repo_metrics", {
