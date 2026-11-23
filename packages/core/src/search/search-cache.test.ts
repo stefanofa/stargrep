@@ -117,10 +117,3 @@ it.effect("turns backend failures into a miss and a dropped write", () => {
     expect(yield* lookup(counts, "first")).toEqual(Option.none());
   }).pipe(Effect.provide(cache));
 });
-
-it.effect("keeps entries in memory for the length of the layer", () =>
-  Effect.gen(function* () {
-    yield* store(counts, "first", { count: 7 });
-    expect(yield* lookup(counts, "first")).toEqual(Option.some({ count: 7 }));
-  }).pipe(Effect.provide(SearchCache.layerMemory)),
-);

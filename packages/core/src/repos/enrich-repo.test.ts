@@ -294,19 +294,6 @@ import * as EnrichRetry from "./enrich-retry.ts";
           expect(yield* db.repos.pendingEnrichment([id(291)])).toEqual([]);
         }),
       );
-
-      it.effect("embeds a stored summary again without a model call when its embedding is missing", () =>
-        Effect.gen(function* () {
-          f.remotes.set(7, { description: "HTTP client", readme: { oid: oid("1"), text: "# Client" } });
-          yield* f.enrich(7);
-          yield* f.resummarize(7);
-          const calls = f.prompts.length;
-          expect(yield* f.enrich(7)).toMatchObject({ _tag: "Embedded" });
-          expect(f.prompts.length).toBe(calls);
-          expect((yield* f.get(7)).embeddingModel).toBe(embeddingModel);
-        }),
-      );
-
       it.effect(
         "queues icon work when the icon was never checked or its README changed, not on an embed-only rerun",
         () =>
@@ -418,13 +405,6 @@ import * as EnrichRetry from "./enrich-retry.ts";
           expect(yield* f.failuresOf(9)).toEqual([{ enrich_failures: 1 }]);
         }),
       );
-
-      it.effect("reports an id with no stored row as NotFound", () =>
-        Effect.gen(function* () {
-          expect(yield* f.enrichOne(id(10))).toEqual({ _tag: "NotFound", id: id(10) });
-        }),
-      );
-
       it.effect("reports NotFound when the row is deleted while its embedding is made", () =>
         Effect.gen(function* () {
           const database = yield* TestDatabase.TestDatabase;

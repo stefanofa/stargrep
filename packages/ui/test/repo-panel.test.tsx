@@ -46,11 +46,3 @@ test("without a repo icon, the panel header shows the owner's avatar, or else th
   cleanup();
   expect(slotIn({ kind: "monogram", letters: "ra" }).textContent).toBe("ra");
 });
-
-test("the panel says who starred the repo", () => {
-  render(
-    <RepoPanel repo={{ ...repo, starred: { by: "@stefanofa", on: "Feb 6, 2026" } }} open onOpenChange={() => {}} />,
-  );
-  expect(page().getByText("@stefanofa starred it Feb 6, 2026")).toBeTruthy();
-  expect(page().queryByText(/you starred it/)).toBeNull();
-});

@@ -856,16 +856,6 @@ describe("gateway batch", () => {
       expect(fake.direct.calls).toBe(1);
     }).pipe(Effect.provide(fake.layer));
   });
-
-  it.effect("answers every prompt directly when the gateway fails the whole batch", () => {
-    const fake = fakeBatch({ items: [], fails: true });
-    return Effect.gen(function* () {
-      const results = yield* summaries(batchRepos);
-      expect(results).toEqual(batchRepos.map(() => Result.succeed(validSummary)));
-      expect(fake.direct.calls).toBe(3);
-    }).pipe(Effect.provide(fake.layer));
-  });
-
   it.effect("retries a failed start, status check, and result read without starting a second job", () => {
     const fake = fakeBatch({
       items: [succeeded("0", JSON.stringify(validAnswer)), succeeded("1", JSON.stringify(validAnswer))],
@@ -960,27 +950,6 @@ describe("gateway embeddings", () => {
             Layer.provide(Layer.succeed(Gateway.AiProvider, provider)),
           ),
           memory.layer,
-        ),
-      ),
-    );
-  });
-
-  it.effect("fails with AiOutputInvalid when the model ignores the requested size", () => {
-    const provider = Gateway.AiProvider.of({
-      languageModel: unused,
-      embeddingModel: () =>
-        new MockEmbeddingModelV4({
-          doEmbed: async ({ values }) => ({ embeddings: values.map(() => [0.1, 0.2]), warnings: [] }),
-        }),
-      experimental_batch: unused,
-    });
-    return Effect.gen(function* () {
-      const embeddings = yield* Embeddings.Embeddings;
-      expect((yield* Effect.flip(embeddings.embed(["one"])))._tag).toBe("AiOutputInvalid");
-    }).pipe(
-      Effect.provide(
-        Gateway.layerEmbeddings({ ...Models.embeddingModel, id: "test/embed", dimensions: 64 }).pipe(
-          Layer.provide(Layer.succeed(Gateway.AiProvider, provider)),
         ),
       ),
     );

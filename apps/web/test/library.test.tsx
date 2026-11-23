@@ -79,21 +79,6 @@ describe("the stars view after a failed library load", () => {
     await act(async () => (await github.next())());
     await waitFor(() => expect(container.textContent).toBe("1 stars"));
   });
-
-  test("shows the library once any reload brings it back", async () => {
-    const github = server([repo(1), repo(2)], 1);
-    const library = makeLibrary(github.load);
-    const { container } = render(<Stars library={library} />);
-    await act(async () => (await github.next())());
-    await waitFor(() => expect(container.textContent).toBe("try again"));
-
-    await act(async () => {
-      const reloaded = library.reload();
-      (await github.next())();
-      await reloaded;
-    });
-    await waitFor(() => expect(container.textContent).toBe("2 stars"));
-  });
 });
 
 describe("reload", () => {

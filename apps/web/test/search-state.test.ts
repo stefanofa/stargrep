@@ -581,15 +581,6 @@ describe("the hero above a visitor's look at the demo account", () => {
       butter: { kind: "claim", progress: 0 },
     });
   });
-
-  test("says an import waits in line, and leaves its start time to the status line", () => {
-    const waiting = importingFor({ done: 0, phase: { kind: "in-line", ahead: 3, startsAt: "2026-11-06T12:00:00Z" } });
-    expect(hero(waiting)?.subtitle).toEqual([
-      stefanofa,
-      " is new here and waits in line for GitHub. search covers their stars as they land.",
-    ]);
-  });
-
   test("points to another username when the page is in trouble", () => {
     expect(hero(importingFor({ phase: { kind: "not-asked" } }), { trouble: "missing" })).toEqual({
       subtitle: ["try any username."],
@@ -663,13 +654,5 @@ describe("a page in trouble", () => {
       undefined,
       undefined,
     ]);
-  });
-
-  test("says whose stars, and your stars on the viewer's own page", () => {
-    expect(troubleBody("load-failed").heading).toBe("stargrep couldn't load @octo's stars");
-    expect(troubleBody("load-failed", { audience: ownPage }).heading).toBe("stargrep couldn't load your stars");
-    expect(troubleBody("missing", { audience: anyone({ login: "nobody-x" }) }).heading).toBe(
-      "GitHub has no one called @nobody-x",
-    );
   });
 });

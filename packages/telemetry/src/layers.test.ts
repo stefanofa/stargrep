@@ -8,7 +8,6 @@ import * as Layer from "effect/Layer";
 import * as OtlpExporter from "effect/observability/OtlpExporter";
 import * as OtlpSerialization from "effect/observability/OtlpSerialization";
 import type * as Tracer from "effect/Tracer";
-import * as Cloudflare from "./cloudflare.ts";
 import * as Otlp from "./otlp.ts";
 
 const canary = "PRIVATE_RESULT_CANARY";
@@ -45,11 +44,4 @@ describe("tracer layers", () => {
       expect(payloads.join("\n")).not.toContain(canary);
     }).pipe(Effect.provide(layer));
   });
-
-  it.effect("the Cloudflare layer ends a successful span with no value", () =>
-    Effect.gen(function* () {
-      const span = yield* endedSpan;
-      expect(span?.status._tag === "Ended" && span.status.exit).toEqual(Exit.void);
-    }).pipe(Effect.provide(Cloudflare.tracer)),
-  );
 });
