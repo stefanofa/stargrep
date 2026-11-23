@@ -16,6 +16,7 @@
   },
   "scripts": {
     "backfill-icon-checks": "bun scripts/backfill-icon-checks.ts",
+    "backfill-matching-keys": "bun scripts/backfill-matching-keys.ts",
     "backfill-reading": "bun scripts/backfill-reading.ts",
     "backfill-similar": "bun scripts/backfill-similar.ts",
     "backfill-topics": "bun scripts/backfill-topics.ts",
