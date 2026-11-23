@@ -1,0 +1,82 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "f56b00fe-5969-451b-9398-b7cc373d3c13",
+  "prevIds": [
+    "1b7f1f6a-c896-4181-a1e7-1b0e457a62bd"
+  ],
+  "footprints": [
+    {
+      "statementType": "alter_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "repo_matching_keys",
+        "keys"
+      ],
+      "writes": [
+        "s|colprop|public.repo_matching_keys.keys.notNull"
+      ],
+      "reads": [
+        "n|tbl|public.repo_matching_keys",
+        "n|sch|public",
+        "n|col|public.repo_matching_keys.keys"
+      ],
+      "sqlHash": "90bd630b5296f123"
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "repo_matching_keys",
+        "repo_matching_keys_cleared_idx"
+      ],
+      "writes": [
+        "s|idx|public.repo_matching_keys_cleared_idx",
+        "n|idx|public.repo_matching_keys_cleared_idx",
+        "e|idx|public.repo_matching_keys_cleared_idx",
+        "n|rel|public.repo_matching_keys_cleared_idx"
+      ],
+      "reads": [
+        "n|tbl|public.repo_matching_keys",
+        "n|sch|public",
+        "n|col|public.repo_matching_keys.repo_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_matching_keys",
+        "name": "repo_matching_keys_cleared_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "repo_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": "\"keys\" is null",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "alter",
+      "key": "columns\u0000[\"public\",\"repo_matching_keys\",\"keys\"]",
+      "set": {
+        "notNull": false
+      }
+    }
+  ]
+}

@@ -87,6 +87,7 @@ const LookupRow = Schema.Struct({
 
 const decodeHeld = rowsDecoder(HeldRow);
 const decodeMatching = rowsDecoder(MatchingRow);
+const decodeStored = rowsDecoder(Schema.Struct({ ...MatchingRow.fields, missing: Schema.Array(RepoId) }));
 const decodeLookup = rowsDecoder(LookupRow);
 
 const prefixDims = new Map(Dim.literals.map((dim) => [dimPrefix[dim], dim]));
@@ -148,7 +149,46 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const matching = (ids: ReadonlyArray<RepoId>) =>
+  // A repo's keys come from its repo_matching_keys row, and a subject key shows only while its subject is listed. The
+  // subjects are read as one array, which Postgres sorts and reads in index order, so subjects that share an index
+  // page cost one read. A repo the backfill has not reached yet has no row, and a repo whose keys a decision cleared
+  // has null keys until the projection sweep fills them, so the keys of both come from matching_atoms.
+  const stored = (ids: ReadonlyArray<RepoId>) =>
+    query(
+      "facets.matching",
+      decodeStored,
+      sql`
+        with stored as (
+          select repo_id, keys from repo_matching_keys
+          where repo_id = any(${sql.param([...ids])}::bigint[]) and keys is not null
+        ),
+        held as (
+          select s.repo_id, k.atom from stored s cross join unnest(s.keys) as k (atom)
+          where split_part(k.atom, ':', -3) <> all(${sql.param(hiddenWires)}::text[])
+        ),
+        shown as (
+          select s.id, s.label from subjects s
+          where s.listed and s.id = any(array(
+            select distinct split_part(atom, ':', -1)::bigint from held where split_part(atom, ':', -2) = 'subject'))
+        ),
+        m as (
+          select repo_id, atom from held
+          where case when split_part(atom, ':', -2) = 'subject'
+            then split_part(atom, ':', -1)::bigint in (select id from shown) else true end
+        )
+        select
+          coalesce((
+            select jsonb_object_agg(repo_id::text, atoms)
+            from (select repo_id, array_agg(atom order by atom) as atoms from m group by repo_id) as a
+          ), '{}') as atoms,
+          coalesce((select jsonb_object_agg(id::text, label) from shown), '{}') as subjects,
+          array(
+            select u.id::float8 from unnest(${sql.param([...ids])}::bigint[]) as u (id)
+            where not exists (select 1 from stored s where s.repo_id = u.id)
+          ) as missing`,
+    );
+
+  const computed = (ids: ReadonlyArray<RepoId>) =>
     query(
       "facets.matching",
       decodeMatching,
@@ -168,14 +208,23 @@ export const make = Effect.gen(function* () {
             from subjects s
             where s.id in (select split_part(atom, ':', -1)::bigint from m where split_part(atom, ':', -2) = 'subject')
           ), '{}') as subjects`,
-    ).pipe(
-      Effect.map(([row]) => {
+    );
+
+  const matching = (ids: ReadonlyArray<RepoId>) =>
+    stored(ids).pipe(
+      Effect.flatMap(([row]) =>
+        row === undefined || row.missing.length === 0
+          ? Effect.succeed(row === undefined ? [] : [row])
+          : Effect.map(computed(row.missing), (rows) => [row, ...rows]),
+      ),
+      Effect.map((rows) => {
         const atoms = new Map<RepoId, ReadonlyArray<string>>();
         const labels: Record<string, string> = {};
-        for (const [id, keys] of Object.entries(row?.atoms ?? {})) {
-          atoms.set(RepoId.make(Number(id)), keys);
-          for (const key of keys) labels[key] ??= labelOf(key, row?.subjects ?? {});
-        }
+        for (const row of rows)
+          for (const [id, keys] of Object.entries(row.atoms)) {
+            atoms.set(RepoId.make(Number(id)), keys);
+            for (const key of keys) labels[key] ??= labelOf(key, row.subjects);
+          }
         return { atoms, labels } satisfies MatchingAtoms;
       }),
     );

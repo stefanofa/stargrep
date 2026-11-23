@@ -765,10 +765,10 @@ describe("knowledge crons", () => {
 
   it("logs a sweep that found nothing stale", async () => {
     const { logs, layer } = capture();
-    const idle = knowledgeRuntime({ stale: () => Effect.succeed([]) });
+    const idle = knowledgeRuntime({ stale: () => Effect.succeed([]), refillKeys: () => Effect.succeed(0) });
     await Effect.runPromise(ProjectionSweep.run(idle).pipe(Effect.provide(layer)));
     expect(logs).toEqual([
-      { level: "Info", message: ["Projection sweep ran", { projected: 0, minted: 0, conflicts: 0 }] },
+      { level: "Info", message: ["Projection sweep ran", { projected: 0, minted: 0, conflicts: 0, refilled: 0 }] },
     ]);
   });
 
@@ -807,7 +807,10 @@ describe("knowledge crons", () => {
               metadataSweepable: () => (fails === "metadata" ? failing("repos.metadataSweepable") : Effect.succeed([])),
               metadataDue: () => Effect.succeed([]),
             },
-            knowledge: { stale: () => (fails === "projection" ? Effect.fail(down) : Effect.succeed([])) },
+            knowledge: {
+              stale: () => (fails === "projection" ? Effect.fail(down) : Effect.succeed([])),
+              refillKeys: () => Effect.succeed(0),
+            },
           }),
         ),
         EnrichQueue.layerMemory().layer,

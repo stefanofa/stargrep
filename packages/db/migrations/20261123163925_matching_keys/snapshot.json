@@ -1,0 +1,129 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "1b7f1f6a-c896-4181-a1e7-1b0e457a62bd",
+  "prevIds": [
+    "28f6b0d8-b24b-40ba-93a1-8986215c34f6"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "repo_matching_keys"
+      ],
+      "writes": [
+        "s|tbl|public.repo_matching_keys",
+        "n|tbl|public.repo_matching_keys",
+        "e|tbl|public.repo_matching_keys",
+        "n|rel|public.repo_matching_keys",
+        "n|type|public.repo_matching_keys",
+        "n|rel|public.repo_matching_keys_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "repo_matching_keys"
+      ],
+      "writes": [
+        "s|fk|public.repo_matching_keys.repo_matching_keys_repo_id_repos_id_fkey",
+        "n|fk|public.repo_matching_keys.repo_matching_keys_repo_id_repos_id_fkey",
+        "e|fk|public.repo_matching_keys.repo_matching_keys_repo_id_repos_id_fkey",
+        "n|con|public.repo_matching_keys.repo_matching_keys_repo_id_repos_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.repo_matching_keys",
+        "n|sch|public",
+        "n|tbl|public.repos",
+        "n|sch|public",
+        "n|col|public.repo_matching_keys.repo_id",
+        "n|col|public.repos.id",
+        "e|uniqueness|public.repos.id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "repo_matching_keys",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_matching_keys",
+        "name": "repo_id",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_matching_keys",
+        "name": "keys",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 1,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_matching_keys",
+        "name": "repo_matching_keys_repo_id_repos_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "repo_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "repos",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "repo_matching_keys",
+        "name": "repo_matching_keys_pkey",
+        "columns": [
+          "repo_id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    }
+  ]
+}

@@ -11,11 +11,18 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Data from "effect/Data";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 
 // Repos one projection transaction locks and writes.
 export const groupSize = 64;
 // Groups one sweep projects at most, so one run stays well inside the cron's time budget.
 export const groupsPerSweep = 50;
+// Repos whose cleared matching keys one transaction fills, and how many such transactions one sweep runs at most. A
+// batch holds the shared lock, which a decision or mint waits for. On a branch of prod, from a laptop about 110 ms away,
+// batches of 500 took 0.9 s at the median and 2.8 s at most, and batches of 1,000 on a compute that had just woken took
+// up to 5 s. One sweep fills the holders of React, the largest subject, about 28,000 repos.
+export const refillSize = 500;
+export const refillsPerSweep = 60;
 
 const labelIndex = (labels: ReadonlyArray<Db.Label>) => {
   const index = new Map<LabelKey, Array<LabelEntry>>();
@@ -132,6 +139,7 @@ const lostRace = (error: DbQueryFailed | DbRowInvalid) => error._tag === "DbQuer
 // The projection sweep: up to groupsPerSweep groups of stale repos, lowest ID first. A group that loses a deadlock or a
 // serialization race leaves its rows stale and counts as a group, and the run goes on, so the next group retries them.
 // A group can commit a first pass and its mints before its second pass loses, so the run's counts are a lower bound.
+// Then it fills the matching keys decisions cleared, which a library page reads from matching_atoms until then.
 export const reproject = Effect.fn("RepoKnowledge.reproject")(function* (
   options: { readonly groupSize: number; readonly groups: number } = { groupSize, groups: groupsPerSweep },
 ) {
@@ -152,7 +160,13 @@ export const reproject = Effect.fn("RepoKnowledge.reproject")(function* (
     minted += result.minted;
     if (ids.length < options.groupSize) break;
   }
-  return { projected, minted, conflicts };
+  let refilled = 0;
+  for (let batch = 0; batch < refillsPerSweep; batch++) {
+    const written = yield* db.knowledge.refillKeys(refillSize);
+    refilled += written;
+    if (written < refillSize) break;
+  }
+  return { projected, minted, conflicts, refilled };
 });
 
 // A summary answer for one repo, with the README and the prompt inputs it describes, and the enrichment lease its
@@ -190,35 +204,46 @@ const newReceiptId = SecureRandom.SecureRandom.use((random) => random.uuidV4()).
   Effect.provide(SecureRandom.layerWebCrypto),
 );
 
+// A capture waits for the shared knowledge lock, which a decision holds exclusively for its whole transaction, under the
+// 10 s limit every statement gets. A capture that runs out of time there, or loses its connection, has saved nothing,
+// and its answers are already paid for, so it tries the same answers again, for about 90 s in all. Receipts are unique
+// per repo, source, input hash, and recipe, and capture clears only the lease each answer names, so a second try saves
+// exactly what the first would have.
+const captureRetry = {
+  schedule: Schedule.exponential("1 second").pipe(Schedule.jittered),
+  times: 5,
+  while: (error: DbQueryFailed | DbRowInvalid) =>
+    error._tag === "DbQueryFailed" && error.reason !== "query" && error.reason !== "constraint",
+};
+
 // Commit A for answers to distinct repos: each answer becomes a receipt, and every repo still at the README and inputs
 // its answer describes shows the answer's summary. It touches no vocabulary and writes no facet, so nothing in
 // projection can roll back an answer that was paid for.
 export const capture = Effect.fn("RepoKnowledge.capture")(function* (answers: ReadonlyArray<Paid>) {
   const db = yield* Db.Db;
-  const captured = yield* db.knowledge.capture(
-    yield* Effect.forEach(answers, (paid) =>
-      Effect.map(
-        newReceiptId,
-        (receiptId): Db.Answer => ({
-          receiptId,
-          repoId: paid.repoId,
-          source: paid.source,
-          inputHash: paid.inputHash,
-          readmeOid: paid.readmeOid,
-          recipe: paid.recipe ?? summaryRecipe,
-          model: paid.model,
-          batchId: paid.batchId ?? null,
-          summary: paid.answer.summary,
-          keywords: paid.answer.keywords,
-          claims: paid.answer.facets.claims,
-          lanes: paid.answer.facets.lanes,
-          dropped: paid.answer.facets.dropped,
-          rawKey: null,
-          lease: paid.lease,
-        }),
-      ),
+  const rows = yield* Effect.forEach(answers, (paid) =>
+    Effect.map(
+      newReceiptId,
+      (receiptId): Db.Answer => ({
+        receiptId,
+        repoId: paid.repoId,
+        source: paid.source,
+        inputHash: paid.inputHash,
+        readmeOid: paid.readmeOid,
+        recipe: paid.recipe ?? summaryRecipe,
+        model: paid.model,
+        batchId: paid.batchId ?? null,
+        summary: paid.answer.summary,
+        keywords: paid.answer.keywords,
+        claims: paid.answer.facets.claims,
+        lanes: paid.answer.facets.lanes,
+        dropped: paid.answer.facets.dropped,
+        rawKey: null,
+        lease: paid.lease,
+      }),
     ),
   );
+  const captured = yield* db.knowledge.capture(rows).pipe(Effect.retry(captureRetry));
   const byRepo = new Map<number, Db.Captured>(captured.map((row) => [row.repoId, row]));
   return answers.map(({ repoId }): Captured => {
     const row = byRepo.get(repoId);

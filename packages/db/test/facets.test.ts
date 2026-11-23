@@ -4,6 +4,7 @@ import type { SubjectId } from "@stargrep/knowledge/ids";
 import * as it from "@stargrep/testing";
 import * as Effect from "effect/Effect";
 import * as Db from "../src/db.ts";
+import { atomColumns } from "../src/schema.ts";
 import * as TestDatabase from "./database.ts";
 import { facts, model, ref, repoId } from "./fixtures.ts";
 import { atom, decide, key, newSubjectId, nextRevision, projectAtoms } from "./knowledge-fixtures.ts";
@@ -38,6 +39,39 @@ const subjectNamed = Effect.fn("subjectNamed")(function* (
 });
 
 const subject = (role: Db.StoredAtom["role"], id: SubjectId) => atom(role, { dim: "subject", id });
+
+// The keys each repo's repo_matching_keys row holds, held to the rule the triggers keep: a row a decision cleared waits
+// for the sweep, every other row equals what knowledge_matching_keys computes now, a page reads the same chips before
+// and after the sweep fills the cleared rows, and then every repo has a row equal to the rule.
+const storedKeys = Effect.fn("storedKeys")(function* (ids: ReadonlyArray<RepoId>) {
+  const db = yield* Db.Db;
+  const database = yield* TestDatabase.TestDatabase;
+  const read = (text: string) =>
+    database.query(text, [ids]) as Effect.Effect<
+      ReadonlyArray<{ readonly id: number; readonly keys: ReadonlyArray<string> | null }>,
+      never
+    >;
+  const kept = () =>
+    read(
+      "select repo_id::float8 as id, keys from repo_matching_keys where repo_id = any($1::bigint[]) order by repo_id",
+    );
+  const rule = yield* read(
+    "select repo_id::float8 as id, keys from knowledge_matching_keys($1::bigint[]) order by repo_id",
+  );
+  const filled = (yield* kept()).filter((row) => row.keys !== null);
+  expect(filled).toEqual(rule.filter((row) => filled.some((stored) => stored.id === row.id)));
+  const page = yield* db.facets.matching(ids);
+  while ((yield* db.knowledge.refillKeys(100)) === 100);
+  const refilled = yield* kept();
+  expect(refilled).toEqual(rule);
+  expect(refilled.map((row) => row.id)).toEqual([...ids].sort((a, b) => a - b));
+  expect(yield* db.facets.matching(ids)).toEqual(page);
+  return new Map(refilled.map((row) => [row.id, row.keys]));
+});
+
+const closedColumns = Object.values(atomColumns).flatMap((columns) =>
+  Object.entries(columns).flatMap(([dim, column]) => (dim === "subject" ? [] : [column])),
+);
 
 const cases = (test: { readonly effect: it.Tester<Services> }) => {
   test.effect("a repo's panel shows every atom it holds, its primary kind first, and its kind comes from atoms", () =>
@@ -329,6 +363,148 @@ const cases = (test: { readonly effect: it.Tester<Services> }) => {
       expect((yield* db.facets.lookup({ q: "quokka", limit: 10 })).map((facet) => facet.atom)).toEqual([
         `subject:${pair}`,
       ]);
+    }),
+  );
+
+  test.effect("a page's chips are the same from stored keys as from matching_atoms, row or no row", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const shared = yield* subjectNamed("numbat widgets");
+      const lonely = yield* subjectNamed("numbat lonely");
+      const rival = yield* subjectNamed("numbat rival");
+      const successor = yield* subjectNamed("numbat next");
+      const [app, peer, bare] = [repoId(9_901), repoId(9_902), repoId(9_903)];
+      yield* seed(
+        new Map([
+          [
+            app,
+            [
+              atom("is", { dim: "kind", id: "app" }),
+              atom("written_in", { dim: "language", id: "typescript" }),
+              atom("for", { dim: "platform", id: "node" }),
+              atom("built_with", { dim: "language", id: "rust" }),
+              subject("about", shared),
+              subject("trait", lonely),
+              subject("built_with", rival),
+              subject("alternative_to", rival),
+              subject("replaced_by", successor),
+            ],
+          ],
+          [peer, [subject("for", shared), subject("alternative_to", rival), subject("replaced_by", successor)]],
+          [bare, []],
+        ]),
+      );
+      const ids = [app, peer, bare];
+      const stored = yield* db.facets.matching(ids);
+      expect(stored.atoms.get(app)).toEqual(
+        [
+          "kind:app",
+          "lang:javascript",
+          "lang:typescript",
+          "platform:node",
+          "with:lang:rust",
+          `subject:${shared}`,
+          `with:subject:${rival}`,
+          `alt:subject:${rival}`,
+        ].sort(),
+      );
+      expect(stored.atoms.has(bare)).toBe(false);
+      expect((yield* storedKeys(ids)).get(app)).toContain(`subject:${lonely}`);
+
+      yield* database.query("delete from repo_matching_keys where repo_id = $1", [peer]);
+      expect(yield* db.facets.matching(ids)).toEqual(stored);
+      yield* database.query("delete from repo_matching_keys where repo_id = any($1::bigint[])", [ids]);
+      expect(yield* db.facets.matching(ids)).toEqual(stored);
+      yield* database.query("select knowledge_refresh_matching_keys($1::bigint[])", [ids]);
+      yield* storedKeys(ids);
+      expect(yield* db.facets.matching(ids)).toEqual(stored);
+    }),
+  );
+
+  test.effect("every input of a repo's keys rewrites its stored row, and listing applies when a page reads it", () =>
+    Effect.gen(function* () {
+      const db = yield* Db.Db;
+      const database = yield* TestDatabase.TestDatabase;
+      const widget = yield* subjectNamed("dingo widget");
+      const gadget = yield* subjectNamed("dingo gadget");
+      const rival = yield* subjectNamed("dingo rival");
+      const tooling = yield* subjectNamed("dingo tooling");
+      const [a, b, c] = [repoId(9_951), repoId(9_952), repoId(9_953)];
+      const atomsOf = new Map<RepoId, ReadonlyArray<Db.StoredAtom>>([
+        [
+          a,
+          [
+            atom("written_in", { dim: "language", id: "rust" }),
+            subject("about", widget),
+            subject("alternative_to", rival),
+          ],
+        ],
+        [b, [subject("about", widget), subject("about", gadget), subject("alternative_to", rival)]],
+      ]);
+      yield* seed(atomsOf);
+      const project = (id: RepoId, atoms: ReadonlyArray<Db.StoredAtom>) => {
+        atomsOf.set(id, atoms);
+        return projectAtoms(() => atoms, [id]);
+      };
+      const keysOf = Effect.fn("keysOf")(function* (id: RepoId) {
+        return (yield* storedKeys([id])).get(id);
+      });
+      expect(yield* keysOf(a)).toEqual([`alt:subject:${rival}`, "lang:rust", `subject:${widget}`].sort());
+
+      // A new repo gets an empty row with its facets row.
+      yield* db.repos.upsertRefs([ref(c)]);
+      expect(yield* keysOf(c)).toEqual([]);
+
+      // Projection that changes only closed arrays, then only subjects.
+      yield* project(a, [atom("written_in", { dim: "language", id: "go" }), ...(atomsOf.get(a) ?? []).slice(1)]);
+      expect(yield* keysOf(a)).toContain("lang:go");
+      expect(yield* keysOf(a)).not.toContain("lang:rust");
+      yield* project(b, [subject("about", widget), subject("alternative_to", rival)]);
+      expect(yield* keysOf(b)).not.toContain(`subject:${gadget}`);
+
+      // Listing is read with the page: a subject one repo holds is stored and shows once a second repo holds it.
+      expect((yield* db.facets.matching([a])).atoms.get(a)).not.toContain(`subject:${gadget}`);
+      yield* project(a, [...(atomsOf.get(a) ?? []), subject("trait", gadget)]);
+      yield* db.knowledge.count;
+      expect(yield* keysOf(a)).toContain(`subject:${gadget}`);
+      expect((yield* db.facets.matching([a])).atoms.get(a)).not.toContain(`subject:${gadget}`);
+      yield* db.repos.saveFacts(facts(c));
+      yield* summarize({ id: c, readmeOid: null, summary: "a project", keywords: [] });
+      yield* project(c, [subject("about", gadget)]);
+      yield* db.knowledge.count;
+      expect((yield* db.facets.matching([a])).atoms.get(a)).toContain(`subject:${gadget}`);
+
+      // A merge, a parent, a link, and a rejection each move the keys of the repos holding the subjects they touch.
+      yield* decide("merge", { merged: [{ originId: gadget, canonicalId: widget, revision: yield* nextRevision }] });
+      expect(yield* keysOf(c)).toEqual([`subject:${widget}`]);
+      yield* decide("parent", {
+        edgesAdded: [
+          { ancestorId: tooling, descendantId: widget, depth: 1, via: "parent", revision: yield* nextRevision },
+        ],
+      });
+      expect(yield* keysOf(c)).toEqual([`subject:${tooling}`, `subject:${widget}`].sort());
+      yield* decide("link", {
+        presented: [{ id: rival, label: "dingo rival", definition: null, status: "accepted", repoId: a }],
+      });
+      expect(yield* keysOf(a)).not.toContain(`alt:subject:${rival}`);
+      expect(yield* keysOf(b)).toContain(`alt:subject:${rival}`);
+      yield* decide("status", {
+        presented: [{ id: rival, label: "dingo rival", definition: null, status: "rejected", repoId: a }],
+      });
+      expect(yield* keysOf(b)).not.toContain(`alt:subject:${rival}`);
+
+      // A repo GitHub stopped serving holds nothing.
+      yield* database.query(
+        `with gone as (
+           update repos set gone_at = now(), ${closedColumns.map((column) => `${column} = '{}'`).join(", ")}
+           where id = $1 returning id
+         )
+         delete from repo_facets where repo_id in (select id from gone)`,
+        [a],
+      );
+      expect(yield* keysOf(a)).toEqual([]);
+      yield* storedKeys([a, b, c]);
     }),
   );
 };

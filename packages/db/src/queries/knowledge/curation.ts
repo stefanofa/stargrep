@@ -80,11 +80,11 @@ export interface Queries {
   // Fresh subject IDs for a decision that creates subjects, so its payload can name them.
   readonly allocate: (count: number) => Effect.Effect<ReadonlyArray<SubjectId>, DbQueryFailed | DbRowInvalid>;
   readonly revision: Effect.Effect<Revision, DbQueryFailed | DbRowInvalid>;
-  // Under the exclusive lock, appends the rows at the revisions after the expected one, applies their change, rebuilds
-  // the subject_matches rows of the subjects it touches and their ancestors, and marks stale the repos its invalidation
-  // names, along with the holders of a minted key a new decision label now outranks. Fails with StaleRevision when the
-  // log moved past the expected revision, and with KeyMinted when a new row gives a subject a key projection minted
-  // for another one.
+  // Under the exclusive lock, appends the rows at the revisions after the expected one, applies their change, refreshes
+  // the subject_matches rows of the subjects it touches and their ancestors, and through them clears the matching keys
+  // of every repo whose matches moved, and marks stale the repos its invalidation names, along with the holders of a
+  // minted key a new decision label now outranks. Fails with StaleRevision when the log moved past the expected
+  // revision, and with KeyMinted when a new row gives a subject a key projection minted for another one.
   readonly decide: (
     decision: Decision,
   ) => Effect.Effect<Decided, StaleRevision | KeyMinted | DbQueryFailed | DbRowInvalid>;
@@ -149,12 +149,15 @@ const decodeSubjectIds = rowsDecoder(Schema.Struct({ id: SubjectId }));
 const decodeFloor = rowsDecoder(Schema.Struct({ id: SubjectId, accepted: Schema.Boolean }));
 
 export const make = Effect.gen(function* () {
-  const { run, withTransaction, withLongTimeout } = yield* Postgres.Postgres;
+  const { run, withLongTimeout } = yield* Postgres.Postgres;
   const { query, execute } = statements(run);
   const { head, invalidated } = vocabulary(query);
 
+  // A decision that moves many origins' matches clears every holder's matching keys in its own statements. On a branch
+  // of prod, rejecting React cleared 28,000 repos in 0.24 s warm and 31 s on a compute that had just woken, so it runs
+  // under the long limit.
   const decide = (decision: Decision) =>
-    withTransaction(
+    withLongTimeout(
       Effect.gen(function* () {
         yield* execute("knowledge.decide", exclusiveLock);
         const current = yield* head;

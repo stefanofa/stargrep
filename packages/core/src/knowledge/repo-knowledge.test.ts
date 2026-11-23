@@ -1,13 +1,18 @@
 import { expect } from "bun:test";
 import * as Db from "@stargrep/db";
 import { DbQueryFailed } from "@stargrep/db/errors";
+import { withClient } from "@stargrep/db/local-database";
 import * as TestDatabase from "@stargrep/db/test-database";
 import type { RepoId } from "@stargrep/github/schemas";
 import type { Atom } from "@stargrep/knowledge/atom";
 import { decodeFacets } from "@stargrep/knowledge/claims";
 import type { ReceiptId } from "@stargrep/knowledge/ids";
 import * as it from "@stargrep/testing";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 import {
   create,
   embeddingModel,
@@ -76,9 +81,9 @@ it.layer(TestDatabase.layerMemory({ embeddingModel }), { timeout: 60_000, testTi
             receipt: null,
           },
         ]);
-        expect(yield* RepoKnowledge.reproject()).toEqual({ projected: 0, minted: 0, conflicts: 0 });
+        expect(yield* RepoKnowledge.reproject()).toEqual({ projected: 0, minted: 0, conflicts: 0, refilled: 0 });
         yield* database.query(`update repos set topics = '["macos"]' where id = 502`);
-        expect(yield* RepoKnowledge.reproject()).toEqual({ projected: 1, minted: 0, conflicts: 0 });
+        expect(yield* RepoKnowledge.reproject()).toEqual({ projected: 1, minted: 0, conflicts: 0, refilled: 0 });
         expect(yield* database.query("select runs_on::text[] as runs from repos where id = 502")).toEqual([
           { runs: ["macos"] },
         ]);
@@ -92,6 +97,7 @@ it.layer(TestDatabase.layerMemory({ embeddingModel }), { timeout: 60_000, testTi
           projected: 4,
           minted: 0,
           conflicts: 0,
+          refilled: 0,
         });
         expect(yield* staleAmong(ids)).toBe(1);
         expect(yield* staleAmong([repoId(605)])).toBe(1);
@@ -99,6 +105,7 @@ it.layer(TestDatabase.layerMemory({ embeddingModel }), { timeout: 60_000, testTi
           projected: 1,
           minted: 0,
           conflicts: 0,
+          refilled: 0,
         });
       }),
     );
@@ -191,7 +198,7 @@ it.layer(TestDatabase.layerMemory({ embeddingModel }), { timeout: 60_000, testTi
         const result = yield* RepoKnowledge.reproject({ groupSize: 1, groups: 2 }).pipe(
           Effect.provideService(Db.Db, landing),
         );
-        expect(result).toEqual({ projected: 2, minted: 0, conflicts: 0 });
+        expect(result).toEqual({ projected: 2, minted: 0, conflicts: 0, refilled: 0 });
         expect(yield* heldBy([first as RepoId, second as RepoId], "")).toEqual([
           ["written_in:language:go"],
           ["about:subject:between groups", "written_in:language:go"],
@@ -250,7 +257,7 @@ it.layer(TestDatabase.layerMemory({ embeddingModel }), { timeout: 60_000, testTi
         const lost = yield* RepoKnowledge.reproject({ groupSize: 2, groups: 5 }).pipe(
           Effect.provideService(Db.Db, failing("conflict", 1)),
         );
-        expect(lost).toEqual({ projected: 3, minted: 0, conflicts: 1 });
+        expect(lost).toEqual({ projected: 3, minted: 0, conflicts: 1, refilled: 0 });
         expect(yield* staleAmong(ids)).toBe(0);
         const broken = yield* seed([{ id: 964, language: "Rust" }]);
         const failure = yield* RepoKnowledge.reproject().pipe(
@@ -367,20 +374,21 @@ it.layer(TestDatabase.layerMemory({ embeddingModel }), { timeout: 60_000, testTi
   },
 );
 
+const input = { fullName: "probe/repo", description: "A CLI for terminal dashboards", topics: [], readme: "" };
+const paid = (id: number, facets: unknown, overrides: Partial<RepoKnowledge.Paid> = {}): RepoKnowledge.Paid => ({
+  repoId: repoId(id),
+  readmeOid,
+  inputHash,
+  source: "stand-in",
+  model: "recorded-no-model-call",
+  answer: { summary: `summary of ${id}`, keywords: ["dashboards"], facets: decodeFacets(facets, input) },
+  lease: null,
+  ...overrides,
+});
+
 it.layer(TestDatabase.layerMemory({ embeddingModel }), { timeout: 60_000, testTimeout: 60_000 })(
   "RepoKnowledge.accept",
   (it) => {
-    const input = { fullName: "probe/repo", description: "A CLI for terminal dashboards", topics: [], readme: "" };
-    const paid = (id: number, facets: unknown, overrides: Partial<RepoKnowledge.Paid> = {}): RepoKnowledge.Paid => ({
-      repoId: repoId(id),
-      readmeOid,
-      inputHash,
-      source: "stand-in",
-      model: "recorded-no-model-call",
-      answer: { summary: `summary of ${id}`, keywords: ["dashboards"], facets: decodeFacets(facets, input) },
-      lease: null,
-      ...overrides,
-    });
     const row = (id: number) =>
       Effect.flatMap(TestDatabase.TestDatabase, (database) =>
         database.query(
@@ -465,6 +473,56 @@ it.layer(TestDatabase.layerMemory({ embeddingModel }), { timeout: 60_000, testTi
           { summary: "summary of 81004", kinds: ["library"], stale: false, about: 0, receipts: 1 },
         ]);
       }),
+    );
+  },
+);
+
+// PGlite has one connection, so only Postgres can hold the lock on one connection while capture waits on another.
+it.layer(TestDatabase.layerNodePostgres({ embeddingModel }), { timeout: 60_000, testTimeout: 60_000 })(
+  "RepoKnowledge.capture behind a long decision",
+  (it) => {
+    it.effect(
+      "saves the same answer once a decision that held the knowledge lock past the statement limit commits",
+      () =>
+        Effect.gen(function* () {
+          const database = yield* TestDatabase.TestDatabase;
+          const url = Option.getOrThrow(database.url);
+          yield* seed([{ id: 81_101 }]);
+          const lease = DateTime.makeUnsafe("2026-11-23T12:00:00Z");
+          yield* database.query("update repos set enrich_retry_at = $2 where id = $1", [
+            81_101,
+            DateTime.formatIso(lease),
+          ]);
+          // A decision's transaction holds the exclusive lock 12 s, past the 10 s a capture's statement gets and the 11 s
+          // the server allows it.
+          const locked = Promise.withResolvers<void>();
+          const decision = withClient(url, async (client) => {
+            await client.query("begin");
+            await client.query("select pg_advisory_xact_lock(hashtextextended('stargrep:knowledge:public', 0))");
+            locked.resolve();
+            await Bun.sleep(12_000);
+            await client.query("commit");
+          });
+          const capture = Effect.gen(function* () {
+            yield* Effect.promise(() => locked.promise);
+            const started = yield* Clock.currentTimeMillis;
+            const captured = yield* RepoKnowledge.capture([paid(81_101, [{ role: "is", term: "CLI" }], { lease })]);
+            return { captured, waited: (yield* Clock.currentTimeMillis) - started };
+          });
+          // The retry waits on the wall clock.
+          const [, { captured, waited }] = yield* TestClock.withLive(
+            Effect.all([decision, capture], { concurrency: "unbounded" }),
+          );
+          expect(waited).toBeGreaterThan(10_000);
+          expect(captured).toMatchObject([{ _tag: "Saved", summary: "summary of 81101" }]);
+          expect(
+            yield* database.query(
+              `select r.summary, r.enrich_retry_at, (select count(*)::int from receipts c where c.repo_id = r.id) as receipts
+             from repos r where r.id = $1`,
+              [81_101],
+            ),
+          ).toEqual([{ summary: "summary of 81101", enrich_retry_at: null, receipts: 1 }]);
+        }),
     );
   },
 );

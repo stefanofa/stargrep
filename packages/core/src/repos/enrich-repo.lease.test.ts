@@ -319,7 +319,8 @@ for (const [adapter, database] of adapters) {
       );
     }
 
-    // A capture that times out behind a mint, loses its connection, or loses a deadlock says nothing about the answer.
+    // A capture that times out behind a decision, loses its connection, or loses a deadlock says nothing about the
+    // answer. Capture tries the same answer again without a model call, and one that never saves counts nothing.
     for (const reason of ["timeout", "transport", "conflict"] as const) {
       it.effect(`a ${reason} while saving counts nothing and keeps the lease until it runs out`, () =>
         Effect.gen(function* () {
@@ -334,19 +335,34 @@ for (const [adapter, database] of adapters) {
               knowledge: {
                 ...db.knowledge,
                 capture: () =>
-                  Effect.fail(new DbQueryFailed({ operation: "knowledge.capture", reason, sqlState: null })),
+                  Effect.suspend(() => {
+                    captures++;
+                    return Effect.fail(new DbQueryFailed({ operation: "knowledge.capture", reason, sqlState: null }));
+                  }),
               },
             }),
           );
+          let captures = 0;
           let calls = 0;
           const text = f.textGeneration((request) =>
             Effect.sync(() => (calls++, { output: SummarizeFake.respond(request.prompt), usage: f.usage })),
           );
           for (let round = 0; round < 3; round++) {
             const leasedAt = yield* DateTime.now;
-            const outcome = yield* f
-              .enrichOne(id(n))
-              .pipe(Effect.provide(Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(Layer.merge(lost, text)))));
+            const running = yield* Effect.forkChild(
+              f
+                .enrichOne(id(n))
+                .pipe(Effect.provide(Layer.fresh(EnrichRepo.layer).pipe(Layer.provide(Layer.merge(lost, text))))),
+            );
+            // Capture waits 1, 2, 4, 8, and 16 s, each scaled by up to 1.2, between its tries. The clock moves past each
+            // wait only once the try before it failed, so no query the enrichment has in flight sees its timeout pass.
+            for (let retry = 0; retry < 5; retry++) {
+              while (captures <= 6 * round + retry) yield* TestClock.withLive(Effect.sleep("1 millis"));
+              yield* TestClock.withLive(Effect.sleep("1 millis"));
+              yield* TestClock.adjust(Duration.millis(1200 * 2 ** retry));
+            }
+            const outcome = yield* Fiber.join(running);
+            expect(captures).toBe(6 * (round + 1));
             expect(outcome).toMatchObject({
               _tag: "Failed",
               error: { _tag: "AnswerNotSaved", reason, refused: false },

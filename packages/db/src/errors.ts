@@ -90,6 +90,7 @@ export const Operation = Schema.Literals([
   "knowledge.labels",
   "knowledge.project",
   "knowledge.stale",
+  "knowledge.refillKeys",
   "knowledge.count",
   "knowledge.countAtoms",
   "knowledge.allocate",

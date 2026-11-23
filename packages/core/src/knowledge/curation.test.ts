@@ -49,6 +49,19 @@ const matchesAgree = Effect.gen(function* () {
   return { kept, rebuilt: yield* read };
 });
 
+// repo_matching_keys once the sweep fills the rows decisions cleared, then as its rule gives it for every repo. Filling
+// writes only cleared rows, so a row a trigger left wrong stays wrong.
+const keysAgree = Effect.gen(function* () {
+  const db = yield* Db.Db;
+  while ((yield* db.knowledge.refillKeys(1000)) === 1000);
+  return {
+    kept: yield* rows("select repo_id::float8 as id, keys from repo_matching_keys order by repo_id"),
+    rebuilt: yield* rows(
+      "select repo_id::float8 as id, keys from knowledge_matching_keys(array(select id from repos)) order by repo_id",
+    ),
+  };
+});
+
 // The rows decisions own, as the database holds them, against the fold of the database's own log.
 const derivedAgree = Effect.gen(function* () {
   const db = yield* Db.Db;
@@ -213,7 +226,13 @@ const propertyCases = (test: { readonly effect: it.Tester<Services> }) => {
                 `select a.origin_id from subject_canonical a join subject_canonical b on b.origin_id = a.canonical_id`,
               ),
             ).toEqual([]);
-            if (step % 6 === 5) yield* sweepAll;
+            const keys = yield* keysAgree;
+            expect(keys.kept).toEqual(keys.rebuilt);
+            if (step % 6 === 5) {
+              yield* sweepAll;
+              const swept = yield* keysAgree;
+              expect(swept.kept).toEqual(swept.rebuilt);
+            }
           }
         }
         expect(applied).toBeGreaterThan(70);
@@ -228,6 +247,8 @@ const propertyCases = (test: { readonly effect: it.Tester<Services> }) => {
         for (const id of order) yield* RepoKnowledge.projectRepos([id as RepoId]);
         yield* sweepAll;
         expect((yield* snapshot(Number.MAX_SAFE_INTEGER)).facets).toEqual(settled.facets);
+        const keys = yield* keysAgree;
+        expect(keys.kept).toEqual(keys.rebuilt);
       }),
   );
 
@@ -269,6 +290,8 @@ const propertyCases = (test: { readonly effect: it.Tester<Services> }) => {
             removals++;
           const matches = yield* matchesAgree;
           expect(matches.kept).toEqual(matches.rebuilt);
+          const keys = yield* keysAgree;
+          expect(keys.kept).toEqual(keys.rebuilt);
         }
       }
       expect(removals).toBeGreaterThan(5);

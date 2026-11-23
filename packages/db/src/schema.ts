@@ -1085,3 +1085,21 @@ export const repoFacets = pgTable(
     check("repo_facets_no_nulls", noNulls([...subjectColumns, "unresolved_keys"])),
   ],
 );
+
+// Each repo's unqualified matching_atoms keys, listed or not, sorted, so a library page reads one narrow row per repo
+// instead of resolving every subject a repo's filters reach. Triggers rewrite a row in the statement that changes an
+// input: a repo's closed arrays or gone time, its facets row, or a subject's link. A merge, split, parent, or rejection
+// moves subject_matches rows, and its trigger sets keys to null on every repo that holds a moved origin, and the
+// projection sweep fills them again. Listing, labels, and hidden roles are applied when it is read.
+// `bun run --cwd packages/db backfill-matching-keys` fills it for the repos that existed before, and a library page
+// reads matching_atoms for any repo with no keys here.
+export const repoMatchingKeys = pgTable(
+  "repo_matching_keys",
+  {
+    repoId: githubId("repo_id")
+      .primaryKey()
+      .references(() => repos.id, { onDelete: "cascade" }),
+    keys: text("keys").array(),
+  },
+  (table) => [index("repo_matching_keys_cleared_idx").on(table.repoId).where(sql`${table.keys} is null`)],
+);
