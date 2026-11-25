@@ -1,6 +1,7 @@
 import type { PipPose } from "@stargrep/ui";
 import { Link, useLoaderData } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { useDiscoverSegment } from "../lib/discover.ts";
 import { ExternalTextLink, textLinkClass } from "./external-text-link.tsx";
 import { type Place, SiteHeader, TabBar } from "./site-nav.tsx";
 import { SourceLink } from "./source-link.tsx";
@@ -40,11 +41,6 @@ export function Frame({
         <nav aria-label="about stargrep">
           <ul className="flex flex-wrap gap-x-[22px] gap-y-2 max-sm:gap-x-[18px]">
             <li>
-              <Link to="/topics" className={textLinkClass}>
-                topics
-              </Link>
-            </li>
-            <li>
               <SourceLink stars={repoStars} />
             </li>
             <li>
@@ -82,11 +78,12 @@ export function Page({
   dock?: boolean | undefined;
   children: ReactNode;
 }) {
-  const { viewer, repoStars } = useLoaderData({ from: "__root__" });
+  const { viewer, repoStars, discover } = useLoaderData({ from: "__root__" });
+  const at = { here, segment: useDiscoverSegment(discover) };
   return (
     <Frame
-      header={<SiteHeader viewer={viewer} here={here} pose={pose} />}
-      bar={<TabBar viewer={viewer} here={here} />}
+      header={<SiteHeader viewer={viewer} at={at} pose={pose} />}
+      bar={<TabBar viewer={viewer} at={at} />}
       dock={dock}
       repoStars={repoStars}
     >

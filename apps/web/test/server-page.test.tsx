@@ -375,6 +375,16 @@ describe("a stars page from the Worker to the browser", () => {
     expect(page.html).not.toContain("view-tiles");
   }, 60_000);
 
+  test("discover opens on the segment this browser opened last, painted by the server and kept on hydration", async () => {
+    const discoverLinks = (html: string) =>
+      [...html.matchAll(/<a [^>]*href="([^"]*)"[^>]*>(?:(?!<\/a>).)*discover<\/a>/g)].map(([, href]) => href);
+    expect(discoverLinks((await renderOnServer("/stefanofa?q=terminal")).html)).toEqual(["/people", "/people"]);
+    const page = await renderOnServer("/stefanofa?q=terminal", "stargrep-discover=topics");
+    expect(discoverLinks(page.html)).toEqual(["/topics", "/topics"]);
+    await hydratePage("/stefanofa?q=terminal", page.html);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
   test("a login never synced renders ready to import, and only the hydrated page asks for the import", async () => {
     const page = await renderOnServer("/fresh-login");
     expect(page.html).toContain("stars arriving");

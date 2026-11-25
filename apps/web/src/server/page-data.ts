@@ -5,6 +5,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { starredOf, whoseOf } from "../lib/audience.ts";
+import { rememberedSegment } from "../lib/discover.ts";
 import { normalize, searchText } from "../lib/keyword.ts";
 import {
   type Asked,
@@ -159,6 +160,7 @@ const loadSession = async (): Promise<Session> => {
     viewer,
     config,
     repoStars,
+    discover: rememberedSegment(request.headers.get("cookie") ?? ""),
     site: {
       origin: new URL(request.url).origin,
       indexable: indexable(request.url),

@@ -1,6 +1,7 @@
 import { CompassIcon, cn, HomeIcon, PeopleIcon, type PipPose } from "@stargrep/ui";
 import { Link, type LinkProps } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import type { Segment } from "../lib/discover.ts";
 import type { Viewer } from "../lib/rpc.ts";
 import { SignInButton } from "./sign-in-button.tsx";
 import { Wordmark } from "./wordmark.tsx";
@@ -9,11 +10,11 @@ import { Wordmark } from "./wordmark.tsx";
 // person's stars or a text page.
 export type Place = "you" | "following" | "discover";
 
-// Where each place opens. Discover opens on people.
-const addresses: Record<Place, LinkProps> = {
-  you: { to: "/{-$login}", params: { login: undefined } },
-  following: { to: "/following" },
-  discover: { to: "/people" },
+// Where each place opens. Discover opens on the segment this browser opened last.
+const addresses: Record<Place, (segment: Segment) => LinkProps> = {
+  you: () => ({ to: "/{-$login}", params: { login: undefined } }),
+  following: () => ({ to: "/following" }),
+  discover: (segment) => ({ to: `/${segment}` }),
 };
 
 const elsewhere = [
@@ -25,20 +26,26 @@ const elsewhere = [
 // place marks the rest, such as discover on a topic's page.
 const exact = { exact: true, includeSearch: false } as const;
 
+// Where the page is, and the segment discover opens on, as every place link needs them.
+export interface Whereabouts {
+  readonly here: Place | undefined;
+  readonly segment: Segment;
+}
+
 function PlaceLink({
   place,
-  here,
+  at: { here, segment },
   className,
   children,
 }: {
   place: Place;
-  here: Place | undefined;
+  at: Whereabouts;
   className: string;
   children: ReactNode;
 }) {
   return (
     <Link
-      {...addresses[place]}
+      {...addresses[place](segment)}
       activeOptions={exact}
       aria-current={place === here ? "page" : undefined}
       className={className}
@@ -77,11 +84,11 @@ const ring =
 // already asks.
 export function SiteHeader({
   viewer,
-  here,
+  at,
   pose,
 }: {
   viewer: Viewer | null;
-  here: Place | undefined;
+  at: Whereabouts;
   pose?: PipPose | undefined;
 }) {
   return (
@@ -93,7 +100,7 @@ export function SiteHeader({
             <li key={place}>
               <PlaceLink
                 place={place}
-                here={here}
+                at={at}
                 className="flex items-center rounded-full px-3.5 py-2 font-sans text-meta font-medium text-secondary-foreground transition-[color,background-color] duration-120 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:font-semibold aria-[current=page]:text-foreground"
               >
                 {place}
@@ -102,7 +109,7 @@ export function SiteHeader({
           ))}
         </ul>
         {viewer !== null && (
-          <PlaceLink place="you" here={here} className="group rounded-full">
+          <PlaceLink place="you" at={at} className="group rounded-full">
             <span className={cn(ring, "size-12 border-[2.5px] p-[3px]")}>
               <Face viewer={viewer} className="size-[38px]" />
             </span>
@@ -116,7 +123,7 @@ export function SiteHeader({
           size="lg"
           label="sign in"
           markClassName="size-[18px] max-sm:hidden"
-          className={cn("max-sm:h-9 max-sm:px-3.5 max-sm:text-meta", here === "you" && "max-sm:hidden")}
+          className={cn("max-sm:h-9 max-sm:px-3.5 max-sm:text-meta", at.here === "you" && "max-sm:hidden")}
         />
       )}
     </>
@@ -131,7 +138,7 @@ const icon =
 
 // The places on a phone, along the bottom of the screen under the thumb. You come first: your face, or home for a
 // visitor.
-export function TabBar({ viewer, here }: { viewer: Viewer | null; here: Place | undefined }) {
+export function TabBar({ viewer, at }: { viewer: Viewer | null; at: Whereabouts }) {
   return (
     <nav
       aria-label="Main"
@@ -140,7 +147,7 @@ export function TabBar({ viewer, here }: { viewer: Viewer | null; here: Place | 
     >
       <ul className="flex h-13 *:flex-1">
         <li>
-          <PlaceLink place="you" here={here} className={tab}>
+          <PlaceLink place="you" at={at} className={tab}>
             {viewer === null ? (
               <span className={slot}>
                 <HomeIcon className={icon} />
@@ -155,7 +162,7 @@ export function TabBar({ viewer, here }: { viewer: Viewer | null; here: Place | 
         </li>
         {elsewhere.map(({ place, Icon }) => (
           <li key={place}>
-            <PlaceLink place={place} here={here} className={tab}>
+            <PlaceLink place={place} at={at} className={tab}>
               <span className={slot}>
                 <Icon className={icon} />
               </span>

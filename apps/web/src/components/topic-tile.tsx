@@ -5,7 +5,7 @@ import type { Topic } from "../lib/rpc.ts";
 import { loginPage } from "../lib/stars-route.ts";
 import { topicPath } from "../lib/topic-path.ts";
 import { topicVisual } from "../lib/topic-visual.ts";
-import { formatCount } from "../lib/whose.ts";
+import { formatCount, peopleCount } from "../lib/whose.ts";
 import { ExternalTextLink, textLinkClass } from "./external-text-link.tsx";
 import { ShareButton, type Shared } from "./share-button.tsx";
 
@@ -77,9 +77,13 @@ export function TopicTile({ topic, query }: { topic: Topic; query: string | unde
           {/* Phones give each count its own line beside the logo and share. */}
           <p className="font-sans text-sm text-muted-foreground tabular-nums sm:text-[15px] sm:leading-5">
             <span className="max-sm:block">{`${formatCount(topic.repos)} repos`}</span>
-            <span className="max-sm:hidden"> · </span>
-            {`${formatCount(topic.ranked)} starred by people`}
-            <span className="max-sm:hidden"> on stargrep</span>
+            {topic.devs > 0 && (
+              <>
+                <span className="max-sm:hidden"> · </span>
+                {`starred by ${peopleCount(topic.devs)}`}
+                <span className="max-sm:hidden"> on stargrep</span>
+              </>
+            )}
           </p>
         </div>
         <ShareButton page={topicShared(topic.topic)} query={query} className="max-sm:size-[42px]" />

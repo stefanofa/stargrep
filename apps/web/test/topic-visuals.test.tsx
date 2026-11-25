@@ -62,6 +62,7 @@ const open = async (path: string) => {
       viewer: null,
       config: { demoLogin: Login.make("stefanofa"), demoQuery: "", examples: [], featured: [], curated: [] },
       repoStars: null,
+      discover: "people",
       site: { origin: "https://stargrep.com", indexable: true, engine: [] },
     }),
   });
