@@ -67,7 +67,7 @@ interface Server {
   // How listTopics answers each typed name, with no q for the first page.
   find: (q: string | undefined) => ReadonlyArray<TopicCount> | Refusal | "hang";
   search: () => ReadonlyArray<SearchResult> | Refusal | "hang";
-  asked: { listTopics: Array<string | undefined>; search: Array<string> };
+  asked: { listTopics: Array<string | undefined>; search: Array<string>; topic: number };
 }
 
 let server: Server;
@@ -99,7 +99,10 @@ const client = {
     const topics = await answer(server.find(q));
     return { topics, total: topics.length, nextOffset: null };
   },
-  topic: async () => tui,
+  topic: async () => {
+    server.asked.topic += 1;
+    return tui;
+  },
   search: async ({ q }: { q: string }) => {
     server.asked.search.push(q);
     return { planSource: "model", results: await answer(server.search()), applied: [] };
@@ -117,7 +120,7 @@ beforeEach(() => {
     topics: [count("tui"), count("rust")],
     find: (q) => (q === undefined ? server.topics : server.topics.filter(({ topic }) => topic.includes(q))),
     search: () => [hit(3, "bottom")],
-    asked: { listTopics: [], search: [] },
+    asked: { listTopics: [], search: [], topic: 0 },
   };
 });
 
@@ -153,7 +156,8 @@ const open = async (path: string) => {
     history: createMemoryHistory({ initialEntries: [path] }),
   });
   render(<RouterProvider router={router} />);
-  await page().findByRole("heading", { level: 1 });
+  // A shared link can open the repo panel, which hides the page from the accessibility tree.
+  await page().findByRole("heading", { level: 1, hidden: true });
   return router;
 };
 
@@ -203,11 +207,23 @@ describe("the topics page", () => {
 });
 
 describe("a topic's search", () => {
+  test("asks when the typing rests, not on every key, keeps the query in the address, and never reloads the topic", async () => {
+    const user = userEvent.setup();
+    const router = await open("/topics/tui");
+    await user.type(page().getByRole("searchbox"), "dashboards");
+    expect(await page().findByRole("heading", { name: "found 1" })).toBeTruthy();
+    // Eight keys make a query long enough to ask about. A slow machine can rest between two of them.
+    expect(server.asked.search.length).toBeLessThan(8);
+    expect(server.asked.search.at(-1)).toBe("dashboards");
+    expect(router.state.location.search).toEqual({ q: "dashboards" });
+    expect(server.asked.topic).toBe(1);
+  });
+
   test("holds the answer's place while it runs", async () => {
     server.search = () => "hang";
     await open("/topics/tui?q=terminal+dashboards");
-    const status = await page().findByRole("status");
-    expect(status.textContent).toBe("searching…");
+    const status = await page().findByText("searching…");
+    expect(status.getAttribute("role")).toBe("status");
     // The tile the results fill is already on screen, so they land without moving the lists under it.
     expect(status.closest("[aria-busy='true']")).not.toBeNull();
   });
@@ -231,5 +247,22 @@ describe("a topic's search", () => {
       expect(page().getByRole("button", { name: "try again" })).toBeTruthy();
       cleanup();
     }
+  });
+});
+
+describe("a topic's repo panel", () => {
+  test("opens from a row or a shared link through ?repo=, and closes off it", async () => {
+    const user = userEvent.setup();
+    const router = await open("/topics/tui");
+    await user.click(page().getByRole("link", { name: /^tui-textarea/ }));
+    expect(await page().findByRole("dialog")).toBeTruthy();
+    expect(router.state.location.search).toEqual({ repo: "ratatui/tui-textarea" });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(router.state.location.search).toEqual({}));
+    cleanup();
+
+    await open("/topics/tui?repo=ratatui/ratatui");
+    expect(within(await page().findByRole("dialog")).getByRole("heading", { level: 2, name: "ratatui" })).toBeTruthy();
   });
 });

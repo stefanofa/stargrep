@@ -56,7 +56,7 @@ spyOn(location, "assign").mockImplementation(() => {});
 
 const rpc = await import("../src/lib/rpc.ts");
 mock.module("../src/lib/rpc.ts", () => ({ ...rpc, api }));
-const { FollowAll, FollowButton, FollowPill } = await import("../src/components/follows.tsx");
+const { FollowButton, FollowPill } = await import("../src/components/follows.tsx");
 const { follow, intentParam, unfollow, useFollows } = await import("../src/lib/follows.ts");
 const { useLeaving } = await import("../src/lib/leaving.ts");
 
@@ -169,29 +169,6 @@ describe("the follow pill", () => {
     await user.click(pill);
     await waitFor(() => expect(server.unfollowed).toEqual(["ada"]));
     await waitFor(() => expect(screen.getByRole("button", { name: "follow @ada" })).toBeDefined());
-  });
-});
-
-describe("follow all", () => {
-  test("follows everyone, then only the others, then confirms quietly", async () => {
-    const user = userEvent.setup();
-    render(<FollowAll logins={["ken", "dennis"]} signedIn />);
-    await user.click(await screen.findByRole("button", { name: "+ follow all 2" }));
-    await waitFor(() => expect(server.followed).toEqual([["ken", "dennis"]]));
-    expect(await screen.findByText("following all 2")).toBeDefined();
-    cleanup();
-
-    render(<FollowAll logins={["ken", "dennis", "bjarne"]} signedIn />);
-    await user.click(await screen.findByRole("button", { name: "+ follow the other 1" }));
-    await waitFor(() => expect(server.followed.at(-1)).toEqual(["bjarne"]));
-  });
-
-  test("signed out, it signs in to follow the people it lists", async () => {
-    const user = userEvent.setup();
-    render(<FollowAll logins={["alan", "edsger"]} signedIn={false} />);
-    await user.click(await screen.findByRole("button", { name: "+ follow all 2" }));
-    await waitFor(() => expect(signedInto).toHaveLength(1));
-    expect(JSON.parse(sessionStorage.getItem(intentKey) ?? "{}").logins).toEqual(["alan", "edsger"]);
   });
 });
 

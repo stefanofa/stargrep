@@ -13,7 +13,7 @@ import { wallNow } from "../lib/wall-clock.ts";
 import { formatCount, sameLogin } from "../lib/whose.ts";
 import { Page } from "./page.tsx";
 import { type PersonStars, PersonTile } from "./person-tile.tsx";
-import { ShareButton } from "./share-button.tsx";
+import { personShared, ShareButton } from "./share-button.tsx";
 import { MonthsTile } from "./taste-months.tsx";
 import { AlikeTile, LanguagesTile, TopicsTile, YearCountTile } from "./taste-tiles.tsx";
 import { YearTile } from "./taste-year.tsx";
@@ -100,7 +100,11 @@ export function TastePage() {
         counts={{ stars: taste === undefined ? undefined : formatCount(taste.stars) }}
         share={
           known ? (
-            <ShareButton login={login} query={undefined} className={own ? "max-sm:size-10" : "max-sm:size-[42px]"} />
+            <ShareButton
+              page={personShared(login)}
+              query={undefined}
+              className={own ? "max-sm:size-10" : "max-sm:size-[42px]"}
+            />
           ) : undefined
         }
       />

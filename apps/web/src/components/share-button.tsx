@@ -3,9 +3,23 @@ import { useEffect, useState } from "react";
 import { capture } from "../lib/analytics.ts";
 import { after } from "../lib/wall-clock.ts";
 
-// The address a person's page shares: /@login, which every login answers at, with the search on screen.
-export const shareUrl = (origin: string, login: string, query: string | undefined) => {
-  const url = new URL(`/@${login}`, origin);
+// A page the share button shares: its address, the title a share sheet shows, and the event a share sends.
+export interface Shared {
+  readonly path: string;
+  readonly title: string;
+  readonly event: "person_shared" | "topic_shared";
+}
+
+// A person's page lives at /@login, which every login answers at.
+export const personShared = (login: string): Shared => ({
+  path: `/@${login}`,
+  title: `@${login}'s stars on stargrep`,
+  event: "person_shared",
+});
+
+// The address a share carries: the page, with the search on screen.
+export const shareUrl = (origin: string, path: string, query: string | undefined) => {
+  const url = new URL(path, origin);
   if (query) url.searchParams.set("q", query);
   return url.href;
 };
@@ -25,34 +39,34 @@ function ShareIcon({ className }: { className: string }) {
   );
 }
 
-// Shares a person's page. A touch screen with a share sheet opens it. Anywhere else the link goes to the clipboard, and
-// the button says so for a moment. Phones show the icon alone.
+// Shares a page. A touch screen with a share sheet opens it. Anywhere else the link goes to the clipboard, and the
+// button says so for a moment. Phones show the icon alone.
 export function ShareButton({
-  login,
+  page,
   query,
   className,
 }: {
-  login: string;
+  page: Shared;
   query: string | undefined;
   className?: string;
 }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => (copied ? after(2_000, () => setCopied(false)) : undefined), [copied]);
   const share = async () => {
-    const url = shareUrl(location.origin, login, query);
+    const url = shareUrl(location.origin, page.path, query);
     if (navigator.share !== undefined && matchMedia("(pointer: coarse)").matches) {
       // Closing the sheet is an answer too. Only a sheet that failed falls back to the clipboard.
-      const outcome = await navigator.share({ title: `@${login}'s stars on stargrep`, url }).then(
+      const outcome = await navigator.share({ title: page.title, url }).then(
         () => "shared" as const,
         (error: unknown) => (error instanceof DOMException && error.name === "AbortError" ? "closed" : "failed"),
       );
-      if (outcome === "shared") capture("person_shared", { via: "sheet" });
+      if (outcome === "shared") capture(page.event, { via: "sheet" });
       if (outcome !== "failed") return;
     }
     await navigator.clipboard.writeText(url).then(
       () => {
         setCopied(true);
-        capture("person_shared", { via: "link" });
+        capture(page.event, { via: "link" });
       },
       () => undefined,
     );

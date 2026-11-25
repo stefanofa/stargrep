@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { normalize } from "./keyword.ts";
 import { hitsOf, type Semantic } from "./page-view.ts";
 import { api, type SearchResult, wireCode } from "./rpc.ts";
-import { type Answer, minimumLength, type SearchFailed, startSemanticSearch } from "./search-stream.ts";
+import { minimumLength } from "./search-pace.ts";
+import { type Answer, type SearchFailed, startSemanticSearch } from "./search-stream.ts";
 
 type Search = ReturnType<typeof startSemanticSearch<ReadonlyArray<SearchResult>>>;
 

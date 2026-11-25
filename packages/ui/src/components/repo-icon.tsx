@@ -35,7 +35,7 @@ const sizes: Record<RepoIconSize, { slot: string; letters: string; side: number 
   },
   row: { slot: "size-9", letters: "text-base leading-[18px]", side: 36 },
   panel: { slot: "size-14", letters: "text-title leading-[26px]", side: 56 },
-  heading: { slot: "size-10 sm:size-14", letters: "text-lg leading-[20px] sm:text-title sm:leading-[26px]", side: 56 },
+  heading: { slot: "size-10 sm:size-16", letters: "text-lg leading-[20px] sm:text-2xl", side: 64 },
 };
 
 export function Monogram({ letters, size = "card" }: { letters: string; size?: RepoIconSize }) {

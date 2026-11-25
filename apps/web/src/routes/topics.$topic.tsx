@@ -1,7 +1,7 @@
 import { createFileRoute, lazyRouteComponent, notFound, redirect } from "@tanstack/react-router";
 import { Failure } from "../components/problem-page.tsx";
 import { canonicalLinks, pagePath, previewMeta, siteTitle, topicImage } from "../lib/preview.ts";
-import { topicPattern } from "../lib/topic-examples.ts";
+import { topicPattern } from "../lib/topic-path.ts";
 
 const loadTopic = () => import("../components/topic-page.tsx");
 
@@ -9,8 +9,10 @@ const loadTopic = () => import("../components/topic-page.tsx");
 // without a page answers 404. Its own chunk, so the landing and the stars engine carry none of it.
 export const Route = createFileRoute("/topics/$topic")({
   codeSplitGroupings: [],
-  validateSearch: (search: Record<string, unknown>): { q?: string } =>
-    typeof search.q === "string" && search.q.trim() !== "" ? { q: search.q.slice(0, 500) } : {},
+  validateSearch: (search: Record<string, unknown>): { q?: string; repo?: string } => ({
+    ...(typeof search.q === "string" && search.q.trim() !== "" ? { q: search.q.slice(0, 500) } : {}),
+    ...(typeof search.repo === "string" && search.repo !== "" ? { repo: search.repo.slice(0, 200) } : {}),
+  }),
   beforeLoad: ({ params: { topic }, search }) => {
     const lower = topic.toLowerCase();
     if (lower !== topic) throw redirect({ to: "/topics/$topic", params: { topic: lower }, search, statusCode: 301 });
@@ -35,7 +37,7 @@ export const Route = createFileRoute("/topics/$topic")({
       .map((repo) => `${repo.owner}/${repo.name}`);
     const description = q
       ? `Searching ${topic.topic} repos for "${q}" on stargrep.`
-      : `${topic.topic} repos ranked by how many developers star them, such as ${top.join(", ")}. Search all ${topic.repos.toLocaleString("en")} in plain words.`;
+      : `${topic.topic} repos ranked by how many people on stargrep star them, such as ${top.join(", ")}. Search all ${topic.repos.toLocaleString("en")} in plain words.`;
     return {
       meta: previewMeta(site, {
         title: `${topic.topic} repos developers actually star · ${siteTitle}`,
