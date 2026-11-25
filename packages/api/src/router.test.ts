@@ -158,6 +158,12 @@ const services = (fakes: Fakes): Context.Context<ApiServices> => {
             ? { total: 3, languages: [{ language: "TypeScript", count: 2 }] }
             : { total: 0, languages: [] },
         ),
+      days: (accountId: GitHubAccountId) =>
+        Effect.succeed(accountId === ada.account.id ? [{ day: "2025-03-14", stars: 3 }] : []),
+      topics: (accountId: GitHubAccountId) =>
+        Effect.succeed(accountId === ada.account.id ? [{ topic: "cli", count: 2 }] : []),
+      churn: (accountId: GitHubAccountId) =>
+        Effect.succeed(accountId === ada.account.id ? { archived: 1, unstarred: 4 } : { archived: 0, unstarred: 0 }),
       library: (accountId: GitHubAccountId) =>
         Effect.succeed(
           accountId === ada.account.id ? [{ repo, starredAt, stars: 16_400, read: false, gone: false }] : [],
@@ -630,7 +636,11 @@ describe("people", () => {
       Effect.sync(() => {
         queries.push(query);
         const shared = Option.isSome(query.viewer) ? 146 : null;
-        return { people: [person("grace", shared), person("theo", shared)], total: 3 };
+        return {
+          people: [person("grace", shared), person("theo", shared)],
+          total: 3,
+          topics: [{ topic: "react", people: 2 }],
+        };
       }),
   });
   const ask = async (fakes: Fakes, input: Parameters<ReturnType<typeof client>["api"]["people"]>[0]) => {
@@ -665,8 +675,11 @@ describe("people", () => {
       ],
       total: 3,
       nextOffset: 2,
+      topics: [{ topic: "react", people: 2 }],
     });
-    expect(queries).toEqual([{ sort: "recently-active", viewer: Option.none(), offset: 0, limit: 2 }]);
+    expect(queries).toEqual([
+      { sort: "recently-active", viewer: Option.none(), topic: Option.none(), offset: 0, limit: 2 },
+    ]);
     expect([cacheControl, limits]).toEqual(["public, max-age=300", ["search"]]);
   });
 
@@ -674,14 +687,16 @@ describe("people", () => {
     const queries: Array<Db.PeopleQuery> = [];
     const { answer, cacheControl } = await ask(
       { people: listing(queries), signedIn: Effect.succeedSome(ada.userId), claimed: syncedAda },
-      { sort: "most-like-you", offset: 1 },
+      { sort: "most-like-you", offset: 1, topic: "rust" },
     );
     expect([answer.sort, answer.people.map((found) => found.shared), answer.nextOffset]).toEqual([
       "most-like-you",
       [146, 146],
       null,
     ]);
-    expect(queries).toEqual([{ sort: "most-like-you", viewer: Option.some(ada.account.id), offset: 1, limit: 24 }]);
+    expect(queries).toEqual([
+      { sort: "most-like-you", viewer: Option.some(ada.account.id), topic: Option.some("rust"), offset: 1, limit: 24 },
+    ]);
     expect(cacheControl).toBe("private, max-age=60");
   });
 
@@ -710,6 +725,7 @@ describe("people", () => {
     const { api } = client({ people: listing([]) });
     expect((await failure(api.people({ limit: 101 }))).code).toBe("BAD_REQUEST");
     expect((await failure(api.people({ offset: -1 }))).code).toBe("BAD_REQUEST");
+    expect((await failure(api.people({ topic: "Not A Topic" }))).code).toBe("BAD_REQUEST");
   });
 });
 
@@ -777,6 +793,45 @@ describe("similarPeople", () => {
   test("answers ACCOUNT_NOT_SYNCED for a login stargrep never synced", async () => {
     const { api } = client({ people: like([]) });
     expect((await failure(api.similarPeople({ login: "linus" }))).code).toBe("ACCOUNT_NOT_SYNCED");
+  });
+});
+
+describe("taste", () => {
+  test("describes a login's stars, and keeps the answer only once the login has stars", async () => {
+    const memory = AnswerCache.memory();
+    const limits: Array<RateLimitKind> = [];
+    const ask = async (login: string) => {
+      const resHeaders = new Headers();
+      const context: ApiContext = {
+        ...contextFor("rest", Effect.succeed(services({ limiter: (kind) => Effect.sync(() => limits.push(kind)) }))),
+        answerCache: memory.cache,
+        resHeaders,
+      };
+      const answer = await createRouterClient(router, { context }).taste({ login });
+      return { answer, cache: resHeaders.get("x-answer-cache") };
+    };
+    const first = await ask("ada");
+    expect(first.answer).toMatchObject({
+      login: "ada",
+      stars: 3,
+      starredOnGitHub: 2431,
+      archived: 1,
+      unstarredThisYear: 4,
+      languages: [{ language: "TypeScript", count: 2 }],
+      topics: [{ topic: "cli", count: 2 }],
+    });
+    expect([first.answer.months[0], first.answer.weeks]).toEqual([
+      { month: "2025-03", stars: 3 },
+      expect.arrayContaining([expect.objectContaining({ days: expect.any(Array) })]),
+    ]);
+    expect([first.cache, (await ask("ada")).cache]).toEqual(["miss", "hit"]);
+    expect([(await ask("grace")).answer.stars, (await ask("grace")).cache]).toEqual([0, "miss"]);
+    expect([[...memory.entries.keys()], limits]).toEqual([["taste/ada"], ["search", "search", "search"]]);
+  });
+
+  test("answers ACCOUNT_NOT_SYNCED for a login stargrep never synced", async () => {
+    const { api } = client();
+    expect((await failure(api.taste({ login: "linus" }))).code).toBe("ACCOUNT_NOT_SYNCED");
   });
 });
 

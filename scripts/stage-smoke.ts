@@ -182,7 +182,7 @@ const web = Effect.gen(function* () {
     check(
       "the OpenAPI document lists every route",
       paths.join(" ") ===
-        "/config /facets /people /people/{login}/similar /repos/{id} /repos/{id}/similar /search /stars/{login} /stars/{login}/languages /sync/{login} /topics /topics/pages /topics/{topic}",
+        "/config /facets /people /people/{login}/similar /repos/{id} /repos/{id}/similar /search /stars/{login} /stars/{login}/languages /stars/{login}/taste /sync/{login} /topics /topics/pages /topics/{topic}",
       {
         status: spec.status,
         paths,
@@ -216,7 +216,7 @@ const web = Effect.gen(function* () {
       { status: noTopic.status, code: noTopicBody.code },
     ),
     check(
-      "MCP lists the fourteen tools",
+      "MCP lists the fifteen tools",
       [
         "search",
         "triggerSync",
@@ -224,6 +224,7 @@ const web = Effect.gen(function* () {
         "getRepo",
         "stars",
         "starLanguages",
+        "taste",
         "config",
         "lookupFacets",
         "similarRepos",

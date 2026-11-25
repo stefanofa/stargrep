@@ -17,6 +17,9 @@ export const peopleRule = { followers: 5000, stars: 40, activeWithin: Duration.d
 // How many of each person's languages and topics a card shows.
 const cardTop = 3;
 
+// How many of the topics the cards show a page lists to filter by.
+const topicChoices = 20;
+
 // A recount reads the repo row of every star it copies, and a cold read cost about 0.7 ms on a branch of prod, so one
 // statement takes people up to this many stars in all, about 7 s cold, well inside the long statement limit. A person
 // with more stars than this goes alone.
@@ -55,13 +58,21 @@ export interface PeopleQuery {
   // The account whose shared stars each person carries. Without one, shared is null and most-like-you sorts as
   // recently-active. The account itself is left out of the list.
   readonly viewer: Option.Option<GitHubAccountId>;
+  // Keeps only the people whose card shows this topic.
+  readonly topic: Option.Option<string>;
   readonly offset: number;
   readonly limit: number;
 }
 
+const CardTopic = Schema.Struct({ topic: Schema.String, people: Schema.Int });
+export type CardTopic = typeof CardTopic.Type;
+
 export interface PeoplePage {
   readonly people: ReadonlyArray<Person>;
+  // How many people the page's filter keeps.
   readonly total: number;
+  // The topics the cards show, on the most cards first, whatever the topic filter.
+  readonly topics: ReadonlyArray<CardTopic>;
 }
 
 export interface Refreshed {
@@ -96,6 +107,7 @@ const decodeCount = rowsDecoder(Schema.Struct({ count: Schema.Int }));
 const decodePeople = rowsDecoder(Person);
 const decodeLiked = rowsDecoder(Liked);
 const decodeStargazers = rowsDecoder(Stargazer);
+const decodeCardTopics = rowsDecoder(CardTopic);
 
 // How many current stars the account shares with each person, from the copy, one index probe per star of the account.
 const sharedWith = (accountId: GitHubAccountId) => sql`
@@ -248,7 +260,7 @@ export const make = Effect.gen(function* () {
       return { listed, recounted: yield* recountAll(0) };
     }),
 
-    page: Effect.fn("Db.people.page")(function* ({ sort, viewer, offset, limit }) {
+    page: Effect.fn("Db.people.page")(function* ({ sort, viewer, topic, offset, limit }) {
       const order =
         sort === "most-like-you" && Option.isSome(viewer)
           ? sql`${likeness} desc nulls last, s.n desc nulls last, p.last_starred_at desc, p.account_id`
@@ -261,22 +273,38 @@ export const make = Effect.gen(function* () {
           where: sql`p.account_id <> ${id}`,
         }),
       });
-      const found = yield* query(
-        "people.page",
-        decodePeople,
-        sql`
-          select ${personColumns(listed.shared)}
-          from ${people} p join ${githubAccounts} a on a.id = p.account_id ${listed.from}
-          where ${listed.where}
-          order by ${order}
-          limit ${limit} offset ${offset}`,
+      const kept = Option.match(topic, {
+        onNone: () => listed.where,
+        onSome: (shown) => sql`${listed.where} and p.topics @> jsonb_build_array(${shown}::text)`,
+      });
+      const [found, [counted], topics] = yield* Effect.all(
+        [
+          query(
+            "people.page",
+            decodePeople,
+            sql`
+              select ${personColumns(listed.shared)}
+              from ${people} p join ${githubAccounts} a on a.id = p.account_id ${listed.from}
+              where ${kept}
+              order by ${order}
+              limit ${limit} offset ${offset}`,
+          ),
+          query("people.page", decodeCount, sql`select count(*)::int as count from ${people} p where ${kept}`),
+          query(
+            "people.page",
+            decodeCardTopics,
+            sql`
+              select shown.topic, count(*)::int as people
+              from ${people} p cross join jsonb_array_elements_text(p.topics) as shown (topic)
+              where ${listed.where}
+              group by shown.topic
+              order by people desc, shown.topic
+              limit ${topicChoices}`,
+          ),
+        ],
+        { concurrency: 3 },
       );
-      const [counted] = yield* query(
-        "people.page",
-        decodeCount,
-        sql`select count(*)::int as count from ${people} p where ${listed.where}`,
-      );
-      return { people: found, total: counted?.count ?? 0 };
+      return { people: found, total: counted?.count ?? 0, topics };
     }),
 
     like: (accountId, limit) =>

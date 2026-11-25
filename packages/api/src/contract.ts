@@ -389,6 +389,50 @@ export const StarLanguages = Schema.Struct({
   }),
 });
 
+const Day = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/));
+
+export const Taste = Schema.Struct({
+  login: Schema.String,
+  stars: Schema.Int.annotate({ description: "How many repos the login stars now, as Stargrep last synced them." }),
+  starredOnGitHub: Schema.NullOr(Schema.Int).annotate({
+    description:
+      "How many repos GitHub said the login starred when Stargrep last looked the login up or read its stars, or null before then.",
+  }),
+  months: Schema.Array(
+    Schema.Struct({
+      month: Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}$/)).annotate({
+        description: "A month in UTC, such as 2025-12.",
+      }),
+      stars: Schema.Int,
+    }),
+  ).annotate({
+    description:
+      "How many of the login's current stars it starred in each month, every month from its first star's to the current one, oldest first, the empty ones included.",
+  }),
+  weeks: Schema.Array(
+    Schema.Struct({
+      start: Day.annotate({ description: "The week's Sunday in UTC, such as 2026-03-08." }),
+      days: Schema.Array(Schema.Int).annotate({
+        description:
+          "How many of the login's current stars it starred on each day from Sunday on. The current week stops at today.",
+      }),
+    }),
+  ).annotate({ description: "The last 52 weeks in UTC, oldest first, the current week last." }),
+  lastYear: Schema.Int.annotate({ description: "How many of the login's current stars it starred in those 52 weeks." }),
+  archived: Schema.Int.annotate({
+    description: "How many of the login's current stars are of repos their owners archived that GitHub still serves.",
+  }),
+  unstarredThisYear: Schema.Int.annotate({
+    description:
+      "How many repos the login unstarred since the current year began in UTC, as Stargrep's full reads of its stars noticed them.",
+  }),
+  languages: StarLanguages.fields.languages,
+  topics: Schema.Array(Schema.Struct({ topic: Schema.String, count: Schema.Int })).annotate({
+    description:
+      "The GitHub topics most of the login's current stars carry, most first, up to 12. Archived repos and repos GitHub no longer serves count toward none.",
+  }),
+}).annotate({ description: "What a login stars and when, as Stargrep last synced its stars. Times are in UTC." });
+
 export const maxNewToYou = 48;
 
 export const NewToYouInput = Schema.Struct({
@@ -462,6 +506,11 @@ export const PeopleInput = Schema.Struct({
   offset: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: maxPeopleOffset }))
     .annotate({ description: "How many people to skip, from nextOffset. 0 when left out." })
     .pipe(Schema.withDecodingDefaultKey(Effect.succeed(0))),
+  topic: Schema.optionalKey(
+    TopicName.annotate({
+      description: "Keeps only the people whose stars mostly carry this GitHub topic, from topics.",
+    }),
+  ),
 });
 
 const personFields = {
@@ -494,9 +543,13 @@ export const Person = Schema.Struct({
 export const People = Schema.Struct({
   sort: PeopleSort.annotate({ description: "The order the people come in." }),
   people: Schema.Array(Person),
-  total: Schema.Int.annotate({ description: "How many people the list holds." }),
+  total: Schema.Int.annotate({ description: "How many people the list holds, or the topic keeps." }),
   nextOffset: Schema.NullOr(Schema.Int).annotate({
     description: "Pass as offset to read the next page, or null when this page is the last.",
+  }),
+  topics: Schema.Array(Schema.Struct({ topic: Schema.String, people: Schema.Int })).annotate({
+    description:
+      "Up to 20 of the topics people's stars mostly carry, on the most people first, to pass as topic. The same whatever topic asked for.",
   }),
 }).annotate({
   description:
@@ -965,6 +1018,19 @@ export const contract = {
     .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
     .input(SyncInput)
     .output(StarLanguages),
+  taste: withServices
+    .errors(Struct.pick(errors, ["ACCOUNT_NOT_SYNCED", "TOO_MANY_REQUESTS"]))
+    .route({
+      method: "GET",
+      path: "/stars/{login}/taste",
+      operationId: "taste",
+      summary: "Describe a login's stars over time",
+      description:
+        "Counts a login's synced stars by month and by day for the last 52 weeks, by language and by topic, and says how many are archived and how many it unstarred this year.",
+    })
+    .meta(mcp.tool({ annotations: { readOnlyHint: true } }))
+    .input(SyncInput)
+    .output(Taste),
   // The name goes in the body, as search's query does, because it is what someone typed.
   lookupFacets: withServices
     .errors(Struct.pick(errors, ["TOO_MANY_REQUESTS"]))

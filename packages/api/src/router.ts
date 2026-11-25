@@ -5,7 +5,7 @@ import * as Analytics from "@stargrep/analytics/analytics";
 import { Feed } from "@stargrep/core/follows";
 import { RateLine } from "@stargrep/core/limits";
 import { MetricRegistry, QueryPlan, type QueryPlanner, Search } from "@stargrep/core/search";
-import { OwnerAccount, SyncRequests } from "@stargrep/core/stars";
+import { OwnerAccount, SyncRequests, Taste } from "@stargrep/core/stars";
 import * as Db from "@stargrep/db";
 import type { DbQueryFailed, DbRowInvalid, RepoNotFound } from "@stargrep/db/errors";
 import { loginKey } from "@stargrep/github/login";
@@ -59,9 +59,11 @@ import {
   type StarLanguages,
   StarsCursor,
   type StarsInput,
+  type SyncInput,
   type SyncStatus,
   similarLimit,
   starredByLimit,
+  Taste as TasteOutput,
   Topic,
   type TopicInput,
   type TopicPages,
@@ -485,7 +487,13 @@ const peopleViewer = Effect.gen(function* () {
 const people = Effect.fnUntraced(function* (input: typeof PeopleInput.Type, context: AnswerContext) {
   const viewer = yield* peopleViewer;
   const sort = Option.isSome(viewer) ? input.sort : "recently-active";
-  const page = yield* (yield* Db.Db).people.page({ sort, viewer, offset: input.offset, limit: input.limit });
+  const page = yield* (yield* Db.Db).people.page({
+    sort,
+    viewer,
+    topic: Option.fromUndefinedOr(input.topic),
+    offset: input.offset,
+    limit: input.limit,
+  });
   const next = input.offset + page.people.length;
   // The list changes once a night, so an answer without shared counts keeps for 5 minutes in any cache. One with them
   // is the viewer's alone.
@@ -496,6 +504,7 @@ const people = Effect.fnUntraced(function* (input: typeof PeopleInput.Type, cont
     people: page.people.map((person) => ({ ...personFields(person), shared: person.shared })),
     total: page.total,
     nextOffset: page.people.length > 0 && next < page.total ? next : null,
+    topics: page.topics,
   };
 });
 
@@ -516,6 +525,30 @@ const similarPeople = Effect.fnUntraced(function* (input: typeof SimilarPeopleIn
   if (Option.isNone(account)) return yield* new Search.AccountNotSynced({ login: input.login });
   const found = yield* db.people.like(account.value.id, input.limit);
   return { people: found.map((person) => ({ ...personFields(person), shared: person.shared })) };
+});
+
+// A login's taste changes only when its stars sync, so an answer keeps for 10 minutes and is then served for up to a
+// day while a refresh runs. A login whose stars are still arriving has none to keep.
+const tasteAnswers: AnswerPolicy<typeof TasteOutput.Encoded> = {
+  procedure: "taste",
+  json: Schema.fromJsonString(Schema.toEncoded(TasteOutput)),
+  fresh: Duration.minutes(10),
+  stale: Duration.days(1),
+  keep: (answer) => answer.stars > 0,
+  refused: refusesRequest,
+};
+
+const taste = Effect.fnUntraced(function* (input: typeof SyncInput.Type) {
+  const account = yield* (yield* Db.Db).accounts.byLogin(input.login);
+  if (Option.isNone(account)) return yield* new Search.AccountNotSynced({ login: input.login });
+  const found = yield* Taste.read(account.value.id);
+  return {
+    ...found,
+    login: account.value.login,
+    stars: found.languages.total,
+    starredOnGitHub: account.value.starredCount,
+    languages: found.languages.languages,
+  };
 });
 
 // Topic pages change once a night, so an answer keeps for 10 minutes and is then served for up to a day while a refresh
@@ -764,6 +797,10 @@ const similarPeopleCache = answerCache(
     Option.some(`similar-people/${loginKey(input.login)}/${input.limit}`),
 );
 
+const tasteCache = answerCache(tasteAnswers, (input: typeof SyncInput.Type, _context: ApiContext) =>
+  Option.some(`taste/${loginKey(input.login)}`),
+);
+
 const topicsCache = answerCache(topicsAnswers, (input: typeof TopicsInput.Type, _context: ApiContext) =>
   Option.some(`topics/${input.limit}/${input.offset}/${(input.q ?? "").trim().toLowerCase()}`),
 );
@@ -967,6 +1004,16 @@ export const router = implementer.router({
     if (Option.isNone(account)) return yield* new Search.AccountNotSynced({ login: input.login });
     return { login: account.value.login, ...(yield* db.stars.languages(account.value.id)) };
   }),
+
+  // Database reads with no model call, so they take from the search binding, and only on a miss.
+  taste: os.taste
+    .use(similarResponse)
+    .use(tasteCache)
+    .use(Services.services)
+    .use(admission("search"))
+    .effect(function* ({ input }): ApiResult<"taste", typeof TasteOutput.Type> {
+      return yield* taste(input);
+    }),
 
   // A database read with no model call, so it takes from the search binding as lookupFacets does, and only on a miss.
   similarRepos: os.similarRepos

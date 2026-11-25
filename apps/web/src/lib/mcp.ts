@@ -7,6 +7,7 @@ export const mcpTools = [
   { name: "syncStatus", does: "says whether a login is synced and how many of its stars stargrep has read" },
   { name: "stars", does: "lists a login's synced stars, newest first" },
   { name: "starLanguages", does: "counts a login's synced stars by language" },
+  { name: "taste", does: "counts a login's synced stars by month, by day for a year, by language and by topic" },
   { name: "getRepo", does: "reads one repo, with its summary" },
   {
     name: "similarRepos",

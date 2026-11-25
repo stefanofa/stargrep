@@ -19,6 +19,7 @@ import {
   repoMetrics,
   repoReading,
   repos,
+  repoTopics,
   stars,
   unreadEnrichment,
 } from "../schema.ts";
@@ -67,6 +68,18 @@ export interface StarLanguages {
   readonly total: number;
   readonly languages: ReadonlyArray<{ readonly language: string; readonly count: number }>;
 }
+
+// How many of an account's current stars it starred on one day in UTC, written as 2026-03-10.
+const StarDay = Schema.Struct({ day: Schema.String, stars: Schema.Int });
+export type StarDay = typeof StarDay.Type;
+
+const StarTopic = Schema.Struct({ topic: Schema.String, count: Schema.Int });
+export type StarTopic = typeof StarTopic.Type;
+
+// What became of an account's stars: how many current ones are of repos archived since, and how many it unstarred
+// since a time, as full syncs noticed them.
+const StarChurn = Schema.Struct({ archived: Schema.Int, unstarred: Schema.Int });
+export type StarChurn = typeof StarChurn.Type;
 
 export interface StarsUpsert {
   readonly accountId: GitHubAccountId;
@@ -130,6 +143,18 @@ export interface Queries {
   ) => Effect.Effect<ReadonlyArray<StarsPosition>, DbQueryFailed | DbRowInvalid>;
   readonly enrichment: (login: Login) => Effect.Effect<EnrichmentProgress, DbQueryFailed | DbRowInvalid>;
   readonly languages: (accountId: GitHubAccountId) => Effect.Effect<StarLanguages, DbQueryFailed | DbRowInvalid>;
+  // The days the account starred something, oldest first, each with how many of its current stars it starred then.
+  readonly days: (accountId: GitHubAccountId) => Effect.Effect<ReadonlyArray<StarDay>, DbQueryFailed | DbRowInvalid>;
+  // The GitHub topics most of the account's current stars carry, most first. Archived repos and repos GitHub no longer
+  // serves have no repo_topics rows, so they count toward none.
+  readonly topics: (
+    accountId: GitHubAccountId,
+    limit: number,
+  ) => Effect.Effect<ReadonlyArray<StarTopic>, DbQueryFailed | DbRowInvalid>;
+  readonly churn: (
+    accountId: GitHubAccountId,
+    since: DateTime.Utc,
+  ) => Effect.Effect<StarChurn, DbQueryFailed | DbRowInvalid>;
   readonly newToYou: (request: NewToYouRequest) => Effect.Effect<NewToYou, DbQueryFailed | DbRowInvalid>;
 }
 
@@ -137,6 +162,9 @@ const decodeStars = rowsDecoder(Star);
 const decodeLibrary = rowsDecoder(LibraryEntry);
 const decodeProgress = rowsDecoder(EnrichmentProgress);
 const decodeLanguages = rowsDecoder(LanguageCount);
+const decodeDays = rowsDecoder(StarDay);
+const decodeTopics = rowsDecoder(StarTopic);
+const decodeChurn = rowsDecoder(StarChurn);
 const decodePositions = rowsDecoder(Schema.Struct({ starredAt: Schema.DateTimeUtcFromMillis, repoId: RepoId }));
 const decodeChanged = rowsDecoder(Schema.Struct({ repoId: RepoId }));
 const decodeCloseness = rowsDecoder(Schema.Struct({ shared: Schema.Int, ranked: Schema.Array(RepoId) }));
@@ -498,6 +526,44 @@ export const make = Effect.fn("Db.stars.make")(function* (model: EmbeddingModelI
           total: rows.reduce((sum, row) => sum + row.count, 0),
           languages: rows.flatMap(({ language, count }) => (language === null ? [] : [{ language, count }])),
         })),
+      ),
+    // Reads only stars_page_idx.
+    days: (accountId) =>
+      run("stars.days", (db) =>
+        db.execute(sql`
+          select to_char(starred_at at time zone 'UTC', 'YYYY-MM-DD') as day, count(*)::int as stars
+          from ${stars} where account_id = ${accountId} and unstarred_at is null
+          group by 1 order by 1`),
+      ).pipe(Effect.flatMap((result) => decodeDays("stars.days")(resultRows(result)))),
+    // One probe of repo_topics' key per star, never the repos heap.
+    topics: (accountId, limit) =>
+      run("stars.topics", (db) =>
+        db
+          .select({ topic: repoTopics.topic, count: sql<number>`count(*)::int` })
+          .from(stars)
+          .innerJoin(repoTopics, eq(repoTopics.repoId, stars.repoId))
+          .where(and(eq(stars.accountId, accountId), isNull(stars.unstarredAt)))
+          .groupBy(repoTopics.topic)
+          .orderBy(desc(sql`count(*)`), repoTopics.topic)
+          .limit(limit),
+      ).pipe(Effect.flatMap(decodeTopics("stars.topics"))),
+    // Archived stars probe repos_archived_idx, whose predicate the exists repeats, and unstars read the account's rows
+    // through the primary key.
+    churn: (accountId, since) =>
+      Effect.flatMap(encodeTime(since), (from) =>
+        run("stars.churn", (db) =>
+          db.execute(sql`
+            select
+              (select count(*)::int from ${stars} s
+                where s.account_id = ${accountId} and s.unstarred_at is null and exists (
+                  select from ${repos} r where r.id = s.repo_id and r.archived and r.gone_at is null
+                )) as archived,
+              (select count(*)::int from ${stars} s
+                where s.account_id = ${accountId} and s.unstarred_at >= ${from}::timestamptz) as unstarred`),
+        ),
+      ).pipe(
+        Effect.flatMap((result) => decodeChurn("stars.churn")(resultRows(result))),
+        Effect.flatMap((rows) => Effect.orDie(Effect.fromNullishOr(rows[0]))),
       ),
     newToYou: Effect.fn("Db.stars.newToYou")(function* (request) {
       const [found] = yield* run("stars.newToYou", (db) => db.execute(closeness(model, request))).pipe(

@@ -50,6 +50,7 @@ const people = async ({ sort, offset = 0 }: { sort?: People["sort"]; offset?: nu
     people: server.list.slice(offset, end),
     total: server.list.length,
     nextOffset: end < server.list.length ? end : null,
+    topics: [],
   };
 };
 

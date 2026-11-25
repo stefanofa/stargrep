@@ -142,7 +142,7 @@ const db = makeDb({
     near: () => Effect.succeed({ inStars: [{ repo, stars: 18_000 }], notStarred: [] }),
   },
   people: {
-    page: ({ offset }) => Effect.succeed({ people: offset === 0 ? [person] : [], total: 1 }),
+    page: ({ offset }) => Effect.succeed({ people: offset === 0 ? [person] : [], total: 1, topics: [] }),
     like: () => Effect.succeed([{ ...person, shared: 146 }]),
     starredBy: () => Effect.succeed({ people: [{ login: person.login, avatarUrl: null }], total: 1 }),
   },

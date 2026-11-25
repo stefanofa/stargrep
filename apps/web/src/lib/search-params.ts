@@ -9,6 +9,10 @@ export interface Params {
   readonly lang?: string | undefined;
   // The library shows only the archived repos the account starred.
   readonly archived?: true | undefined;
+  // The library shows only the stars of a UTC month or day, such as 2025-12 or 2026-03-10.
+  readonly starred?: string | undefined;
+  // The library shows only the repos that carry this GitHub topic.
+  readonly topic?: string | undefined;
   // Someone else's page shows everything new to the signed-in viewer in place of the months.
   readonly show?: "new" | undefined;
   readonly repo?: string | undefined;
@@ -24,20 +28,23 @@ export const librarySorts = searchSorts.filter((sort) => sort !== "best");
 
 const isSort = (value: unknown): value is Sort => searchSorts.some((sort) => sort === value);
 
-export const validateParams = (search: Record<string, unknown>): Params => {
-  const q = typeof search.q === "string" ? search.q : undefined;
-  const [lang, repo, error] = [text(search.lang), text(search.repo), text(search.error)];
-  return {
-    ...(q === undefined ? {} : { q }),
-    ...(search.view === "list" || search.view === "tiles" ? { view: search.view } : {}),
-    ...(isSort(search.sort) ? { sort: search.sort } : {}),
-    ...(lang === undefined ? {} : { lang }),
-    ...(search.archived === true ? { archived: true } : {}),
-    ...(search.show === "new" ? { show: "new" } : {}),
-    ...(repo === undefined ? {} : { repo }),
-    ...(error === undefined ? {} : { error }),
-  };
-};
+const period = /^\d{4}-\d\d(-\d\d)?$/;
+
+// A param that is set, or nothing, so a params object never holds a key set to undefined.
+const set = <K extends keyof Params>(key: K, value: Params[K]) => (value === undefined ? {} : { [key]: value });
+
+export const validateParams = (search: Record<string, unknown>): Params => ({
+  ...set("q", typeof search.q === "string" ? search.q : undefined),
+  ...set("view", search.view === "list" || search.view === "tiles" ? search.view : undefined),
+  ...set("sort", isSort(search.sort) ? search.sort : undefined),
+  ...set("lang", text(search.lang)),
+  ...set("archived", search.archived === true || undefined),
+  ...set("starred", text(search.starred)?.match(period)?.[0]),
+  ...set("topic", text(search.topic)),
+  ...set("show", search.show === "new" ? "new" : undefined),
+  ...set("repo", text(search.repo)),
+  ...set("error", text(search.error)),
+});
 
 // Single-segment paths the Worker or the router answers before a login page could. These logins live at /@login, which
 // every login also accepts.

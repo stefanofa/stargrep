@@ -73,6 +73,7 @@ export type {
   Variant,
 } from "./queries/knowledge/index.ts";
 export type {
+  CardTopic,
   Liked,
   PeoplePage,
   PeopleQuery,
@@ -134,6 +135,8 @@ export type {
   NewToYouRequest,
   SnapshotChanges,
   Star,
+  StarChurn,
+  StarDay,
   StarEvent,
   StarLanguages,
   StarredRepo,
@@ -141,6 +144,7 @@ export type {
   StarsPosition,
   StarsSnapshot,
   StarsUpsert,
+  StarTopic,
 } from "./queries/stars.ts";
 export type { Settlement, SyncClaim, SyncRequest } from "./queries/sync-requests.ts";
 export type {

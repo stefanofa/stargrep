@@ -178,7 +178,7 @@ describe("when the services cannot start", () => {
     const down = await send("/api/search", post({ scope: { kind: "stars", login: "ada" }, q: "dashboards" }));
     expect([down.status, down.body.code]).toEqual([503, "SERVICE_UNAVAILABLE"]);
     expect(down.body.data.traceId).toEqual(traceId);
-    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(14);
+    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(15);
   });
 });
 
@@ -269,7 +269,7 @@ describe("when the database is unreachable", () => {
       data: { traceId },
     });
 
-    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(14);
+    expect((await send("/mcp", mcpCall("tools/list", {}))).body.result.tools).toHaveLength(15);
     expect(JSON.stringify([viaRest, viaRpc, viaMcp])).not.toContain("postgres://");
   });
 });
@@ -302,6 +302,7 @@ describe("mcp", () => {
       "starLanguages",
       "stars",
       "syncStatus",
+      "taste",
       "topic",
       "topicPages",
       "triggerSync",
@@ -434,6 +435,7 @@ describe("people", () => {
       ],
       total: 1,
       nextOffset: null,
+      topics: [],
     });
     expect((await tool("people", { limit: 1 })).structuredContent).toEqual(body);
     expect((await rest("/people?limit=0")).status).toBe(400);
@@ -498,6 +500,7 @@ describe("getRepo and the spec", () => {
       "/search",
       "/stars/{login}",
       "/stars/{login}/languages",
+      "/stars/{login}/taste",
       "/sync/{login}",
       "/topics",
       "/topics/pages",
