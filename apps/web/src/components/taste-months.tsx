@@ -10,13 +10,13 @@ const recent = { wide: 24, phone: 12 } as const;
 // Stars per month, the latest 24 on wide screens and 12 on phones, or every month since the first star. The busiest
 // month is accent-strong and the current one, still running, is ink. Each bar opens those stars.
 export function MonthsTile({ login, months, all }: { login: string; months: ReadonlyArray<TasteMonth>; all: boolean }) {
-  const views = (["wide", "phone"] as const).map((screen) => {
-    const shown = all ? months : months.slice(-recent[screen]);
-    return { screen, shown, more: !all && shown.length < months.length };
-  });
+  const views = (["wide", "phone"] as const).map((screen) => ({
+    screen,
+    shown: all ? months : months.slice(-recent[screen]),
+  }));
   return (
     <Tile className="flex min-w-0 flex-col gap-3.5 px-5 pt-5 pb-4.5 sm:gap-4.5 sm:px-7 sm:pt-6 sm:pb-5.5 lg:w-195 lg:shrink-0">
-      {views.map(({ screen, shown, more }) => (
+      {views.map(({ screen, shown }) => (
         <div key={screen} className={cn("contents", screen === "wide" ? "max-sm:hidden" : "sm:hidden")}>
           <div className="flex items-baseline justify-between gap-4">
             <h2 className="font-display text-[22px] leading-6.5 font-semibold tracking-snug sm:text-[26px] sm:leading-7.5">
@@ -24,7 +24,7 @@ export function MonthsTile({ login, months, all }: { login: string; months: Read
             </h2>
             <p className="font-sans text-sm text-muted-foreground">
               <Summary shown={shown} wide={screen === "wide"} all={all} />
-              {(more || all) && months.length > recent[screen] && (
+              {months.length > recent[screen] && (
                 <>
                   {" · "}
                   <Link
