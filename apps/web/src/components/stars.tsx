@@ -33,7 +33,7 @@ import { getLibrary, type Library } from "../lib/library-collection.ts";
 import { facetOf, facetsOf, keeps, resultFacet } from "../lib/library-filter.ts";
 import { askedPage, defaultQueryOf, type PageData, type PageRequest, type Session } from "../lib/page-data.ts";
 import { hitsOf, liveView } from "../lib/page-view.ts";
-import { closesBack } from "../lib/panel-history.ts";
+import { useRepoParam } from "../lib/panel-history.ts";
 import { personStars } from "../lib/person-stars.ts";
 import {
   now,
@@ -66,7 +66,7 @@ import { Hero, TryChips } from "./landing-hero.tsx";
 import { LibraryPlaceholder, LibraryView } from "./library-view.tsx";
 import { type PersonStars, PersonTile } from "./person-tile.tsx";
 import { SameQuestion } from "./same-question.tsx";
-import { ShareButton } from "./share-button.tsx";
+import { personShared, ShareButton } from "./share-button.tsx";
 import { TopicChips } from "./topic-chips.tsx";
 
 // A navigation in the browser starts from the session the server loaded. The page reads the rest once it mounts.
@@ -308,19 +308,10 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
       replace: true,
     });
   };
-  // Opening a repo adds a history entry that names the page it opened over, so Back closes the panel. The entry keeps
-  // that through Forward and reloads, which a component's own state would not.
+  const panel = useRepoParam();
   const open: OpenResult = (result, link) => {
     setOpener(link);
-    navigate({
-      to: ".",
-      search: (previous) => ({ ...previous, repo: `${result.owner}/${result.name}` }),
-      state: { panelOver: router.state.location.state.__TSR_index },
-    });
-  };
-  const close = () => {
-    if (closesBack(router.state.location.state)) router.history.back();
-    else navigate({ to: ".", search: (previous) => ({ ...previous, repo: undefined }), replace: true });
+    panel.open(result);
   };
   // The panel keeps the last repo it showed while it slides closed. Until the library loads, the repo a shared link
   // opens comes from the server.
@@ -436,7 +427,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           share={
             page.person.known ? (
               <ShareButton
-                login={page.person.login}
+                page={personShared(page.person.login)}
                 query={links.q}
                 className={audience.by === "owner" ? "max-sm:size-10" : "max-sm:size-[42px]"}
               />
@@ -503,7 +494,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
         repo={detail}
         open={params.repo !== undefined && detail !== undefined}
         onOpenChange={(next) => {
-          if (!next) close();
+          if (!next) panel.close();
         }}
         returnFocus={opener}
         starredBy={

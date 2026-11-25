@@ -266,38 +266,6 @@ export function FollowPill({ login, signedIn }: { login: string; signedIn: boole
   );
 }
 
-// A starter pack: one click follows a topic's people. Following all of them, it turns into a quiet confirmation.
-export function FollowAll({ logins, signedIn }: { logins: ReadonlyArray<string>; signedIn: boolean }) {
-  const follows = useFollows(signedIn);
-  const toast = useReturned(signedIn);
-  const others = logins.filter((login) => !follows.isFollowing(login));
-  const refusal = logins.map(follows.refusal).find((found) => found !== undefined);
-  if (signedIn && !follows.ready) return <Skeleton className="h-9 w-[124px] rounded-full" />;
-  const label =
-    others.length === logins.length ? `+ follow all ${logins.length}` : `+ follow the other ${others.length}`;
-  return (
-    <div className="flex flex-col items-end gap-1">
-      {others.length === 0 ? (
-        <p className={cn(buttonVariants({ variant: "muted", static: true }), "pointer-events-none")}>
-          <Check />
-          {`following all ${logins.length}`}
-        </p>
-      ) : (
-        <button
-          type="button"
-          className={buttonVariants({ variant: "primary" })}
-          disabled={others.some(follows.isPending)}
-          onClick={() => (signedIn ? void follow(others) : void signInToFollow(others))}
-        >
-          {label}
-        </button>
-      )}
-      <RefusalLine refusal={refusal} />
-      {toast}
-    </div>
-  );
-}
-
 // The repo panel's "also starred by" with the people the viewer follows first, as their own group.
 export function FollowedStarredBy({
   repoId,

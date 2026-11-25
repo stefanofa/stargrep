@@ -74,8 +74,9 @@ interface ClientEvents {
   readonly starred_by_person_opened: { readonly position: number };
   // A repo opened from what the people the visitor follows starred: the feed's rows or its top repo.
   readonly following_repo_opened: { readonly from: "feed" | "top"; readonly position: number };
-  // A person's page shared through the phone's share sheet, or its link copied.
+  // A person's page or a topic's page shared through the phone's share sheet, or its link copied.
   readonly person_shared: { readonly via: "sheet" | "link" };
+  readonly topic_shared: { readonly via: "sheet" | "link" };
   // A face in "same question in" under a search's answer, from 1, which asks that person the same words.
   readonly same_question_opened: { readonly position: number };
 }

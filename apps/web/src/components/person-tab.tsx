@@ -13,7 +13,7 @@ import { wallNow } from "../lib/wall-clock.ts";
 import { formatCount, sameLogin } from "../lib/whose.ts";
 import { Page } from "./page.tsx";
 import { type PersonStars, type PersonTab, PersonTile } from "./person-tile.tsx";
-import { ShareButton } from "./share-button.tsx";
+import { personShared, ShareButton } from "./share-button.tsx";
 
 // The tabs of a person's page beside stars, each a route chunk of its own that reads the login's taste for the person
 // tile, and what the tab shows besides.
@@ -131,7 +131,11 @@ export function TabPage<A>({
         counts={{ stars: taste === undefined ? undefined : formatCount(taste.stars) }}
         share={
           known ? (
-            <ShareButton login={login} query={undefined} className={own ? "max-sm:size-10" : "max-sm:size-[42px]"} />
+            <ShareButton
+              page={personShared(login)}
+              query={undefined}
+              className={own ? "max-sm:size-10" : "max-sm:size-[42px]"}
+            />
           ) : undefined
         }
       />

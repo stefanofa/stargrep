@@ -6,10 +6,9 @@ import * as Queue from "effect/Queue";
 import type * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { normalize } from "./keyword.ts";
+import { minimumLength, pauseMillis } from "./search-pace.ts";
 
-export const pause = Duration.millis(250);
-
-export const minimumLength = 3;
+export const pause = Duration.millis(pauseMillis);
 
 export interface Answer<A, E> {
   readonly query: string;
