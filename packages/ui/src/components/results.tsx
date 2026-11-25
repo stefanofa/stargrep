@@ -411,13 +411,13 @@ function Group({
 export function Results({
   view,
   groups,
-  hero = "butter",
+  hero,
   onOpen,
   className,
 }: {
   view: View;
   groups: ReadonlyArray<ResultGroup>;
-  hero?: Hero;
+  hero?: Hero | undefined;
   onOpen?: OpenResult | undefined;
   className?: string;
 }) {

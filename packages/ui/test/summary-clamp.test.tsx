@@ -36,7 +36,7 @@ const detail: RepoDetail = {
 
 const reasonsOf = (view: View) => {
   const results = [result, { ...result, name: "tui-rs", href: "?repo=ratatui/tui-rs" }];
-  const { container } = render(<Results view={view} groups={[{ key: "all", results }]} />);
+  const { container } = render(<Results view={view} groups={[{ key: "all", results }]} hero="card" />);
   const [hero, tile] = [...container.querySelectorAll("article")].map((article) =>
     article.querySelector("mark")?.closest("p"),
   );

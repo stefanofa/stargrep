@@ -1,5 +1,5 @@
 import { Input } from "@base-ui/react/input";
-import { type FormEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useLayoutEffect, useRef } from "react";
 import { cn } from "../lib/cn.ts";
 import { Button } from "./button.tsx";
 import { CloseIcon, SearchIcon } from "./icons.tsx";
@@ -40,13 +40,16 @@ function Rail({ progress, className }: { progress: TileProgress; className?: str
   );
 }
 
+// The page's search. On desktop it is one tile: the input over a strip with the answer, the filters, and the controls.
+// On phones the input docks just above the tab bar as one slim field, and the strip stays in the page above the results,
+// so the tile itself lays out nothing there.
 export function SearchTile({
   query,
   onQueryChange,
   label = "Search your stars",
   placeholder,
-  owner,
   status,
+  filters,
   controls,
   progress,
   className,
@@ -55,8 +58,9 @@ export function SearchTile({
   onQueryChange?: (query: string) => void;
   label?: string;
   placeholder?: string | undefined;
-  owner?: ReactNode;
   status?: ReactNode;
+  // The chips that filter the answer, which scroll sideways on phones.
+  filters?: ReactNode;
   controls?: ReactNode;
   progress?: TileProgress | undefined;
   className?: string;
@@ -91,20 +95,15 @@ export function SearchTile({
     input.current?.focus();
   };
 
-  const strip = status !== undefined || controls !== undefined;
-
   return (
     <div className={cn("relative", className)}>
-      <Tile className="flex flex-col overflow-clip p-0 has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-ring">
-        <search
-          className={cn(
-            "flex flex-col gap-[18px] px-[22px] pt-4 pb-5 sm:px-8 sm:pt-7 sm:pb-6",
-            owner !== undefined && "sm:pt-[22px] sm:pb-5 sm:pl-6",
-          )}
-        >
-          <form onSubmit={submit} className="flex items-center gap-3 sm:gap-4">
-            <SearchIcon className={cn("size-[22px] shrink-0 sm:size-[26px]", owner !== undefined && "sm:hidden")} />
-            {owner !== undefined && <div className="contents max-sm:hidden">{owner}</div>}
+      <Tile className="flex flex-col overflow-clip px-7 pt-[22px] pb-2.5 max-sm:contents sm:has-[input:focus-visible]:outline-2 sm:has-[input:focus-visible]:outline-offset-2 sm:has-[input:focus-visible]:outline-ring">
+        <search className="max-sm:fixed max-sm:inset-x-0 max-sm:bottom-[calc(var(--dock-bottom)-8px)] max-sm:z-30 max-sm:bg-linear-to-b max-sm:from-background/0 max-sm:to-background/95 max-sm:to-40% max-sm:px-3 max-sm:pt-2.5 max-sm:pb-2">
+          <form
+            onSubmit={submit}
+            className="flex items-center gap-2.5 max-sm:relative max-sm:h-12 max-sm:rounded-full max-sm:bg-card max-sm:pr-2 max-sm:pl-4 max-sm:shadow-dock max-sm:has-[input:focus-visible]:outline-2 max-sm:has-[input:focus-visible]:outline-offset-2 max-sm:has-[input:focus-visible]:outline-ring sm:gap-3.5 sm:border-b-[1.5px] sm:border-muted sm:pb-[18px]"
+          >
+            <SearchIcon className="size-[18px] shrink-0 text-muted-foreground sm:size-[22px]" />
             <Input
               ref={input}
               type="search"
@@ -113,216 +112,74 @@ export function SearchTile({
               value={query}
               onValueChange={(next) => onQueryChange?.(next)}
               enterKeyHint="search"
-              className="min-w-0 flex-1 bg-transparent font-sans text-ellipsis outline-none text-[16px] leading-6 font-medium text-foreground placeholder:text-muted-foreground sm:text-xl sm:tracking-snug [&::-webkit-search-cancel-button]:appearance-none"
+              className="min-w-0 flex-1 bg-transparent font-sans text-[16px] leading-5 text-ellipsis text-foreground outline-none placeholder:text-muted-foreground sm:text-xl sm:leading-8 [&::-webkit-search-cancel-button]:appearance-none"
             />
-            {query !== "" && (
-              <Button variant="bare" size="xs" aria-label="Clear search" onClick={clear}>
+            {query === "" ? (
+              <kbd className="flex h-7 shrink-0 items-center rounded-xs bg-muted px-2.5 font-sans text-sm font-semibold text-secondary-foreground max-sm:hidden">
+                /
+              </kbd>
+            ) : (
+              <Button
+                variant="muted"
+                size="xs"
+                aria-label="Clear search"
+                onClick={clear}
+                className="size-[30px] text-muted-foreground sm:size-7 [&_svg]:size-[13px]"
+              >
                 <CloseIcon />
               </Button>
             )}
-            <kbd className="flex h-[30px] shrink-0 items-center rounded-xs bg-muted px-2.5 font-sans text-sm font-semibold text-secondary-foreground max-sm:hidden">
-              /
-            </kbd>
+            {progress !== undefined && (
+              <Rail
+                progress={progress}
+                className="absolute inset-x-6 top-0 rounded-full sm:inset-x-0 sm:top-auto sm:bottom-0 sm:rounded-none"
+              />
+            )}
           </form>
         </search>
-        {strip && (
-          <div className="max-sm:order-first sm:pr-5 sm:pb-1.5 sm:pl-8">
-            <div className="flex min-h-16 items-center justify-between gap-2 border-muted pr-3 pl-[22px] max-sm:pt-[3px] sm:gap-6 sm:border-t-[1.5px] sm:px-0">
-              <div className="flex min-w-0 items-center gap-2.5">
-                {owner !== undefined && <div className="contents sm:hidden">{owner}</div>}
-                {status}
-              </div>
-              <div className="flex shrink-0 items-center gap-2.5">{controls}</div>
+        {(status !== undefined || filters !== undefined || controls !== undefined) && (
+          <div className="flex items-center gap-1 max-sm:-mt-1 max-sm:-mb-2 sm:h-16 sm:justify-between sm:gap-6">
+            {/* Phones scroll the answer and its chips under the controls, which stay put, and fade them out as they go. */}
+            <div className="flex min-w-0 items-center gap-2 max-sm:-my-1 max-sm:-ml-4 max-sm:overflow-x-auto max-sm:py-1 max-sm:pr-3 max-sm:pl-4 max-sm:[mask-image:linear-gradient(to_left,transparent,#000_12px)] max-sm:[scrollbar-width:none]">
+              {status}
+              {filters}
             </div>
-            <div aria-hidden className="mx-[22px] h-[1.5px] bg-muted sm:hidden" />
+            <div className="flex shrink-0 items-center gap-2 sm:gap-2.5">{controls}</div>
           </div>
-        )}
-        {progress !== undefined && (
-          <Rail
-            progress={progress}
-            className="absolute inset-x-8 top-0 rounded-full sm:inset-x-0 sm:top-auto sm:bottom-0 sm:rounded-none"
-          />
         )}
       </Tile>
     </div>
   );
 }
 
-export type StatusIcon = "busy" | "synced" | "found" | "done" | "paused" | "failed";
-
-const statusIcons: ReadonlyArray<StatusIcon> = ["busy", "synced", "found", "done", "paused", "failed"];
-
-function Glyph({ icon, shown }: { icon: StatusIcon; shown: boolean }) {
-  const common = { viewBox: "0 0 16 16", fill: "none", className: "size-4" } as const;
-  switch (icon) {
-    case "busy":
-      return (
-        <svg aria-hidden {...common} className={cn("size-4", shown && "animate-spin motion-reduce:animate-none")}>
-          <circle cx="8" cy="8" r="6" stroke="var(--color-accent-soft)" strokeWidth="2.2" />
-          <path d="M8 2a6 6 0 0 1 6 6" stroke="var(--color-accent-strong)" strokeWidth="2.2" strokeLinecap="round" />
-        </svg>
-      );
-    case "synced":
-      return (
-        <svg aria-hidden {...common}>
-          <path
-            d="M13 6.5A5.2 5.2 0 0 0 3.6 5M3 9.5A5.2 5.2 0 0 0 12.4 11M3.4 2.6V5.2H6M12.6 13.4V10.8H10"
-            stroke="var(--color-success)"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      );
-    case "found":
-      return (
-        <svg aria-hidden {...common}>
-          <path
-            d="M8 2.3l1.7 3.5 3.9.6-2.8 2.7.7 3.8L8 11.1l-3.5 1.8.7-3.8-2.8-2.7 3.9-.6z"
-            fill="var(--color-highlight)"
-            stroke="var(--color-highlight-edge)"
-            strokeWidth="1.2"
-            strokeLinejoin="round"
-          />
-        </svg>
-      );
-    case "done":
-      return (
-        <svg aria-hidden {...common}>
-          <circle cx="8" cy="8" r="6" stroke="var(--color-muted-foreground)" strokeWidth="1.5" />
-          <path
-            d="m5.5 8.2 1.7 1.7 3.3-3.4"
-            stroke="var(--color-muted-foreground)"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      );
-    case "paused":
-      return (
-        <svg aria-hidden {...common}>
-          <circle cx="8" cy="8" r="6" stroke="var(--color-muted-foreground)" strokeWidth="1.5" />
-          <path
-            d="M8 5v3.2l2 1.3"
-            stroke="var(--color-muted-foreground)"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      );
-    case "failed":
-      return (
-        <svg aria-hidden {...common}>
-          <circle cx="8" cy="8" r="6" stroke="var(--color-destructive)" strokeWidth="1.5" />
-          <path d="M8 5v3.5M8 11h.01" stroke="var(--color-destructive)" strokeWidth="1.6" strokeLinecap="round" />
-        </svg>
-      );
-  }
-}
-
-function Glyphs({ icon, instant }: { icon: StatusIcon; instant: boolean }) {
-  return (
-    <span className="grid size-[18px] shrink-0 place-items-center max-sm:hidden">
-      {statusIcons.map((each) => (
-        <span
-          key={each}
-          className={cn(
-            "[grid-area:1/1]",
-            !instant &&
-              "transition-[opacity,scale,filter] duration-200 ease-(--ease-out) motion-reduce:transition-none",
-            each !== icon && "scale-25 opacity-0 blur-[4px]",
-          )}
-        >
-          <Glyph icon={each} shown={each === icon} />
-        </span>
-      ))}
-    </span>
-  );
-}
-
+// What the strip says about the answer on screen: found 6!, searching…, or what went wrong, with a way to try again.
+// The label is the one live region, and it stays in the page while it is empty, so screen readers hear each new answer.
 export function StatusLine({
-  icon,
-  label,
+  label = "",
   phoneLabel,
-  detail,
-  phoneDetail,
-  continues = false,
-  instant = false,
   action,
 }: {
-  icon: StatusIcon;
-  label: string;
+  label?: string | undefined;
+  // A shorter label for the phone's strip, which shares its one line with the filters.
   phoneLabel?: string | undefined;
-  detail?: string | undefined;
-  phoneDetail?: string | undefined;
-  continues?: boolean | undefined;
-  instant?: boolean | undefined;
   action?: ReactNode;
 }) {
-  const [settled, setSettled] = useState(icon);
-  const [settles, setSettles] = useState(false);
-  if (settled !== icon) {
-    setSettled(icon);
-    setSettles(!instant);
-  }
   return (
-    <div className="flex min-w-0 items-center gap-2.5">
-      <Glyphs icon={icon} instant={instant} />
-      <div className="flex min-h-9 min-w-0 flex-col items-start justify-start gap-0.5 sm:flex-row sm:items-center sm:justify-center sm:gap-2.5">
-        <p
-          className={cn(
-            "flex max-w-full min-w-0 flex-col gap-0.5 font-sans font-medium tabular-nums sm:block sm:truncate sm:text-base sm:leading-5",
-            !detail && !action && "max-sm:translate-y-2.5",
-          )}
-        >
-          <span role="status" className="text-meta font-semibold text-foreground max-sm:truncate sm:text-base">
-            <span
-              key={icon}
-              className={cn("inline-block max-sm:block max-sm:truncate", settles && "motion-safe:animate-settle")}
-            >
-              {phoneLabel === undefined ? (
-                label
-              ) : (
-                <>
-                  <span className="sm:hidden">{phoneLabel}</span>
-                  <span className="max-sm:hidden">{label}</span>
-                </>
-              )}
-            </span>
-          </span>
-          {/* A new label starts a new status sentence, so its detail is new text rather than old text pushed aside. */}
-          {detail && (
-            <span
-              key={label}
-              className={cn(
-                "text-sm text-muted-foreground max-sm:line-clamp-1 sm:text-base",
-                Boolean(action) && "max-sm:hidden",
-              )}
-            >
-              <span className="max-sm:hidden">{continues ? " " : " · "}</span>
-              {phoneDetail === undefined ? (
-                detail
-              ) : (
-                <>
-                  <span className="sm:hidden">{phoneDetail}</span>
-                  <span className="max-sm:hidden">{detail}</span>
-                </>
-              )}
-            </span>
-          )}
-        </p>
-        {/* Phones have one line under the label, so an action shares it with the detail rather than hiding it. */}
-        {action ? (
-          <div className="flex max-w-full min-w-0 items-center gap-2">
-            {detail && (
-              <span className="min-w-0 truncate text-sm text-muted-foreground sm:hidden">{phoneDetail ?? detail}</span>
-            )}
-            {action}
-          </div>
-        ) : null}
-      </div>
-    </div>
+    <>
+      <span
+        role="status"
+        className="shrink-0 font-display text-lg leading-[22px] font-semibold whitespace-nowrap not-empty:pr-1 empty:-me-2 sm:text-xl sm:leading-6 sm:not-empty:pr-2"
+      >
+        {phoneLabel === undefined ? (
+          label
+        ) : (
+          <>
+            <span className="sm:hidden">{phoneLabel}</span>
+            <span className="max-sm:hidden">{label}</span>
+          </>
+        )}
+      </span>
+      {action}
+    </>
   );
 }

@@ -7,7 +7,7 @@ export { Chip } from "./components/chip.tsx";
 export { DeepSearch } from "./components/deep-search.tsx";
 export { Digits } from "./components/digits.tsx";
 export { EmptyTile } from "./components/empty-tile.tsx";
-export { CompassIcon, HomeIcon, PeopleIcon } from "./components/icons.tsx";
+export { CheckIcon, CompassIcon, HomeIcon, PeopleIcon } from "./components/icons.tsx";
 export { LanguageBar, type LanguageShare } from "./components/language-bar.tsx";
 export { popupSurface } from "./components/popup.ts";
 export { ProgressRing } from "./components/progress-ring.tsx";
@@ -29,12 +29,7 @@ export {
   Results,
 } from "./components/results.tsx";
 export { type Scope, ScopeSwitch } from "./components/scope-switch.tsx";
-export {
-  SearchTile,
-  type StatusIcon,
-  StatusLine,
-  type TileProgress,
-} from "./components/search-tile.tsx";
+export { SearchTile, StatusLine, type TileProgress } from "./components/search-tile.tsx";
 export { type OpenSimilar, type SimilarItem, SimilarRepos, type SimilarRow } from "./components/similar-repos.tsx";
 export { Skeleton } from "./components/skeleton.tsx";
 export { type Sort, SortMenu, sorts } from "./components/sort-menu.tsx";
