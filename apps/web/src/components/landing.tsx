@@ -96,7 +96,7 @@ function JoinTile() {
         <h2 className="font-display text-[22px] leading-[26px] font-semibold text-foreground text-wrap lg:w-[240px] lg:text-[34px] lg:leading-[38px] lg:tracking-snug">
           get your own page
         </h2>
-        <p className="font-sans text-sm leading-[17px] text-secondary-foreground lg:hidden">
+        <p className="font-sans text-sm leading-[17px] text-wrap text-secondary-foreground lg:hidden">
           your stars, your taste, people you follow
         </p>
         <ul className="flex flex-col gap-2 font-sans text-[16px] leading-[22px] text-secondary-foreground max-lg:hidden">
