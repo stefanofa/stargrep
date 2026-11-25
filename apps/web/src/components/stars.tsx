@@ -65,6 +65,7 @@ import { FollowButton, FollowedStarredBy } from "./follows.tsx";
 import { Hero, TryChips } from "./landing-hero.tsx";
 import { LibraryPlaceholder, LibraryView } from "./library-view.tsx";
 import { type PersonStars, PersonTile } from "./person-tile.tsx";
+import { SameQuestion } from "./same-question.tsx";
 import { ShareButton } from "./share-button.tsx";
 import { TopicChips } from "./topic-chips.tsx";
 
@@ -487,6 +488,14 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
       <div data-reveal-results aria-busy={page.body.kind === "loading" || undefined} className="flex flex-col gap-gap">
         {body(page.body)}
       </div>
+      {page.person?.known && searching && (page.body.kind === "results" || page.body.kind === "empty") && (
+        <SameQuestion
+          login={page.person.login}
+          query={query}
+          own={audience.by === "owner"}
+          signedIn={audience.by !== "anyone"}
+        />
+      )}
       <RepoPanel
         repo={detail}
         open={params.repo !== undefined && detail !== undefined}
