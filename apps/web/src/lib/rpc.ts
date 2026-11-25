@@ -20,6 +20,7 @@ export type People = Outputs["people"];
 export type Person = People["people"][number];
 export type PeopleSort = People["sort"];
 export type SimilarPerson = Outputs["similarPeople"]["people"][number];
+export type Taste = Outputs["taste"];
 export type Topic = Outputs["topic"];
 export type TopicRepo = Topic["core"][number];
 export type TopicPerson = Topic["people"][number];

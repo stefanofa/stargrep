@@ -518,3 +518,18 @@ describe("the following pages", () => {
     expect((await renderOnServer("/people")).cacheControl).not.toBe("private, no-store");
   }, 60_000);
 });
+
+describe("the taste page", () => {
+  test("a shared link paints the charts from the server, every mark a link into the stars it counts", async () => {
+    const page = await renderOnServer("/@stefanofa/taste");
+    expect(page.status).toBe(200);
+    // A chart that throws on the server hands the page to the browser without a word, but for React's note.
+    expect(page.html.match(/Switched to client rendering[^"]*/)?.[0]).toBeUndefined();
+    for (const href of ["/stefanofa?starred=2026-10", "/stefanofa?starred=2026-11", "/stefanofa?lang=TypeScript"])
+      expect(page.html).toContain(`href="${href}"`);
+    expect(page.html).toContain('href="/stefanofa?topic=mcp"');
+    const unread = await renderOnServer("/@octonever/taste");
+    expect(unread.html).toContain('href="/octonever"');
+    expect(unread.html).not.toContain("stars per month");
+  }, 60_000);
+});
