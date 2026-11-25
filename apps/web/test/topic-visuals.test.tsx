@@ -16,7 +16,13 @@ import type {} from "../src/routeTree.gen.ts";
 configure({ asyncUtilTimeout: 4000 });
 
 const logo = { url: "https://stargrep.test/icons/logos/nextdotjs.ae8fd2e153.svg", plate: "light", size: 128 } as const;
-const counted = (topic: string, icon: TopicCount["icon"]): TopicCount => ({ topic, repos: 900, ranked: 300, icon });
+const counted = (topic: string, icon: TopicCount["icon"]): TopicCount => ({
+  topic,
+  repos: 900,
+  ranked: 300,
+  devs: 400,
+  icon,
+});
 
 const nextjs: Topic = {
   ...counted("nextjs", logo),

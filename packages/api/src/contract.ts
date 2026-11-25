@@ -604,6 +604,10 @@ const topicCountFields = {
   ranked: Schema.Int.annotate({
     description: "How many repos for or about the topic at least 3 of the developers Stargrep synced star.",
   }),
+  devs: Schema.Int.annotate({
+    description:
+      "How many of the developers Stargrep synced star at least 3 of the topic's repos for or about it, as of the nightly refresh.",
+  }),
   icon: Schema.NullOr(Icon).annotate({
     description: "The topic's logo, or its own repo's icon, or null when it has neither.",
   }),
