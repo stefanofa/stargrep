@@ -1,7 +1,7 @@
 import { Skeleton, Tile } from "@stargrep/ui";
 import type { ReactNode } from "react";
 import { avatarOf } from "../lib/avatar.ts";
-import { starredOn } from "../lib/present.ts";
+import { starredOn } from "../lib/starred-on.ts";
 import { formatCount, starCount } from "../lib/whose.ts";
 import { ExternalTextLink } from "./external-text-link.tsx";
 

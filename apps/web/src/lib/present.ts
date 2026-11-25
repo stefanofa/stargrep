@@ -7,12 +7,12 @@ import { repoVisual } from "./repo-visual.ts";
 import type { LibraryRepo, SimilarRepo, SimilarRepos } from "./rpc.ts";
 import type { Params } from "./search-params.ts";
 import { factsPending } from "./search-state.ts";
+import { starredOn } from "./starred-on.ts";
 import { loginHref } from "./stars-route.ts";
 import { theirs, type Whose } from "./whose.ts";
 
 const day = 86_400_000;
 const relative = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
-const dateFormat = new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 const monthFormat = new Intl.DateTimeFormat("en", { month: "long", year: "numeric", timeZone: "UTC" });
 
 const millis = (iso: string) => DateTime.toEpochMillis(DateTime.makeUnsafe(iso));
@@ -48,8 +48,6 @@ const activity = (repo: Pick<LibraryRepo, "archived" | "stars" | "pushedAt">, at
   const label = `pushed ${since(repo.pushedAt, at)}`;
   return at - millis(repo.pushedAt) <= 30 * day ? { state: "alive", label } : { state: "quiet", label };
 };
-
-export const starredOn = (iso: string) => dateFormat.format(millis(iso));
 
 export const monthOf = (iso: string) => monthFormat.format(millis(iso)).toLowerCase();
 
