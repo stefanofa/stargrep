@@ -49,7 +49,7 @@ export function PersonCard({ person, following, at }: { person: CardPerson; foll
       </div>
       {person.shared !== null && (
         <p className="flex shrink-0 flex-col items-end sm:flex-row sm:items-baseline sm:gap-1.5">
-          <span className="font-display text-xl leading-6 font-semibold tabular-nums sm:text-name">
+          <span className="font-display text-xl leading-6 font-semibold tabular-nums sm:text-name sm:leading-[30px]">
             {formatCount(person.shared)}
           </span>
           <span className="font-sans text-sm text-secondary-foreground sm:text-meta">

@@ -36,10 +36,10 @@ export function SameQuestion({
   return (
     <Tile
       variant="quiet"
-      className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2.5 sm:px-6 sm:py-[18px]"
+      className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-start sm:gap-2.5 sm:px-6 sm:py-[18px]"
     >
-      <h2 className="font-sans text-meta text-muted-foreground sm:pr-1.5">same question in</h2>
-      <ul className="flex flex-wrap gap-2 sm:gap-2.5">
+      <h2 className="shrink-0 font-sans text-meta text-muted-foreground sm:pr-1.5 sm:leading-9">same question in</h2>
+      <ul className="flex min-w-0 flex-1 flex-wrap gap-2 sm:gap-2.5">
         {faces.map((person, index) => {
           const note = noteOf(person, follows.isFollowing(person.login), own);
           return (
