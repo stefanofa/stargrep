@@ -16,9 +16,10 @@ import {
 } from "@stargrep/ui";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { dead, deadStars } from "../lib/dead-stars.ts";
+import { deadStars } from "../lib/dead-stars.ts";
 import { languageShares } from "../lib/languages.ts";
 import type { LibraryEntry } from "../lib/library-collection.ts";
+import { libraryFilter } from "../lib/library-filter.ts";
 import { libraryOrder } from "../lib/order.ts";
 import { monthOf, toResult } from "../lib/present.ts";
 import type { Params } from "../lib/search-params.ts";
@@ -238,11 +239,8 @@ export function LibraryView({
   const shares = useMemo(() => languageShares(entries), [entries]);
   const graveyard = useMemo(() => deadStars(entries), [entries]);
   const visible = useMemo(
-    () =>
-      entries
-        .filter((entry) => (language === undefined || entry.language === language) && (!archived || dead(entry)))
-        .toSorted(libraryOrder(sort)),
-    [entries, language, archived, sort],
+    () => entries.filter(libraryFilter(language, archived, search.starred, search.topic)).toSorted(libraryOrder(sort)),
+    [entries, language, archived, search.starred, search.topic, sort],
   );
   const page = visible.slice(0, shown);
   const byMonth = sort === "starred" || sort === "best";

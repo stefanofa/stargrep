@@ -101,6 +101,9 @@ const api = (): Client => ({
   starLanguages: async () => {
     throw new Error("Unexpected starLanguages call");
   },
+  taste: async () => {
+    throw new Error("Unexpected taste call");
+  },
   similarPeople: async ({ login, limit }: { login: string; limit?: number }) => {
     server.alikeAsked.push([login, limit]);
     return { people: server.alike[login] ?? [] };

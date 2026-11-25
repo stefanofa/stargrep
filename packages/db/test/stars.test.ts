@@ -134,7 +134,7 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
     }),
   );
 
-  test.effect("counts current stars by language, the ones with no language in the total only", () =>
+  test.effect("describes current stars by language, day, and topic, and counts the archived and unstarred ones", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
       const database = yield* TestDatabase.TestDatabase;
@@ -153,10 +153,15 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
       yield* database.query(
         `update repos set language = case when id = ${go} then 'Go' when id = ${unnamed} then null else 'TypeScript' end where id between ${go} and ${elsewhere}`,
       );
+      // An archived repo has no topic rows, and only an archived repo GitHub still serves counts as archived.
+      yield* database.query(`update repos set topics = '["cli", "tui"]' where id = ${go}`);
+      yield* database.query(`update repos set topics = '["cli"]' where id in (${tsOld}, ${tsNew}, ${dropped})`);
+      yield* database.query(`update repos set archived = true where id in (${tsNew}, ${unnamed})`);
+      yield* database.query(`update repos set gone_at = now() where id = ${unnamed}`);
       const kept = [
         starred(go, "2026-01-01T00:00:00Z"),
         starred(tsOld, "2026-01-02T00:00:00Z"),
-        starred(tsNew, "2026-01-03T00:00:00Z"),
+        starred(tsNew, "2026-01-02T23:59:00Z"),
         starred(unnamed, "2026-01-04T00:00:00Z"),
       ];
       yield* db.stars.upsert({ accountId: id, stars: [...kept, starred(dropped, "2026-01-05T00:00:00Z")] });
@@ -171,6 +176,18 @@ const starCases = (test: { readonly effect: it.Tester<Db.Db | Db.Transactions | 
         ],
       });
       expect(yield* db.stars.languages(accountId(999_995))).toEqual({ total: 0, languages: [] });
+      expect(yield* db.stars.days(id)).toEqual([
+        { day: "2026-01-01", stars: 1 },
+        { day: "2026-01-02", stars: 2 },
+        { day: "2026-01-04", stars: 1 },
+      ]);
+      expect(yield* db.stars.topics(id, 5)).toEqual([
+        { topic: "cli", count: 2 },
+        { topic: "tui", count: 1 },
+      ]);
+      expect(yield* db.stars.topics(id, 1)).toEqual([{ topic: "cli", count: 2 }]);
+      expect(yield* db.stars.churn(id, at("2026-01-15T00:00:00Z"))).toEqual({ archived: 1, unstarred: 1 });
+      expect(yield* db.stars.churn(id, at("2026-03-01T00:00:00Z"))).toEqual({ archived: 1, unstarred: 0 });
     }),
   );
 

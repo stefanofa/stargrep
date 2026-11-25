@@ -61,7 +61,13 @@ const logins = (page: ReadonlyArray<Db.Person>) => page.map((person): string => 
 const counts = (page: ReadonlyArray<Pick<Db.Person, "login" | "shared">>) =>
   page.map((person): readonly [string, number | null] => [person.login, person.shared]);
 
-const everyone = { sort: "recently-active", viewer: Option.none(), offset: 0, limit: 50 } as const;
+const everyone = {
+  sort: "recently-active",
+  viewer: Option.none(),
+  topic: Option.none(),
+  offset: 0,
+  limit: 50,
+} as const;
 
 const cases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatabase> }) => {
   test.effect("lists the accounts the rule picks and the curated ones, with what each card shows", () =>
@@ -114,6 +120,14 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatab
           shared: null,
         },
       ]);
+      expect(page.topics).toEqual([
+        { topic: "cli", people: 2 },
+        { topic: "tui", people: 2 },
+        { topic: "embedded", people: 1 },
+      ]);
+      const embedded = yield* db.people.page({ ...everyone, topic: Option.some("embedded") });
+      expect([logins(embedded.people), embedded.total, embedded.topics]).toEqual([["active"], 1, page.topics]);
+      expect((yield* db.people.page({ ...everyone, topic: Option.some("rust") })).total).toBe(0);
     }),
   );
 

@@ -65,6 +65,9 @@ const defaults = {
     pageStarts: unexpected("stars.pageStarts"),
     enrichment: unexpected("stars.enrichment"),
     languages: unexpected("stars.languages"),
+    days: unexpected("stars.days"),
+    topics: unexpected("stars.topics"),
+    churn: unexpected("stars.churn"),
     newToYou: unexpected("stars.newToYou"),
   },
   search: {

@@ -8,6 +8,7 @@ import { LibraryView } from "../src/components/library-view.tsx";
 import { deadStars } from "../src/lib/dead-stars.ts";
 import { searchText } from "../src/lib/keyword.ts";
 import type { LibraryEntry } from "../src/lib/library-collection.ts";
+import { libraryFilter } from "../src/lib/library-filter.ts";
 import { type Params, validateParams } from "../src/lib/search-params.ts";
 import type { Whose } from "../src/lib/whose.ts";
 
@@ -156,6 +157,31 @@ describe("the dead stars tile", () => {
   test("a shared link to the archived filter lands on it", async () => {
     const { view } = show(library, { own: true }, "/?archived=true");
     await waitFor(() => expect(shownRepos(view)).toEqual(["atom", "moment", "tui-rs", "request"]));
+  });
+});
+
+describe("the starred and topic filters", () => {
+  const tagged = library.map((repo) => (repo.id % 2 === 0 ? { ...repo, topics: ["cli", "tui"] } : repo));
+  const kept = (search: string) =>
+    tagged
+      .filter((repo) => {
+        const { lang, archived, starred, topic } = validateParams(Object.fromEntries(new URLSearchParams(search)));
+        return libraryFilter(lang, archived === true, starred, topic)(repo);
+      })
+      .map((repo) => repo.name);
+
+  test("keep the stars of a UTC month or day, and the repos with a topic", () => {
+    expect(kept("starred=2026-10")).toHaveLength(7);
+    expect(kept("starred=2026-09")).toEqual([]);
+    expect(kept("starred=2026-10-12")).toEqual(["tui-rs"]);
+    expect(kept("topic=cli")).toEqual(["tui-rs", "moment", "atom"]);
+    expect(kept("topic=cli&starred=2026-10-14")).toEqual(["moment"]);
+  });
+
+  test("a malformed period filters nothing", () => {
+    expect(validateParams({ starred: "2026-1", topic: "" })).toEqual({});
+    expect(validateParams({ starred: "2026-10-12..2026-10-14" })).toEqual({});
+    expect(kept("starred=last-week")).toHaveLength(7);
   });
 });
 

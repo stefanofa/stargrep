@@ -350,6 +350,9 @@ export const repos = pgTable(
     index("repos_metadata_sweep_idx").on(table.id).where(metadataEmbeddingDue(table)),
     // An account's languages read each starred repo's language from this small index, not the wide heap rows.
     index("repos_language_idx").on(table.id, table.language),
+    // The archived repos GitHub still serves, about 3% of repos, so an account's taste counts its archived stars from
+    // this small index instead of a heap page per star.
+    index("repos_archived_idx").on(table.id).where(sql`${table.archived} and ${table.goneAt} is null`),
     check(
       "repos_icon_complete",
       sql`(${table.iconKey} is null) = (${table.iconSource} is null) and (${table.iconKey} is null) = (${table.iconPlate} is null) and (${table.iconKey} is null) = (${table.iconSize} is null)`,

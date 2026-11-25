@@ -4,3 +4,4 @@ export * as StarCheck from "./star-check.ts";
 export * as StarSync from "./star-sync.ts";
 export * as SyncQueue from "./sync-queue.ts";
 export * as SyncRequests from "./sync-requests.ts";
+export * as Taste from "./taste.ts";
