@@ -192,9 +192,14 @@ describe("a stars page from the Worker to the browser", () => {
     expect(page.html).not.toContain("@StefanoFA");
   }, 60_000);
 
-  test("the demo landing's own query is the one answer the server searches for", async () => {
+  test("the demo landing's own query is the one answer the server searches for, and a filtered link runs none", async () => {
     const page = await renderOnServer("/");
     expect(page.searched).toEqual(["let an ai agent control my iphone"]);
+    for (const path of ["/@stefanofa?starred=2026-03", "/?topic=react", "/stefanofa?lang=Rust", "/?archived=true"]) {
+      const filtered = await renderOnServer(path);
+      const box = filtered.html.match(/<input[^>]*type="search"[^>]*>/)?.[0] ?? "";
+      expect([path, filtered.searched, box.includes("let an ai agent")]).toEqual([path, [], false]);
+    }
   }, 60_000);
 
   test("a shared link with another query paints its keyword matches and searches nothing on the server", async () => {
@@ -342,7 +347,7 @@ describe("a stars page from the Worker to the browser", () => {
       // The owner's page asks for a sync on every open, and lists the stars of the session's own library.
       await waitFor(() => expect(requested).toEqual(["octodone"]));
       await waitFor(() => expect(resultNames()).toEqual(["mobile-mcp", "fzf", "asciinema"]));
-      expect(document.querySelector("nav[aria-label='your page'] a")?.textContent).toBe("stars3");
+      expect(document.querySelector("nav[aria-label='your page'] a")?.getAttribute("aria-current")).toBe("page");
       expect(lit(document.documentElement.outerHTML)).toEqual(["you", "you"]);
       expect(errors).toEqual([]);
     } finally {

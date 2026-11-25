@@ -743,7 +743,7 @@ describe("the search page in each state", () => {
     ]);
   });
 
-  test("on the demo page an emptied search stays empty across Back and Forward", async () => {
+  test("on the demo page an emptied search stays empty across Back and Forward, and a filtered link starts empty", async () => {
     const user = userEvent.setup();
     server.signedIn = false;
     server.status = status({ login: "stefanofa" });
@@ -764,6 +764,12 @@ describe("the search page in each state", () => {
     await act(async () => router.history.back());
     await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
     expect(box().value).toBe("async");
+    cleanup();
+    server.searches = [];
+    // A link that filters the demo's stars opens on the stars it keeps, not on the demo search.
+    await open("/?topic=cli", "Search @stefanofa's stars");
+    expect(box().value).toBe("");
+    expect(server.searches).toEqual([]);
   });
 
   test("Forward to the demo page's own address brings its query back, and Back the one typed over it", async () => {

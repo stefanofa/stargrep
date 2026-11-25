@@ -31,7 +31,7 @@ import { policyOf, starredOf, whoseOf } from "../lib/audience.ts";
 import { keywordTerms, normalize, searchText } from "../lib/keyword.ts";
 import { getLibrary, type Library } from "../lib/library-collection.ts";
 import { facetOf, facetsOf, keeps, resultFacet } from "../lib/library-filter.ts";
-import { askedPage, type PageData, type PageRequest, type Session } from "../lib/page-data.ts";
+import { askedPage, defaultQueryOf, type PageData, type PageRequest, type Session } from "../lib/page-data.ts";
 import { hitsOf, liveView } from "../lib/page-view.ts";
 import { closesBack } from "../lib/panel-history.ts";
 import { personStars } from "../lib/person-stars.ts";
@@ -184,15 +184,18 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   const params: Params = useSearch({ strict: false });
   const navigate = useNavigate();
   const router = useRouter();
-  const [query, setQuery] = useState(params.q ?? data.query);
+  // A navigation in the browser loads the page from the login alone, so the address it opened on decides the default
+  // search here, as it did on the server.
+  const [defaultQuery] = useState(() => defaultQueryOf(audience, data.config, params));
+  const [query, setQuery] = useState(params.q ?? defaultQuery);
   // Typing replaces ?q= as it goes, so only Back and Forward bring another query into the search box.
   useEffect(
     () =>
       router.history.subscribe(({ location, action }) => {
         if (action.type === "PUSH" || action.type === "REPLACE") return;
-        setQuery(validateParams(router.parseLocation(location).search).q ?? data.defaultQuery);
+        setQuery(validateParams(router.parseLocation(location).search).q ?? defaultQuery);
       }),
-    [router, data.defaultQuery],
+    [router, defaultQuery],
   );
   const [opener, setOpener] = useState<HTMLElement | null>(null);
 
@@ -232,7 +235,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   // anywhere. The default view and sort stay out, so a link doesn't override the opener's own choice.
   const links: Params = {
     ...params,
-    q: query === data.defaultQuery ? undefined : query,
+    q: query === defaultQuery ? undefined : query,
     view: view === "tiles" && params.view === undefined ? undefined : view,
   };
   const trouble: Trouble | undefined =
@@ -297,7 +300,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     setQuery(next);
     navigate({
       to: ".",
-      search: (previous) => ({ ...previous, q: next === data.defaultQuery ? undefined : next }),
+      search: (previous) => ({ ...previous, q: next === defaultQuery ? undefined : next }),
       replace: true,
     });
   };

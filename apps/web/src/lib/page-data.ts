@@ -1,7 +1,8 @@
-import type { Sort, View } from "@stargrep/ui";
+import type { View } from "@stargrep/ui";
 import { type Audience, audienceOf } from "./audience.ts";
 import type { Site } from "./preview.ts";
 import type { LibraryRepo, PublicConfig, SearchResult, SyncStatus, Viewer } from "./rpc.ts";
+import type { Params } from "./search-params.ts";
 import type { SearchView } from "./search-state.ts";
 import type { Refusal } from "./trouble.ts";
 
@@ -54,15 +55,23 @@ export interface PageRequest {
   readonly login?: string | undefined;
 }
 
-// The server reads the query and sort from the address it renders. The browser never reloads the page for them.
-export interface Asked extends PageRequest {
-  readonly q?: string | undefined;
-  readonly sort?: Sort | undefined;
-}
+// The server reads the query, sort and filters from the address it renders. The browser never reloads the page for them.
+export type Asked = PageRequest & Params;
 
-// Who looks at whose stars, and what the page searches. The demo account opens on its example query.
-export const askedPage = (viewer: Viewer | null, config: PublicConfig, { login, q }: Asked) => {
+// What a page searches when its address has no q. The demo account opens on its example query, unless the address
+// filters its stars, since a filtered link asks for the stars it keeps.
+export const defaultQueryOf = (
+  audience: Audience,
+  config: PublicConfig,
+  { lang, archived, starred, topic }: Params,
+): string =>
+  audience.owner.demo && [lang, archived, starred, topic].every((filter) => filter === undefined)
+    ? config.demoQuery
+    : "";
+
+// Who looks at whose stars, and what the page searches.
+export const askedPage = (viewer: Viewer | null, config: PublicConfig, { login, ...search }: Asked) => {
   const audience = audienceOf(viewer, config, login);
-  const defaultQuery = audience.owner.demo ? config.demoQuery : "";
-  return { audience, query: q ?? defaultQuery, defaultQuery };
+  const defaultQuery = defaultQueryOf(audience, config, search);
+  return { audience, query: search.q ?? defaultQuery, defaultQuery };
 };

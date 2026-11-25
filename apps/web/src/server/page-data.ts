@@ -1,5 +1,5 @@
 import { loginKey } from "@stargrep/github/login";
-import { isNotFound, isRedirect } from "@tanstack/react-router";
+import { defaultParseSearch, isNotFound, isRedirect } from "@tanstack/react-router";
 import { getRequest, setResponseHeader, setResponseStatus } from "@tanstack/react-start/server";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -172,8 +172,10 @@ const loadPage = async ({ login }: PageRequest, { viewer, config, repoStars, sit
   const request = getRequest();
   const client = api();
   const cookies = request.headers.get("cookie");
-  const { q, sort, repo } = validateParams(Object.fromEntries(new URL(request.url).searchParams));
-  const { audience, query, defaultQuery } = askedPage(viewer, config, { login, q });
+  // The router's own parse, so a filter such as archived=true reads here as it does in the browser.
+  const search = validateParams(defaultParseSearch(new URL(request.url).search));
+  const { sort, repo } = search;
+  const { audience, query, defaultQuery } = askedPage(viewer, config, { login, ...search });
   const owner = audience.owner.login;
   // The server reads the sync first: it names the library revision a cached answer must match, and only a library an
   // import has written gets a first answer or a panel. Crawlers and link previews render pages too, so the server paints
