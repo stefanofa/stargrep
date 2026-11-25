@@ -1092,7 +1092,11 @@ describe("the search page in each state", () => {
       topics,
       shared: 12,
     });
-    server.alike = [alike("orhun", ["rust", "tui"]), alike("antfu", []), ...["a", "b", "c"].map((login) => alike(login, []))];
+    server.alike = [
+      alike("orhun", ["rust", "tui"]),
+      alike("antfu", []),
+      ...["a", "b", "c"].map((login) => alike(login, [])),
+    ];
     await open("/octoask", "Search @octoask's stars");
     expect(server.alikeAsked).toEqual([]);
     cleanup();

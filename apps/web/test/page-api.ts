@@ -184,7 +184,10 @@ const db = makeDb({
   people: {
     like: (_accountId, _limit, topic) =>
       Effect.succeed(
-        Option.getOrElse(Option.map(topic, (asked) => asked === "mcp"), () => true)
+        Option.getOrElse(
+          Option.map(topic, (asked) => asked === "mcp"),
+          () => true,
+        )
           ? [
               {
                 accountId: GitHubAccountId.make(13),

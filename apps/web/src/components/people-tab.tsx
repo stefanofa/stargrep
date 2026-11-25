@@ -52,12 +52,7 @@ function Into({ topics, topic }: { topics: ReadonlyArray<string>; topic: string 
         any
       </Chip>
       {offered.map((name) => (
-        <Chip
-          key={name}
-          className={chip}
-          active={topic === name}
-          render={<Link to="." search={{ topic: name }} />}
-        >
+        <Chip key={name} className={chip} active={topic === name} render={<Link to="." search={{ topic: name }} />}>
           {name}
         </Chip>
       ))}
