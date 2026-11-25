@@ -86,7 +86,9 @@ describe("topic visuals", () => {
 
   test("a topic's page shows its logo by its name, and a related topic's chip shows its own", async () => {
     await open("/topics/nextjs");
-    expect(imageIn(page().getByRole("heading", { level: 1, name: "nextjs" }).parentElement)).toBe(logo.url);
+    expect(
+      imageIn(page().getByRole("heading", { level: 1, name: "nextjs" }).closest<HTMLElement>("[data-slot='tile']")),
+    ).toBe(logo.url);
     const related = within(page().getByRole("navigation", { name: "related topics" }));
     expect(imageIn(related.getByRole("link", { name: "react" }))).toBe(
       "https://stargrep.test/icons/logos/react.f772626394.svg",
