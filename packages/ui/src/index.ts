@@ -6,6 +6,7 @@ export { Chip } from "./components/chip.tsx";
 export { DeepSearch } from "./components/deep-search.tsx";
 export { Digits } from "./components/digits.tsx";
 export { EmptyTile } from "./components/empty-tile.tsx";
+export { CompassIcon, HomeIcon, PeopleIcon } from "./components/icons.tsx";
 export { LanguageBar, type LanguageShare } from "./components/language-bar.tsx";
 export { popupSurface } from "./components/popup.ts";
 export { ProgressRing } from "./components/progress-ring.tsx";
