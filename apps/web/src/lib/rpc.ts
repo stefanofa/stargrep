@@ -15,7 +15,6 @@ export type StarLanguages = Outputs["starLanguages"];
 export type SimilarRepos = Outputs["similarRepos"];
 export type SimilarRepo = SimilarRepos["inStars"][number];
 export type PublicConfig = Outputs["config"];
-export type NewToYou = Outputs["newToYou"];
 export type People = Outputs["people"];
 export type Person = People["people"][number];
 export type PeopleSort = People["sort"];

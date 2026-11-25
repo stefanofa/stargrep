@@ -28,8 +28,6 @@ import { api } from "../lib/rpc.ts";
 import { loginHref } from "../lib/stars-route.ts";
 import { after } from "../lib/wall-clock.ts";
 
-export { FollowingTile } from "./following-tile.tsx";
-
 export const refusals: Record<Refusal, string> = {
   failed: "couldn't save that. try again",
   limited: "that's a lot of changes at once. try again in a minute",
@@ -119,14 +117,13 @@ function RefusalLine({ refusal }: { refusal: Refusal | undefined }) {
   );
 }
 
+// On phones a person's follow fills its row under the person, 42px tall.
+const phoneWide = "max-sm:h-[42px] max-sm:w-full max-sm:text-meta";
+
 // Unfollowing from someone's page asks first, and says they aren't told. A menu on wide screens, a sheet on phones.
-function Unfollow({ login, follows, wide }: { login: string; follows: Follows; wide: boolean }) {
+function Unfollow({ login, follows }: { login: string; follows: Follows }) {
   const phone = usePhone();
-  const trigger = cn(
-    buttonVariants({ variant: "secondary", size: "lg" }),
-    "data-popup-open:bg-accent/30",
-    wide && "max-sm:w-full",
-  );
+  const trigger = cn(buttonVariants({ variant: "secondary", size: "lg" }), "data-popup-open:bg-accent/30", phoneWide);
   const label = (
     <>
       <Check />
@@ -191,34 +188,33 @@ function Unfollow({ login, follows, wide }: { login: string; follows: Follows; w
 export function FollowButton({ login, signedIn }: { login: string; signedIn: boolean }) {
   const follows = useFollows(signedIn);
   const toast = useReturned(signedIn);
-  const wide = "max-sm:w-full";
   const control = () => {
     if (!signedIn)
       return (
         <Tooltip
           content={`sign in with GitHub to follow @${login}`}
-          className={cn(buttonVariants({ variant: "primary", size: "lg" }), wide)}
+          className={cn(buttonVariants({ variant: "primary", size: "lg" }), phoneWide)}
           onClick={() => void signInToFollow([login])}
         >
           + follow
         </Tooltip>
       );
-    if (!follows.ready) return <Skeleton className={cn("h-11 w-[120px] rounded-full", wide)} />;
+    if (!follows.ready) return <Skeleton className={cn("h-11 w-[120px] rounded-full", phoneWide)} />;
     if (follows.isPending(login) && follows.isFollowing(login))
       return (
         <span
           role="status"
-          className={cn(buttonVariants({ variant: "secondary", size: "lg" }), "text-muted-foreground", wide)}
+          className={cn(buttonVariants({ variant: "secondary", size: "lg" }), "text-muted-foreground", phoneWide)}
         >
           <Spinner />
           following
         </span>
       );
-    if (follows.isFollowing(login)) return <Unfollow login={login} follows={follows} wide />;
+    if (follows.isFollowing(login)) return <Unfollow login={login} follows={follows} />;
     return (
       <button
         type="button"
-        className={cn(buttonVariants({ variant: "primary", size: "lg" }), wide)}
+        className={cn(buttonVariants({ variant: "primary", size: "lg" }), phoneWide)}
         onClick={() => void follow([login])}
       >
         + follow

@@ -106,7 +106,10 @@ const lit = (html: string) => {
   for (const hidden of page.querySelectorAll("[aria-hidden=true]")) hidden.remove();
   return Array.from(page.querySelectorAll('nav[aria-label="Main"] [aria-current="page"]'), (link) => link.textContent);
 };
-const statusText = () => document.querySelector("[role=status]")?.textContent ?? "";
+const statusText = () => document.querySelector("[data-reveal-tile] [role=status]")?.textContent ?? "";
+const heading = (name: string) =>
+  [...document.querySelectorAll("h2")].some((element) => element.textContent === name) ? name : undefined;
+const rail = () => document.querySelector("[role=progressbar]")?.getAttribute("aria-valuetext");
 const resultNames = () =>
   Array.from(document.querySelectorAll("main ol li h3"), (heading) => heading.textContent?.trim() ?? "");
 const searchValue = () => (document.querySelector("[data-reveal-tile] input") as HTMLInputElement | null)?.value;
@@ -174,9 +177,6 @@ describe("a stars page from the Worker to the browser", () => {
       await getLibrary("stefanofa", "public", false).whole;
     });
     // The browser loads the library from the same API and derives the view live. Nothing on screen changes.
-    await waitFor(() =>
-      expect(document.querySelector("[role=status]")?.closest("p")?.textContent).toContain("3 stars"),
-    );
     watching.disconnect();
     expect({ status: statusText(), results: resultNames(), query: searchValue() }).toEqual(painted);
     // Not even for a moment while the library's first page alone has landed.
@@ -213,9 +213,6 @@ describe("a stars page from the Worker to the browser", () => {
     const shown = new Set([statusText()]);
     const watching = new MutationObserver(() => shown.add(statusText()));
     watching.observe(document.body, { subtree: true, childList: true, characterData: true });
-    await waitFor(() =>
-      expect(document.querySelector("[role=status]")?.closest("p")?.textContent).toContain("3 stars"),
-    );
     watching.disconnect();
     expect([...shown]).toEqual(["found 1!"]);
     expect(errors).toEqual([]);
@@ -249,9 +246,6 @@ describe("a stars page from the Worker to the browser", () => {
     expect(loaded?.first.hits.stale).toBe(false);
     const shown = watchScreen();
     expect(shown.now()).toEqual({ status: "found 1!", results: "mobile-mcp" });
-    await waitFor(() =>
-      expect(document.querySelector("[role=status]")?.closest("p")?.textContent).toContain("3 stars"),
-    );
     // The browser asks only once typing pauses, so the page waits past that before it checks no search ran.
     await act(() => Effect.runPromise(Effect.sleep(Duration.times(pause, 2))));
     expect([shown.stop(), searched, errors]).toEqual([[{ status: "found 1!", results: "mobile-mcp" }], [], []]);
@@ -265,9 +259,6 @@ describe("a stars page from the Worker to the browser", () => {
     const shown = watchScreen();
     expect(shown.now()).toEqual({ status: "found 1!", results: "mobile-mcp" });
     await waitFor(() => expect(searched).toEqual(["phone automation"]));
-    await waitFor(() =>
-      expect(document.querySelector("[role=status]")?.closest("p")?.textContent).toContain("3 stars"),
-    );
     expect([shown.stop(), errors]).toEqual([[{ status: "found 1!", results: "mobile-mcp" }], []]);
   }, 60_000);
 
@@ -335,14 +326,14 @@ describe("a stars page from the Worker to the browser", () => {
     expect(countless.html).not.toContain("1.2k");
   }, 60_000);
 
-  test("a signed-in viewer's own page paints their stars, the owner pill, the ring on you and the account row from the server, and hydrates without a change", async () => {
+  test("a signed-in viewer's own page paints their person tile, the ring on you and the account row from the server, and hydrates without a change", async () => {
     const page = await renderOnServer("/", session, { STARGREP_SIGNED_IN: "octodone" });
     expect(page.status).toBe(200);
     expect(page.html).toContain('aria-label="Search your stars"');
-    expect(page.html).toContain('aria-label="Whose stars: @octodone. Change"');
+    expect(page.html.match(/<h1[^>]*>[^<]*<\/h1>/g)).toEqual([expect.stringContaining(">@octodone</h1>")]);
+    expect(page.html).toMatch(/<nav aria-label="your page"[^>]*>.*<a [^>]*aria-current="page"[^>]*href="\/"/);
     expect(lit(page.html)).toEqual(["you", "you"]);
     expect(page.html).toContain("only you see this");
-    expect(page.html).not.toContain("<h1");
     expect(page.requested).toEqual([]);
 
     process.env.STARGREP_SIGNED_IN = "octodone";
@@ -351,7 +342,7 @@ describe("a stars page from the Worker to the browser", () => {
       // The owner's page asks for a sync on every open, and lists the stars of the session's own library.
       await waitFor(() => expect(requested).toEqual(["octodone"]));
       await waitFor(() => expect(resultNames()).toEqual(["mobile-mcp", "fzf", "asciinema"]));
-      expect(statusText()).toContain("your stars");
+      expect(document.querySelector("nav[aria-label='your page'] a")?.textContent).toBe("stars3");
       expect(lit(document.documentElement.outerHTML)).toEqual(["you", "you"]);
       expect(errors).toEqual([]);
     } finally {
@@ -359,19 +350,12 @@ describe("a stars page from the Worker to the browser", () => {
     }
   }, 60_000);
 
-  test("a signed-in viewer on someone else's page gets the person, not the landing, and a way to switch", async () => {
+  test("a signed-in viewer on someone else's page gets the person, not the landing", async () => {
     const page = await renderOnServer("/stefanofa?q=terminal", session, { STARGREP_SIGNED_IN: "octodone" });
     expect(page.html).toContain('aria-label="Search @stefanofa&#x27;s stars"');
-    expect(page.html).toContain('aria-label="Whose stars: @stefanofa. Change"');
     expect(lit(page.html)).toEqual([]);
     expect(page.html).not.toContain("only you see this");
     expect(page.html.match(/<h1[^>]*>[^<]*<\/h1>/g)).toEqual([expect.stringContaining(">@stefanofa</h1>")]);
-  }, 60_000);
-
-  test("a visitor on someone's synced stars gets the new-to-you sign-in ask from the server, before the library", async () => {
-    const page = await renderOnServer("/octodone");
-    expect(page.html).toContain(">new to you</h2>");
-    expect(page.html).toContain("sign in and see which of @octodone&#x27;s stars you haven&#x27;t starred");
   }, 60_000);
 
   test("a cookie with a broken percent escape counts as no choice, not a failed page", async () => {
@@ -388,21 +372,20 @@ describe("a stars page from the Worker to the browser", () => {
 
   test("a login never synced renders ready to import, and only the hydrated page asks for the import", async () => {
     const page = await renderOnServer("/fresh-login");
-    expect(page.html).toContain("ready to import @fresh-login");
-    expect(page.html).toContain("is this you? skip the wait");
+    expect(page.html).toContain("stars arriving");
+    expect(page.html).not.toContain("is this you? skip the wait");
     expect(page.html).not.toContain("stargrep:revealed");
     expect(page.requested).toEqual([]);
 
     await hydratePage("/fresh-login", page.html);
     await waitFor(() => expect(requested).toEqual(["fresh-login"]));
-    await waitFor(() => expect(statusText()).toContain("importing @fresh-login's stars"));
     expect(errors).toEqual([]);
   }, 60_000);
 
   test("a refused import is remembered: the reload paints the refusal and asks no one again", async () => {
     const first = await renderOnServer("/ghost-login");
     await hydratePage("/ghost-login", first.html);
-    await waitFor(() => expect(statusText()).toBe("no such GitHub user"));
+    await waitFor(() => expect(heading("GitHub has no one called @ghost-login")).toBeDefined());
     expect(requested).toEqual(["ghost-login"]);
     const cookie = document.cookie;
     expect(cookie).toContain("stargrep-refused=");
@@ -415,8 +398,7 @@ describe("a stars page from the Worker to the browser", () => {
     expect(reload.html).toContain("GitHub has no one called @ghost-login");
     expect(reload.requested).toEqual([]);
     await hydratePage("/ghost-login", reload.html);
-    await waitFor(() => expect(statusText()).toBe("no such GitHub user"));
-    expect(statusText()).toBe("no such GitHub user");
+    await waitFor(() => expect(heading("GitHub has no one called @ghost-login")).toBeDefined());
     expect(requested).toEqual([]);
   }, 60_000);
 
@@ -424,10 +406,10 @@ describe("a stars page from the Worker to the browser", () => {
     const page = await renderOnServer("/gone-login");
     expect(page.status).toBe(404);
     expect(page.html).toContain("GitHub has no one called @gone-login");
-    expect(page.html).not.toContain("ready to import");
+    expect(page.html).not.toContain("stars arriving");
     expect(page.requested).toEqual([]);
     await hydratePage("/gone-login", page.html);
-    await waitFor(() => expect(statusText()).toBe("no such GitHub user"));
+    await waitFor(() => expect(heading("GitHub has no one called @gone-login")).toBeDefined());
     expect(requested).toEqual([]);
     expect(errors).toEqual([]);
   }, 60_000);
@@ -441,14 +423,13 @@ describe("a stars page from the Worker to the browser", () => {
     expect(errors).toEqual([]);
   }, 60_000);
 
-  test("an import under way paints the claim tile from the server's status read, and its progress once hydrated", async () => {
+  test("an import under way paints the person from the server's status read, and its progress once hydrated", async () => {
     const page = await renderOnServer("/octosync");
-    expect(page.html).toContain("is this you? skip the wait");
+    expect(page.html).toContain("stars arriving");
     expect(page.html).toMatch(/<h1[^>]*>@octosync<\/h1>/);
     expect(page.requested).toEqual([]);
     await hydratePage("/octosync", page.html);
-    await waitFor(() => expect(statusText()).toContain("importing @octosync's stars"));
-    expect(document.querySelector("[role=status]")?.closest("p")?.textContent).toContain("2 of 10");
+    await waitFor(() => expect(rail()).toBe("2 of 10 imported"));
     expect(requested).toEqual([]);
     expect(errors).toEqual([]);
   }, 60_000);
@@ -499,7 +480,7 @@ describe("a stars page from the Worker to the browser", () => {
     expect(redirected.status).toBeLessThan(400);
     expect(redirected.location).toBe("/@api?q=rust");
     const reserved = await renderOnServer("/@api");
-    expect(reserved.html).toContain("ready to import @api");
+    expect(reserved.html).toMatch(/<h1[^>]*>@api<\/h1>/);
     const anyone = await renderOnServer("/@octosync");
     expect(anyone.html).toMatch(/<h1[^>]*>@octosync<\/h1>/);
   }, 60_000);

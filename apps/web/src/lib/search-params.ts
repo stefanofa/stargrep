@@ -13,8 +13,6 @@ export interface Params {
   readonly starred?: string | undefined;
   // The library shows only the repos that carry this GitHub topic.
   readonly topic?: string | undefined;
-  // Someone else's page shows everything new to the signed-in viewer in place of the months.
-  readonly show?: "new" | undefined;
   readonly repo?: string | undefined;
   readonly error?: string | undefined;
 }
@@ -41,7 +39,6 @@ export const validateParams = (search: Record<string, unknown>): Params => ({
   ...set("archived", search.archived === true || undefined),
   ...set("starred", text(search.starred)?.match(period)?.[0]),
   ...set("topic", text(search.topic)),
-  ...set("show", search.show === "new" ? "new" : undefined),
   ...set("repo", text(search.repo)),
   ...set("error", text(search.error)),
 });

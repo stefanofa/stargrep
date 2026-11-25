@@ -68,14 +68,14 @@ export const reportError = (error: unknown) => {
 // and carries counts at most, never text.
 interface ClientEvents {
   readonly github_star_clicked: undefined;
-  readonly new_to_you_shown: { readonly shared: number; readonly repos: number };
-  readonly new_to_you_opened: { readonly position: number };
   // Which of the repo panel's rows held the repo the visitor opened.
   readonly similar_repo_opened: { readonly row: "in_stars" | "not_starred" };
   // A person's place among the repo panel's "also starred by" faces, from 1.
   readonly starred_by_person_opened: { readonly position: number };
-  // A repo opened from what the people the visitor follows starred: the feed's rows, its top repo, or the discover tile.
-  readonly following_repo_opened: { readonly from: "feed" | "top" | "discover"; readonly position: number };
+  // A repo opened from what the people the visitor follows starred: the feed's rows or its top repo.
+  readonly following_repo_opened: { readonly from: "feed" | "top"; readonly position: number };
+  // A person's page shared through the phone's share sheet, or its link copied.
+  readonly person_shared: { readonly via: "sheet" | "link" };
 }
 
 export type ClientEvent = keyof ClientEvents;

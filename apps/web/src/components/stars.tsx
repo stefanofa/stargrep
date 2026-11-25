@@ -8,9 +8,11 @@ import {
   type PipPose,
   RephraseChips,
   RepoPanel,
+  type ResultGroup,
   Results,
   SearchTile,
   SimilarRepos,
+  Skeleton,
   type Sort,
   SortMenu,
   type Stargazer,
@@ -23,16 +25,16 @@ import { useLiveQuery } from "@tanstack/react-db";
 import { Link, useHydrated, useNavigate, useRouter, useSearch } from "@tanstack/react-router";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { capture } from "../lib/analytics.ts";
 import { policyOf, starredOf, whoseOf } from "../lib/audience.ts";
 import { keywordTerms, normalize, searchText } from "../lib/keyword.ts";
 import { getLibrary, type Library } from "../lib/library-collection.ts";
-import { useNewToYou } from "../lib/new-to-you.ts";
+import { facetOf, facetsOf, keeps, resultFacet } from "../lib/library-filter.ts";
 import { askedPage, type PageData, type PageRequest, type Session } from "../lib/page-data.ts";
 import { hitsOf, liveView } from "../lib/page-view.ts";
 import { closesBack } from "../lib/panel-history.ts";
-import { useSimilarPeople } from "../lib/people.ts";
+import { personStars } from "../lib/person-stars.ts";
 import {
   now,
   type SimilarRowKey,
@@ -43,13 +45,12 @@ import {
   toDetail,
   withLinks,
 } from "../lib/present.ts";
-import { rememberLogin } from "../lib/recent-logins.ts";
 import { withReply } from "../lib/results.ts";
 import { useReveal } from "../lib/reveal.ts";
 import { playSurprise } from "../lib/reveal-timing.ts";
 import type { SimilarRepo } from "../lib/rpc.ts";
 import { librarySorts, type Params, searchSorts, validateParams } from "../lib/search-params.ts";
-import { type Arriving, type Body, pageView, type Retry, type Stage, stageOf } from "../lib/search-state.ts";
+import { type Body, pageView, type Retry, type Stage, stageOf } from "../lib/search-state.ts";
 import { loginPage } from "../lib/stars-route.ts";
 import { storedView, useStoredView } from "../lib/stored-view.ts";
 import { libraryRevision, nothingSynced } from "../lib/sync-status.ts";
@@ -57,15 +58,14 @@ import { libraryTrouble, type Trouble } from "../lib/trouble.ts";
 import { useSemanticSearch } from "../lib/use-semantic.ts";
 import { useSimilar } from "../lib/use-similar.ts";
 import { useSync } from "../lib/use-sync.ts";
-import { theirs } from "../lib/whose.ts";
+import { formatCount, theirs } from "../lib/whose.ts";
 import { AccountRow } from "./account-row.tsx";
-import { FollowButton, FollowedStarredBy, FollowingTile } from "./follows.tsx";
-import { ButterTile, Hero, TryChips } from "./landing-hero.tsx";
-import { type Discover, LibraryPlaceholder, LibraryView } from "./library-view.tsx";
-import { NewToYouList, NewToYouTile, type NewToYouTileState } from "./new-to-you.tsx";
-import { OwnerPill } from "./owner-pill.tsx";
-import { PeopleTile } from "./people-tile.tsx";
+import { FilterChips } from "./filter-chips.tsx";
+import { FollowButton, FollowedStarredBy } from "./follows.tsx";
+import { Hero, TryChips } from "./landing-hero.tsx";
+import { LibraryPlaceholder, LibraryView } from "./library-view.tsx";
 import { type PersonStars, PersonTile } from "./person-tile.tsx";
+import { ShareButton } from "./share-button.tsx";
 import { TopicChips } from "./topic-chips.tsx";
 
 // A navigation in the browser starts from the session the server loaded. The page reads the rest once it mounts.
@@ -86,9 +86,6 @@ export const pageFor = (request: PageRequest, { viewer, config, repoStars, site 
   };
 };
 
-const dock =
-  "max-sm:fixed max-sm:inset-x-3 max-sm:bottom-(--dock-bottom) max-sm:z-30 max-sm:[&_[data-slot=tile]]:shadow-dock";
-
 function useArrangement(searching: boolean, saved: View | null) {
   const params: Params = useSearch({ strict: false });
   const navigate = useNavigate();
@@ -104,33 +101,17 @@ function useArrangement(searching: boolean, saved: View | null) {
   return { view, sort, setView, setSort };
 }
 
-function Waiting({
-  view,
-  searching,
-  arriving,
-  butter,
-  countTile,
-  discover,
-}: {
-  view: View;
-  searching: boolean;
-  arriving: Arriving | undefined;
-  butter: boolean;
-  countTile: boolean;
-  discover: ReactNode;
-}) {
+function Waiting({ view, searching, hero }: { view: View; searching: boolean; hero: "card" | undefined }) {
   return searching ? (
-    <Results view={view} groups={[{ key: "all", results: [], pending: 4 }]} hero={butter ? "butter" : "card"} />
+    <Results view={view} groups={[{ key: "all", results: [], pending: 4 }]} hero={hero} />
   ) : (
-    <LibraryPlaceholder view={view} arriving={arriving} butter={butter} countTile={countTile} discover={discover} />
+    <LibraryPlaceholder view={view} />
   );
 }
 
-const lastStarred = (entries: ReadonlyArray<{ readonly starredAt: string }>) =>
-  entries.reduce<string | undefined>(
-    (last, entry) => (last === undefined || entry.starredAt > last ? entry.starredAt : last),
-    undefined,
-  );
+// A search's results that pass the chips that are on. The placeholders still waiting for results stay.
+const filtered = (groups: ReadonlyArray<ResultGroup>, pass: ReturnType<typeof keeps>) =>
+  groups.map((group) => ({ ...group, results: group.results.filter((result) => pass(resultFacet(result))) }));
 
 const measured = (stage: Stage) => {
   if (stage.name === "importing") return { done: stage.done, total: stage.total };
@@ -229,12 +210,6 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     data.refusal ?? undefined,
   );
   const sync = watch.kind === "watching" ? watch.status : undefined;
-  // The owner pill offers the logins this browser looked at, once stargrep knows their stars. A login GitHub doesn't
-  // know never gets that far. The pill lists the viewer's own login anyway.
-  const known = sync !== undefined && sync.state !== "unknown";
-  useEffect(() => {
-    if (known && audience.by !== "owner") rememberLogin(owner);
-  }, [known, audience.by, owner]);
   const readAt = watch.kind === "watching" ? watch.at : undefined;
   const starred = starredOf(audience, sync);
   const stage = stageOf({ sync, entries, starred });
@@ -287,37 +262,28 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     surprised,
   });
   useEffect(() => onPose(page.pose), [onPose, page.pose]);
-  const newToYou = useNewToYou(audience, page.body.kind === "library");
-  // Someone else's page opens its library on the discover row, once their stars have arrived. A tile with nothing to
-  // say leaves the row to the dead stars.
-  const discover: NewToYouTileState | undefined =
-    page.person === undefined || trouble !== undefined || stage.name === "importing"
-      ? undefined
-      : audience.by === "anyone"
-        ? { kind: "signed-out" }
-        : newToYou?.kind === "failed"
-          ? undefined
-          : newToYou;
-  // The people whose stars are most like these, once the library shows: on someone else's stars after theirs arrive, on
-  // your own after your first sync.
-  const alike = useSimilarPeople(
-    owner,
-    audience.by === "owner" ? 6 : 3,
-    page.body.kind === "library" && trouble === undefined && stage.name !== "importing" && page.hero === undefined,
-  );
-  const everythingNew =
-    params.show === "new" && newToYou?.kind === "found" && newToYou.found.repos.length > 0 ? newToYou.found : undefined;
-
-  // The page has one butter tile. The hero or the claim tile above the search takes it, or else the content does.
-  const butter = page.hero === undefined && page.person?.claim === undefined;
-  const personStars: PersonStars =
+  const personFacts: PersonStars =
     trouble !== undefined
       ? { kind: "unsaid" }
       : stage.name === "importing"
         ? { kind: "arriving" }
         : libraryReady
-          ? { kind: "count", count: entries.length, last: lastStarred(entries) }
+          ? personStars(entries, at)
           : { kind: "loading" };
+  // The count is said once, on the stars tab.
+  const starsCount =
+    trouble !== undefined ? undefined : libraryReady ? (
+      formatCount(entries.length)
+    ) : (
+      <Skeleton className="inline-block h-[0.8em] w-8 align-baseline" />
+    );
+  // The chips count whichever answer is on screen: the library while browsing, the results while searching.
+  const libraryFacets = useMemo(
+    () => (page.body.kind === "library" ? facetsOf(entries.map(facetOf)) : undefined),
+    [page.body.kind, entries],
+  );
+  const pass = keeps(params.lang, params.archived === true);
+  const resultsHero = page.hero === undefined ? undefined : "card";
 
   const reveal = useReveal(query, page.painted);
   const butterPose = reveal.phase === "typing" ? "thinking" : reveal.phase === "settled" ? "happy" : "idle";
@@ -384,30 +350,6 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     navigate(loginPage(person.login));
   };
 
-  const newToYouTile = discover && <NewToYouTile state={discover} login={owner} at={at} search={links} onOpen={open} />;
-  const peopleTile =
-    alike !== undefined && alike.length > 0 ? (
-      audience.by === "owner" ? (
-        <PeopleTile heading="people with stars like yours" people={alike} more="see everyone" wide />
-      ) : (
-        <PeopleTile heading={`stars like @${owner}'s`} people={alike} more="more people" />
-      )
-    ) : undefined;
-  const discoverRow: Discover | undefined =
-    newToYouTile === undefined && peopleTile === undefined
-      ? undefined
-      : audience.by === "owner"
-        ? {
-            lead: (
-              <>
-                {peopleTile}
-                <FollowingTile />
-              </>
-            ),
-            trail: undefined,
-          }
-        : { lead: newToYouTile, trail: peopleTile };
-
   const body = (current: Body) => {
     switch (current.kind) {
       case "trouble":
@@ -432,16 +374,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           </EmptyTile>
         );
       case "loading":
-        return (
-          <Waiting
-            view={view}
-            searching={current.searching}
-            arriving={current.arriving}
-            butter={butter}
-            countTile={page.person === undefined}
-            discover={newToYouTile}
-          />
-        );
+        return <Waiting view={view} searching={current.searching} hero={resultsHero} />;
       case "library":
         return (
           <LibraryView
@@ -450,26 +383,16 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
             view={view}
             sort={sort}
             search={links}
-            whose={whose}
             arriving={current.arriving}
-            pose={page.pose}
-            butter={butter}
-            countTile={page.person === undefined}
             onOpen={open}
-            discover={discoverRow}
-            instead={
-              everythingNew && (
-                <NewToYouList found={everythingNew} login={owner} at={at} view={view} search={links} onOpen={open} />
-              )
-            }
           />
         );
       case "results":
         return (
           <Results
             view={view}
-            groups={withLinks(current.groups, links)}
-            hero={butter ? "butter" : "card"}
+            groups={withLinks(filtered(current.groups, pass), links)}
+            hero={resultsHero}
             onOpen={open}
           />
         );
@@ -486,30 +409,38 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     }
   };
 
-  const { retry: again, ...status } = page.status;
+  const again = page.status?.retry;
+  const facets =
+    page.body.kind === "results"
+      ? facetsOf(page.body.groups.flatMap((group) => group.results).map(resultFacet))
+      : libraryFacets;
 
   return (
     <>
       {page.hero && <Hero {...page.hero} faces={data.config.curated} pose={butterPose} />}
       {page.person && (
-        <section aria-label={`@${page.person.login}`} className="flex flex-col gap-3.5 lg:flex-row lg:gap-gap">
-          <PersonTile
-            login={page.person.login}
-            known={page.person.known}
-            stars={personStars}
-            shared={newToYou?.kind === "found" ? newToYou.found.shared : undefined}
-            action={
-              page.person.known &&
-              audience.by !== "owner" &&
-              sync?.accountType !== "org" && (
-                <FollowButton login={page.person.login} signedIn={audience.by === "signed-in"} />
-              )
-            }
-          />
-          {page.person.claim !== undefined && (
-            <ButterTile butter={{ kind: "claim", progress: page.person.claim }} pose={butterPose} />
-          )}
-        </section>
+        <PersonTile
+          login={page.person.login}
+          own={audience.by === "owner"}
+          known={page.person.known}
+          stars={personFacts}
+          tab="stars"
+          counts={{ stars: starsCount }}
+          share={
+            page.person.known ? (
+              <ShareButton
+                login={page.person.login}
+                query={links.q}
+                className={audience.by === "owner" ? "max-sm:size-10" : "max-sm:size-[42px]"}
+              />
+            ) : undefined
+          }
+          follow={
+            page.person.known && audience.by !== "owner" && sync?.accountType !== "org" ? (
+              <FollowButton login={page.person.login} signedIn={audience.by === "signed-in"} />
+            ) : undefined
+          }
+        />
       )}
       <div data-reveal-tile className="contents">
         <SearchTile
@@ -517,32 +448,28 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           onQueryChange={search}
           label={`Search ${theirs(whose)}`}
           placeholder={page.placeholder}
-          className={dock}
-          owner={<OwnerPill audience={audience} config={data.config} />}
           progress={page.progress}
           status={
             <StatusLine
-              {...status}
+              label={page.status?.label}
+              phoneLabel={page.status?.phoneLabel}
               action={
                 again && (
-                  <Button
-                    variant="bare"
-                    size="default"
-                    className="max-sm:h-[18px] max-sm:px-0 max-sm:text-sm max-sm:after:-inset-x-2 max-sm:after:-inset-y-2.5 max-sm:hover:bg-transparent"
-                    onClick={tryAgain[again]}
-                  >
+                  <Button variant="bare" size="default" className="shrink-0" onClick={tryAgain[again]}>
                     try again
                   </Button>
                 )
               }
             />
           }
+          filters={
+            (page.body.kind === "loading" || page.body.kind === "library" || page.body.kind === "results") && (
+              <FilterChips facets={facets} lang={params.lang} archived={params.archived === true} />
+            )
+          }
           controls={
             <>
-              {/* The owner pill takes the phone strip's room for the sort trigger, so phones sort by the default. */}
-              <div className="contents max-sm:hidden">
-                <SortMenu value={sort} onValueChange={setSort} options={searching ? searchSorts : librarySorts} />
-              </div>
+              <SortMenu value={sort} onValueChange={setSort} options={searching ? searchSorts : librarySorts} />
               <ViewToggle value={view} onValueChange={setView} />
             </>
           }
@@ -554,7 +481,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           onPick={search}
         />
       )}
-      <div data-reveal-results className="flex flex-col gap-gap">
+      <div data-reveal-results aria-busy={page.body.kind === "loading" || undefined} className="flex flex-col gap-gap">
         {body(page.body)}
       </div>
       <RepoPanel
