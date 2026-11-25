@@ -58,6 +58,7 @@ import { useSemanticSearch } from "../lib/use-semantic.ts";
 import { useSimilar } from "../lib/use-similar.ts";
 import { useSync } from "../lib/use-sync.ts";
 import { theirs } from "../lib/whose.ts";
+import { AccountRow } from "./account-row.tsx";
 import { FollowButton, FollowedStarredBy, FollowingTile } from "./follows.tsx";
 import { ButterTile, Hero, TryChips } from "./landing-hero.tsx";
 import { type Discover, LibraryPlaceholder, LibraryView } from "./library-view.tsx";
@@ -86,7 +87,7 @@ export const pageFor = (request: PageRequest, { viewer, config, repoStars, site 
 };
 
 const dock =
-  "max-sm:fixed max-sm:inset-x-3 max-sm:bottom-[max(16px,env(safe-area-inset-bottom))] max-sm:z-30 max-sm:[&_[data-slot=tile]]:shadow-dock";
+  "max-sm:fixed max-sm:inset-x-3 max-sm:bottom-(--dock-bottom) max-sm:z-30 max-sm:[&_[data-slot=tile]]:shadow-dock";
 
 function useArrangement(searching: boolean, saved: View | null) {
   const params: Params = useSearch({ strict: false });
@@ -578,15 +579,15 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
         similar={<SimilarRepos rows={similarRows(similar, links, whose)} onOpen={openSimilar} />}
         topics={<TopicChips topics={(opened ?? stray)?.topics ?? []} />}
       />
+      {audience.by === "owner" && <AccountRow />}
     </>
   );
 }
 
-// The account menu, the text pages, the people page, and the sign-in problem ride in the engine chunk,
+// The text pages, the people page, and the sign-in problem ride in the engine chunk,
 // so the landing entry never reaches Base UI. A second lazy chunk would make the bundler move React, the router, and the
 // UI kit out of the landing entry into a shared chunk, which costs the landing page about 2 KB gzipped.
 export { firstPeople } from "../lib/people.ts";
-export { AccountMenu } from "./account-menu.tsx";
 export { DevelopersPage } from "./developers-page.tsx";
 export { PeoplePage } from "./people-page.tsx";
 export { PrivacyPage } from "./privacy-page.tsx";

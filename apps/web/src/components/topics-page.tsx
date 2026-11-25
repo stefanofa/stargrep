@@ -5,7 +5,6 @@ import { api, type TopicCount, type TopicsList } from "../lib/rpc.ts";
 import { topicVisual } from "../lib/topic-visual.ts";
 import { formatCount } from "../lib/whose.ts";
 import { Page } from "./page.tsx";
-import { SiteHeader } from "./site-header.tsx";
 
 export const topicsShown = 200;
 
@@ -131,13 +130,12 @@ function TopicGrid({ topics, busy = false }: { topics: ReadonlyArray<TopicCount>
 
 // Every GitHub topic with a page: the most ranked first, and a field that finds one by its name.
 export function TopicsPage() {
-  const { viewer, repoStars } = useLoaderData({ from: "__root__" });
   const { first } = useLoaderData({ from: "/topics/" });
   const [typed, setTyped] = useState("");
   const finding = useFound(typed);
   const field = useId();
   return (
-    <Page header={<SiteHeader viewer={viewer} repoStars={repoStars} />}>
+    <Page here="discover">
       <section className="flex flex-col gap-3.5 pt-1.5 sm:pt-5">
         <h1 className="flex items-baseline gap-3 font-display text-3xl leading-10 font-semibold tracking-tight sm:text-[52px] sm:leading-[56px]">
           topics

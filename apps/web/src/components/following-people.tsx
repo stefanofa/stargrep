@@ -12,7 +12,6 @@ import { wallNow } from "../lib/wall-clock.ts";
 import { formatCount } from "../lib/whose.ts";
 import { FollowPill, refusals } from "./follows.tsx";
 import { Page } from "./page.tsx";
-import { SiteHeader } from "./site-header.tsx";
 
 export type FollowedPeople =
   | { readonly kind: "found"; readonly people: ReadonlyArray<FollowedPerson>; readonly at: number }
@@ -323,12 +322,12 @@ function Empty({ onImport }: { onImport: () => void }) {
 }
 
 export function FollowingPeoplePage() {
-  const { viewer, repoStars } = useLoaderData({ from: "__root__" });
+  const { viewer } = useLoaderData({ from: "__root__" });
   const { people } = useLoaderData({ from: "/following/people" });
   const router = useRouter();
   const [retrying, setRetrying] = useState(false);
   return (
-    <Page header={<SiteHeader viewer={viewer} repoStars={repoStars} />}>
+    <Page here="following">
       {people.kind === "failed" || viewer === null ? (
         <>
           <Heading count={undefined} />
