@@ -2,7 +2,7 @@ import { buttonVariants, EmptyTile, type PipPose } from "@stargrep/ui";
 import { type ErrorComponentProps, Link } from "@tanstack/react-router";
 import { type ReactNode, useEffect } from "react";
 import { reportError } from "../lib/analytics.ts";
-import { Page } from "./page.tsx";
+import { Frame } from "./page.tsx";
 import { Wordmark } from "./wordmark.tsx";
 
 // The error and not-found pages ship in the landing chunk, so a page whose loader fails while the visitor is offline
@@ -21,11 +21,11 @@ function ProblemPage({
   children: ReactNode;
 }) {
   return (
-    <Page header={<Wordmark pose={pose} />}>
+    <Frame header={<Wordmark pose={pose} />}>
       <EmptyTile pose={pose} heading={heading} body={body}>
         <div className="pt-2">{children}</div>
       </EmptyTile>
-    </Page>
+    </Frame>
   );
 }
 

@@ -100,6 +100,12 @@ const hydratePage = async (path: string, html: string) => {
   return router;
 };
 
+// The names of the places a page marks current in its main navigation, the header's and the phone's tab bar.
+const lit = (html: string) => {
+  const page = new DOMParser().parseFromString(html, "text/html");
+  for (const hidden of page.querySelectorAll("[aria-hidden=true]")) hidden.remove();
+  return Array.from(page.querySelectorAll('nav[aria-label="Main"] [aria-current="page"]'), (link) => link.textContent);
+};
 const statusText = () => document.querySelector("[role=status]")?.textContent ?? "";
 const resultNames = () =>
   Array.from(document.querySelectorAll("main ol li h3"), (heading) => heading.textContent?.trim() ?? "");
@@ -315,26 +321,27 @@ describe("a stars page from the Worker to the browser", () => {
     expect(errors).toEqual([]);
   }, 60_000);
 
-  test("the header's star link paints its count from the server and hydrates without a change", async () => {
-    const starLink = () => document.querySelector('a[aria-label="star stargrep on GitHub"]');
+  test("a visitor's home lights home, and the footer's source link paints its count from the server", async () => {
+    const sourceLink = () => document.querySelector(`footer a[href="${"https://github.com/stefanofa/stargrep"}"]`);
     const page = await renderOnServer("/", undefined, { STARGREP_HEADER_STARS: "1234" });
+    expect(lit(page.html)).toEqual(["home"]);
     await hydratePage("/", page.html);
-    expect(starLink()?.getAttribute("href")).toBe("https://github.com/stefanofa/stargrep");
-    expect(starLink()?.textContent).toBe("star1.2k");
+    expect(sourceLink()?.textContent).toBe("source ★ 1.2k stars");
     expect(errors).toEqual([]);
 
     const countless = await renderOnServer("/stefanofa?q=terminal");
     expect(countless.status).toBe(200);
-    expect(countless.html).toContain('aria-label="star stargrep on GitHub"');
+    expect(countless.html).toContain(">source <");
     expect(countless.html).not.toContain("1.2k");
   }, 60_000);
 
-  test("a signed-in viewer's own page paints their stars and the owner pill from the server, and hydrates without a change", async () => {
+  test("a signed-in viewer's own page paints their stars, the owner pill, the ring on you and the account row from the server, and hydrates without a change", async () => {
     const page = await renderOnServer("/", session, { STARGREP_SIGNED_IN: "octodone" });
     expect(page.status).toBe(200);
     expect(page.html).toContain('aria-label="Search your stars"');
     expect(page.html).toContain('aria-label="Whose stars: @octodone. Change"');
-    expect(page.html).toContain('aria-label="Account menu for octodone"');
+    expect(lit(page.html)).toEqual(["you", "you"]);
+    expect(page.html).toContain("only you see this");
     expect(page.html).not.toContain("<h1");
     expect(page.requested).toEqual([]);
 
@@ -345,7 +352,7 @@ describe("a stars page from the Worker to the browser", () => {
       await waitFor(() => expect(requested).toEqual(["octodone"]));
       await waitFor(() => expect(resultNames()).toEqual(["mobile-mcp", "fzf", "asciinema"]));
       expect(statusText()).toContain("your stars");
-      expect(document.querySelector('[aria-label="Account menu for octodone"]')).not.toBeNull();
+      expect(lit(document.documentElement.outerHTML)).toEqual(["you", "you"]);
       expect(errors).toEqual([]);
     } finally {
       delete process.env.STARGREP_SIGNED_IN;
@@ -356,7 +363,8 @@ describe("a stars page from the Worker to the browser", () => {
     const page = await renderOnServer("/stefanofa?q=terminal", session, { STARGREP_SIGNED_IN: "octodone" });
     expect(page.html).toContain('aria-label="Search @stefanofa&#x27;s stars"');
     expect(page.html).toContain('aria-label="Whose stars: @stefanofa. Change"');
-    expect(page.html).toContain('aria-label="Account menu for octodone"');
+    expect(lit(page.html)).toEqual([]);
+    expect(page.html).not.toContain("only you see this");
     expect(page.html.match(/<h1[^>]*>[^<]*<\/h1>/g)).toEqual([expect.stringContaining(">@stefanofa</h1>")]);
   }, 60_000);
 

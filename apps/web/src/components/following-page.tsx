@@ -28,7 +28,6 @@ import { textLinkClass } from "./external-text-link.tsx";
 import { FollowPill } from "./follows.tsx";
 import { Page } from "./page.tsx";
 import { SignInButton } from "./sign-in-button.tsx";
-import { SiteHeader } from "./site-header.tsx";
 import { TopicChips } from "./topic-chips.tsx";
 
 export { FollowingPeoplePage, loadFollowedPeople } from "./following-people.tsx";
@@ -673,8 +672,7 @@ function SignedOut({ faces, total }: { faces: ReadonlyArray<string>; total: numb
 }
 
 function Shell({ children }: { children: ReactNode }) {
-  const { viewer, repoStars } = useLoaderData({ from: "__root__" });
-  return <Page header={<SiteHeader viewer={viewer} repoStars={repoStars} />}>{children}</Page>;
+  return <Page here="following">{children}</Page>;
 }
 
 // The stars arriving from people whose first import is still running land on their own, a few seconds apart.

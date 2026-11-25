@@ -24,7 +24,6 @@ import { formatCount, starCount } from "../lib/whose.ts";
 import { textLinkClass } from "./external-text-link.tsx";
 import { FollowAll } from "./follows.tsx";
 import { Page } from "./page.tsx";
-import { SiteHeader } from "./site-header.tsx";
 import { TopicChips } from "./topic-chips.tsx";
 
 // What the route finds for a typed topic: its page, the topic another spelling leads to, or nothing.
@@ -371,7 +370,7 @@ const builtStep = 6;
 // A GitHub topic's page: the repos synced developers star most for or about it, the apps built with it, the people who
 // star them, and topics nearby, with a search over all of its repos.
 export function TopicPage() {
-  const { viewer, repoStars } = useLoaderData({ from: "__root__" });
+  const { viewer } = useLoaderData({ from: "__root__" });
   const { topic } = useLoaderData({ from: "/topics/$topic" });
   const { q } = useSearch({ from: "/topics/$topic" });
   const { asked, retry } = useTopicSearch(topic.topic, q);
@@ -385,7 +384,7 @@ export function TopicPage() {
   };
   const { home } = topic;
   return (
-    <Page header={<SiteHeader viewer={viewer} repoStars={repoStars} />}>
+    <Page here="discover">
       <section className="flex flex-col gap-3.5 pt-1.5 sm:pt-5">
         <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
           <div className="flex min-w-0 items-baseline gap-3 sm:gap-4">
@@ -455,9 +454,8 @@ export function TopicPage() {
 
 // A topic without a page: say so, and lead to the topics that have one.
 export function TopicMissing() {
-  const { viewer, repoStars } = useLoaderData({ from: "__root__" });
   return (
-    <Page header={<SiteHeader viewer={viewer} repoStars={repoStars} />}>
+    <Page here="discover">
       <EmptyTile
         pose="unsure"
         heading="no page for this topic yet"

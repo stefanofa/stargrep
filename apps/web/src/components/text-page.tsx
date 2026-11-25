@@ -1,14 +1,11 @@
 import { Tile } from "@stargrep/ui";
-import { useLoaderData } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { Page } from "./page.tsx";
-import { SiteHeader } from "./site-header.tsx";
 
 // A page of reading, such as the privacy page, in one tile at the narrow measure.
 export function TextPage({ heading, children }: { heading: string; children: ReactNode }) {
-  const { viewer, repoStars } = useLoaderData({ from: "__root__" });
   return (
-    <Page header={<SiteHeader viewer={viewer} repoStars={repoStars} />}>
+    <Page>
       <Tile className="mx-auto flex w-full max-w-narrow flex-col gap-8 px-6 pt-tile-top pb-8 sm:px-tile-lg sm:pb-10">
         <h1 className="font-display text-3xl leading-none font-semibold tracking-snug">{heading}</h1>
         {children}

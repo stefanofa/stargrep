@@ -624,26 +624,20 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(mark()).toBe("unsure"));
   });
 
-  test("the header links to your stars, and marks the link current only on your own page", async () => {
-    await open("/?q=terminal");
-    const header = within(page().getAllByRole("banner")[0] as HTMLElement);
-    expect(header.getByRole("link", { name: "your stars" }).getAttribute("aria-current")).toBe("page");
-    expect(header.queryByRole("button", { name: "sign in" })).toBeNull();
-    expect(page().queryByRole("tablist")).toBeNull();
+  test("a visitor's home lights home and leaves sign-in to the butter tile on phones, and someone's stars light nothing", async () => {
+    const signIn = () =>
+      within(page().getAllByRole("banner")[0] as HTMLElement).getByRole("button", { name: "sign in" });
+    const bar = () => document.querySelector("[data-slot=tab-bar]") as HTMLElement;
+    server.signedIn = false;
+    server.status = status({ login: "stefanofa" });
+    await open("/", "Search @stefanofa's stars");
+    expect(within(bar()).getByRole("link", { name: "home" }).getAttribute("aria-current")).toBe("page");
+    expect(signIn().className).toContain("max-sm:hidden");
     cleanup();
     server.status = status({ login: "octosync" });
     await open("/octosync", "Search @octosync's stars");
-    expect(page().getByRole("link", { name: "your stars" }).getAttribute("aria-current")).toBeNull();
-  });
-
-  test("a visitor can sign in from the header on any stars page, and has people but no your stars link", async () => {
-    server.signedIn = false;
-    server.status = status({ login: "octosync" });
-    await open("/octosync", "Search @octosync's stars");
-    const header = within(page().getAllByRole("banner")[0] as HTMLElement);
-    expect(header.getByRole("button", { name: "sign in" })).toBeTruthy();
-    expect(header.queryByRole("link", { name: "your stars" })).toBeNull();
-    expect(header.getByRole("link", { name: "people" }).getAttribute("href")).toBe("/people");
+    expect(bar().querySelector("[aria-current]")).toBeNull();
+    expect(signIn().className).not.toContain("max-sm:hidden");
   });
 
   test("the search box's example speaks as the viewer only on their own stars", async () => {
@@ -782,7 +776,6 @@ describe("the search page in each state", () => {
       ["@simonw", "/simonw"],
       ["see everyone →", "/people"],
     ]);
-    expect(within(page().getByRole("navigation", { name: "Main" })).getByRole("link", { name: "people" })).toBeTruthy();
   });
 
   test("on the demo page an emptied search stays empty across Back and Forward", async () => {

@@ -7,11 +7,24 @@
     scrollbar-gutter: stable;
   }
 
-  /* On phones the search tile docks over the bottom of the screen, so focus scrolls a result clear of it. 11rem
-     matches the results' bottom padding. */
+  /* On phones the tab bar holds the bottom of the screen, and the search tile docks just above it, so focus scrolls a
+     result clear of both. 11rem matches the results' bottom padding. A text field's keyboard covers the bar, so while one has
+     focus on a touch screen the bar steps aside and the tile docks at the bottom as it did before the bar. */
   @media (width < 40rem) {
     html {
-      scroll-padding-bottom: 11rem;
+      --tab-bar: calc(52px + env(safe-area-inset-bottom));
+      --dock-bottom: calc(var(--tab-bar) + 8px);
+      scroll-padding-bottom: calc(11rem + var(--tab-bar));
+    }
+  }
+
+  @media (width < 40rem) and (pointer: coarse) {
+    html:has(:is(input:not([type="checkbox"], [type="radio"]), textarea):focus) {
+      --dock-bottom: max(16px, env(safe-area-inset-bottom));
+
+      & [data-slot="tab-bar"] {
+        display: none;
+      }
     }
   }
 }

@@ -151,19 +151,18 @@ test("a page that fails says so without its error, and offers a reload", async (
   }
 });
 
-test("every page's footer links topics, the source, the API, MCP, privacy, and terms", async () => {
+test("every page's footer links topics, the source, the API and MCP, privacy, and terms", async () => {
   for (const path of ["/octo", "/privacy", "/terms", "/not..valid"]) {
-    const footer = (await renderPage(path)).split("<footer")[1] ?? "";
-    const links = [...footer.matchAll(/<a [^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/g)].map(([, href, text]) => [
-      text,
+    const footer = (await renderPage(path)).split("<footer")[1]?.split("</footer>")[0] ?? "";
+    const links = [...footer.matchAll(/<a [^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/g)].map(([, href, inner]) => [
+      inner?.replace(/<[^>]*>/g, ""),
       href,
     ]);
     expect(links).toEqual([
       ["@stefanofa", "https://x.com/stefanofa"],
       ["topics", "/topics"],
-      ["source", "https://github.com/stefanofa/stargrep"],
-      ["api", "/developers#api"],
-      ["mcp", "/developers#mcp"],
+      ["source ★", "https://github.com/stefanofa/stargrep"],
+      ["api and mcp", "/developers"],
       ["privacy", "/privacy"],
       ["terms", "/terms"],
     ]);

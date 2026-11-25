@@ -12,7 +12,6 @@ import { textLinkClass } from "./external-text-link.tsx";
 import { FollowPill } from "./follows.tsx";
 import { LoginField } from "./landing-hero.tsx";
 import { Page } from "./page.tsx";
-import { SiteHeader } from "./site-header.tsx";
 
 const grid = "grid gap-gap sm:grid-cols-2 lg:grid-cols-4";
 const cardBox = "flex min-w-0 flex-col gap-4 pt-6 pr-tile-sm pb-tile-sm pl-6";
@@ -200,10 +199,10 @@ function Body({ first, signedIn }: { first: FirstPeople; signedIn: boolean }) {
 
 // Everyone on the people list, a page at a time, under the same username field as the landing.
 export function PeoplePage() {
-  const { viewer, repoStars } = useLoaderData({ from: "__root__" });
+  const { viewer } = useLoaderData({ from: "__root__" });
   const { first } = useLoaderData({ from: "/people" });
   return (
-    <Page header={<SiteHeader viewer={viewer} repoStars={repoStars} />}>
+    <Page here="discover">
       <section className="flex flex-col gap-3.5 pt-1.5 sm:pt-5">
         <h1 className="flex items-baseline gap-3 font-display text-3xl leading-10 font-semibold tracking-tight sm:text-[52px] sm:leading-[56px]">
           people
