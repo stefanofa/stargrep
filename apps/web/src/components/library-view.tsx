@@ -81,6 +81,8 @@ export function LibraryView({
   useEffect(() => {
     for (const entry of page) seen.current.add(`${entry.owner}/${entry.name}`);
   });
+  // An import holds the place of the stars it hasn't brought yet.
+  if (arriving !== undefined && entries.length === 0) return <LibraryPlaceholder view={view} />;
   return (
     <>
       {Array.from(groups, ([heading, members]) => {

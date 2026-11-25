@@ -270,9 +270,9 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
         : libraryReady
           ? personStars(entries, at)
           : { kind: "loading" };
-  // The count is said once, on the stars tab.
+  // The count is said once, on the stars tab. While the stars import, the rail says how many have arrived instead.
   const starsCount =
-    trouble !== undefined ? undefined : libraryReady ? (
+    trouble !== undefined || stage.name === "importing" ? undefined : libraryReady ? (
       formatCount(entries.length)
     ) : (
       <Skeleton className="inline-block h-[0.8em] w-8 align-baseline" />

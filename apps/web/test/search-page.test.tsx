@@ -361,6 +361,7 @@ describe("the search page in each state", () => {
     expect(page().getByRole("heading", { level: 1, name: "@junodev" }).parentElement?.textContent).toContain(
       "stars arriving",
     );
+    expect(starsTab()).toBe("stars");
     server.repos = [...server.repos, repo(7, "charmbracelet", "bubbletea", "A TUI framework.")];
     await poll();
     await waitFor(() => expect(bar.getAttribute("aria-valuetext")).toBe("7 of 10 imported"));
@@ -1083,8 +1084,9 @@ describe("the search page in each state", () => {
     expect(strip()).toBe("found 3!");
   });
 
-  test("someone else's stars say whose they are", async () => {
+  test("someone else's stars say whose they are, and hold the place of stars still on their way", async () => {
     server.signedIn = false;
+    server.repos = [];
     server.status = status({
       login: "octosync",
       state: "queued",
@@ -1096,6 +1098,7 @@ describe("the search page in each state", () => {
     expect(await page().findByRole("progressbar", { name: "importing @octosync's stars" })).toBeTruthy();
     const person = page().getByRole("heading", { level: 1, name: "@octosync" }).parentElement;
     expect(person?.textContent).toContain("stars arriving");
+    await waitFor(() => expect(document.querySelectorAll("ol[aria-busy=true] > li").length).toBe(8));
     expect(page().queryByRole("heading", { name: "is this you? skip the wait" })).toBeNull();
     expect(page().queryByRole("list", { name: "Example searches" })).toBeNull();
   });
