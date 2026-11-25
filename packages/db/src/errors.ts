@@ -136,6 +136,7 @@ export const Operation = Schema.Literals([
   "topics.list",
   "topics.related",
   "topics.people",
+  "topics.devs",
   "topics.page",
   "topics.size",
   "topics.resolve",

@@ -182,11 +182,13 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatab
       expect(refreshed.listed).toBe(2);
       expect(page.repos).toBe(42);
       expect(page.ranked).toBe(34);
+      // Developers 1 to 5 star at least 3 of its core repos, and developer 6 stars one.
+      expect(page.devs).toBe(5);
       expect(Option.map(page.home, ({ repo }) => repo.id)).toEqual(Option.some(home));
       expect(ids(page.core)).toEqual([2, 1, ...range(3, 30), facetCore, kindBeatsFacet]);
       expect(page.core.slice(0, 2).map(({ devs }) => devs)).toEqual([6, 5]);
       expect(ids(page.built)).toEqual(built);
-      expect(page.related).toEqual([{ topic: "react", repos: 32, ranked: 32, home: null }]);
+      expect(page.related).toEqual([{ topic: "react", repos: 32, ranked: 32, devs: 5, home: null }]);
       expect(page.people.map((person): [string, number, number] => [person.login, person.repos, person.stars])).toEqual(
         [
           ["dev-4", 32, 33],
@@ -210,8 +212,8 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatab
       expect(yield* db.topics.list({ q: "", offset: 0, limit: 10 })).toEqual({
         topics: [
           // A topic's home repo comes with its owner and icon, which may stand for the topic.
-          { topic: "nextjs", repos: 42, ranked: 34, home: { owner: "owner", icon: homeIcon } },
-          { topic: "react", repos: 32, ranked: 32, home: null },
+          { topic: "nextjs", repos: 42, ranked: 34, devs: 5, home: { owner: "owner", icon: homeIcon } },
+          { topic: "react", repos: 32, ranked: 32, devs: 5, home: null },
         ],
         total: 2,
       });

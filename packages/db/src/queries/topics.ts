@@ -22,11 +22,13 @@ import {
 import { Repo, RepoIcon, repoColumns } from "./repos.ts";
 
 // Which topics get a page and what each page keeps. A topic is read once it tags `considered` repos, and gets a page
-// once `gate` of its core repos have `devs` synced developers who star them, the count it ranks by.
+// once `gate` of its core repos have `devs` synced developers who star them, the count it ranks by. A synced developer
+// is into a topic once they star `into` of its core repos.
 export const topicRule = {
   considered: 30,
   gate: 20,
   devs: 3,
+  into: 3,
   core: 48,
   built: 12,
   builtAtLeast: 6,
@@ -117,6 +119,7 @@ const TopicCount = Schema.Struct({
   topic: Schema.String,
   repos: Schema.Int,
   ranked: Schema.Int,
+  devs: Schema.Int,
   home: Schema.NullOr(TopicHome),
 });
 export type TopicCount = typeof TopicCount.Type;
@@ -125,6 +128,7 @@ const TopicRow = Schema.Struct({
   topic: Schema.String,
   repos: Schema.Int,
   ranked: Schema.Int,
+  devs: Schema.Int,
   home: Schema.NullOr(Schema.Finite),
   core: Schema.Array(Schema.Finite),
   built: Schema.Array(Schema.Finite),
@@ -152,6 +156,7 @@ export interface TopicPage {
   readonly topic: string;
   readonly repos: number;
   readonly ranked: number;
+  readonly devs: number;
   readonly home: Option.Option<TopicRepo>;
   readonly core: ReadonlyArray<TopicRepo>;
   readonly built: ReadonlyArray<TopicRepo>;
@@ -376,20 +381,23 @@ const list = sql`
 const listedCore = sql`
   select m.topic, m.repo_id from ${topicRepos} m join ${topics} t on t.topic = m.topic where m.role = 'core'`;
 
-// Sets a jsonb column of every listed topic from a query of (topic, value) rows, empty for a topic it has no row for.
-const setEach = (column: string, ranked: SQL) => sql`
+// Sets a column of every listed topic from a query of (topic, value) rows, `none` for a topic it has no row for.
+const setEach = (column: string, none: SQL, ranked: SQL) => sql`
   with ranked as (${ranked}),
   updated as (
-    update ${topics} t set ${sql.identifier(column)} = coalesce(r.value, '[]'::jsonb)
+    update ${topics} t set ${sql.identifier(column)} = coalesce(r.value, ${none})
     from ${topics} l left join ranked r on r.topic = l.topic
-    where t.topic = l.topic and t.${sql.identifier(column)} is distinct from coalesce(r.value, '[]'::jsonb)
+    where t.topic = l.topic and t.${sql.identifier(column)} is distinct from coalesce(r.value, ${none})
     returning 1
   )
   select count(*)::int as count from updated`;
 
+const noList = sql`'[]'::jsonb`;
+
 // The gated topics whose core repos overlap each one's most, by the cosine of the two sets.
 const relate = setEach(
   "related",
+  noList,
   sql`
     with core as (${listedCore}),
     sizes as (select topic, count(*) as n from core group by topic),
@@ -411,6 +419,7 @@ const relate = setEach(
 // stars everything does not lead. A topic shows them only when enough qualify.
 const findPeople = setEach(
   "people",
+  noList,
   sql`
     with core as (${listedCore}),
     counted as (
@@ -425,6 +434,21 @@ const findPeople = setEach(
     )
     select topic, jsonb_agg(jsonb_build_array(account_id, n) order by place) as value from placed
     where place <= ${topicRule.people} and qualified >= ${topicRule.peopleAtLeast} group by topic`,
+);
+
+// The synced developers into each listed topic. Every current star of a core repo is a row here, about 18 million on
+// prod in 2026-11, so this reads stars whole: 17 s on prod, under the long statement limit.
+const countDevs = setEach(
+  "devs",
+  sql`0`,
+  sql`
+    with core as (${listedCore}),
+    fans as (
+      select c.topic from core c join ${stars} s on s.repo_id = c.repo_id
+      where s.unstarred_at is null
+      group by c.topic, s.account_id having count(*) >= ${topicRule.into}
+    )
+    select topic, count(*)::int as value from fans group by topic`,
 );
 
 // Logs how long a step of the refresh took, so a step nearing the long statement limit shows before it fails.
@@ -513,6 +537,7 @@ export const make = Effect.gen(function* () {
       const listed = yield* step("listed", long("topics.list", list));
       yield* step("related", long("topics.related", relate));
       yield* step("people", long("topics.people", findPeople));
+      yield* step("devs", long("topics.devs", countDevs));
       return { considered: names.length, members: read, listed };
     }),
 
@@ -521,10 +546,11 @@ export const make = Effect.gen(function* () {
         "topics.page",
         decodeTopicRows,
         sql`
-          select t.topic, t.repos, t.ranked, t.home::float8 as home, t.core, t.built,
+          select t.topic, t.repos, t.ranked, t.devs, t.home::float8 as home, t.core, t.built,
             coalesce((
               select jsonb_agg(
-                jsonb_build_object('topic', o.topic, 'repos', o.repos, 'ranked', o.ranked, 'home', ${homeObject})
+                jsonb_build_object('topic', o.topic, 'repos', o.repos, 'ranked', o.ranked, 'devs', o.devs,
+                  'home', ${homeObject})
                 order by r.place)
               from jsonb_array_elements_text(t.related) with ordinality as r (topic, place)
               join ${topics} o on o.topic = r.topic
@@ -556,6 +582,7 @@ export const make = Effect.gen(function* () {
         topic: row.topic,
         repos: row.repos,
         ranked: row.ranked,
+        devs: row.devs,
         home: Option.fromNullishOr(row.home === null ? undefined : found.get(row.home)),
         core: pick(row.core),
         built: pick(row.built),
@@ -580,9 +607,9 @@ export const make = Effect.gen(function* () {
         "topics.list",
         decodeTopicCounts,
         sql`
-          select p.topic, p.repos, p.ranked, ${homeObject} as home, p.total
+          select p.topic, p.repos, p.ranked, p.devs, ${homeObject} as home, p.total
           from (
-            select topic, repos, ranked, home, ${text === "" ? sql`false` : sql`topic like ${`${text}%`}`} as starts,
+            select topic, repos, ranked, devs, home, ${text === "" ? sql`false` : sql`topic like ${`${text}%`}`} as starts,
               count(*) over ()::int as total
             from ${topics}
             where ${text === "" ? sql`true` : sql`topic like ${`%${text}%`}`}
