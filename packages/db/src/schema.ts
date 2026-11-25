@@ -300,7 +300,6 @@ export const repos = pgTable(
     iconSize: integer("icon_size"),
     // Where each icon check was recorded before repo_icon_checks. Only `backfill-icon-checks` reads it, and a later
     // migration drops it.
-    iconCheckedAt: time("icon_checked_at"),
     ownerType: accountType("owner_type"),
     ownerAvatarUrl: text("owner_avatar_url"),
     // SHA-256 of the prompt inputs as saveFacts last saw them, and of the inputs the saved summary was made from.
