@@ -5,10 +5,10 @@ import { loadPage, pageHead } from "../lib/load-page.ts";
 import { validateParams } from "../lib/search-params.ts";
 import { guardHome, guardLogin } from "../lib/stars-route.ts";
 
-// The viewer's or the demo's stars at /, and anyone's at /{login}.
+// The landing or the viewer's own stars at /, and anyone's stars at /{login}.
 export const Route = createFileRoute("/{-$login}")({
-  // The page hydrates on the server's HTML without waiting for a route chunk, and lib/engine.ts splits the engine
-  // off on its own terms, so the router splits nothing here.
+  // The page hydrates on the server's HTML without waiting for a route chunk, and lib/engine.ts and lib/landing.ts split
+  // their chunks off on their own terms, so the router splits nothing here.
   codeSplitGroupings: [],
   validateSearch: validateParams,
   beforeLoad: ({ params: { login }, search, location }) => {
@@ -17,8 +17,7 @@ export const Route = createFileRoute("/{-$login}")({
   },
   loader: async ({ params: { login }, parentMatchPromise }) =>
     loadPage({ login }, (await parentMatchPromise).loaderData),
-  head: ({ loaderData, params, match }) =>
-    pageHead(loaderData, params.login === undefined, { pathname: match.pathname, query: match.search.q }),
+  head: ({ loaderData, match }) => pageHead(loaderData, { pathname: match.pathname, query: match.search.q }),
   component: function Stars() {
     return <StarsPage data={Route.useLoaderData()} error={Route.useSearch().error} />;
   },

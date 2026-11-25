@@ -16,6 +16,10 @@ const visitor = async (): Promise<Session> => ({
   site: { origin: "https://stargrep.com", indexable: true, engine: [] },
 });
 let loadSession = visitor;
+// No API answers here, as for a page that is offline, so the landing paints its example without an answer.
+const rpc = await import("../src/lib/rpc.ts");
+const offline = new Proxy({}, { get: () => () => Promise.reject(new Error("no API in this test")) });
+mock.module("../src/lib/rpc.ts", () => ({ ...rpc, api: () => offline }));
 const loads = await import("../src/lib/load-page.ts");
 mock.module("../src/lib/load-page.ts", () => ({ ...loads, loadSession: () => loadSession() }));
 const { routeTree } = await import("../src/routeTree.gen.ts");
@@ -119,6 +123,7 @@ test("a stars page preloads the engine's chunks with its HTML, and a page withou
     );
   try {
     expect(preloads(await renderPage("/octo"))).toEqual(engine);
+    // The landing renders in the engine too.
     expect(preloads(await renderPage("/"))).toEqual(engine);
     expect(preloads(await renderPage("/not.a.login"))).toEqual([]);
   } finally {

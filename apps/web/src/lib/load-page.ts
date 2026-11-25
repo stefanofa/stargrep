@@ -2,7 +2,7 @@ import { createIsomorphicFn, createServerOnlyFn } from "@tanstack/react-start";
 import { serverLoads } from "../server/page-data.ts";
 import { whoseOf } from "./audience.ts";
 import { loadEngine } from "./engine.ts";
-import type { PageData, PageRequest, Session } from "./page-data.ts";
+import type { PageRequest, Session, StarsRouteData } from "./page-data.ts";
 import {
   accountImage,
   canonicalLinks,
@@ -12,7 +12,6 @@ import {
   siteDescription,
   siteTitle,
 } from "./preview.ts";
-import { revealScript } from "./reveal-script.ts";
 import { libraryRevision } from "./sync-status.ts";
 import { theirs } from "./whose.ts";
 
@@ -28,46 +27,43 @@ const readPage = createIsomorphicFn()
   })
   .client(async (request: PageRequest, session: Session) => (await loadEngine()).pageFor(request, session));
 
-export const loadPage = (request: PageRequest, session: Session | undefined): Promise<PageData> => {
+// / is the viewer's own stars once they sign in, and the landing until then.
+export const loadPage = (
+  { login }: { readonly login?: string | undefined },
+  session: Session | undefined,
+): Promise<StarsRouteData> => {
   if (session === undefined) throw new Error("no session");
-  return readPage(request, session);
+  const whose = login ?? session.viewer?.login;
+  return whose === undefined
+    ? loadEngine().then((engine) => engine.landingFor(session))
+    : readPage({ login: whose }, session);
 };
 
 // A stars page is titled by whose stars it shows and what it searches, so tabs, history and link previews tell pages
-// apart. The home page a visitor lands on keeps the site's own title. The reveal types the demo query once per visit, on a
-// page the server painted with its first answer for that query, and never over a shared link's own query. Its script
-// runs in the head before the first paint, so it renders on that page alone.
+// apart. The landing keeps the site's own title and card.
 export const pageHead = (
-  loaderData: PageData | undefined,
-  home: boolean,
+  loaderData: StarsRouteData | undefined,
   { pathname, query }: { readonly pathname: string; readonly query: string | undefined },
 ) => {
   if (loaderData === undefined) return {};
+  if (loaderData.kind === "landing")
+    return {
+      meta: previewMeta(loaderData.site, { title: siteTitle, description: siteDescription, path: pathname }),
+      links: [...canonicalLinks(loaderData.site, pathname), ...engineLinks(loaderData.site)],
+    };
   const path = pagePath(pathname, query);
-  const landing = home && loaderData.audience.by !== "owner";
   const whose = whoseOf(loaderData.audience);
   return {
     meta: previewMeta(loaderData.site, {
-      title: landing
-        ? siteTitle
-        : query
-          ? `"${query}" in ${theirs(whose)} · ${siteTitle}`
-          : `${theirs(whose)} · ${siteTitle}`,
-      description:
-        landing || whose.own ? siteDescription : `Search @${whose.login}'s starred GitHub repos in plain words.`,
+      title: query ? `"${query}" in ${theirs(whose)} · ${siteTitle}` : `${theirs(whose)} · ${siteTitle}`,
+      description: whose.own ? siteDescription : `Search @${whose.login}'s starred GitHub repos in plain words.`,
       path,
-      image: landing
-        ? undefined
-        : accountImage(
-            loaderData.audience.owner.login,
-            loaderData.sync === null ? null : libraryRevision(loaderData.sync),
-            query,
-          ),
+      image: accountImage(
+        loaderData.audience.owner.login,
+        loaderData.sync === null ? null : libraryRevision(loaderData.sync),
+        query,
+      ),
     }),
     links: [...canonicalLinks(loaderData.site, path), ...engineLinks(loaderData.site)],
-    scripts:
-      loaderData.first != null && loaderData.first.query === loaderData.defaultQuery
-        ? [{ children: revealScript }]
-        : [],
   };
 };

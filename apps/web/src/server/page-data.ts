@@ -1,4 +1,3 @@
-import { loginKey } from "@stargrep/github/login";
 import { defaultParseSearch, isNotFound, isRedirect } from "@tanstack/react-router";
 import { getRequest, setResponseHeader, setResponseStatus } from "@tanstack/react-start/server";
 import * as Duration from "effect/Duration";
@@ -24,11 +23,8 @@ import { validateParams } from "../lib/search-params.ts";
 import { stageOf } from "../lib/search-state.ts";
 import { allStars, findStar } from "../lib/stars-pages.ts";
 import { storedView } from "../lib/stored-view.ts";
-import { libraryRevision } from "../lib/sync-status.ts";
 import { rememberedRefusal } from "../lib/trouble.ts";
 import type { Whose } from "../lib/whose.ts";
-import { type Computed, cachedFirstAnswer, firstAnswerKey } from "./first-answers.ts";
-import { inProcess } from "./in-process.ts";
 import { indexable } from "./robots.ts";
 
 const hasSession = (request: Request) =>
@@ -82,42 +78,6 @@ const firstView = (
   return { query, at, sync, hits, view };
 };
 
-// The search answer and when the API stored it, which bounds how long a page built from it stays fresh.
-const searched = async (login: string, query: string) => {
-  let storedAt: number | undefined;
-  const client = inProcess((response) => {
-    const at = Number(response.headers.get("x-answer-stored-at"));
-    if (Number.isSafeInteger(at) && at > 0) storedAt = at;
-  });
-  const answer = await client.search({ scope: { kind: "stars", login }, q: query });
-  return { answer, searchedAt: storedAt ?? now() };
-};
-
-// The demo landing's own query is the one answer the server searches for, so the model work an HTML request can cause
-// is bounded to it, and it is cached. The API module binds Cloudflare's env, which only the Worker has, so it loads with
-// the first page that needs it.
-const demoAnswer = async (request: Request, client: Client, sync: SyncStatus, asking: Asking) => {
-  const { answers, waitUntil } = await import("./app.ts");
-  const { login, query, sort } = asking;
-  const compute = async (): Promise<Computed> => {
-    const [repos, { answer, searchedAt }] = await Promise.all([allStars(client, login), searched(login, query)]);
-    return {
-      first: firstView(repos, sync, asking, { results: answer.results, stale: false }),
-      searchedAt,
-      keep: answer.planSource !== "fallback",
-    };
-  };
-  const build = import.meta.env.STARGREP_BUILD ?? "source";
-  const { first, outcome } = await cachedFirstAnswer({
-    store: answers(request),
-    key: firstAnswerKey(build, loginKey(login), libraryRevision(sync), normalize(query), sort ?? "best"),
-    compute,
-    background: waitUntil,
-  });
-  setResponseHeader("x-answer-cache", outcome);
-  return first;
-};
-
 // A shared link's first answer and opened repo read the owner's whole library, 1,000 stars a page. Read one page after
 // another, a cold 15,000 stars kept a page from its first byte for 38 s, longer than link previews and crawlers wait.
 // So the server waits this long at most, and past it paints the page as a navigation in the browser does, which then
@@ -127,8 +87,8 @@ const libraryWait = Duration.seconds(2);
 const withinLibraryWait = <A>(read: Promise<A>) =>
   Effect.runPromise(Effect.promise(() => read).pipe(Effect.timeoutOption(libraryWait), Effect.map(Option.getOrNull)));
 
-// Any other query, a shared link's or a crawler's, is never searched on the server, so an HTML request spends no model
-// work. The page paints the answer by meaning when the API's answer cache already holds one, and keyword matches alone
+// A query, a shared link's or a crawler's, is never searched on the server, so an HTML request for a page spends no
+// model work. The page paints the answer by meaning when the API's answer cache already holds one, and keyword matches alone
 // when it doesn't. The browser then asks for the search by meaning through the API, unless the answer was fresh.
 const sharedAnswer = async (
   request: Request,
@@ -177,7 +137,7 @@ const loadPage = async ({ login }: PageRequest, { viewer, config, repoStars, sit
   // The router's own parse, so a filter such as archived=true reads here as it does in the browser.
   const search = validateParams(defaultParseSearch(new URL(request.url).search));
   const { sort, repo } = search;
-  const { audience, query, defaultQuery } = askedPage(viewer, config, { login, ...search });
+  const { audience, query } = askedPage(viewer, { login, ...search });
   const owner = audience.owner.login;
   // The server reads the sync first: it names the library revision a cached answer must match, and only a library an
   // import has written gets a first answer or a panel. Crawlers and link previews render pages too, so the server paints
@@ -193,10 +153,7 @@ const loadPage = async ({ login }: PageRequest, { viewer, config, repoStars, sit
     whose: whoseOf(audience),
     starred: (status) => starredOf(audience, status),
   };
-  const answer = (library: SyncStatus) =>
-    audience.owner.demo && query === config.demoQuery
-      ? demoAnswer(request, client, library, asking)
-      : withinLibraryWait(sharedAnswer(request, config, client, library, asking));
+  const answer = (library: SyncStatus) => withinLibraryWait(sharedAnswer(request, config, client, library, asking));
   const [first, opened] = await Promise.all([
     imported === null || query === "" ? null : answer(imported).catch(() => null),
     imported === null || repo === undefined ? null : withinLibraryWait(findStar(client, owner, repo)).catch(() => null),
@@ -207,12 +164,12 @@ const loadPage = async ({ login }: PageRequest, { viewer, config, repoStars, sit
   if (refusal === "missing") setResponseStatus(404);
   const view = storedView(cookies) ?? null;
   return {
+    kind: "stars",
     audience,
     repoStars,
     site,
     config,
     query,
-    defaultQuery,
     first,
     sync,
     refusal,
