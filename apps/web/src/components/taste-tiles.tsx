@@ -158,7 +158,15 @@ export function TopicsTile({ login, taste, words }: { login: string; taste: Tast
 }
 
 // The people on the people list whose stars overlap the most, each a link to their stars.
-export function AlikeTile({ people, words }: { people: ReadonlyArray<SimilarPerson>; words: TasteWords }) {
+export function AlikeTile({
+  login,
+  people,
+  words,
+}: {
+  login: string;
+  people: ReadonlyArray<SimilarPerson>;
+  words: TasteWords;
+}) {
   return (
     <Tile className="flex flex-col gap-3 p-5 sm:gap-3.5 sm:p-6">
       <h2 className={heading}>{words.alike}</h2>
@@ -184,8 +192,12 @@ export function AlikeTile({ people, words }: { people: ReadonlyArray<SimilarPers
           </li>
         ))}
       </ul>
-      <Link to="/people" className={cn(textLinkClass, "mt-auto self-start font-sans text-meta font-medium")}>
-        more people →
+      <Link
+        to="/@{$login}/people"
+        params={{ login }}
+        className={cn(textLinkClass, "mt-auto self-start font-sans text-meta font-medium")}
+      >
+        all in the people tab →
       </Link>
     </Tile>
   );

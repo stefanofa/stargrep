@@ -180,6 +180,30 @@ const db = makeDb({
     stars: () => Effect.succeed([]),
     repos: () => Effect.succeed([]),
   },
+  // Everyone's stars are like octodone's, the one person on the list, whose stars mostly carry mcp.
+  people: {
+    like: (_accountId, _limit, topic) =>
+      Effect.succeed(
+        Option.getOrElse(
+          Option.map(topic, (asked) => asked === "mcp"),
+          () => true,
+        )
+          ? [
+              {
+                accountId: GitHubAccountId.make(13),
+                login: Login.make("octodone"),
+                avatarUrl: null,
+                curated: false,
+                stars: demoRepos.length,
+                lastStarredAt: at,
+                languages: [{ language: "TypeScript", share: 1 }],
+                topics: ["mcp"],
+                shared: 3,
+              },
+            ]
+          : [],
+      ),
+  },
   accounts: {
     byLogin: (login: Login) => Effect.succeed(accountOf(login)),
     claimedBy: (userId) =>

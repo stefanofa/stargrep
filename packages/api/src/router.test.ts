@@ -730,10 +730,10 @@ describe("people", () => {
 });
 
 describe("similarPeople", () => {
-  const like = (asked: Array<readonly [GitHubAccountId, number]>) => ({
-    like: (accountId: GitHubAccountId, limit: number) =>
+  const like = (asked: Array<readonly [GitHubAccountId, number, Option.Option<string>]>) => ({
+    like: (accountId: GitHubAccountId, limit: number, topic: Option.Option<string>) =>
       Effect.sync(() => {
-        asked.push([accountId, limit]);
+        asked.push([accountId, limit, topic]);
         return [
           {
             accountId: GitHubAccountId.make(11),
@@ -750,11 +750,11 @@ describe("similarPeople", () => {
       }),
   });
 
-  test("answers the people most like a login, kept for the next asker", async () => {
-    const asked: Array<readonly [GitHubAccountId, number]> = [];
+  test("answers the people most like a login, on a topic or any, kept for the next asker", async () => {
+    const asked: Array<readonly [GitHubAccountId, number, Option.Option<string>]> = [];
     const limits: Array<RateLimitKind> = [];
     const memory = AnswerCache.memory();
-    const ask = async () => {
+    const ask = async (topic?: string) => {
       const resHeaders = new Headers();
       const context: ApiContext = {
         ...contextFor(
@@ -764,7 +764,10 @@ describe("similarPeople", () => {
         answerCache: memory.cache,
         resHeaders,
       };
-      const answer = await createRouterClient(router, { context }).similarPeople({ login: "ada" });
+      const answer = await createRouterClient(router, { context }).similarPeople({
+        login: "ada",
+        ...(topic === undefined ? {} : { topic }),
+      });
       return [answer, resHeaders.get("x-answer-cache"), resHeaders.get("cache-control")];
     };
     const answer = {
@@ -783,10 +786,14 @@ describe("similarPeople", () => {
     };
     expect(await ask()).toEqual([answer, "miss", "public, max-age=300"]);
     expect(await ask()).toEqual([answer, "hit", "public, max-age=300"]);
+    expect(await ask("rust")).toEqual([answer, "miss", "public, max-age=300"]);
     expect([asked, limits, [...memory.entries.keys()]]).toEqual([
-      [[ada.account.id, 3]],
-      ["search"],
-      ["similar-people/ada/3"],
+      [
+        [ada.account.id, 3, Option.none()],
+        [ada.account.id, 3, Option.some("rust")],
+      ],
+      ["search", "search"],
+      ["similar-people/ada/3/", "similar-people/ada/3/rust"],
     ]);
   });
 

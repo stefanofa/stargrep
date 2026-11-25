@@ -77,6 +77,8 @@ interface ClientEvents {
   // A person's page or a topic's page shared through the phone's share sheet, or its link copied.
   readonly person_shared: { readonly via: "sheet" | "link" };
   readonly topic_shared: { readonly via: "sheet" | "link" };
+  // A face in "same question in" under a search's answer, from 1, which asks that person the same words.
+  readonly same_question_opened: { readonly position: number };
 }
 
 export type ClientEvent = keyof ClientEvents;

@@ -89,10 +89,11 @@ export interface Queries {
   ) => Effect.Effect<Refreshed, DbQueryFailed | DbRowInvalid>;
   readonly page: (query: PeopleQuery) => Effect.Effect<PeoplePage, DbQueryFailed | DbRowInvalid>;
   // The people who share the most stars with the account, for their size, each with the count. The account is left
-  // out, and so is anyone it shares none with.
+  // out, and so is anyone it shares none with. A topic keeps only the people whose card shows it.
   readonly like: (
     accountId: GitHubAccountId,
     limit: number,
+    topic: Option.Option<string>,
   ) => Effect.Effect<ReadonlyArray<Liked>, DbQueryFailed | DbRowInvalid>;
   // The listed people who star the repo now, curated first, then most followed. The account is left out, so a person's
   // own page doesn't name them.
@@ -123,6 +124,13 @@ const personColumns = (shared: SQL) => sql`
 // Shared over the square root of the person's stars, so a person with thousands of stars doesn't rank first by volume.
 // The other account's own count would divide every row alike, so it is left out.
 const likeness = sql`s.n / sqrt(p.stars)`;
+
+// Keeps the people whose card shows the topic, or everyone without one.
+const shows = (topic: Option.Option<string>) =>
+  Option.match(topic, {
+    onNone: () => sql`true`,
+    onSome: (shown) => sql`p.topics @> jsonb_build_array(${shown}::text)`,
+  });
 
 export const make = Effect.gen(function* () {
   const { run, withLongTimeout } = yield* Postgres.Postgres;
@@ -273,10 +281,7 @@ export const make = Effect.gen(function* () {
           where: sql`p.account_id <> ${id}`,
         }),
       });
-      const kept = Option.match(topic, {
-        onNone: () => listed.where,
-        onSome: (shown) => sql`${listed.where} and p.topics @> jsonb_build_array(${shown}::text)`,
-      });
+      const kept = sql`${listed.where} and ${shows(topic)}`;
       const [found, [counted], topics] = yield* Effect.all(
         [
           query(
@@ -307,7 +312,7 @@ export const make = Effect.gen(function* () {
       return { people: found, total: counted?.count ?? 0, topics };
     }),
 
-    like: (accountId, limit) =>
+    like: (accountId, limit, topic) =>
       query(
         "people.like",
         decodeLiked,
@@ -316,7 +321,7 @@ export const make = Effect.gen(function* () {
           from (${sharedWith(accountId)}) s
           join ${people} p on p.account_id = s.account_id
           join ${githubAccounts} a on a.id = p.account_id
-          where p.account_id <> ${accountId}
+          where p.account_id <> ${accountId} and ${shows(topic)}
           order by ${likeness} desc, s.n desc, p.account_id
           limit ${limit}`,
       ),

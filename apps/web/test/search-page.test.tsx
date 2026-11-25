@@ -19,6 +19,7 @@ import type {
   Client,
   LibraryRepo,
   SearchResult,
+  SimilarPerson,
   SimilarRepo,
   SimilarRepos,
   SyncStatus,
@@ -49,6 +50,9 @@ interface Server {
   similarAsked: Array<number>;
   // Every topic the page asked whether it has a page.
   topicsAsked: Array<string>;
+  // The people with stars like the page's login, and every login the page asked about.
+  alike: Array<SimilarPerson>;
+  alikeAsked: Array<string>;
 }
 
 let server: Server;
@@ -99,8 +103,9 @@ const api = (): Client => ({
   taste: async () => {
     throw new Error("Unexpected taste call");
   },
-  similarPeople: async () => {
-    throw new Error("Unexpected similarPeople call");
+  similarPeople: async ({ login }: { login: string }) => {
+    server.alikeAsked.push(login);
+    return { people: server.alike };
   },
   monthlyPicks: async () => {
     throw new Error("Unexpected monthlyPicks call");
@@ -247,6 +252,8 @@ beforeEach(() => {
     similar: () => nothingNear,
     similarAsked: [],
     topicsAsked: [],
+    alike: [],
+    alikeAsked: [],
   };
   library = real.makeLibrary(() =>
     real.onePage(
@@ -1030,6 +1037,7 @@ describe("the search page in each state", () => {
       expect(tabs.map((tab) => [tab.textContent, tab.getAttribute("aria-current"), tab.getAttribute("href")])).toEqual([
         ["stars6", "page", "/octodone"],
         ["taste", null, "/@octodone/taste"],
+        ["people", null, "/@octodone/people"],
       ]);
       expect(
         within(person)
@@ -1069,6 +1077,43 @@ describe("the search page in each state", () => {
     ).toBe(true);
     await waitFor(() => expect(captured).toContainEqual(["person_shared", { via: "link" }]));
     await waitFor(() => expect(page().getByRole("button", { name: "share" })).toBeTruthy(), { timeout: 3000 });
+  });
+
+  test("an answer offers the same words on the stars of people like this person, and browsing offers nothing", async () => {
+    server.signedIn = false;
+    server.status = status({ login: "octoask" });
+    const alike = (login: string, topics: Array<string>): SimilarPerson => ({
+      login,
+      avatarUrl: null,
+      curated: false,
+      stars: 100,
+      lastStarredAt: "2026-11-01T00:00:00.000Z",
+      languages: [],
+      topics,
+      shared: 12,
+    });
+    server.alike = [
+      alike("orhun", ["rust", "tui"]),
+      alike("antfu", []),
+      ...["a", "b", "c"].map((login) => alike(login, [])),
+    ];
+    await open("/octoask", "Search @octoask's stars");
+    expect(server.alikeAsked).toEqual([]);
+    cleanup();
+    server.search = () => [hit(server.repos[0] as Repo)];
+    await open("/octoask?q=rust tui", "Search @octoask's stars");
+    const row = (await page().findByRole("heading", { name: "same question in" })).parentElement as HTMLElement;
+    expect(
+      within(row)
+        .getAllByRole("link")
+        .map((link) => [shownAt(link, "desktop"), link.getAttribute("href")]),
+    ).toEqual([
+      ["@orhunmostly rust", "/@orhun?q=rust+tui"],
+      ["@antfu", "/@antfu?q=rust+tui"],
+      ["@a", "/@a?q=rust+tui"],
+      ["@b", "/@b?q=rust+tui"],
+    ]);
+    expect(server.alikeAsked).toEqual(["octoask"]);
   });
 
   test("the chips count the answer on screen and filter it, and the answer keeps its count", async () => {

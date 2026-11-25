@@ -565,6 +565,9 @@ export const SimilarPeopleInput = Schema.Struct({
   limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: maxSimilarPeople }))
     .annotate({ description: "How many people to return, at most. 3 when left out." })
     .pipe(Schema.withDecodingDefaultKey(Effect.succeed(3))),
+  topic: Schema.optionalKey(
+    TopicName.annotate({ description: "Keeps only the people whose stars mostly carry this GitHub topic." }),
+  ),
 });
 
 export const SimilarPeople = Schema.Struct({

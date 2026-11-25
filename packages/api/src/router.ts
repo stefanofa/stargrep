@@ -523,7 +523,7 @@ const similarPeople = Effect.fnUntraced(function* (input: typeof SimilarPeopleIn
   const db = yield* Db.Db;
   const account = yield* db.accounts.byLogin(input.login);
   if (Option.isNone(account)) return yield* new Search.AccountNotSynced({ login: input.login });
-  const found = yield* db.people.like(account.value.id, input.limit);
+  const found = yield* db.people.like(account.value.id, input.limit, Option.fromUndefinedOr(input.topic));
   return { people: found.map((person) => ({ ...personFields(person), shared: person.shared })) };
 });
 
@@ -794,7 +794,7 @@ const similarCache = answerCache(similarAnswers, (input: typeof SimilarInput.Typ
 const similarPeopleCache = answerCache(
   similarPeopleAnswers,
   (input: typeof SimilarPeopleInput.Type, _context: ApiContext) =>
-    Option.some(`similar-people/${loginKey(input.login)}/${input.limit}`),
+    Option.some(`similar-people/${loginKey(input.login)}/${input.limit}/${input.topic ?? ""}`),
 );
 
 const tasteCache = answerCache(tasteAnswers, (input: typeof SyncInput.Type, _context: ApiContext) =>
