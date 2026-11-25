@@ -514,6 +514,17 @@ describe("the taste page", () => {
     for (const href of ["/stefanofa?starred=2026-10", "/stefanofa?starred=2026-11", "/stefanofa?lang=TypeScript"])
       expect(page.html).toContain(`href="${href}"`);
     expect(page.html).toContain('href="/stefanofa?topic=mcp"');
+    // The person's tabs paint with taste current, and stars leads back to the stars page with their count.
+    const tabs = page.html.match(/<nav aria-label="@stefanofa&#x27;s page".*?<\/nav>/)?.[0] ?? "";
+    expect(
+      [...tabs.matchAll(/<a [^>]*>/g)].map(([link]) => [
+        link.match(/href="([^"]*)"/)?.[1],
+        link.includes("aria-current"),
+      ]),
+    ).toEqual([
+      ["/stefanofa", false],
+      ["/@stefanofa/taste", true],
+    ]);
     const unread = await renderOnServer("/@octonever/taste");
     expect(unread.html).toContain('href="/octonever"');
     expect(unread.html).not.toContain("stars per month");

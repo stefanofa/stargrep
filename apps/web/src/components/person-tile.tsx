@@ -15,6 +15,7 @@ const personTabs = [
     link: (login: string, own: boolean): LinkProps =>
       own ? { to: "/{-$login}", params: { login: undefined } } : loginPage(login),
   },
+  { name: "taste", link: (login: string): LinkProps => ({ to: "/@{$login}/taste", params: { login } }) },
 ] as const;
 
 export type PersonTab = (typeof personTabs)[number]["name"];

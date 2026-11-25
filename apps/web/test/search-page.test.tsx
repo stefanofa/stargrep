@@ -1029,6 +1029,7 @@ describe("the search page in each state", () => {
       const tabs = within(page().getByRole("navigation", { name: "@octodone's page" })).getAllByRole("link");
       expect(tabs.map((tab) => [tab.textContent, tab.getAttribute("aria-current"), tab.getAttribute("href")])).toEqual([
         ["stars6", "page", "/octodone"],
+        ["taste", null, "/@octodone/taste"],
       ]);
       expect(
         within(person)

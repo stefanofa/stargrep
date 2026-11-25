@@ -1,24 +1,18 @@
-import * as DateTime from "effect/DateTime";
 import type { LibraryEntry } from "./library-collection.ts";
+import { lastStarredOn } from "./starred-on.ts";
 
 const mostlyShown = 4;
-const day = 86_400_000;
-const shortDay = new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" });
-const longDay = new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 
-const millis = (iso: string) => DateTime.toEpochMillis(DateTime.makeUnsafe(iso));
-const yearOf = (at: number) => DateTime.formatIsoDateUtc(DateTime.makeUnsafe(at)).slice(0, 4);
+// The topics at least two of someone's stars carry, most first, as the person tile says them.
+export const mostlyOf = (topics: Iterable<readonly [topic: string, count: number]>) =>
+  [...topics]
+    .filter(([, count]) => count > 1)
+    .toSorted((a, b) => b[1] - a[1])
+    .slice(0, mostlyShown)
+    .map(([topic]) => topic);
 
-// When the last star was, in UTC days: today, yesterday, a day this year, or a day with its year.
-export const lastStarredOn = (iso: string, at: number) => {
-  const days = Math.floor(at / day) - Math.floor(millis(iso) / day);
-  if (days <= 0) return "today";
-  if (days === 1) return "yesterday";
-  return (iso.startsWith(yearOf(at)) ? shortDay : longDay).format(millis(iso));
-};
-
-// What the person tile says about a library: the year of the first star, when the last one was, and the topics at
-// least two of the stars carry, most first. Archived and gone repos count toward no topic, as on the taste tab.
+// What the person tile says about a library: the year of the first star, when the last one was, and what the stars
+// mostly carry. Archived and gone repos count toward no topic, as on the taste tab.
 export const personStars = (entries: ReadonlyArray<LibraryEntry>, at: number) => {
   let first: string | undefined;
   let last: string | undefined;
@@ -33,10 +27,6 @@ export const personStars = (entries: ReadonlyArray<LibraryEntry>, at: number) =>
     kind: "starred" as const,
     since: first?.slice(0, 4),
     last: last === undefined ? undefined : lastStarredOn(last, at),
-    mostly: [...topics]
-      .filter(([, count]) => count > 1)
-      .toSorted((a, b) => b[1] - a[1])
-      .slice(0, mostlyShown)
-      .map(([topic]) => topic),
+    mostly: mostlyOf(topics),
   };
 };
