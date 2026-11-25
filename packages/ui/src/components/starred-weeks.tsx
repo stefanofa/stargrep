@@ -1,12 +1,15 @@
 import { cn } from "../lib/cn.ts";
 
-const steps = ["bg-muted", "bg-accent-soft", "bg-accent/60", "bg-accent", "bg-accent-strong", "bg-foreground"] as const;
+const steps = ["bg-muted", "bg-accent/40", "bg-accent/65", "bg-accent", "bg-accent-strong", "bg-foreground"] as const;
 
 const step = (count: number, max: number) => {
   if (count === 0 || max === 0) return 0;
   if (count === max) return steps.length - 1;
   return Math.min(steps.length - 2, Math.ceil((count / max) * (steps.length - 2)));
 };
+
+// A day's fill for how many stars it holds against the busiest day shown.
+export const dayFill = (count: number, max: number) => steps[step(count, max)];
 
 export type StarredDay = {
   readonly date: string;
@@ -38,7 +41,7 @@ export function StarredWeeks({
       >
         {weeks.flatMap((week) =>
           week.days.map((day) => (
-            <span key={day.date} className={cn("aspect-square rounded-[3px]", steps[step(day.stars, max)])} />
+            <span key={day.date} className={cn("aspect-square rounded-[3px]", dayFill(day.stars, max))} />
           )),
         )}
       </div>

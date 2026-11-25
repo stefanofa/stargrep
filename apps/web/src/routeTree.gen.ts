@@ -16,6 +16,7 @@ import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as SearchRouteImport } from './routes/search'
 import { Route as TermsRouteImport } from './routes/terms'
 import { Route as Char123LoginChar125RouteImport } from './routes/{-$login}'
+import { Route as AtChar123loginChar125TasteRouteImport } from './routes/@{$login}_.taste'
 import { Route as FollowingIndexRouteImport } from './routes/following.index'
 import { Route as FollowingPeopleRouteImport } from './routes/following.people'
 import { Route as TopicsIndexRouteImport } from './routes/topics.index'
@@ -56,6 +57,12 @@ const Char123LoginChar125Route = Char123LoginChar125RouteImport.update({
   path: '/{-$login}',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AtChar123loginChar125TasteRoute =
+  AtChar123loginChar125TasteRouteImport.update({
+    id: '/@{$login}_/taste',
+    path: '/@{$login}/taste',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const FollowingIndexRoute = FollowingIndexRouteImport.update({
   id: '/following/',
   path: '/following/',
@@ -85,6 +92,7 @@ export interface FileRoutesByFullPath {
   '/search': typeof SearchRoute
   '/terms': typeof TermsRoute
   '/{-$login}': typeof Char123LoginChar125Route
+  '/@{$login}/taste': typeof AtChar123loginChar125TasteRoute
   '/following/people': typeof FollowingPeopleRoute
   '/topics/$topic': typeof TopicsTopicRoute
   '/following/': typeof FollowingIndexRoute
@@ -98,6 +106,7 @@ export interface FileRoutesByTo {
   '/search': typeof SearchRoute
   '/terms': typeof TermsRoute
   '/{-$login}': typeof Char123LoginChar125Route
+  '/@{$login}/taste': typeof AtChar123loginChar125TasteRoute
   '/following/people': typeof FollowingPeopleRoute
   '/topics/$topic': typeof TopicsTopicRoute
   '/following': typeof FollowingIndexRoute
@@ -112,6 +121,7 @@ export interface FileRoutesById {
   '/search': typeof SearchRoute
   '/terms': typeof TermsRoute
   '/{-$login}': typeof Char123LoginChar125Route
+  '/@{$login}_/taste': typeof AtChar123loginChar125TasteRoute
   '/following/people': typeof FollowingPeopleRoute
   '/topics/$topic': typeof TopicsTopicRoute
   '/following/': typeof FollowingIndexRoute
@@ -127,6 +137,7 @@ export interface FileRouteTypes {
     | '/search'
     | '/terms'
     | '/{-$login}'
+    | '/@{$login}/taste'
     | '/following/people'
     | '/topics/$topic'
     | '/following/'
@@ -140,6 +151,7 @@ export interface FileRouteTypes {
     | '/search'
     | '/terms'
     | '/{-$login}'
+    | '/@{$login}/taste'
     | '/following/people'
     | '/topics/$topic'
     | '/following'
@@ -153,6 +165,7 @@ export interface FileRouteTypes {
     | '/search'
     | '/terms'
     | '/{-$login}'
+    | '/@{$login}_/taste'
     | '/following/people'
     | '/topics/$topic'
     | '/following/'
@@ -167,6 +180,7 @@ export interface RootRouteChildren {
   SearchRoute: typeof SearchRoute
   TermsRoute: typeof TermsRoute
   Char123LoginChar125Route: typeof Char123LoginChar125Route
+  AtChar123loginChar125TasteRoute: typeof AtChar123loginChar125TasteRoute
   FollowingPeopleRoute: typeof FollowingPeopleRoute
   TopicsTopicRoute: typeof TopicsTopicRoute
   FollowingIndexRoute: typeof FollowingIndexRoute
@@ -224,6 +238,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof Char123LoginChar125RouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/@{$login}_/taste': {
+      id: '/@{$login}_/taste'
+      path: '/@{$login}/taste'
+      fullPath: '/@{$login}/taste'
+      preLoaderRoute: typeof AtChar123loginChar125TasteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/following/': {
       id: '/following/'
       path: '/following'
@@ -263,6 +284,7 @@ const rootRouteChildren: RootRouteChildren = {
   SearchRoute: SearchRoute,
   TermsRoute: TermsRoute,
   Char123LoginChar125Route: Char123LoginChar125Route,
+  AtChar123loginChar125TasteRoute: AtChar123loginChar125TasteRoute,
   FollowingPeopleRoute: FollowingPeopleRoute,
   TopicsTopicRoute: TopicsTopicRoute,
   FollowingIndexRoute: FollowingIndexRoute,
