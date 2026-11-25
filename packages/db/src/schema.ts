@@ -353,6 +353,9 @@ export const repos = pgTable(
     // The archived repos GitHub still serves, about 3% of repos, so an account's taste counts its archived stars from
     // this small index instead of a heap page per star.
     index("repos_archived_idx").on(table.id).where(sql`${table.archived} and ${table.goneAt} is null`),
+    // The repos GitHub no longer serves, so the topics refresh reads every archived or gone repo from these two indexes
+    // instead of a heap page per repo it checks.
+    index("repos_gone_idx").on(table.id).where(sql`${table.goneAt} is not null`),
     check(
       "repos_icon_complete",
       sql`(${table.iconKey} is null) = (${table.iconSource} is null) and (${table.iconKey} is null) = (${table.iconPlate} is null) and (${table.iconKey} is null) = (${table.iconSize} is null)`,

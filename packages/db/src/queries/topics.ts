@@ -248,7 +248,8 @@ const considered = sql`
 // a repo is for or about one make it core, and built with one makes it built. A tagged repo of a core kind is core and
 // one of an app kind is built, so a kind beats a built-with facet. The subjects' own repo, and any tagged repo named like
 // the topic, may be its home. A strict topic's tags give no role. repo_topics holds only repos GitHub serves that are
-// not archived, and the repos facets or a subject bring are checked against repos, so no other repo is a member.
+// not archived, and every archived or gone repo is left out, so no other repo is a member. Those come whole from two
+// small partial indexes, because checking each faceted repo's row read about 150k heap pages a statement.
 const members = (spelled: ReadonlyArray<Spelling>) => {
   const excluded = Object.entries(topicOverrides.excludes).flatMap(([topic, ids]) =>
     Object.values(ids).map((id) => [topic, id] as const),
@@ -283,10 +284,9 @@ const members = (spelled: ReadonlyArray<Spelling>) => {
       where f.for_subjects && s.ids or f.about && s.ids or f.built_with && s.ids
     ),
     dead as (
-      select x.id as repo_id
-      from (select repo_id from faceted union select home from subjects_of where home is not null) u
-      join ${repos} x on x.id = u.repo_id
-      where x.gone_at is not null or x.archived
+      select id as repo_id from ${repos} where archived and gone_at is null
+      union all
+      select id from ${repos} where gone_at is not null
     ),
     roles as (
       select topic, repo_id,
