@@ -18,9 +18,9 @@ import {
 import { liveView, type Semantic } from "../lib/page-view.ts";
 import { now } from "../lib/present.ts";
 import { api, type Client, type LibraryRepo, type PublicConfig, type SyncStatus, type Viewer } from "../lib/rpc.ts";
+import { minimumLength } from "../lib/search-pace.ts";
 import { validateParams } from "../lib/search-params.ts";
 import { stageOf } from "../lib/search-state.ts";
-import { minimumLength } from "../lib/search-stream.ts";
 import { allStars, findStar } from "../lib/stars-pages.ts";
 import { storedView } from "../lib/stored-view.ts";
 import { libraryRevision } from "../lib/sync-status.ts";

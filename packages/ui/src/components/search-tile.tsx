@@ -40,7 +40,8 @@ function Rail({ progress, className }: { progress: TileProgress; className?: str
   );
 }
 
-// The page's search. On desktop it is one tile: the input over a strip with the answer, the filters, and the controls.
+// The page's search. On desktop it is one tile: the input over a strip with the answer, the filters, and the controls,
+// or the input alone when there is no strip.
 // On phones the input docks just above the tab bar as one slim field, and the strip stays in the page above the results,
 // so the tile itself lays out nothing there.
 export function SearchTile({
@@ -95,13 +96,24 @@ export function SearchTile({
     input.current?.focus();
   };
 
+  const strip = status !== undefined || filters !== undefined || controls !== undefined;
+
   return (
-    <div className={cn("relative", className)}>
-      <Tile className="flex flex-col overflow-clip px-7 pt-[22px] pb-2.5 max-sm:contents sm:has-[input:focus-visible]:outline-2 sm:has-[input:focus-visible]:outline-offset-2 sm:has-[input:focus-visible]:outline-ring">
+    // With no strip, phones keep nothing of the tile in the page, so the box leaves the layout and adds no gap.
+    <div className={cn("relative", !strip && "max-sm:contents", className)}>
+      <Tile
+        className={cn(
+          "flex flex-col overflow-clip px-7 max-sm:contents sm:has-[input:focus-visible]:outline-2 sm:has-[input:focus-visible]:outline-offset-2 sm:has-[input:focus-visible]:outline-ring",
+          strip ? "pt-[22px] pb-2.5" : "py-4",
+        )}
+      >
         <search className="max-sm:fixed max-sm:inset-x-0 max-sm:bottom-[calc(var(--dock-bottom)-8px)] max-sm:z-30 max-sm:bg-linear-to-b max-sm:from-background/0 max-sm:to-background/95 max-sm:to-40% max-sm:px-3 max-sm:pt-2.5 max-sm:pb-2">
           <form
             onSubmit={submit}
-            className="flex items-center gap-2.5 max-sm:relative max-sm:h-12 max-sm:rounded-full max-sm:bg-card max-sm:pr-2 max-sm:pl-4 max-sm:shadow-dock max-sm:has-[input:focus-visible]:outline-2 max-sm:has-[input:focus-visible]:outline-offset-2 max-sm:has-[input:focus-visible]:outline-ring sm:gap-3.5 sm:border-b-[1.5px] sm:border-muted sm:pb-[18px]"
+            className={cn(
+              "flex items-center gap-2.5 max-sm:relative max-sm:h-12 max-sm:rounded-full max-sm:bg-card max-sm:pr-2 max-sm:pl-4 max-sm:shadow-dock max-sm:has-[input:focus-visible]:outline-2 max-sm:has-[input:focus-visible]:outline-offset-2 max-sm:has-[input:focus-visible]:outline-ring sm:gap-3.5",
+              strip && "sm:border-b-[1.5px] sm:border-muted sm:pb-[18px]",
+            )}
           >
             <SearchIcon className="size-[18px] shrink-0 text-muted-foreground sm:size-[22px]" />
             <Input
@@ -137,7 +149,7 @@ export function SearchTile({
             )}
           </form>
         </search>
-        {(status !== undefined || filters !== undefined || controls !== undefined) && (
+        {strip && (
           <div className="flex items-center gap-1 max-sm:-mt-1 max-sm:-mb-2 sm:h-16 sm:justify-between sm:gap-6">
             {/* Phones scroll the answer and its chips under the controls, which stay put, and fade them out as they go. */}
             <div className="flex min-w-0 items-center gap-2 max-sm:-my-1 max-sm:-ml-4 max-sm:overflow-x-auto max-sm:py-1 max-sm:pr-3 max-sm:pl-4 max-sm:[mask-image:linear-gradient(to_left,transparent,#000_12px)] max-sm:[scrollbar-width:none]">
