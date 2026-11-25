@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import { siteCard, siteCardPath } from "../scripts/og-image.ts";
 import { themeColor } from "../scripts/theme.ts";
-import { languageShares } from "../src/lib/languages.ts";
 import { accountImage } from "../src/lib/preview.ts";
 import type { LibraryRepo, SearchResult, SyncStatus } from "../src/lib/rpc.ts";
 import { libraryRevision } from "../src/lib/sync-status.ts";
@@ -87,7 +86,11 @@ test("a login's card counts its starred repos and the languages of the stars it 
     login,
     avatar: "data:image/png;base64,AA==",
     stars: 1786,
-    languages: languageShares(library),
+    languages: [
+      { name: "Rust", share: 4 / 7 },
+      { name: "TypeScript", share: 1 / 7 },
+      { name: "Zig", share: 1 / 7 },
+    ],
     search: null,
   });
   expect(asked.stars).toBe(0);

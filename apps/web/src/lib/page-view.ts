@@ -2,7 +2,6 @@ import type { Sort } from "@stargrep/ui";
 import { anyMatches, keywordTerms, matchesEvery } from "./keyword.ts";
 import type { LibraryEntry } from "./library-collection.ts";
 import { orders } from "./order.ts";
-import { syncedAgo } from "./present.ts";
 import { mergeResults } from "./results.ts";
 import type { SearchResult, SyncStatus } from "./rpc.ts";
 import { type SearchView, type Stage, searchView } from "./search-state.ts";
@@ -50,7 +49,6 @@ export const liveView = (inputs: LiveInputs): SearchView => {
       semantic: inputs.semantic.kind,
       hasMatches: (words) => anyMatches(inputs.entries, words),
     },
-    synced: inputs.sync?.syncedAt ? syncedAgo(inputs.sync.syncedAt, inputs.at) : undefined,
     timeLeft: inputs.timeLeft,
     whose: inputs.whose,
   });

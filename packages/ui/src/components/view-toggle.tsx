@@ -36,14 +36,14 @@ export function ViewToggle({
         setOwn(picked);
         onValueChange?.(picked);
       }}
-      className={cn("flex w-fit items-center gap-0.5 rounded-full bg-muted p-[3px] sm:p-1", className)}
+      className={cn("flex w-fit items-center gap-0.5 rounded-full bg-muted p-[3px]", className)}
     >
       {views.map(({ value: option, label, Icon }) => (
         <Toggle
           key={option}
           value={option}
           aria-label={label}
-          className="relative flex h-[30px] w-10 items-center justify-center rounded-full text-muted-foreground transition-[color,background-color,scale] duration-120 motion-safe:active:scale-[0.96] after:absolute after:inset-x-0 after:-inset-y-[5px] hover:text-foreground data-pressed:bg-accent data-pressed:text-ink sm:h-8"
+          className="relative flex h-[30px] w-[34px] items-center justify-center rounded-full text-muted-foreground transition-[color,background-color,scale] duration-120 motion-safe:active:scale-[0.96] after:absolute after:inset-x-0 after:-inset-y-[5px] hover:text-foreground data-pressed:bg-accent data-pressed:text-ink"
         >
           <Icon className="size-4" />
         </Toggle>

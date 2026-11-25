@@ -34,13 +34,6 @@ export const startsIn = (iso: string, at: number) => {
   return `starts in about ${Math.round(minutes / 60)} hours`;
 };
 
-export const syncedAgo = (iso: string, at: number) => {
-  const minutes = Math.floor((at - millis(iso)) / 60_000);
-  if (minutes < 1) return "synced just now";
-  if (minutes < 60) return `synced ${minutes} min ago`;
-  return `synced ${since(iso, at)}`;
-};
-
 const activity = (repo: Pick<LibraryRepo, "archived" | "stars" | "pushedAt">, at: number): Activity => {
   if (repo.archived) return { state: "archived" };
   if (factsPending(repo)) return { state: "reading" };

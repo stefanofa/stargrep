@@ -162,7 +162,7 @@ export function ResultItem({
         ) : (
           <p
             className={cn(
-              "line-clamp-4 font-sans text-base text-secondary-foreground",
+              "line-clamp-4 font-sans text-base wrap-anywhere text-secondary-foreground",
               dim && "text-muted-foreground",
               hero && heroText.reason,
               "list:line-clamp-2 list:text-base",
@@ -411,13 +411,13 @@ function Group({
 export function Results({
   view,
   groups,
-  hero = "butter",
+  hero,
   onOpen,
   className,
 }: {
   view: View;
   groups: ReadonlyArray<ResultGroup>;
-  hero?: Hero;
+  hero?: Hero | undefined;
   onOpen?: OpenResult | undefined;
   className?: string;
 }) {

@@ -28,10 +28,10 @@ export function SortMenu({
     <Menu.Root>
       <Menu.Trigger
         aria-label={`Sort by ${current?.label ?? ""}`}
-        className="flex h-10 shrink-0 items-center gap-2 rounded-full bg-muted px-3 font-sans text-meta font-medium text-foreground transition-[color,background-color] duration-120 select-none hover:bg-border sm:w-[184px] sm:pr-3.5 sm:pl-4"
+        className="flex h-[30px] w-[34px] shrink-0 items-center justify-center gap-1.5 rounded-full bg-muted font-sans text-meta font-medium text-foreground transition-[color,background-color] duration-120 select-none hover:bg-border data-popup-open:bg-border sm:h-[34px] sm:w-auto sm:pr-3 sm:pl-3.5"
       >
-        <SortIcon className="size-4 text-secondary-foreground" />
-        <span className="flex-1 text-left max-sm:sr-only">{current?.label}</span>
+        <SortIcon className="size-4 sm:hidden" />
+        <span className="max-sm:sr-only">{current?.label}</span>
         <ChevronIcon className="size-3.5 text-secondary-foreground max-sm:hidden" />
       </Menu.Trigger>
       <Menu.Portal>

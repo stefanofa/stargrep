@@ -55,8 +55,8 @@ const search = (extra: Partial<Search> = {}): Search => ({
   ...extra,
 });
 
-const view = (stage: Stage, extra: Partial<Search> = {}, synced?: string) =>
-  searchView({ stage, search: search(extra), synced, timeLeft: "about 6 minutes left", whose: { own: true } });
+const view = (stage: Stage, extra: Partial<Search> = {}) =>
+  searchView({ stage, search: search(extra), timeLeft: "about 6 minutes left", whose: { own: true } });
 
 const query = { terms: ["record", "terminal", "sessions", "gifs"] };
 
@@ -70,20 +70,12 @@ describe("the stage", () => {
   test("a login nobody asked to import yet is ready to import, with the importing layout", () => {
     const fresh = stageOf({ sync: sync({ state: "unknown", syncedAt: null }), entries: [], starred: null });
     expect(fresh).toMatchObject({ name: "importing", phase: { kind: "not-asked" }, done: 0 });
-    expect(view(fresh, {}, undefined)).toMatchObject({
-      status: { icon: "paused", label: "ready to import your stars" },
-    });
   });
 
   test("a first sync waiting for github budget is in line, with its place and start time", () => {
     const waiting = { ahead: 3, startsAt: "2026-11-05T10:24:00.000Z" };
     const inLine = stageOf({ sync: sync({ state: "waiting", syncedAt: null, waiting }), entries: [], starred: 412 });
     expect(inLine).toMatchObject({ name: "importing", phase: { kind: "in-line", ...waiting } });
-    expect(view(inLine).status).toEqual({
-      icon: "busy",
-      label: "in line to import",
-      detail: "3 ahead · about 6 minutes left",
-    });
   });
 
   test("reading lasts until every star is read or failed", () => {
@@ -140,106 +132,41 @@ describe("the stage", () => {
 });
 
 describe("browsing", () => {
-  test("a synced library counts its stars", () => {
-    expect(view(ready, {}, "synced 2 min ago")).toEqual({
-      status: { icon: "synced", label: "1,776 stars", detail: "synced 2 min ago" },
-      progress: undefined,
-      pose: "idle",
-      body: { kind: "library", arriving: undefined },
-    });
-  });
-
-  test("a library waiting on the daily summary cap says its summaries are queued for later, with no progress bar", () => {
-    expect(view(capped, {}, "synced 2 min ago")).toEqual({
-      status: {
-        icon: "synced",
-        label: "1,776 stars",
-        detail: "312 summaries queued for later · synced 2 min ago",
-        phoneDetail: "312 queued for later",
-      },
-      progress: undefined,
-      pose: "idle",
-      body: { kind: "library", arriving: undefined },
-    });
-    expect(view(capped, query).status).toMatchObject({
-      icon: "done",
-      label: "nothing found",
-      detail: "1,464 of 1,776 stars read",
-    });
-  });
-
-  test("importing shows real counts on the strip and the progress bar", () => {
-    const state = view(importing);
-    expect(state.status).toEqual({
-      icon: "busy",
-      label: "importing your stars",
-      phoneLabel: "importing",
-      detail: "1,204 of 1,776 · about 6 minutes left",
-    });
-    expect(state.progress).toEqual({
+  test("says nothing about the pipeline, and the rail alone shows an import or a read", () => {
+    const refreshing: Stage = { name: "refreshing", total: 1778, arriving: 2 };
+    for (const stage of [ready, capped, importing, reading, refreshing]) expect(view(stage).status).toBeUndefined();
+    expect(view(ready).body).toEqual({ kind: "library", arriving: undefined });
+    expect(view(capped).progress).toBeUndefined();
+    expect(view(refreshing).progress).toBeUndefined();
+    expect(view(importing).progress).toEqual({
       value: 1204,
       max: 1776,
       label: "importing your stars",
       text: "1,204 of 1,776 imported",
     });
-    expect(state.pose).toBe("happy");
+    expect(view(reading).progress).toEqual({
+      value: 412,
+      max: 1776,
+      label: "reading your stars",
+      text: "412 of 1,776 read",
+    });
+    expect([view(importing).pose, view(reading).pose, view(refreshing).pose]).toEqual(["happy", "thinking", "idle"]);
   });
 
-  test("importing with no known total counts up and draws no progress bar", () => {
+  test("importing with no known total draws no rail", () => {
     const state = view(
       stageOf({ sync: sync({ state: "queued", syncedAt: null }), entries: entries(40), starred: null }),
     );
-    expect(state.status.detail).toBe("40 imported so far");
     expect(state.progress).toBeUndefined();
   });
 
-  test("reading moves the same bar to the read count", () => {
-    const state = view(reading);
-    expect(state.status).toEqual({
-      icon: "busy",
-      label: "reading your stars",
-      phoneLabel: "reading",
-      detail: "412 of 1,776 understood · names and descriptions already searchable",
-    });
-    expect(state.progress).toEqual({ value: 412, max: 1776, label: "reading your stars", text: "412 of 1,776 read" });
-    expect(state.pose).toBe("thinking");
-  });
-
-  test("checking for new stars is quiet, then counts the new stars while they are read", () => {
-    const checking = view({ name: "refreshing", total: 1776, arriving: 0 });
-    expect(checking.status).toEqual({ icon: "busy", label: "checking for new stars" });
-    expect(checking.progress).toBeUndefined();
-    expect(checking.body).toEqual({ kind: "library", arriving: undefined });
-    expect(checking.pose).toBe("idle");
-    expect(view({ name: "refreshing", total: 1778, arriving: 2 }).status).toEqual({
-      icon: "busy",
-      label: "2 new stars",
-      detail: "reading…",
-    });
-  });
-
-  test("a failed first sync offers a retry and scares the mark", () => {
-    const state = view({ name: "ready", total: 40, failed: 0, queued: 0, lastSync: "failed-first" });
-    expect(state.status).toEqual({
-      icon: "failed",
-      label: "sync didn't finish",
-      detail: "40 stars so far",
-      retry: "sync",
-    });
-    expect(state.pose).toBe("scared");
-  });
-
-  test("a failed check on a synced library says it couldn't check", () => {
-    const state = view(
-      { name: "ready", total: 1776, failed: 0, queued: 0, lastSync: "failed-refresh" },
-      {},
-      "synced 2 min ago",
-    );
-    expect(state.status).toEqual({
-      icon: "failed",
-      label: "couldn't check",
-      detail: "for new stars",
-      continues: true,
+  test("a sync that failed says so and offers a retry, and a failed first sync scares the mark", () => {
+    const first = view({ name: "ready", total: 40, failed: 0, queued: 0, lastSync: "failed-first" });
+    expect(first.status).toEqual({ label: "sync didn't finish", retry: "sync" });
+    expect(first.pose).toBe("scared");
+    expect(view({ name: "ready", total: 1776, failed: 0, queued: 0, lastSync: "failed-refresh" }).status).toEqual({
+      label: "couldn't check for new stars",
+      phoneLabel: "couldn't check",
       retry: "sync",
     });
   });
@@ -248,12 +175,7 @@ describe("browsing", () => {
 describe("searching", () => {
   test("before any answer, placeholders hold the meaning group", () => {
     const state = view(reading, { terms: ["tui"], semantic: "pending" });
-    expect(state.status).toEqual({
-      icon: "busy",
-      label: "searching",
-      detail: "1,364 stars not read yet",
-      instant: true,
-    });
+    expect(state.status).toEqual({ label: "searching…" });
     expect(state.pose).toBe("thinking");
     expect(state.body).toEqual({
       kind: "results",
@@ -270,12 +192,7 @@ describe("searching", () => {
 
   test("results while reading are grouped and say they are partial", () => {
     const state = view(reading, { terms: ["tui"], words: results("w", 2), meaning: results("m", 1) });
-    expect(state.status).toEqual({
-      icon: "busy",
-      label: "found 3 so far",
-      detail: "1,364 stars not read yet",
-      instant: true,
-    });
+    expect(state.status).toEqual({ label: "found 3 so far" });
     expect(state.body.kind === "results" && state.body.groups.map((group) => group.heading)).toEqual([
       { label: "matching words", detail: "2 from all 1,776" },
       { label: "matching meaning", detail: "1 from the 412 read so far" },
@@ -296,13 +213,7 @@ describe("searching", () => {
       meaning: results("m", 4),
       semantic: "answered",
     });
-    expect(state.status).toEqual({
-      icon: "found",
-      label: "found 6",
-      detail: "of 1,776",
-      continues: true,
-      instant: true,
-    });
+    expect(state.status).toEqual({ label: "found 6!" });
     expect(state.progress).toBeUndefined();
     expect(state.pose).toBe("idle");
     expect(state.body).toEqual({
@@ -313,12 +224,7 @@ describe("searching", () => {
 
   test("nothing yet while reading could still be in the unread part", () => {
     const state = view(reading, query);
-    expect(state.status).toEqual({
-      icon: "busy",
-      label: "nothing yet",
-      detail: "1,364 stars not read yet",
-      instant: true,
-    });
+    expect(state.status).toEqual({ label: "nothing yet" });
     expect(state.pose).toBe("unsure");
     expect(state.body).toEqual({
       kind: "empty-reading",
@@ -340,7 +246,6 @@ describe("searching", () => {
     const state = searchView({
       stage: fresh,
       search: search(query),
-      synced: undefined,
       timeLeft: undefined,
       whose: { own: true },
     });
@@ -353,12 +258,7 @@ describe("searching", () => {
 
   test("nothing after everything is read is a real no, with rephrasings from the query's words", () => {
     const state = view(ready, query);
-    expect(state.status).toEqual({
-      icon: "done",
-      label: "nothing found",
-      detail: "all 1,776 stars read",
-      instant: true,
-    });
+    expect(state.status).toEqual({ label: "nothing found" });
     expect(state.pose).toBe("sad");
     expect(state.body).toEqual({
       kind: "empty",
@@ -390,19 +290,12 @@ describe("searching", () => {
 
   test("an empty answer never claims every star was read when some failed", () => {
     const state = view(someFailed, query);
-    expect(state.status.detail).toBe("1,770 of 1,776 stars read");
     expect(state.body.kind === "empty" && state.body.copy.body).toStartWith("i've read every one i could");
   });
 
   test("a search that failed with no keyword hits says so and offers to search again", () => {
     const state = view(ready, { terms: ["tui"], semantic: "failed" });
-    expect(state.status).toEqual({
-      icon: "failed",
-      label: "search didn't answer",
-      phoneLabel: "search failed",
-      retry: "search",
-      instant: true,
-    });
+    expect(state.status).toEqual({ label: "search didn't answer", phoneLabel: "search failed", retry: "search" });
     expect(state.body).toEqual({
       kind: "failed",
       copy: { heading: "stargrep couldn't search that", body: "the search didn't answer. try again in a moment." },
@@ -412,25 +305,22 @@ describe("searching", () => {
 
   test("an earlier query's results stay on screen, and the status says the new query is still searching", () => {
     const state = view(ready, { terms: ["qzxvbnm"], meaning: results("m", 20), semantic: "pending" });
-    expect(state.status).toEqual({ icon: "busy", label: "searching", instant: true });
+    expect(state.status).toEqual({ label: "searching…" });
     expect(state.pose).toBe("thinking");
     expect(state.body).toEqual({ kind: "results", groups: [{ key: "all", results: results("m", 20), pending: 2 }] });
   });
 
   test("keyword matches for the new query count while its meaning search is pending", () => {
     const state = view(ready, { terms: ["tui"], words: results("w", 2), semantic: "pending" });
-    expect(state.status).toMatchObject({ icon: "found", label: "found 2" });
+    expect(state.status).toEqual({ label: "found 2!" });
   });
 
   test("a meaning search that failed beside keyword matches keeps them, says so, and offers to search again", () => {
     const state = view(reading, { terms: ["tui"], words: results("w", 2), semantic: "failed" });
     expect(state.status).toEqual({
-      icon: "failed",
-      label: "meaning search didn't answer",
-      phoneLabel: "meaning failed",
-      detail: "found 2",
+      label: "found 2 · meaning search didn't answer",
+      phoneLabel: "found 2 · meaning failed",
       retry: "search",
-      instant: true,
     });
     expect(state.pose).toBe("scared");
     expect(state.body.kind === "results" && state.body.groups.flatMap((group) => group.results)).toEqual(
@@ -440,18 +330,17 @@ describe("searching", () => {
 
   test("a network that searched too often is asked for a breather, not told the search broke", () => {
     const alone = view(ready, { terms: ["tui"], semantic: "limited" });
-    expect(alone.status).toEqual({ icon: "paused", label: "taking a breather", retry: "search", instant: true });
+    expect(alone.status).toEqual({ label: "taking a breather", retry: "search" });
     expect(alone.body).toEqual({
       kind: "failed",
       copy: { heading: "lots of searches from your network", body: "give it a minute, then try again." },
     });
     expect(alone.pose).toBe("unsure");
     const beside = view(ready, { terms: ["tui"], words: results("w", 1), semantic: "limited" });
-    expect(beside.status).toMatchObject({
-      icon: "paused",
-      label: "meaning search is taking a breather",
-      phoneLabel: "taking a breather",
-      detail: "found 1",
+    expect(beside.status).toEqual({
+      label: "found 1 · meaning search is taking a breather",
+      phoneLabel: "found 1 · taking a breather",
+      retry: "search",
     });
   });
 });
@@ -490,9 +379,9 @@ describe("what the page shows", () => {
   const answered = view(ready, { terms: ["tui"], words: results("w", 2) });
   const serverAnswer: SearchView = view(reading, { terms: ["terminal"], meaning: results("m", 1) });
 
-  test("trouble wins over any answer, with its own status, pose and try again", () => {
+  test("trouble wins over any answer, with its own pose and try again, and leaves the strip to its tile", () => {
     const troubled = page({ query: "tui", live: answered, trouble: "load-failed" });
-    expect(troubled.status).toEqual({ icon: "failed", label: "couldn't load" });
+    expect(troubled.status).toBeUndefined();
     expect(troubled.pose).toBe("scared");
     expect(troubled.body).toEqual({
       kind: "trouble",
@@ -503,15 +392,12 @@ describe("what the page shows", () => {
     });
   });
 
-  test("until the library loads, the page says so and holds placeholders in the final layout", () => {
+  test("until the library loads, the page holds placeholders in the final layout", () => {
     const loading = page({ query: "tui", library: { ready: false, whole: false }, stage: importingFor() });
-    expect(loading.status).toEqual({ icon: "busy", label: "loading @octo's stars" });
+    expect(loading.status).toBeUndefined();
     expect(loading.body).toEqual({ kind: "loading", searching: true, arriving: { total: 28 } });
     expect(loading.progress).toBeUndefined();
     expect(loading.painted).toBe(false);
-    expect(page({ audience: ownPage, library: { ready: false, whole: false } }).status.label).toBe(
-      "loading your stars",
-    );
   });
 
   test("the server's answer holds until the library has every page, then the live view takes over", () => {
@@ -572,7 +458,7 @@ describe("the hero above a visitor's look at the demo account", () => {
     });
   });
 
-  test("says a login nobody asked for yet is ready to import, as the status line does", () => {
+  test("says a login nobody asked for yet is ready to import", () => {
     expect(hero(importingFor({ done: 0, total: null, phase: { kind: "not-asked" } }))).toEqual({
       subtitle: [
         stefanofa,
@@ -589,30 +475,23 @@ describe("the hero above a visitor's look at the demo account", () => {
   });
 });
 
-describe("the person above anyone else's stars", () => {
-  test("shows on every page but the landing and your own", () => {
-    expect(person(ready)).toEqual({ login: "octo", known: true, claim: undefined });
-    expect(person(ready, { audience: signedIn })).toEqual({ login: "octo", known: true, claim: undefined });
+describe("the person above the stars", () => {
+  test("shows on every page but the landing, your own included", () => {
+    expect(person(ready)).toEqual({ login: "octo", known: true });
+    expect(person(importingFor(), { audience: signedIn })).toEqual({ login: "octo", known: true });
     expect(person(ready, { audience: { ...signedIn, owner: { login: "stefanofa", demo: true } } })?.login).toBe(
       "stefanofa",
     );
+    expect(person(ready, { audience: ownPage })).toEqual({ login: "juno", known: true });
     expect(person(ready, { audience: demo })).toBeUndefined();
-    expect(person(ready, { audience: ownPage })).toBeUndefined();
   });
 
-  test("a visitor watching the import gets the claim tile with its progress, a signed-in viewer doesn't", () => {
-    expect(person(importingFor())?.claim).toBe(0.5);
-    expect(person(importingFor({ done: 0, total: null, phase: { kind: "not-asked" } }))?.claim).toBe(0);
-    expect(person(importingFor(), { audience: signedIn })?.claim).toBeUndefined();
-  });
-
-  test("a login GitHub doesn't know keeps its handle but no claim and no profile", () => {
+  test("a login GitHub doesn't know keeps its handle but no profile", () => {
     expect(person(importingFor({ phase: { kind: "not-asked" } }), { trouble: "missing" })).toEqual({
       login: "octo",
       known: false,
-      claim: undefined,
     });
-    expect(person(ready, { trouble: "busy" })).toEqual({ login: "octo", known: true, claim: undefined });
+    expect(person(ready, { trouble: "busy" })).toEqual({ login: "octo", known: true });
   });
 });
 
@@ -627,10 +506,7 @@ const troubleBody = (trouble: Trouble, extra: Partial<PageInputs> = {}) => {
 };
 
 describe("a page in trouble", () => {
-  test("never marks a refusal with a check, and one network limit reads the same wherever it hits", () => {
-    for (const trouble of troubles) expect(troubled(trouble).status.icon).not.toBe("done");
-    expect(troubled("busy").status.icon).toBe("paused");
-    expect(troubled("limited").status).toEqual(troubled("load-limited").status);
+  test("one network limit reads the same wherever it hits", () => {
     expect(troubleBody("limited").heading).toBe(troubleBody("load-limited").heading);
   });
 

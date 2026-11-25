@@ -1,15 +1,19 @@
 import { isGitHubLogin } from "@stargrep/github/login";
 import { Button, buttonVariants, EmptyTile, type PipPose, Skeleton, Tile } from "@stargrep/ui";
-import { getRouteApi, Link, notFound, useRouter } from "@tanstack/react-router";
+import { getRouteApi, Link, notFound, useLoaderData, useRouter } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import type { Session } from "../lib/page-data.ts";
+import { mostlyOf } from "../lib/person-stars.ts";
 import { accountImage, canonicalLinks, previewMeta, siteTitle } from "../lib/preview.ts";
 import { api, type SimilarPerson, type Taste, wireCode } from "../lib/rpc.ts";
+import { lastStarredOn } from "../lib/starred-on.ts";
 import { loginPage } from "../lib/stars-route.ts";
 import { dayOf, tasteWords } from "../lib/taste.ts";
+import { wallNow } from "../lib/wall-clock.ts";
 import { formatCount, sameLogin } from "../lib/whose.ts";
 import { Page } from "./page.tsx";
 import { type PersonStars, PersonTile } from "./person-tile.tsx";
+import { ShareButton } from "./share-button.tsx";
 import { MonthsTile } from "./taste-months.tsx";
 import { AlikeTile, LanguagesTile, TopicsTile, YearCountTile } from "./taste-tiles.tsx";
 import { YearTile } from "./taste-year.tsx";
@@ -66,26 +70,38 @@ export const loadTaste = async (login: string, session: Session | undefined) => 
   };
 };
 
+// What the person tile says from a login's taste: the year of the first star, when the last one was, what the stars
+// mostly carry.
+const tasteStars = (taste: Taste): PersonStars => {
+  const last = lastStar(taste);
+  return {
+    kind: "starred",
+    since: taste.months[0]?.month.slice(0, 4),
+    last: last === undefined ? undefined : lastStarredOn(last, wallNow()),
+    mostly: mostlyOf(taste.topics.map(({ topic, count }) => [topic, count] as const)),
+  };
+};
+
 // The person, and under them their charts or why there are none.
 export function TastePage() {
   const { login, own, state } = route.useLoaderData();
   const { months } = route.useSearch();
   const taste = state.kind === "taste" && state.taste.stars > 0 ? state.taste : undefined;
   const words = tasteWords(login, own);
-  const stars: PersonStars =
-    taste === undefined ? { kind: "unsaid" } : { kind: "count", count: taste.stars, last: lastStar(taste) };
+  const known = state.kind !== "unread";
   return (
     <Page here={own ? "you" : undefined} pose={state.kind === "failed" ? "scared" : undefined}>
       <PersonTile
         login={login}
-        known={state.kind !== "unread"}
-        stars={stars}
-        action={
-          taste !== undefined && (
-            <Link {...loginPage(login)} className={buttonVariants({ variant: "secondary", size: "lg" })}>
-              {own ? "your stars" : "their stars"}
-            </Link>
-          )
+        own={own}
+        known={known}
+        stars={taste === undefined ? { kind: "unsaid" } : tasteStars(taste)}
+        tab="taste"
+        counts={{ stars: taste === undefined ? undefined : formatCount(taste.stars) }}
+        share={
+          known ? (
+            <ShareButton login={login} query={undefined} className={own ? "max-sm:size-10" : "max-sm:size-[42px]"} />
+          ) : undefined
         }
       />
       {taste === undefined ? (
@@ -191,9 +207,17 @@ function Empty({ login, own, state }: { login: string; own: boolean; state: Tast
 // The page as it will stand, with placeholders where the charts go, so nothing moves when they arrive.
 export function TasteLoading() {
   const { login } = route.useParams();
+  const { viewer } = useLoaderData({ from: "__root__" });
   return (
     <Page>
-      <PersonTile login={login} known stars={{ kind: "loading" }} />
+      <PersonTile
+        login={login}
+        own={viewer !== null && sameLogin(viewer.login, login)}
+        known
+        stars={{ kind: "loading" }}
+        tab="taste"
+        counts={{}}
+      />
       <div className="flex flex-col gap-gap lg:flex-row">
         <Tile className="flex flex-col gap-4.5 px-5 pt-5 pb-4.5 sm:px-7 sm:pt-6 sm:pb-5.5 lg:w-195 lg:shrink-0">
           <Skeleton className="h-6.5 w-48 sm:h-7.5" />

@@ -1,4 +1,4 @@
-import type { PipPose, Result, ResultGroup, StatusIcon, TileProgress } from "@stargrep/ui";
+import type { PipPose, Result, ResultGroup, TileProgress } from "@stargrep/ui";
 import { type Audience, type Owner, pageKindOf, whoseOf } from "./audience.ts";
 import { keywordTerms, normalize } from "./keyword.ts";
 import type { LibraryRepo, SyncStatus } from "./rpc.ts";
@@ -107,15 +107,12 @@ type Answer =
 
 export type Retry = "sync" | "library" | "search";
 
+// What the strip says about the answer on screen. Browsing says nothing, since the library speaks for itself and the
+// rail shows an import or a read. A failure says so and offers to try again.
 export interface Status {
-  readonly icon: StatusIcon;
   readonly label: string;
+  // A shorter label for the phone's strip, which shares one line with the filters.
   readonly phoneLabel?: string;
-  readonly detail?: string;
-  readonly phoneDetail?: string;
-  readonly continues?: boolean;
-  readonly instant?: boolean;
-  // The status line offers to try this again.
   readonly retry?: Retry;
 }
 
@@ -146,7 +143,7 @@ export type Body =
     };
 
 export interface SearchView {
-  readonly status: Status;
+  readonly status: Status | undefined;
   readonly progress: TileProgress | undefined;
   readonly pose: PipPose;
   readonly body: Body;
@@ -184,18 +181,10 @@ const answerOf = ({ terms, words, meaning, semantic }: Search): Answer => {
   return semantic === "pending" ? { kind: "searching" } : { kind: "none" };
 };
 
-// What the status line says when the search by meaning gave no answer. It is the label, which screen readers hear, and
-// phones show a shorter one, since their strip leaves one short line for it.
+// What the strip adds to the keyword matches when the search by meaning gave no answer. Phones say it shorter.
 const missedStatus: Record<Missed, { readonly label: string; readonly phoneLabel: string }> = {
   failed: { label: "meaning search didn't answer", phoneLabel: "meaning failed" },
   limited: { label: "meaning search is taking a breather", phoneLabel: "taking a breather" },
-};
-
-const unreadDetail = (stage: Stage) => {
-  if (stage.name === "reading") return `${starCount(stage.total - stage.read)} not read yet`;
-  if (stage.name === "importing")
-    return stage.total === null ? "more stars still arriving" : `${starCount(stage.total - stage.done)} still arriving`;
-  return undefined;
 };
 
 const progressOf = (stage: Stage, whose: Whose): TileProgress | undefined => {
@@ -219,118 +208,32 @@ const progressOf = (stage: Stage, whose: Whose): TileProgress | undefined => {
 const withTime = (text: string, timeLeft: string | undefined) =>
   timeLeft === undefined ? text : `${text} · ${timeLeft}`;
 
-const importingStatus = (stage: Importing, timeLeft: string | undefined, whose: Whose): Status => {
-  switch (stage.phase.kind) {
-    case "not-asked":
-      return {
-        icon: "paused",
-        label: `ready to import ${theirs(whose)}`,
-        phoneLabel: "ready to import",
-      };
-    case "in-line":
-      return {
-        icon: "busy",
-        label: "in line to import",
-        detail: withTime(stage.phase.ahead === 0 ? "next up" : `${formatCount(stage.phase.ahead)} ahead`, timeLeft),
-      };
-    case "running":
-      return {
-        icon: "busy",
-        label: `importing ${theirs(whose)}`,
-        phoneLabel: "importing",
-        detail:
-          stage.total === null
-            ? `${formatCount(stage.done)} imported so far`
-            : withTime(`${formatCount(stage.done)} of ${formatCount(stage.total)}`, timeLeft),
-      };
-  }
+// Browsing says nothing about the pipeline. Only a sync that failed says so, with a way to try again.
+const browsing = (stage: Stage): Status | undefined => {
+  if (stage.name !== "ready" || stage.lastSync === "done") return undefined;
+  return stage.lastSync === "failed-refresh"
+    ? { label: "couldn't check for new stars", phoneLabel: "couldn't check", retry: "sync" }
+    : { label: "sync didn't finish", retry: "sync" };
 };
 
-const browsing = (stage: Stage, synced: string | undefined, timeLeft: string | undefined, whose: Whose): Status => {
-  switch (stage.name) {
-    case "importing":
-      return importingStatus(stage, timeLeft, whose);
-    case "refreshing":
-      return stage.arriving === 0
-        ? { icon: "busy", label: "checking for new stars" }
-        : {
-            icon: "busy",
-            label: `${formatCount(stage.arriving)} new ${stage.arriving === 1 ? "star" : "stars"}`,
-            detail: "reading…",
-          };
-    case "reading":
-      return {
-        icon: "busy",
-        label: `reading ${theirs(whose)}`,
-        phoneLabel: "reading",
-        detail: `${formatCount(stage.read)} of ${formatCount(stage.total)} understood · names and descriptions already searchable`,
-      };
-    case "ready":
-      if (stage.lastSync === "failed-refresh")
-        return { icon: "failed", label: "couldn't check", detail: "for new stars", continues: true, retry: "sync" };
-      if (stage.lastSync === "failed-first")
-        return {
-          icon: "failed",
-          label: "sync didn't finish",
-          detail: `${starCount(stage.total)} so far`,
-          retry: "sync",
-        };
-      if (stage.queued > 0) {
-        const queued = `${formatCount(stage.queued)} ${stage.queued === 1 ? "summary" : "summaries"} queued for later`;
-        return {
-          icon: "synced",
-          label: starCount(stage.total),
-          detail: synced === undefined ? queued : `${queued} · ${synced}`,
-          phoneDetail: `${formatCount(stage.queued)} queued for later`,
-        };
-      }
-      return { icon: "synced", label: starCount(stage.total), ...(synced === undefined ? {} : { detail: synced }) };
-  }
-};
-
-const answered = (stage: Stage, answer: Exclude<Answer, { kind: "browsing" }>, whose: Whose): Status => {
-  const detail = unreadDetail(stage);
-  const rest = detail === undefined ? {} : { detail };
+const answered = (stage: Stage, answer: Exclude<Answer, { kind: "browsing" }>): Status => {
   switch (answer.kind) {
     case "searching":
-      return { icon: "busy", label: "searching", ...rest };
-    case "found":
-      if (answer.missed !== undefined)
-        return {
-          icon: answer.missed === "limited" ? "paused" : "failed",
-          ...missedStatus[answer.missed],
-          detail: `found ${formatCount(answer.count)}`,
-          retry: "search",
-        };
-      return partial(stage)
-        ? { icon: "busy", label: `found ${formatCount(answer.count)} so far`, ...rest }
-        : whose.own
-          ? {
-              icon: "found",
-              label: `found ${formatCount(answer.count)}`,
-              detail: `of ${formatCount(stage.total)}`,
-              continues: true,
-            }
-          : {
-              icon: "found",
-              label: `found ${formatCount(answer.count)}!`,
-              detail: `in @${whose.login}'s ${starCount(stage.total)}`,
-              phoneDetail: `of ${starCount(stage.total)}`,
-            };
+      return { label: "searching…" };
+    case "found": {
+      const found = `found ${formatCount(answer.count)}`;
+      if (answer.missed !== undefined) {
+        const missed = missedStatus[answer.missed];
+        return { label: `${found} · ${missed.label}`, phoneLabel: `${found} · ${missed.phoneLabel}`, retry: "search" };
+      }
+      return { label: partial(stage) ? `${found} so far` : `${found}!` };
+    }
     case "none":
-      if (partial(stage)) return { icon: "busy", label: "nothing yet", ...rest };
-      return {
-        icon: "done",
-        label: "nothing found",
-        detail:
-          stage.name === "ready" && stage.failed + stage.queued > 0
-            ? `${formatCount(stage.total - stage.failed - stage.queued)} of ${formatCount(stage.total)} stars read`
-            : `all ${starCount(stage.total)} read`,
-      };
+      return { label: partial(stage) ? "nothing yet" : "nothing found" };
     case "failed":
       return answer.missed === "limited"
-        ? { ...breather, retry: "search" }
-        : { icon: "failed", label: "search didn't answer", phoneLabel: "search failed", retry: "search" };
+        ? { label: "taking a breather", retry: "search" }
+        : { label: "search didn't answer", phoneLabel: "search failed", retry: "search" };
   }
 };
 
@@ -452,23 +355,18 @@ const bodyOf = (
 export const searchView = ({
   stage,
   search,
-  synced,
   timeLeft,
   whose,
 }: {
   stage: Stage;
   search: Search;
-  synced: string | undefined;
   timeLeft: string | undefined;
   whose: Whose;
 }): SearchView => {
   const answer = answerOf(search);
   const progress = progressOf(stage, whose);
   return {
-    status:
-      answer.kind === "browsing"
-        ? browsing(stage, synced, timeLeft, whose)
-        : { ...answered(stage, answer, whose), instant: true },
+    status: answer.kind === "browsing" ? browsing(stage) : answered(stage, answer),
     progress,
     pose: poseOf(stage, answer),
     body: bodyOf(stage, answer, search, progress, timeLeft, whose),
@@ -476,7 +374,6 @@ export const searchView = ({
 };
 
 interface TroubleCopy {
-  readonly status: Status;
   readonly heading: string;
   readonly detail: string;
   readonly pose: PipPose;
@@ -485,13 +382,10 @@ interface TroubleCopy {
   readonly offer?: "people";
 }
 
-const breather: Status = { icon: "paused", label: "taking a breather" };
-
 const troubleCopy = (trouble: Trouble, owner: string, whose: Whose): TroubleCopy => {
   switch (trouble) {
     case "missing":
       return {
-        status: { icon: "failed", label: "no such GitHub user" },
         heading: `GitHub has no one called @${owner}`,
         detail: "check the spelling, or pick someone from people.",
         pose: "unsure",
@@ -500,7 +394,6 @@ const troubleCopy = (trouble: Trouble, owner: string, whose: Whose): TroubleCopy
       };
     case "busy":
       return {
-        status: { icon: "paused", label: "the import line is full", detail: "for now" },
         heading: "github's line for new imports is full",
         detail: `stargrep can read ${theirs(whose)} once there's room. try again in a while.`,
         pose: "unsure",
@@ -508,7 +401,6 @@ const troubleCopy = (trouble: Trouble, owner: string, whose: Whose): TroubleCopy
       };
     case "limited":
       return {
-        status: breather,
         heading: "lots of requests from your network",
         detail: "give it a few minutes, then try again. accounts stargrep already knows still work.",
         pose: "unsure",
@@ -516,7 +408,6 @@ const troubleCopy = (trouble: Trouble, owner: string, whose: Whose): TroubleCopy
       };
     case "unavailable":
       return {
-        status: { icon: "failed", label: "couldn't reach GitHub" },
         heading: "stargrep couldn't reach GitHub just now",
         detail: `${theirs(whose)} can import once it answers. try again in a moment.`,
         pose: "unsure",
@@ -524,7 +415,6 @@ const troubleCopy = (trouble: Trouble, owner: string, whose: Whose): TroubleCopy
       };
     case "load-limited":
       return {
-        status: breather,
         heading: "lots of requests from your network",
         detail: "give it a minute, then try again.",
         pose: "unsure",
@@ -532,7 +422,6 @@ const troubleCopy = (trouble: Trouble, owner: string, whose: Whose): TroubleCopy
       };
     case "load-failed":
       return {
-        status: { icon: "failed", label: "couldn't load" },
         heading: `stargrep couldn't load ${theirs(whose)}`,
         detail: "the library didn't arrive. try again in a moment.",
         pose: "scared",
@@ -556,8 +445,7 @@ export interface HeroCopy {
 const importProgress = (stage: Importing) => (stage.total === null ? 0 : stage.done / Math.max(1, stage.total));
 
 // What the hero says above a visitor's look at the demo account. While the demo's stars import, as on a fresh stage,
-// the butter tile becomes the claim tile. The status line under it carries the counts and times, so the subtitle stays
-// put while they tick.
+// the butter tile becomes the claim tile, with the import's progress, so the subtitle stays put while it ticks.
 const heroCopy = (stage: Stage, troubled: boolean, owner: Owner): HeroCopy => {
   if (troubled) return { subtitle: ["try any username."], butter: { kind: "join" } };
   const mention = { login: owner.login };
@@ -575,22 +463,12 @@ const heroCopy = (stage: Stage, troubled: boolean, owner: Owner): HeroCopy => {
   };
 };
 
-// The person tile above anyone else's stars.
+// The person tile above every stars page but the landing, your own included.
 export interface PersonCopy {
   readonly login: string;
   // GitHub knows the login, so the tile shows their avatar and links to their profile.
   readonly known: boolean;
-  // A visitor watching their stars import gets the claim tile beside them, with the import's progress, since owners
-  // skip the line.
-  readonly claim: number | undefined;
 }
-
-const personCopy = (stage: Stage, trouble: Trouble | undefined, audience: Audience): PersonCopy => ({
-  login: audience.owner.login,
-  known: trouble !== "missing",
-  claim:
-    audience.by === "anyone" && trouble === undefined && stage.name === "importing" ? importProgress(stage) : undefined,
-});
 
 // The example speaks as the viewer, so it fits only their own stars. Anyone else's stars name whose they are.
 const idlePlaceholder = (whose: Whose) =>
@@ -601,7 +479,7 @@ export interface PageView extends SearchView {
   readonly painted: boolean;
   // Only the landing has the hero.
   readonly hero: HeroCopy | undefined;
-  // Only a person page has the person tile.
+  // Every page but the landing has the person tile.
   readonly person: PersonCopy | undefined;
   readonly placeholder: string;
 }
@@ -641,20 +519,20 @@ export const pageView = ({
   const page = {
     painted,
     hero: kind === "landing" ? heroCopy(stage, trouble !== undefined, audience.owner) : undefined,
-    person: kind === "person" ? personCopy(stage, trouble, audience) : undefined,
+    person: kind === "landing" ? undefined : { login: audience.owner.login, known: trouble !== "missing" },
     placeholder: stage.name === "importing" ? "search what has arrived" : idlePlaceholder(whose),
     progress: shown?.progress,
   };
   if (trouble !== undefined) {
-    const { status, heading, detail, pose, retry, offer } = troubleCopy(trouble, audience.owner.login, whose);
-    return { ...page, status, pose, body: { kind: "trouble", heading, detail, retry, offer } };
+    const { heading, detail, pose, retry, offer } = troubleCopy(trouble, audience.owner.login, whose);
+    return { ...page, status: undefined, pose, body: { kind: "trouble", heading, detail, retry, offer } };
   }
   const calm = (shown ?? live).pose;
   const pose = surprised && calm === "idle" ? "surprised" : calm;
   if (shown === undefined)
     return {
       ...page,
-      status: { icon: "busy", label: `loading ${theirs(whose)}` },
+      status: undefined,
       pose,
       body: { kind: "loading", searching: keywordTerms(query).length > 0, arriving: arrivingOf(stage) },
     };

@@ -22,39 +22,16 @@ describe("search input", () => {
 });
 
 describe("status line", () => {
-  const label = () => page().getByRole("status").firstElementChild;
-
-  test("on phones an action shares the line under the label with the detail", () => {
-    const { container } = render(
-      <StatusLine
-        icon="failed"
-        label="meaning search didn't answer"
-        phoneLabel="meaning failed"
-        detail="found 2"
-        action={<button type="button">try again</button>}
-      />,
-    );
-    const phone = container.cloneNode(true) as Element;
-    for (const hidden of phone.querySelectorAll('[class~="max-sm:hidden"]')) hidden.remove();
-    const desktop = container.cloneNode(true) as Element;
-    for (const hidden of desktop.querySelectorAll('[class~="sm:hidden"]')) hidden.remove();
-    expect(phone.textContent).toBe("meaning failedfound 2try again");
-    expect(desktop.textContent).toBe("meaning search didn't answer · found 2try again");
-  });
-
-  test("a new sync state settles its label in, once", () => {
-    const { rerender } = render(<StatusLine icon="busy" label="loading your stars" />);
-    expect(label()?.className).not.toContain("animate-settle");
-    rerender(<StatusLine icon="synced" label="24 stars" />);
-    expect(label()?.className).toContain("animate-settle");
-  });
-
-  test("search answers swap in place while you type", () => {
-    const { rerender } = render(<StatusLine icon="synced" label="24 stars" />);
-    rerender(<StatusLine icon="busy" label="searching" instant />);
-    rerender(<StatusLine icon="found" label="found 3" instant />);
-    expect(label()?.textContent).toBe("found 3");
-    expect(label()?.className).not.toContain("animate-settle");
+  test("is one live region that stays in the page while empty, so the next answer is announced", () => {
+    const { rerender } = render(<StatusLine />);
+    const region = page().getByRole("status");
+    expect(region.textContent).toBe("");
+    rerender(<StatusLine label="found 2 · meaning search didn't answer" phoneLabel="found 2 · meaning failed" />);
+    expect(page().getByRole("status")).toBe(region);
+    expect([...region.children].map((label) => [label.className, label.textContent])).toEqual([
+      ["sm:hidden", "found 2 · meaning failed"],
+      ["max-sm:hidden", "found 2 · meaning search didn't answer"],
+    ]);
   });
 });
 

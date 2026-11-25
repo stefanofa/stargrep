@@ -42,7 +42,8 @@ const keywordTop = (repos: ReadonlyArray<LibraryRepo>, query: string) => {
   return best === undefined ? null : topOf(best.repo);
 };
 
-// Each language's share of the whole library, as languageShares gives it, from the counts the API groups.
+// Each language's share of the whole library, a repo with no language counting toward the whole, from the counts the
+// API groups.
 const sharesOf = ({ total, languages }: StarLanguages): ReadonlyArray<LanguageShare> =>
   languages.map(({ language, count }) => ({ name: language, share: count / total }));
 

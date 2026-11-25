@@ -18,9 +18,7 @@ import * as real from "../src/lib/library-collection.ts";
 import type {
   Client,
   LibraryRepo,
-  NewToYou,
   SearchResult,
-  SimilarPerson,
   SimilarRepo,
   SimilarRepos,
   SyncStatus,
@@ -46,15 +44,11 @@ interface Server {
   // A refusal the API answers, or the zone's rate limit turning the address away before the API sees the request.
   refusals: Record<string, "LOGIN_NOT_FOUND" | "SYNC_BUSY" | "TOO_MANY_REQUESTS" | "SERVICE_UNAVAILABLE" | "zone">;
   calls: { library: number; syncStatus: number };
-  newToYou: NewToYou;
-  // Every login the page asked what's new to the viewer in.
-  compared: Array<string>;
   similar: (id: number) => SimilarRepos;
   // The repo IDs the page asked for similar repos of.
   similarAsked: Array<number>;
-  // The people most like each login, and every login and limit the page asked about.
-  alike: Record<string, ReadonlyArray<SimilarPerson>>;
-  alikeAsked: Array<[string, number | undefined]>;
+  // Every topic the page asked whether it has a page.
+  topicsAsked: Array<string>;
 }
 
 let server: Server;
@@ -95,8 +89,9 @@ const api = (): Client => ({
   topic: async () => {
     throw new Error("Unexpected topic call");
   },
-  topicPages: async () => {
-    throw new Error("Unexpected topicPages call");
+  topicPages: async ({ topics }: { topics: ReadonlyArray<string> }) => {
+    server.topicsAsked.push(...topics);
+    return { pages: topics.filter((topic) => topic === "tui").map((topic) => ({ topic, page: topic })) };
   },
   starLanguages: async () => {
     throw new Error("Unexpected starLanguages call");
@@ -104,9 +99,8 @@ const api = (): Client => ({
   taste: async () => {
     throw new Error("Unexpected taste call");
   },
-  similarPeople: async ({ login, limit }: { login: string; limit?: number }) => {
-    server.alikeAsked.push([login, limit]);
-    return { people: server.alike[login] ?? [] };
+  similarPeople: async () => {
+    throw new Error("Unexpected similarPeople call");
   },
   monthlyPicks: async () => {
     throw new Error("Unexpected monthlyPicks call");
@@ -132,9 +126,8 @@ const api = (): Client => ({
   followedStarrers: async () => {
     throw new Error("Unexpected followedStarrers call");
   },
-  newToYou: async ({ login }: { login: string }) => {
-    server.compared.push(login);
-    return server.newToYou;
+  newToYou: async () => {
+    throw new Error("Unexpected newToYou call");
   },
   setMonthlyPicks: async () => {
     throw new Error("Unexpected setMonthlyPicks call");
@@ -234,19 +227,6 @@ const allRead = { total: 6, read: 6, failed: 0, queued: 0 };
 const arriving = { total: 6, read: 0, failed: 0, queued: 0 };
 
 const status = (extra: Partial<Server["status"]>): Server["status"] => syncStatus({ enrichment: allRead, ...extra });
-// A sync waiting for GitHub budget, due to start in 24 minutes with 3 ahead of it.
-const inLine = () =>
-  status({
-    login: "linewaiter",
-    state: "waiting",
-    syncedAt: null,
-    waiting: {
-      ahead: 3,
-      startsAt: DateTime.formatIso(DateTime.add(DateTime.nowUnsafe(), { minutes: 24 })),
-    },
-    starredTotal: 412,
-    enrichment: arriving,
-  });
 const near = ({ atoms, keywords, starredAt, read, ...rest }: Repo): SimilarRepo => rest;
 
 const nobody = { people: [], total: 0 };
@@ -264,12 +244,9 @@ beforeEach(() => {
     triggered: [],
     refusals: {},
     calls: { library: 0, syncStatus: 0 },
-    newToYou: { shared: null, repos: [], labels: {} },
-    compared: [],
     similar: () => nothingNear,
     similarAsked: [],
-    alike: {},
-    alikeAsked: [],
+    topicsAsked: [],
   };
   library = real.makeLibrary(() =>
     real.onePage(
@@ -308,11 +285,15 @@ const open = async (path: string, label: string | RegExp = "Search your stars", 
   });
   render(<RouterProvider router={router} />);
   await page().findByRole("searchbox", { name: label });
-  if (settle) await waitFor(() => expect(strip()).not.toContain("loading"));
+  if (settle) await waitFor(() => expect(document.querySelector("[data-reveal-results][aria-busy]")).toBeNull());
   return router;
 };
 
-const strip = () => document.querySelector("[role=status]")?.closest("p")?.textContent ?? "";
+const tile = () => page().getByRole("searchbox").closest("[data-slot=tile]") as HTMLElement;
+// The strip's live region: the answer, or what went wrong.
+const answer = () => tile().querySelector("[role=status]") as HTMLElement;
+const strip = () => answer()?.textContent ?? "";
+const starsTab = () => page().queryByRole("link", { name: /^stars/ })?.textContent;
 // What one breakpoint shows of an element: its text without the parts that breakpoint hides.
 const shownAt = (element: Element, width: "phone" | "desktop") => {
   const copy = element.cloneNode(true) as Element;
@@ -320,8 +301,6 @@ const shownAt = (element: Element, width: "phone" | "desktop") => {
     hidden.remove();
   return copy.textContent ?? "";
 };
-const statusLine = () => page().getByRole("status").closest("p")?.parentElement as HTMLElement;
-const tile = () => page().getByRole("searchbox").closest("[data-slot=tile]") as HTMLElement;
 const rail = () => page().queryByRole("progressbar");
 const mark = () => document.querySelector("header svg[data-pose]")?.getAttribute("data-pose");
 const chips = () =>
@@ -335,10 +314,10 @@ const poll = () =>
   });
 
 describe("the search page in each state", () => {
-  test("browsing a synced library: the strip counts, the controls sit in the tile", async () => {
+  test("browsing a synced library: the stars tab counts it, the strip says nothing, the controls sit in the tile", async () => {
     await open("/", "Search your stars", false);
-    await waitFor(() => expect(strip()).toContain("6 stars"));
-    expect(strip()).toContain("synced");
+    await waitFor(() => expect(starsTab()).toBe("stars6"));
+    expect(strip()).toBe("");
     expect(within(tile()).getByRole("button", { name: /Sort by/ })).toBeTruthy();
     expect(within(tile()).getByRole("group", { name: "View" })).toBeTruthy();
     expect(rail()).toBeNull();
@@ -348,7 +327,7 @@ describe("the search page in each state", () => {
   test("the language filter marks only the chosen language current", async () => {
     const user = userEvent.setup();
     await open("/", "Search your stars", false);
-    const filter = await waitFor(() => page().getByRole("navigation", { name: "Filter by language" }));
+    const filter = await waitFor(() => page().getByRole("navigation", { name: "Filter stars" }));
     const current = () =>
       within(filter)
         .getAllByRole("link")
@@ -356,16 +335,14 @@ describe("the search page in each state", () => {
         .map((link) => link.textContent);
     await waitFor(() => expect(current()).toEqual(["all"]));
     await user.click(within(filter).getByRole("link", { name: /^Rust/ }));
-    await waitFor(() => expect(current()).toEqual(["Rust 100%"]));
+    await waitFor(() => expect(current()).toEqual(["Rust 6"]));
   });
 
-  test("importing: real counts on the strip and the rail, and placeholders where stars will land", async () => {
+  test("importing: real counts on the rail, quiet live region, and placeholders where stars will land", async () => {
     server.viewer = { ...server.viewer, starredCount: 10 };
     server.status = status({ state: "queued", syncedAt: null, enrichment: arriving });
     await open("/", "Search your stars", false);
-    await waitFor(() => expect(strip()).toContain("importing your stars"));
-    expect(strip()).toContain("6 of 10");
-    const bar = page().getByRole("progressbar", { name: "importing your stars" });
+    const bar = await page().findByRole("progressbar", { name: "importing your stars" });
     expect([
       bar.getAttribute("aria-valuemin"),
       bar.getAttribute("aria-valuenow"),
@@ -381,14 +358,20 @@ describe("the search page in each state", () => {
     );
     expect(document.querySelectorAll("ol[aria-busy=true] > li").length).toBe(8);
     expect(document.querySelectorAll("ol > li > [aria-busy=true]").length).toBe(2);
+    expect(page().getByRole("heading", { level: 1, name: "@junodev" }).parentElement?.textContent).toContain(
+      "stars arriving",
+    );
+    expect(starsTab()).toBe("stars");
+    server.repos = [...server.repos, repo(7, "charmbracelet", "bubbletea", "A TUI framework.")];
+    await poll();
+    await waitFor(() => expect(bar.getAttribute("aria-valuetext")).toBe("7 of 10 imported"));
+    expect(strip()).toBe("");
   });
 
   test("reading: the rail follows the read count and the library shows unread repos by their description", async () => {
     server.status = status({ enrichment: reading });
     await open("/", "Search your stars", false);
-    await waitFor(() => expect(strip()).toContain("reading your stars"));
-    expect(strip()).toContain("4 of 6 understood");
-    const bar = page().getByRole("progressbar", { name: "reading your stars" });
+    const bar = await page().findByRole("progressbar", { name: "reading your stars" });
     expect([
       bar.getAttribute("aria-valuenow"),
       bar.getAttribute("aria-valuemax"),
@@ -410,7 +393,8 @@ describe("the search page in each state", () => {
   test("a sync on a library that synced before checks quietly, then reads new stars in place", async () => {
     server.status = status({ state: "queued", enrichment: allRead });
     await open("/", "Search your stars", false);
-    await waitFor(() => expect(strip()).toContain("checking for new stars"));
+    await waitFor(() => expect(starsTab()).toBe("stars6"));
+    expect(strip()).toBe("");
     expect(rail()).toBeNull();
     expect(page().queryByText(/still arriving/)).toBeNull();
 
@@ -425,8 +409,7 @@ describe("the search page in each state", () => {
     server.repos = [fresh, ...server.repos];
     server.status = status({ state: "queued", enrichment: { total: 7, read: 6, failed: 0, queued: 0 } });
     await poll();
-    await waitFor(() => expect(strip()).toContain("1 new star · reading…"));
-    const card = page().getByRole("link", { name: "auto-ontology" }).closest("article");
+    const card = (await page().findByRole("link", { name: "auto-ontology" })).closest("article");
     expect(card?.textContent).toContain("reading…");
     expect(card?.textContent).not.toContain("no pushes yet");
 
@@ -445,7 +428,7 @@ describe("the search page in each state", () => {
     server.status = status({ enrichment: { total: 7, read: 7, failed: 0, queued: 0 } });
     await poll();
     await waitFor(() => expect(page().getByText("A semantic layer.")).toBeTruthy());
-    expect(strip()).toContain("7 stars");
+    expect(starsTab()).toBe("stars7");
   });
 
   test("your own page asks for a sync as it opens, and someone else's synced stars never ask", async () => {
@@ -462,33 +445,20 @@ describe("the search page in each state", () => {
     server.refusals.junodev = "zone";
     await open("/");
     await waitFor(() => expect(server.triggered).toEqual(["junodev"]));
-    await waitFor(() => expect(strip()).toContain("6 stars"));
+    await waitFor(() => expect(starsTab()).toBe("stars6"));
     expect(page().queryByRole("heading", { name: "lots of requests from your network" })).toBeNull();
     expect(rememberedRefusal(document.cookie, "junodev")).toBeUndefined();
   });
 
   test("a sync that starts after the page settled is picked up when the tab is shown again", async () => {
     await open("/", "Search your stars", false);
-    await waitFor(() => expect(strip()).toContain("6 stars"));
-    server.status = status({ state: "queued", enrichment: allRead });
+    await waitFor(() => expect(starsTab()).toBe("stars6"));
+    server.repos = [repo(7, "charmbracelet", "bubbletea", "A TUI framework."), ...server.repos];
+    server.status = status({ state: "queued", enrichment: { total: 7, read: 7, failed: 0, queued: 0 } });
     await act(async () => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
-    await waitFor(() => expect(strip()).toContain("checking for new stars"));
-  });
-
-  test("the live region announces the state, not every count the poll brings", async () => {
-    server.viewer = { ...server.viewer, starredCount: 10 };
-    server.status = status({ state: "queued", syncedAt: null, enrichment: arriving });
-    await open("/", "Search your stars", false);
-    await waitFor(() => expect(strip()).toContain("6 of 10"));
-    expect(shownAt(page().getByRole("status"), "desktop")).toBe("importing your stars");
-    // The owner pill says whose stars on phones, so the status there doesn't.
-    expect(shownAt(page().getByRole("status"), "phone")).toBe("importing");
-    server.repos = [...server.repos, repo(7, "charmbracelet", "bubbletea", "A TUI framework.")];
-    await poll();
-    await waitFor(() => expect(strip()).toContain("7 of 10"));
-    expect(shownAt(page().getByRole("status"), "desktop")).toBe("importing your stars");
+    await waitFor(() => expect(starsTab()).toBe("stars7"));
   });
 
   test("a failed check on a synced library says so and offers a retry", async () => {
@@ -523,7 +493,6 @@ describe("the search page in each state", () => {
       expect(page().getByRole("heading", { name: "matching meaning 1 from the 4 read so far" })).toBeTruthy(),
     );
     expect(page().getByRole("heading", { name: "matching words 2 from all 6" })).toBeTruthy();
-    expect(strip()).toContain("2 stars not read yet");
   });
 
   test("typing on keeps the results on screen instead of blanking and replaying them", async () => {
@@ -543,7 +512,7 @@ describe("the search page in each state", () => {
     const user = userEvent.setup();
     server.search = () => [hit(server.repos[4] as Repo)];
     await open("/", "Search your stars", false);
-    await waitFor(() => expect(strip()).toContain("6 stars"));
+    await waitFor(() => expect(starsTab()).toBe("stars6"));
     const poses: Array<string | null | undefined> = [mark()];
     const watch = new MutationObserver(() => poses.push(mark()));
     watch.observe(document.body, { subtree: true, attributeFilter: ["data-pose"] });
@@ -568,7 +537,7 @@ describe("the search page in each state", () => {
             land = resolve;
           });
     await open("/?q=terminal");
-    await waitFor(() => expect(strip()).toContain("found 3 of 6"));
+    await waitFor(() => expect(strip()).toBe("found 3!"));
     const box = page().getByRole("searchbox");
     await user.clear(box);
     await user.type(box, "qzxvbnm");
@@ -587,13 +556,11 @@ describe("the search page in each state", () => {
       return [hit(server.repos[4] as Repo)];
     };
     await open("/?q=terminal");
-    await waitFor(() => expect(shownAt(page().getByRole("status"), "desktop")).toBe("meaning search didn't answer"));
-    expect(shownAt(page().getByRole("status"), "phone")).toBe("meaning failed");
-    expect(shownAt(statusLine(), "desktop")).toBe("meaning search didn't answer · found 2try again");
-    expect(shownAt(statusLine(), "phone")).toBe("meaning failedfound 2try again");
+    await waitFor(() => expect(shownAt(answer(), "desktop")).toBe("found 2 · meaning search didn't answer"));
+    expect(shownAt(answer(), "phone")).toBe("found 2 · meaning failed");
     await waitFor(() => expect(mark()).toBe("scared"));
     await user.click(within(tile()).getByRole("button", { name: "try again" }));
-    await waitFor(() => expect(strip()).toContain("found 3 of 6"));
+    await waitFor(() => expect(strip()).toBe("found 3!"));
     expect(server.searches).toEqual(["terminal", "terminal"]);
   });
 
@@ -615,11 +582,9 @@ describe("the search page in each state", () => {
       throw answered("TOO_MANY_REQUESTS");
     };
     await open("/?q=terminal");
-    await waitFor(() =>
-      expect(shownAt(page().getByRole("status"), "desktop")).toBe("meaning search is taking a breather"),
-    );
-    expect(shownAt(page().getByRole("status"), "phone")).toBe("taking a breather");
-    expect(shownAt(statusLine(), "phone")).toBe("taking a breatherfound 2try again");
+    await waitFor(() => expect(shownAt(answer(), "desktop")).toBe("found 2 · meaning search is taking a breather"));
+    expect(shownAt(answer(), "phone")).toBe("found 2 · taking a breather");
+    expect(within(tile()).getByRole("button", { name: "try again" })).toBeTruthy();
     expect(page().getAllByRole("link", { name: /ratatui|bottom/ }).length).toBe(2);
     await waitFor(() => expect(mark()).toBe("unsure"));
   });
@@ -778,7 +743,7 @@ describe("the search page in each state", () => {
     ]);
   });
 
-  test("on the demo page an emptied search stays empty across Back and Forward", async () => {
+  test("on the demo page an emptied search stays empty across Back and Forward, and a filtered link starts empty", async () => {
     const user = userEvent.setup();
     server.signedIn = false;
     server.status = status({ login: "stefanofa" });
@@ -799,6 +764,12 @@ describe("the search page in each state", () => {
     await act(async () => router.history.back());
     await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
     expect(box().value).toBe("async");
+    cleanup();
+    server.searches = [];
+    // A link that filters the demo's stars opens on the stars it keeps, not on the demo search.
+    await open("/?topic=cli", "Search @stefanofa's stars");
+    expect(box().value).toBe("");
+    expect(server.searches).toEqual([]);
   });
 
   test("Forward to the demo page's own address brings its query back, and Back the one typed over it", async () => {
@@ -824,7 +795,7 @@ describe("the search page in each state", () => {
   test("results once everything is read: one list, a plain count, no rail", async () => {
     server.search = () => [hit(server.repos[4] as Repo)];
     await open("/?q=terminal");
-    await waitFor(() => expect(strip()).toContain("found 3 of 6"));
+    await waitFor(() => expect(strip()).toBe("found 3!"));
     expect(page().queryByRole("heading", { name: /matching words/ })).toBeNull();
     expect(page().getByRole("list", { name: "Results" })).toBeTruthy();
     expect(rail()).toBeNull();
@@ -844,8 +815,7 @@ describe("the search page in each state", () => {
     const user = userEvent.setup();
     await open("/?q=record%20terminal%20sessions%20as%20gifs");
     await waitFor(() => expect(page().getByRole("heading", { name: "nothing in all 6 stars" })).toBeTruthy());
-    expect(strip()).toContain("nothing found");
-    expect(strip()).toContain("all 6 stars read");
+    expect(strip()).toBe("nothing found");
     await waitFor(() => expect(mark()).toBe("sad"));
     expect(page().queryByText(/everyone/)).toBeNull();
     const chips = within(page().getByRole("list", { name: "Try other words" })).getAllByRole("button");
@@ -879,7 +849,7 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(server.searches).toEqual(["async"]));
     server.status = status({ enrichment: allRead });
     await poll();
-    await waitFor(() => expect(strip()).toContain("of 6"));
+    await waitFor(() => expect(strip()).toBe("found 1!"));
     expect(server.searches).toEqual(["async"]);
   }, 10_000);
 
@@ -930,34 +900,19 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(strip()).toContain("found"));
   }, 15_000);
 
-  test("someone GitHub doesn't know: the tile and its pill stay, and the page says so", async () => {
+  test("someone GitHub doesn't know: the person keeps their handle, and the page says so", async () => {
     server.refusals["nobody-here-x"] = "LOGIN_NOT_FOUND";
     server.status = status({ login: "nobody-here-x", state: "unknown", syncedAt: null, requestedAt: null });
     await open("/nobody-here-x", "Search @nobody-here-x's stars");
     await waitFor(() =>
       expect(page().getByRole("heading", { name: "GitHub has no one called @nobody-here-x" })).toBeTruthy(),
     );
-    expect(strip()).toContain("no such GitHub user");
     expect(page().getByText("check the spelling, or pick someone from people.")).toBeTruthy();
     expect(page().getByRole("link", { name: "see people" }).getAttribute("href")).toBe("/people");
-    expect(page().getAllByRole("button", { name: /Whose stars: @nobody-here-x/ }).length).toBeGreaterThan(0);
+    expect(page().getByRole("heading", { level: 1, name: "@nobody-here-x" })).toBeTruthy();
+    expect(page().queryByRole("button", { name: "share" })).toBeNull();
+    expect(page().queryByRole("link", { name: "on GitHub ↗" })).toBeNull();
     await waitFor(() => expect(mark()).toBe("unsure"));
-  });
-
-  test("someone waiting for an import slot sees their place in line", async () => {
-    server.status = inLine();
-    await open("/linewaiter", "Search @linewaiter's stars");
-    await waitFor(() => expect(strip()).toContain("in line to import"));
-    expect(strip()).toMatch(/3 ahead · starts in about 2[45] min/);
-    expect(page().queryByRole("heading", { name: "is this you? skip the wait" })).toBeNull();
-  });
-
-  test("a visitor watching someone's stars import is offered to skip the wait as that person", async () => {
-    server.signedIn = false;
-    server.status = inLine();
-    await open("/linewaiter", "Search @linewaiter's stars");
-    await waitFor(() => expect(strip()).toContain("in line to import"));
-    expect(page().getByRole("heading", { name: "is this you? skip the wait" })).toBeTruthy();
   });
 
   test("a full import line says so calmly and offers to try again", async () => {
@@ -967,9 +922,7 @@ describe("the search page in each state", () => {
     await waitFor(() =>
       expect(page().getByRole("heading", { name: "github's line for new imports is full" })).toBeTruthy(),
     );
-    expect(strip()).toContain("the import line is full");
     expect(page().getAllByRole("button", { name: "try again" }).length).toBeGreaterThan(0);
-    expect(page().getAllByRole("button", { name: /Whose stars: @busyline/ }).length).toBeGreaterThan(0);
   });
 
   test("a network that asked too often is told to wait a few minutes", async () => {
@@ -979,7 +932,6 @@ describe("the search page in each state", () => {
     await waitFor(() =>
       expect(page().getByRole("heading", { name: "lots of requests from your network" })).toBeTruthy(),
     );
-    expect(strip()).toContain("taking a breather");
   });
 
   test("an address the zone turned away is told to wait, not that github is out of reach, and only for a minute", async () => {
@@ -989,7 +941,6 @@ describe("the search page in each state", () => {
     await waitFor(() =>
       expect(page().getByRole("heading", { name: "lots of requests from your network" })).toBeTruthy(),
     );
-    expect(strip()).toContain("taking a breather");
     expect(page().getAllByRole("button", { name: "try again" }).length).toBeGreaterThan(0);
     expect(rememberedRefusal(document.cookie, "flooded")).toBe("limited");
     try {
@@ -1051,50 +1002,98 @@ describe("the search page in each state", () => {
     expect(page().getByRole("searchbox", { name: "Search @stefanofa's stars" })).toBeTruthy();
   });
 
-  test("a visitor watching an import gets the claim tile beside the person until the stars land", async () => {
-    server.signedIn = false;
-    server.status = status({
-      login: "octosync",
-      state: "queued",
-      syncedAt: null,
-      starredTotal: 10,
-      enrichment: arriving,
-    });
-    await open("/octosync", "Search @octosync's stars");
-    const person = page().getByRole("region", { name: "@octosync" });
-    await waitFor(() =>
-      expect(within(person).getByRole("heading", { name: "is this you? skip the wait" })).toBeTruthy(),
-    );
-    expect(within(person).getByRole("heading", { level: 1, name: "@octosync" })).toBeTruthy();
-    expect(person.textContent).toContain("stars arriving");
-    expect(page().queryByRole("heading", { name: "search anyone's starred GitHub repos in plain words" })).toBeNull();
-    server.status = status({ login: "octosync", starredTotal: 6 });
-    await poll();
-    await waitFor(
-      () => expect(within(person).queryByRole("heading", { name: "is this you? skip the wait" })).toBeNull(),
-      {
-        timeout: 6000,
-      },
-    );
-    await waitFor(() => expect(person.textContent).toContain("6 stars · last starred Oct 16, 2026 · on GitHub ↗"));
-    expect(within(person).getByRole("link", { name: "on GitHub ↗" }).getAttribute("href")).toBe(
-      "https://github.com/octosync",
-    );
+  test("a person page says since when and how lately they star, what they mostly star, and the count once", async () => {
+    setSystemTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-11-21T00:00:00.000Z")));
+    try {
+      server.signedIn = false;
+      server.status = status({ login: "octodone" });
+      server.repos = repos().map((entry) =>
+        entry.id <= 4
+          ? { ...entry, topics: entry.id === 4 ? ["tui"] : ["tui", "terminal"] }
+          : { ...entry, topics: ["rust"] },
+      );
+      await open("/octodone", "Search @octodone's stars");
+      const person = page().getByRole("heading", { level: 1, name: "@octodone" }).closest("[data-slot=tile]");
+      if (!(person instanceof HTMLElement)) throw new Error("no person tile");
+      await waitFor(() =>
+        expect(shownAt(person, "desktop")).toContain("starring since 2026 · last starred Oct 16 · on GitHub ↗"),
+      );
+      expect(shownAt(person, "phone")).toContain("since 2026 · last starred Oct 16");
+      expect(shownAt(person, "phone")).not.toContain("on GitHub");
+      expect(person.querySelector("img")?.getAttribute("src")).toBe("https://github.com/octodone.png?size=192");
+      await waitFor(() =>
+        expect(within(person).getByRole("link", { name: "tui" }).getAttribute("href")).toBe("/topics/tui"),
+      );
+      expect(within(person).getByText("terminal").closest("a")).toBeNull();
+      expect(shownAt(person, "desktop")).toContain("mostlytuiterminalrust");
+      const tabs = within(page().getByRole("navigation", { name: "@octodone's page" })).getAllByRole("link");
+      expect(tabs.map((tab) => [tab.textContent, tab.getAttribute("aria-current"), tab.getAttribute("href")])).toEqual([
+        ["stars6", "page", "/octodone"],
+        ["taste", null, "/@octodone/taste"],
+      ]);
+      expect(
+        within(person)
+          .getAllByRole("button")
+          .map((button) => button.textContent),
+      ).toEqual(["share", "+ follow"]);
+      cleanup();
+      server.signedIn = true;
+      server.status = status({});
+      await open("/");
+      const own = within(page().getByRole("navigation", { name: "your page" })).getByRole("link", { name: /^stars/ });
+      await waitFor(() => expect(own.textContent).toBe("stars6"));
+      expect(own.getAttribute("href")).toBe("/");
+      expect(page().queryByRole("button", { name: "+ follow" })).toBeNull();
+    } finally {
+      setSystemTime();
+    }
   });
 
-  test("a person page shows the count in the person tile, so the library has no count tile", async () => {
+  test("share copies the person's /@login address with the search on screen, and says so for a moment", async () => {
+    const user = userEvent.setup();
+    setHost("https://stargrep.com/octodone?q=terminal");
+    const copied: Array<string> = [];
+    using _ = spyOn(navigator.clipboard, "writeText").mockImplementation(async (text) => {
+      copied.push(text);
+    });
     server.signedIn = false;
     server.status = status({ login: "octodone" });
-    await open("/octodone", "Search @octodone's stars");
-    const person = page().getByRole("region", { name: "@octodone" });
-    await waitFor(() => expect(person.textContent).toContain("6 stars"));
-    expect(person.querySelector("img")?.getAttribute("src")).toBe("https://github.com/octodone.png?size=192");
-    await page().findByRole("heading", { name: "languages" });
-    expect(page().queryByText("stars", { selector: "main p.font-display" })).toBeNull();
+    await open("/octodone?q=terminal", "Search @octodone's stars");
+    await user.click(page().getByRole("button", { name: "share" }));
+    await waitFor(() => expect(copied).toEqual(["https://stargrep.com/@octodone?q=terminal"]));
+    expect(page().getByRole("button", { name: "link copied" })).toBeTruthy();
+    expect(
+      page()
+        .getAllByRole("status")
+        .some((status) => status.textContent === "link copied"),
+    ).toBe(true);
+    await waitFor(() => expect(captured).toContainEqual(["person_shared", { via: "link" }]));
+    await waitFor(() => expect(page().getByRole("button", { name: "share" })).toBeTruthy(), { timeout: 3000 });
   });
 
-  test("someone else's stars say whose they are", async () => {
+  test("the chips count the answer on screen and filter it, and the answer keeps its count", async () => {
+    const user = userEvent.setup();
+    server.repos = repos().map((entry) => (entry.name === "bottom" ? { ...entry, language: "Go" } : entry));
+    server.search = () => [hit(server.repos[4] as Repo)];
+    const router = await open("/?q=terminal");
+    await waitFor(() => expect(strip()).toBe("found 3!"));
+    const filters = within(page().getByRole("navigation", { name: "Filter stars" }));
+    expect(filters.getAllByRole("link").map((link) => link.textContent)).toEqual(["all", "Rust 2", "Go 1"]);
+    await user.click(filters.getByRole("link", { name: "Go 1" }));
+    await waitFor(() => expect(router.state.location.search).toMatchObject({ q: "terminal", lang: "Go" }));
+    await waitFor(() =>
+      expect(
+        page()
+          .getAllByRole("article")
+          .map((article) => within(article).getByRole("heading").textContent),
+      ).toEqual(["bottom"]),
+    );
+    expect(strip()).toBe("found 3!");
+  });
+
+  test("someone else's stars say whose they are, and hold the place of stars still on their way", async () => {
     server.signedIn = false;
+    server.repos = [];
     server.status = status({
       login: "octosync",
       state: "queued",
@@ -1103,9 +1102,11 @@ describe("the search page in each state", () => {
       enrichment: arriving,
     });
     await open("/octosync", "Search @octosync's stars");
-    await waitFor(() => expect(strip()).toContain("importing @octosync's stars"));
-    expect(page().getByRole("heading", { name: "is this you? skip the wait" })).toBeTruthy();
-    expect(page().getByRole("progressbar", { name: "importing @octosync's stars" })).toBeTruthy();
+    expect(await page().findByRole("progressbar", { name: "importing @octosync's stars" })).toBeTruthy();
+    const person = page().getByRole("heading", { level: 1, name: "@octosync" }).parentElement;
+    expect(person?.textContent).toContain("stars arriving");
+    await waitFor(() => expect(document.querySelectorAll("ol[aria-busy=true] > li").length).toBe(8));
+    expect(page().queryByRole("heading", { name: "is this you? skip the wait" })).toBeNull();
     expect(page().queryByRole("list", { name: "Example searches" })).toBeNull();
   });
 
@@ -1116,7 +1117,6 @@ describe("the search page in each state", () => {
       expect(page().getByRole("heading", { name: "lots of requests from your network" })).toBeTruthy(),
     );
     expect(page().getByRole("button", { name: "try again" })).toBeTruthy();
-    expect(strip()).toContain("taking a breather");
   });
 
   test("a sync that cannot reach github says so and offers to try again", async () => {
@@ -1126,61 +1126,11 @@ describe("the search page in each state", () => {
     await waitFor(() =>
       expect(page().getByRole("heading", { name: "stargrep couldn't reach GitHub just now" })).toBeTruthy(),
     );
-    expect(strip()).toContain("couldn't reach GitHub");
     expect(page().getAllByRole("button", { name: "try again" }).length).toBeGreaterThan(0);
   });
 });
 
-describe("whose stars the page searches", () => {
-  const pill = () => page().getAllByRole("button", { name: /^Whose stars: / })[0] as HTMLElement;
-  const accounts = () =>
-    within(page().getByRole("list", { name: "Synced accounts" }))
-      .getAllByRole("button")
-      .map((person) => [within(person).getByText(/^@/).textContent, within(person).queryByText("you") && "you"]);
-
-  test("a signed-in viewer's own page has the pill, and it goes to anyone's stars", async () => {
-    const user = userEvent.setup();
-    const router = await open("/");
-    expect(pill().getAttribute("aria-label")).toBe("Whose stars: @junodev. Change");
-    await user.click(pill());
-    expect(accounts()).toEqual([
-      ["@junodev", "you"],
-      ["@stefanofa", null],
-      ["@karpathy", null],
-      ["@simonw", null],
-    ]);
-    expect(page().getByRole("link", { name: "see everyone →" }).getAttribute("href")).toBe("/people");
-    await user.type(page().getByRole("textbox", { name: "search anyone's stars" }), "octodone");
-    await user.click(page().getByRole("button", { name: "go" }));
-    await page().findByRole("searchbox", { name: "Search @octodone's stars" });
-    expect(router.state.location.pathname).toBe("/octodone");
-  });
-
-  test("the pill offers the logins this browser looked at, newest first, but not one GitHub doesn't know", async () => {
-    const user = userEvent.setup();
-    for (const login of ["octodone", "octosync"]) {
-      server.status = status({ login });
-      await open(`/${login}`, `Search @${login}'s stars`);
-      cleanup();
-    }
-    server.refusals["nobody-here-x"] = "LOGIN_NOT_FOUND";
-    server.status = status({ login: "nobody-here-x", state: "unknown", syncedAt: null, requestedAt: null });
-    await open("/nobody-here-x", "Search @nobody-here-x's stars");
-    await waitFor(() => expect(strip()).toContain("no such GitHub user"));
-    cleanup();
-    server.status = status({});
-    await open("/");
-    await user.click(pill());
-    expect(accounts().map(([login]) => login)).toEqual([
-      "@junodev",
-      "@octosync",
-      "@octodone",
-      "@stefanofa",
-      "@karpathy",
-      "@simonw",
-    ]);
-  });
-
+describe("signing in", () => {
   test("signing in comes back to the page it started from", async () => {
     const user = userEvent.setup();
     server.signedIn = false;
@@ -1197,167 +1147,6 @@ describe("whose stars the page searches", () => {
       "/auth/sign-in/social",
       { provider: "github", callbackURL: "/octosync?q=terminal", errorCallbackURL: "/octosync?q=terminal" },
     ]);
-  });
-});
-
-describe("what's new to you on someone else's stars", () => {
-  const tile = () =>
-    page().queryByRole("heading", { level: 2, name: "new to you" })?.closest<HTMLElement>("[data-slot=tile]") ?? null;
-  const inTile = () => within(tile() as HTMLElement);
-  const person = () => within(page().getByRole("region", { name: "@octodone" }));
-  const many = () =>
-    Array.from({ length: 10 }, (_, index) =>
-      repo(20 + index, "someone", `close-${index}`, "A close repo.", { starredAt: "2026-09-01T00:00:00.000Z" }),
-    );
-
-  test("the butter tile lists the three closest to yours, and a repo opens over the page", async () => {
-    const user = userEvent.setup();
-    setHost("https://stargrep.com/octodone");
-    server.status = status({ login: "octodone" });
-    const [first, second, third, fourth] = [repos()[5], repos()[4], repos()[3], repos()[2]] as [Repo, Repo, Repo, Repo];
-    server.newToYou = { shared: 2, repos: [first, second, third, fourth], labels: {} };
-    const router = await open("/octodone", "Search @octodone's stars");
-    await waitFor(() => expect(inTile().queryByRole("list", { name: "closest to yours" })).not.toBeNull());
-    expect(tile()?.className).toContain("butter");
-    expect(
-      within(inTile().getByRole("list", { name: "closest to yours" }))
-        .getAllByRole("link")
-        .map((link) => link.querySelector("span > span")?.textContent),
-    ).toEqual(["tui-textarea", "tui-rs", "cursive"]);
-    expect(person().getByText("you share 2 stars")).toBeTruthy();
-    expect(server.compared).toEqual(["octodone"]);
-    await user.click(inTile().getByRole("link", { name: /^tui-rs/ }));
-    await page().findByRole("dialog");
-    expect(router.state.location.search).toEqual({ repo: "fdehau/tui-rs" });
-    await waitFor(() =>
-      expect(captured).toEqual([
-        ["new_to_you_shown", { shared: 2, repos: 3 }],
-        ["new_to_you_opened", { position: 2 }],
-      ]),
-    );
-  });
-
-  test("see all shows every one in place of the months, and the chip goes back to them", async () => {
-    const user = userEvent.setup();
-    server.status = status({ login: "octodone" });
-    server.repos = [...repos(), ...many()];
-    server.newToYou = { shared: 0, repos: many(), labels: {} };
-    const router = await open("/octodone", "Search @octodone's stars");
-    await waitFor(() => expect(inTile().queryByRole("link", { name: "see all 10" })).not.toBeNull());
-    expect(person().getByText("you share no stars")).toBeTruthy();
-    expect(page().getByRole("region", { name: "october 2026" })).toBeTruthy();
-    await user.click(inTile().getByRole("link", { name: "see all 10" }));
-    const list = await page().findByRole("region", { name: "new to you" });
-    expect(router.state.location.search).toEqual({ show: "new" });
-    expect(within(list).getAllByRole("heading", { level: 3 })).toHaveLength(10);
-    expect(page().queryByRole("region", { name: "october 2026" })).toBeNull();
-    await user.click(within(list).getByRole("link", { name: "back to all of @octodone's stars" }));
-    await waitFor(() => expect(page().getByRole("region", { name: "october 2026" })).toBeTruthy());
-    expect(page().queryByRole("region", { name: "new to you" })).toBeNull();
-  });
-
-  test("says so when nothing is new yet, or before your own stars have synced, and reports nothing shown", async () => {
-    setHost("https://stargrep.com/octodone");
-    server.status = status({ login: "octodone" });
-    for (const [answer, line] of [
-      [{ shared: null, repos: [], labels: {} }, "new to you shows once your own stars sync."],
-      [{ shared: 0, repos: [], labels: {} }, "nothing new to you in @octodone's stars yet."],
-    ] as const) {
-      server.newToYou = answer;
-      server.compared = [];
-      await open("/octodone", "Search @octodone's stars");
-      await waitFor(() => expect(inTile().queryByText(line)).not.toBeNull());
-      cleanup();
-    }
-    expect(captured).toEqual([]);
-  });
-
-  test("a visitor gets the sign-in ask in its place, and nobody asks on your own page or during a search", async () => {
-    server.newToYou = { shared: 2, repos: [repos()[5] as Repo], labels: {} };
-    await open("/");
-    await waitFor(() => expect(strip()).toContain("6 stars"));
-    expect(tile()).toBeNull();
-    cleanup();
-    server.signedIn = false;
-    server.status = status({ login: "octodone" });
-    await open("/octodone", "Search @octodone's stars");
-    await waitFor(() => expect(tile()).not.toBeNull());
-    expect(
-      inTile().getByText(
-        "sign in and see which of @octodone's stars you haven't starred, closest to your taste first.",
-      ),
-    ).toBeTruthy();
-    expect(inTile().getByRole("button", { name: "sign in with GitHub" })).toBeTruthy();
-    cleanup();
-    server.signedIn = true;
-    await open("/octodone?q=terminal", "Search @octodone's stars");
-    expect(server.compared).toEqual([]);
-    expect(tile()).toBeNull();
-  });
-});
-
-describe("people with stars like these", () => {
-  const alike = (login: string, shared: number): SimilarPerson => ({
-    login,
-    avatarUrl: null,
-    curated: true,
-    stars: 600,
-    lastStarredAt: "2026-11-01T00:00:00.000Z",
-    languages: [],
-    topics: [],
-    shared,
-  });
-  const tileOf = (heading: string) =>
-    page().queryByRole("heading", { level: 2, name: heading })?.closest<HTMLElement>("[data-slot=tile]") ?? null;
-  const rowHeadings = (heading: string) =>
-    Array.from(
-      tileOf(heading)?.parentElement?.querySelectorAll(":scope > [data-slot=tile] h2") ?? [],
-      (title) => title.textContent,
-    );
-
-  test("someone else's stars end the discover row with the people most like theirs", async () => {
-    server.signedIn = false;
-    server.status = status({ login: "octodone" });
-    server.repos = [...repos(), repo(9, "old", "archived-one", "Gone quiet.", { archived: true })];
-    server.alike = { octodone: [alike("mattpocock", 32), alike("leerob", 10)] };
-    await open("/octodone", "Search @octodone's stars");
-    await waitFor(() => expect(tileOf("stars like @octodone's")).not.toBeNull());
-    expect(rowHeadings("stars like @octodone's")).toEqual(["new to you", "dead stars", "stars like @octodone's"]);
-    const tile = within(tileOf("stars like @octodone's") as HTMLElement);
-    expect(tile.getAllByRole("link").map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
-      ["@mattpocock32 stars in common", "/mattpocock"],
-      ["@leerob10 stars in common", "/leerob"],
-      ["more people", "/people"],
-    ]);
-    expect(server.alikeAsked).toEqual([["octodone", 3]]);
-  });
-
-  test("the tile stays out when nobody's stars are alike", async () => {
-    server.status = status({ login: "octodone" });
-    await open("/octodone", "Search @octodone's stars");
-    await waitFor(() => expect(server.alikeAsked).toEqual([["octodone", 3]]));
-    await waitFor(() => expect(tileOf("new to you")).not.toBeNull());
-    expect(tileOf("stars like @octodone's")).toBeNull();
-  });
-
-  test("your own stars lead with the people most like yours, and nobody asks during a search or on the landing", async () => {
-    server.alike = { junodev: [alike("t3dotgg", 146)] };
-    await open("/?q=terminal");
-    expect(server.alikeAsked).toEqual([]);
-    cleanup();
-    await open("/");
-    await waitFor(() => expect(tileOf("people with stars like yours")).not.toBeNull());
-    const tile = within(tileOf("people with stars like yours") as HTMLElement);
-    expect(tile.getByRole("link", { name: /@t3dotgg/ }).getAttribute("href")).toBe("/t3dotgg");
-    expect(tile.getByRole("link", { name: "see everyone" }).getAttribute("href")).toBe("/people");
-    expect(server.alikeAsked).toEqual([["junodev", 6]]);
-    cleanup();
-    server.alikeAsked = [];
-    server.signedIn = false;
-    server.status = status({ login: "stefanofa" });
-    await open("/", "Search @stefanofa's stars");
-    await waitFor(() => expect(strip()).toContain("found"));
-    expect(server.alikeAsked).toEqual([]);
   });
 });
 

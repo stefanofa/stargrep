@@ -5,12 +5,12 @@ import { ExternalTextLink, textLinkClass } from "./external-text-link.tsx";
 import { type Place, SiteHeader, TabBar } from "./site-nav.tsx";
 import { SourceLink } from "./source-link.tsx";
 
-// On phones the tab bar covers the bottom of the screen, and a docked search tile sits above it, so the page ends with
-// room for both below the footer. styles.css sets --tab-bar.
+// On phones the tab bar covers the bottom of the screen, and a docked search field sits above it, 66px with its fade, so
+// the page ends with room for both below the footer. styles.css sets --tab-bar.
 const room = {
   none: "",
   bar: "max-sm:pb-[calc(var(--tab-bar)+32px)]",
-  dock: "max-sm:pb-[calc(var(--tab-bar)+168px)]",
+  dock: "max-sm:pb-[calc(var(--tab-bar)+96px)]",
 } as const;
 
 // The frame every page shares: the header, the page, and the footer, with the phone's tab bar when the page has one.
