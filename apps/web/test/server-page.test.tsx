@@ -75,8 +75,6 @@ afterEach(() => {
   act(() => root?.unmount());
   root = undefined;
   mock.restore();
-  sessionStorage.clear();
-  delete document.documentElement.dataset.reveal;
 });
 
 // Puts the server's HTML in the document, runs its inline scripts as the parser would, and hydrates it.
@@ -106,13 +104,13 @@ const lit = (html: string) => {
   for (const hidden of page.querySelectorAll("[aria-hidden=true]")) hidden.remove();
   return Array.from(page.querySelectorAll('nav[aria-label="Main"] [aria-current="page"]'), (link) => link.textContent);
 };
-const statusText = () => document.querySelector("[data-reveal-tile] [role=status]")?.textContent ?? "";
+const searchTile = () => document.querySelector("input[type=search]")?.closest("[data-slot=tile]");
+const statusText = () => searchTile()?.querySelector("[role=status]")?.textContent ?? "";
 const heading = (name: string) =>
   [...document.querySelectorAll("h2")].some((element) => element.textContent === name) ? name : undefined;
 const rail = () => document.querySelector("[role=progressbar]")?.getAttribute("aria-valuetext");
 const resultNames = () =>
   Array.from(document.querySelectorAll("main ol li h3"), (heading) => heading.textContent?.trim() ?? "");
-const searchValue = () => (document.querySelector("[data-reveal-tile] input") as HTMLInputElement | null)?.value;
 
 // Every distinct status and result list the page showed from now until stop.
 const watchScreen = () => {
@@ -140,66 +138,53 @@ const cachedSearch = (minutesAgo: number) => ({
 const session = "better-auth.session_token=signed";
 
 describe("a stars page from the Worker to the browser", () => {
-  test("the home page paints the demo answer on the server and keeps it once the live library takes over", async () => {
-    const page = await renderOnServer("/");
-    expect(page.status).toBe(200);
-    expect(page.html).toContain("found 1!");
-    expect(page.html).toContain(">mobile-mcp</a>");
-    expect(page.html).toContain("let an ai agent control my iphone");
-    // The engine was loaded before the render, so no boundary waits for it.
-    expect(page.html).not.toContain("<!--$?-->");
-    expect(page.html).toContain("stargrep:revealed");
-    expect(page.requested).toEqual([]);
-
-    sessionStorage.setItem("stargrep:revealed", "1");
+  test("a fresh cached answer hydrates as painted, holds while the library loads, and is never asked for again", async () => {
+    const page = await renderOnServer(cachedPath, undefined, cachedSearch(1));
+    // This process keeps each library it loads, so this is the first test to load stefanofa's.
     using secondPage = holdSecondPage();
-    const router = await hydratePage("/", page.html);
-    const loaded = router.state.matches.at(-1)?.loaderData as { first: unknown } | undefined;
-    expect(loaded?.first).not.toBeNull();
-    const painted = { status: statusText(), results: resultNames(), query: searchValue() };
-    const shown = new Set([statusText()]);
-    const watching = new MutationObserver(() => shown.add(statusText()));
-    watching.observe(document.body, { subtree: true, childList: true, characterData: true });
-    expect(painted).toEqual({
-      status: "found 1!",
-      results: ["mobile-mcp"],
-      query: "let an ai agent control my iphone",
-    });
+    const router = await hydratePage(cachedPath, page.html);
+    const loaded = router.state.matches.at(-1)?.loaderData as { first: { hits: { stale: boolean } } } | undefined;
+    expect(loaded?.first.hits.stale).toBe(false);
+    const shown = watchScreen();
+    expect(shown.now()).toEqual({ status: "found 1!", results: "mobile-mcp" });
+    // Not even for a moment while the library's first page alone has landed.
     await act(async () => {
       await loadEngine();
     });
     await act(async () => {
       await secondPage.arrived;
     });
-    expect({ status: statusText(), results: resultNames(), query: searchValue() }).toEqual(painted);
     await act(async () => {
       secondPage.release();
       await getLibrary("stefanofa", "public", false).whole;
     });
-    // The browser loads the library from the same API and derives the view live. Nothing on screen changes.
-    watching.disconnect();
-    expect({ status: statusText(), results: resultNames(), query: searchValue() }).toEqual(painted);
-    // Not even for a moment while the library's first page alone has landed.
-    expect([...shown]).toEqual(["found 1!"]);
+    // The browser asks only once typing pauses, so the page waits past that before it checks no search ran.
+    await act(() => Effect.runPromise(Effect.sleep(Duration.times(pause, 2))));
+    expect([shown.stop(), searched, errors]).toEqual([[{ status: "found 1!", results: "mobile-mcp" }], [], []]);
+  }, 60_000);
+
+  test("a visitor's home paints one example answer from the server and hydrates without a change", async () => {
+    const page = await renderOnServer("/");
+    expect(page.status).toBe(200);
+    // The example is the one search a page asks for on the server, and it opens that search on its person's page.
+    expect(page.searched).toEqual(["let an ai agent control my iphone"]);
+    expect(page.html).toContain('href="/stefanofa?q=let+an+ai+agent+control+my+iphone"');
+    expect(page.html).toContain(" found 1!");
+    expect(page.html).toContain("mobile-mcp");
+    expect(page.html).not.toContain('type="search"');
+    // The engine was loaded before the render, so no boundary waits for it.
+    expect(page.html).not.toContain("<!--$?-->");
+
+    await hydratePage("/", page.html);
+    const example = () => document.querySelector('a[href^="/stefanofa?q="]')?.closest("[data-slot=tile]")?.textContent;
+    const painted = example();
+    expect(painted).toContain("mobile-mcp");
+    await act(async () => {
+      await loadEngine();
+    });
+    expect(example()).toBe(painted);
     expect(errors).toEqual([]);
     expect(requested).toEqual([]);
-  }, 60_000);
-
-  test("the demo account in any case is the demo, with its own spelling", async () => {
-    const page = await renderOnServer("/StefanoFA");
-    expect(page.html).toContain("found 1!");
-    expect(page.html).toContain("@stefanofa");
-    expect(page.html).not.toContain("@StefanoFA");
-  }, 60_000);
-
-  test("the demo landing's own query is the one answer the server searches for, and a filtered link runs none", async () => {
-    const page = await renderOnServer("/");
-    expect(page.searched).toEqual(["let an ai agent control my iphone"]);
-    for (const path of ["/@stefanofa?starred=2026-03", "/?topic=react", "/stefanofa?lang=Rust", "/?archived=true"]) {
-      const filtered = await renderOnServer(path);
-      const box = filtered.html.match(/<input[^>]*type="search"[^>]*>/)?.[0] ?? "";
-      expect([path, filtered.searched, box.includes("let an ai agent")]).toEqual([path, [], false]);
-    }
   }, 60_000);
 
   test("a shared link with another query paints its keyword matches and searches nothing on the server", async () => {
@@ -208,8 +193,6 @@ describe("a stars page from the Worker to the browser", () => {
     expect(page.html).toContain(">asciinema</a>");
     expect(page.html).not.toContain("loading @stefanofa");
     expect(page.searched).toEqual([]);
-    // The reveal types the demo's own query, never a shared one.
-    expect(page.html).not.toContain("stargrep:revealed");
 
     const router = await hydratePage("/stefanofa?q=terminal", page.html);
     // The page has no answer by meaning, so the browser searches for one through the API.
@@ -244,18 +227,6 @@ describe("a stars page from the Worker to the browser", () => {
     }
   }, 60_000);
 
-  test("a fresh cached answer hydrates as painted, and the browser never asks for it again", async () => {
-    const page = await renderOnServer(cachedPath, undefined, cachedSearch(1));
-    const router = await hydratePage(cachedPath, page.html);
-    const loaded = router.state.matches.at(-1)?.loaderData as { first: { hits: { stale: boolean } } } | undefined;
-    expect(loaded?.first.hits.stale).toBe(false);
-    const shown = watchScreen();
-    expect(shown.now()).toEqual({ status: "found 1!", results: "mobile-mcp" });
-    // The browser asks only once typing pauses, so the page waits past that before it checks no search ran.
-    await act(() => Effect.runPromise(Effect.sleep(Duration.times(pause, 2))));
-    expect([shown.stop(), searched, errors]).toEqual([[{ status: "found 1!", results: "mobile-mcp" }], [], []]);
-  }, 60_000);
-
   test("a stale cached answer stays on screen while the browser asks for it again", async () => {
     const page = await renderOnServer(cachedPath, undefined, cachedSearch(6));
     const router = await hydratePage(cachedPath, page.html);
@@ -267,10 +238,11 @@ describe("a stars page from the Worker to the browser", () => {
     expect([shown.stop(), errors]).toEqual([[{ status: "found 1!", results: "mobile-mcp" }], []]);
   }, 60_000);
 
-  test("an HTML request for a new query on another login, or a cold demo query, makes no search and no model call", async () => {
+  test("an HTML request for a person's page, the demo's included, makes no search and no model call", async () => {
     for (const path of [
       "/octodone?q=a%20sentence%20no%20one%20asked%20before",
       "/stefanofa?q=another%20cold%20sentence",
+      "/stefanofa",
     ]) {
       const page = await renderOnServer(path);
       expect([path, page.status, page.searched]).toEqual([path, 200, []]);
@@ -370,7 +342,7 @@ describe("a stars page from the Worker to the browser", () => {
   }, 60_000);
 
   test("the view this browser picked paints from the server, so the page does not switch on hydration", async () => {
-    const page = await renderOnServer("/", "stargrep-view=list");
+    const page = await renderOnServer("/stefanofa", "stargrep-view=list");
     expect(page.html).toContain("view-list");
     expect(page.html).not.toContain("view-tiles");
   }, 60_000);
@@ -472,7 +444,7 @@ describe("a stars page from the Worker to the browser", () => {
     expect(page.html).not.toContain(secret);
   }, 60_000);
 
-  test("the hero's username field goes to that login's stars before the page hydrates", async () => {
+  test("the landing's username field goes to that login's stars before the page hydrates", async () => {
     const landing = await renderOnServer("/");
     const form = landing.html.match(/<form[^>]*aria-label="Whose stars"[^>]*>.*?<\/form>/s)?.[0] ?? "";
     expect(form).toMatch(/action="\/"/);

@@ -271,7 +271,7 @@ afterEach(() => {
   setHost("http://localhost/");
 });
 
-const open = async (path: string, label: string | RegExp = "Search your stars", settle = true) => {
+const mount = (path: string) => {
   // The root route loads the session, as the Worker does for the first page.
   const root = createRootRoute({
     component: Outlet,
@@ -292,8 +292,23 @@ const open = async (path: string, label: string | RegExp = "Search your stars", 
     history: createMemoryHistory({ initialEntries: [path] }),
   });
   render(<RouterProvider router={router} />);
+  return router;
+};
+
+const open = async (path: string, label: string | RegExp = "Search your stars", settle = true) => {
+  const router = mount(path);
   await page().findByRole("searchbox", { name: label });
-  if (settle) await waitFor(() => expect(document.querySelector("[data-reveal-results][aria-busy]")).toBeNull());
+  if (settle) await waitFor(() => expect(document.querySelector("main > [aria-busy]")).toBeNull());
+  return router;
+};
+
+const headline = "search anyone's starred GitHub repos in plain words";
+
+// A visitor's /, which has no search box.
+const landing = async () => {
+  server.signedIn = false;
+  const router = mount("/");
+  await page().findByRole("heading", { level: 1, name: headline });
   return router;
 };
 
@@ -601,9 +616,7 @@ describe("the search page in each state", () => {
     const signIn = () =>
       within(page().getAllByRole("banner")[0] as HTMLElement).getByRole("button", { name: "sign in" });
     const bar = () => document.querySelector("[data-slot=tab-bar]") as HTMLElement;
-    server.signedIn = false;
-    server.status = status({ login: "stefanofa" });
-    await open("/", "Search @stefanofa's stars");
+    await landing();
     expect(within(bar()).getByRole("link", { name: "home" }).getAttribute("aria-current")).toBe("page");
     expect(signIn().className).toContain("max-sm:hidden");
     cleanup();
@@ -640,17 +653,6 @@ describe("the search page in each state", () => {
       // biome-ignore lint/suspicious/noDocumentCookie: the test clears the view it saved.
       document.cookie = "stargrep-view=; Max-Age=0; Path=/";
     }
-  });
-
-  test("a result's link on the demo page keeps a search someone cleared", async () => {
-    const user = userEvent.setup();
-    server.signedIn = false;
-    server.status = status({ login: "stefanofa" });
-    await open("/", "Search @stefanofa's stars");
-    const box = page().getByRole<HTMLInputElement>("searchbox");
-    await user.type(box, "{Backspace}".repeat(box.value.length));
-    const href = (await page().findByRole("link", { name: "bottom" })).getAttribute("href") ?? "";
-    expect(Object.fromEntries(new URLSearchParams(href.slice(1)))).toEqual({ q: "", repo: "ClementTsang/bottom" });
   });
 
   test("a closing panel keeps its repo on screen while it slides away", async () => {
@@ -733,71 +735,6 @@ describe("the search page in each state", () => {
     await waitFor(() => expect(router.state.location.search).toEqual({ q: "terminal" }));
     expect(page().queryByRole("dialog")).toBeNull();
     expect(router.history.length).toBe(1);
-  });
-
-  test("the landing offers the curated people under the username field, and the way to everyone", async () => {
-    server.signedIn = false;
-    server.status = status({ login: "stefanofa" });
-    await open("/", "Search @stefanofa's stars");
-    const faces = page().getByRole("navigation", { name: "Start with" });
-    expect(
-      within(faces)
-        .getAllByRole("link")
-        .map((link) => [link.textContent, link.getAttribute("href")]),
-    ).toEqual([
-      ["@karpathy", "/karpathy"],
-      ["@simonw", "/simonw"],
-      ["see everyone →", "/people"],
-    ]);
-  });
-
-  test("on the demo page an emptied search stays empty across Back and Forward, and a filtered link starts empty", async () => {
-    const user = userEvent.setup();
-    server.signedIn = false;
-    server.status = status({ login: "stefanofa" });
-    const router = await open("/", "Search @stefanofa's stars");
-    const box = () => page().getByRole<HTMLInputElement>("searchbox", { hidden: true });
-    expect(box().value).toBe("terminal dashboard");
-    await user.type(box(), "{Backspace}".repeat(box().value.length));
-    await waitFor(() => expect(router.state.location.search).toEqual({ q: "" }));
-    await user.click(await page().findByRole("link", { name: "bottom" }));
-    await page().findByRole("dialog");
-    await user.keyboard("{Escape}");
-    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
-    await user.type(box(), "async");
-    await waitFor(() => expect(router.state.location.search).toEqual({ q: "async" }));
-    await act(async () => router.history.forward());
-    await page().findByRole("dialog");
-    expect(box().value).toBe("");
-    await act(async () => router.history.back());
-    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
-    expect(box().value).toBe("async");
-    cleanup();
-    server.searches = [];
-    // A link that filters the demo's stars opens on the stars it keeps, not on the demo search.
-    await open("/?topic=cli", "Search @stefanofa's stars");
-    expect(box().value).toBe("");
-    expect(server.searches).toEqual([]);
-  });
-
-  test("Forward to the demo page's own address brings its query back, and Back the one typed over it", async () => {
-    const user = userEvent.setup();
-    server.signedIn = false;
-    server.status = status({ login: "stefanofa" });
-    const router = await open("/", "Search @stefanofa's stars");
-    const box = () => page().getByRole<HTMLInputElement>("searchbox", { hidden: true });
-    await user.click(await page().findByRole("link", { name: "bottom" }));
-    await page().findByRole("dialog");
-    await user.keyboard("{Escape}");
-    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
-    await user.type(box(), `${"{Backspace}".repeat(box().value.length)}async`);
-    await waitFor(() => expect(router.state.location.search).toEqual({ q: "async" }));
-    await act(async () => router.history.forward());
-    await page().findByRole("dialog");
-    expect(box().value).toBe("terminal dashboard");
-    await act(async () => router.history.back());
-    await waitFor(() => expect(page().queryByRole("dialog")).toBeNull());
-    expect(box().value).toBe("async");
   });
 
   test("results once everything is read: one list, a plain count, no rail", async () => {
@@ -959,55 +896,63 @@ describe("the search page in each state", () => {
     }
   });
 
-  test("a visitor lands on the demo account with the hero, the sign-in tile and example searches", async () => {
-    const user = userEvent.setup();
-    server.signedIn = false;
-    server.status = status({ login: "stefanofa" });
-    await open("/", "Search @stefanofa's stars");
+  test("a visitor's home shows one search someone could run, painted from its answer and linked to it", async () => {
+    server.search = () => [hit(server.repos[0] as Repo), hit(server.repos[1] as Repo)];
+    server.status = status({ login: "stefanofa", starredTotal: 1234 });
+    await landing();
+    expect(page().queryByRole("searchbox")).toBeNull();
+    expect(page().getByRole("heading", { name: "get your own page" })).toBeTruthy();
+    const example = page().getByRole("link", { name: '"terminal dashboard"' });
+    const tile = example.closest("[data-slot=tile]") as HTMLElement;
+    expect(example.getAttribute("href")).toBe("/stefanofa?q=terminal+dashboard");
+    expect(shownAt(tile, "desktop")).toContain("for example, in @stefanofa's 1,234 stars");
+    expect(shownAt(tile, "phone")).toContain("for example, in @stefanofa's stars");
+    expect(tile.querySelector("h2")?.textContent).toBe('"terminal dashboard" found 2!');
     expect(
-      page().getByRole("heading", { level: 1, name: "search anyone's starred GitHub repos in plain words" }),
-    ).toBeTruthy();
-    expect(page().getByRole("heading", { name: "search your own stars" })).toBeTruthy();
-    const owner = within(page().getByRole("main")).getByRole("link", { name: "@stefanofa" });
-    expect(owner.closest("p")?.textContent).toBe("live results from @stefanofa, our demo account. try any username.");
-    const hero = owner.closest("section") as HTMLElement;
-    expect(shownAt(hero, "phone")).toContain("live results from @stefanofa, our demo account. try any username.");
-    expect(shownAt(hero, "phone")).toContain("github.com/");
-    expect(within(hero).getByRole("textbox", { name: "github.com/ username" })).toBeTruthy();
-    expect([owner.getAttribute("href"), owner.getAttribute("target")]).toEqual([
-      "https://github.com/stefanofa",
-      "_blank",
+      Array.from(tile.querySelectorAll("li"), (repo) => repo.querySelector("span:not([data-slot])")?.textContent),
+    ).toEqual(["ratatui", "bottom"]);
+    expect(Array.from(tile.querySelectorAll("mark"), (mark) => mark.textContent)).toEqual([
+      "terminal",
+      "dashboard",
+      "dashboard",
+      "terminal",
     ]);
+    // The example is the one search the page asks for.
+    expect(server.searches).toEqual(["terminal dashboard"]);
     const footer = page().getByRole("contentinfo");
     const maker = within(footer).getByRole("link", { name: "@stefanofa" });
     expect(maker.parentElement?.textContent).toBe("made by @stefanofa");
     expect([maker.getAttribute("href"), maker.getAttribute("target")]).toEqual(["https://x.com/stefanofa", "_blank"]);
-    const chips = page().getByRole("list", { name: "Example searches" });
-    await user.click(within(chips).getByRole("button", { name: "terminal recorder" }));
-    expect((page().getByRole("searchbox") as HTMLInputElement).value).toBe("terminal recorder");
   });
 
-  test("a visitor types any username in the hero and lands on that login's stars", async () => {
+  test("a visitor's home without an answer to show still offers the search, without a count", async () => {
+    server.search = () => [];
+    await landing();
+    const example = page().getByRole("link", { name: '"terminal dashboard"' });
+    const tile = example.closest("[data-slot=tile]") as HTMLElement;
+    expect(tile.querySelector("h2")?.textContent).toBe('"terminal dashboard"');
+    expect(tile.querySelectorAll("li")).toHaveLength(0);
+  });
+
+  test("a visitor types any username on the landing and lands on that login's stars", async () => {
     const user = userEvent.setup();
-    server.signedIn = false;
-    const router = await open("/", "Search @stefanofa's stars");
+    const router = await landing();
     await user.type(page().getByRole("textbox", { name: "github.com/ username" }), " @octodone ");
     await user.click(within(page().getByRole("form", { name: "Whose stars" })).getByRole("button", { name: "go" }));
     await page().findByRole("searchbox", { name: "Search @octodone's stars" });
     expect(router.state.location.pathname).toBe("/octodone");
-    // A person page has the person in place of the hero, so the field leaves with it.
+    // A person page has the person in place of the landing, so the field leaves with it.
     expect(page().getByRole("heading", { level: 1, name: "@octodone" })).toBeTruthy();
     expect(page().queryByRole("textbox", { name: "github.com/ username" })).toBeNull();
   });
 
-  test("the hero's username field stays put on something GitHub could not call a login", async () => {
+  test("the landing's username field stays put on something GitHub could not call a login", async () => {
     const user = userEvent.setup();
-    server.signedIn = false;
-    const router = await open("/", "Search @stefanofa's stars");
+    const router = await landing();
     await user.type(page().getByRole("textbox", { name: "github.com/ username" }), "not a login");
     await user.click(within(page().getByRole("form", { name: "Whose stars" })).getByRole("button", { name: "go" }));
     expect(router.state.location.pathname).toBe("/");
-    expect(page().getByRole("searchbox", { name: "Search @stefanofa's stars" })).toBeTruthy();
+    expect(page().getByRole("heading", { level: 1, name: headline })).toBeTruthy();
   });
 
   test("a person page says since when and how lately they star, what they mostly star, and the count once", async () => {

@@ -20,8 +20,6 @@ export {
   type Activity,
   GroupHeading,
   type Hero,
-  highlight,
-  type Match,
   type OpenResult,
   type Result,
   type ResultGroup,
@@ -43,4 +41,5 @@ export { Tooltip } from "./components/tooltip.tsx";
 export { isView, type View, ViewToggle } from "./components/view-toggle.tsx";
 export { cn } from "./lib/cn.ts";
 export { formatStars } from "./lib/format-stars.ts";
+export { highlight, type Match } from "./lib/highlight.tsx";
 export { Pip, type PipPose, pipPoses } from "./mark/pip.tsx";

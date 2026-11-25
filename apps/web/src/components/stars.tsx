@@ -28,10 +28,10 @@ import * as Fiber from "effect/Fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { capture } from "../lib/analytics.ts";
 import { policyOf, starredOf, whoseOf } from "../lib/audience.ts";
-import { keywordTerms, normalize, searchText } from "../lib/keyword.ts";
+import { keywordTerms, searchText } from "../lib/keyword.ts";
 import { getLibrary, type Library } from "../lib/library-collection.ts";
 import { facetOf, facetsOf, keeps, resultFacet } from "../lib/library-filter.ts";
-import { askedPage, defaultQueryOf, type PageData, type PageRequest, type Session } from "../lib/page-data.ts";
+import { askedPage, type PageData, type PageRequest, type Session } from "../lib/page-data.ts";
 import { hitsOf, liveView } from "../lib/page-view.ts";
 import { useRepoParam } from "../lib/panel-history.ts";
 import { personStars } from "../lib/person-stars.ts";
@@ -46,13 +46,12 @@ import {
   withLinks,
 } from "../lib/present.ts";
 import { withReply } from "../lib/results.ts";
-import { useReveal } from "../lib/reveal.ts";
-import { playSurprise } from "../lib/reveal-timing.ts";
 import type { SimilarRepo } from "../lib/rpc.ts";
 import { librarySorts, type Params, searchSorts, validateParams } from "../lib/search-params.ts";
 import { type Body, pageView, type Retry, type Stage, stageOf } from "../lib/search-state.ts";
 import { loginPage } from "../lib/stars-route.ts";
 import { storedView, useStoredView } from "../lib/stored-view.ts";
+import { playSurprise } from "../lib/surprise.ts";
 import { libraryRevision, nothingSynced } from "../lib/sync-status.ts";
 import { libraryTrouble, type Trouble } from "../lib/trouble.ts";
 import { useSemanticSearch } from "../lib/use-semantic.ts";
@@ -62,7 +61,6 @@ import { formatCount, theirs } from "../lib/whose.ts";
 import { AccountRow } from "./account-row.tsx";
 import { FilterChips } from "./filter-chips.tsx";
 import { FollowButton, FollowedStarredBy } from "./follows.tsx";
-import { Hero, TryChips } from "./landing-hero.tsx";
 import { LibraryPlaceholder, LibraryView } from "./library-view.tsx";
 import { type PersonStars, PersonTile } from "./person-tile.tsx";
 import { SameQuestion } from "./same-question.tsx";
@@ -71,14 +69,14 @@ import { TopicChips } from "./topic-chips.tsx";
 
 // A navigation in the browser starts from the session the server loaded. The page reads the rest once it mounts.
 export const pageFor = (request: PageRequest, { viewer, config, repoStars, site }: Session): PageData => {
-  const { audience, query, defaultQuery } = askedPage(viewer, config, request);
+  const { audience, query } = askedPage(viewer, request);
   return {
+    kind: "stars",
     audience,
     repoStars,
     site,
     config,
     query,
-    defaultQuery,
     first: null,
     sync: null,
     refusal: null,
@@ -102,9 +100,9 @@ function useArrangement(searching: boolean, saved: View | null) {
   return { view, sort, setView, setSort };
 }
 
-function Waiting({ view, searching, hero }: { view: View; searching: boolean; hero: "card" | undefined }) {
+function Waiting({ view, searching }: { view: View; searching: boolean }) {
   return searching ? (
-    <Results view={view} groups={[{ key: "all", results: [], pending: 4 }]} hero={hero} />
+    <Results view={view} groups={[{ key: "all", results: [], pending: 4 }]} />
   ) : (
     <LibraryPlaceholder view={view} />
   );
@@ -188,18 +186,15 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   const params: Params = useSearch({ strict: false });
   const navigate = useNavigate();
   const router = useRouter();
-  // A navigation in the browser loads the page from the login alone, so the address it opened on decides the default
-  // search here, as it did on the server.
-  const [defaultQuery] = useState(() => defaultQueryOf(audience, data.config, params));
-  const [query, setQuery] = useState(params.q ?? defaultQuery);
+  const [query, setQuery] = useState(params.q ?? "");
   // Typing replaces ?q= as it goes, so only Back and Forward bring another query into the search box.
   useEffect(
     () =>
       router.history.subscribe(({ location, action }) => {
         if (action.type === "PUSH" || action.type === "REPLACE") return;
-        setQuery(validateParams(router.parseLocation(location).search).q ?? defaultQuery);
+        setQuery(validateParams(router.parseLocation(location).search).q ?? "");
       }),
-    [router, defaultQuery],
+    [router],
   );
   const [opener, setOpener] = useState<HTMLElement | null>(null);
 
@@ -239,7 +234,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   // anywhere. The default view and sort stay out, so a link doesn't override the opener's own choice.
   const links: Params = {
     ...params,
-    q: query === defaultQuery ? undefined : query,
+    q: query === "" ? undefined : query,
     view: view === "tiles" && params.view === undefined ? undefined : view,
   };
   const trouble: Trouble | undefined =
@@ -290,10 +285,6 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     [page.body.kind, entries],
   );
   const pass = keeps(params.lang, params.archived === true);
-  const resultsHero = page.hero === undefined ? undefined : "card";
-
-  const reveal = useReveal(query, page.painted);
-  const butterPose = reveal.phase === "typing" ? "thinking" : reveal.phase === "settled" ? "happy" : "idle";
 
   const retryLibrary = () => {
     setRetrying(true);
@@ -304,7 +295,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
     setQuery(next);
     navigate({
       to: ".",
-      search: (previous) => ({ ...previous, q: next === defaultQuery ? undefined : next }),
+      search: (previous) => ({ ...previous, q: next === "" ? undefined : next }),
       replace: true,
     });
   };
@@ -372,7 +363,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           </EmptyTile>
         );
       case "loading":
-        return <Waiting view={view} searching={current.searching} hero={resultsHero} />;
+        return <Waiting view={view} searching={current.searching} />;
       case "library":
         return (
           <LibraryView
@@ -386,14 +377,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
           />
         );
       case "results":
-        return (
-          <Results
-            view={view}
-            groups={withLinks(filtered(current.groups, pass), links)}
-            hero={resultsHero}
-            onOpen={open}
-          />
-        );
+        return <Results view={view} groups={withLinks(filtered(current.groups, pass), links)} onOpen={open} />;
       case "empty-reading":
         return <EmptyTile pose={page.pose} ring={current.ring} {...current.copy} />;
       case "empty":
@@ -415,74 +399,63 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
 
   return (
     <>
-      {page.hero && <Hero {...page.hero} faces={data.config.curated} pose={butterPose} />}
-      {page.person && (
-        <PersonTile
-          login={page.person.login}
-          own={audience.by === "owner"}
-          known={page.person.known}
-          stars={personFacts}
-          tab="stars"
-          counts={{ stars: starsCount }}
-          share={
-            page.person.known ? (
-              <ShareButton
-                page={personShared(page.person.login)}
-                query={links.q}
-                className={audience.by === "owner" ? "max-sm:size-10" : "max-sm:size-[42px]"}
-              />
-            ) : undefined
-          }
-          follow={
-            page.person.known && audience.by !== "owner" && sync?.accountType !== "org" ? (
-              <FollowButton login={page.person.login} signedIn={audience.by === "signed-in"} />
-            ) : undefined
-          }
-        />
-      )}
-      <div data-reveal-tile className="contents">
-        <SearchTile
-          query={reveal.typed ?? query}
-          onQueryChange={search}
-          label={`Search ${theirs(whose)}`}
-          placeholder={page.placeholder}
-          progress={page.progress}
-          status={
-            <StatusLine
-              label={page.status?.label}
-              phoneLabel={page.status?.phoneLabel}
-              action={
-                again && (
-                  <Button variant="bare" size="default" className="shrink-0" onClick={tryAgain[again]}>
-                    try again
-                  </Button>
-                )
-              }
+      <PersonTile
+        login={page.person.login}
+        own={audience.by === "owner"}
+        known={page.person.known}
+        stars={personFacts}
+        tab="stars"
+        counts={{ stars: starsCount }}
+        share={
+          page.person.known ? (
+            <ShareButton
+              page={personShared(page.person.login)}
+              query={links.q}
+              className={audience.by === "owner" ? "max-sm:size-10" : "max-sm:size-[42px]"}
             />
-          }
-          filters={
-            (page.body.kind === "loading" || page.body.kind === "library" || page.body.kind === "results") && (
-              <FilterChips facets={facets} lang={params.lang} archived={params.archived === true} />
-            )
-          }
-          controls={
-            <>
-              <SortMenu value={sort} onValueChange={setSort} options={searching ? searchSorts : librarySorts} />
-              <ViewToggle value={view} onValueChange={setView} />
-            </>
-          }
-        />
-      </div>
-      {page.hero && (
-        <TryChips
-          examples={data.config.examples.filter((example) => normalize(example) !== normalize(query))}
-          onPick={search}
-        />
-      )}
-      <div data-reveal-results aria-busy={page.body.kind === "loading" || undefined} className="flex flex-col gap-gap">
+          ) : undefined
+        }
+        follow={
+          page.person.known && audience.by !== "owner" && sync?.accountType !== "org" ? (
+            <FollowButton login={page.person.login} signedIn={audience.by === "signed-in"} />
+          ) : undefined
+        }
+      />
+      <SearchTile
+        query={query}
+        onQueryChange={search}
+        label={`Search ${theirs(whose)}`}
+        placeholder={page.placeholder}
+        progress={page.progress}
+        status={
+          <StatusLine
+            label={page.status?.label}
+            phoneLabel={page.status?.phoneLabel}
+            action={
+              again && (
+                <Button variant="bare" size="default" className="shrink-0" onClick={tryAgain[again]}>
+                  try again
+                </Button>
+              )
+            }
+          />
+        }
+        filters={
+          (page.body.kind === "loading" || page.body.kind === "library" || page.body.kind === "results") && (
+            <FilterChips facets={facets} lang={params.lang} archived={params.archived === true} />
+          )
+        }
+        controls={
+          <>
+            <SortMenu value={sort} onValueChange={setSort} options={searching ? searchSorts : librarySorts} />
+            <ViewToggle value={view} onValueChange={setView} />
+          </>
+        }
+      />
+      <div aria-busy={page.body.kind === "loading" || undefined} className="flex flex-col gap-gap">
         {body(page.body)}
       </div>
-      {page.person?.known && searching && answered.has(page.body.kind) && (
+      {page.person.known && searching && answered.has(page.body.kind) && (
         <SameQuestion
           login={page.person.login}
           query={query}
@@ -517,7 +490,8 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
   );
 }
 
-// The text pages, the people page, and the sign-in problem ride in the engine chunk,
+// The landing and the sign-in problem ride in the engine chunk,
 // so the landing entry never reaches Base UI. A second lazy chunk would make the bundler move React, the router, and the
 // UI kit out of the landing entry into a shared chunk, which costs the landing page about 2 KB gzipped.
+export { Landing, landingFor } from "./landing.tsx";
 export { SignInProblem } from "./sign-in-problem.tsx";

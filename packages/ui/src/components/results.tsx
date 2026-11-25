@@ -2,6 +2,7 @@ import { type MouseEvent, type ReactNode, useId, useLayoutEffect, useRef, useSta
 import { Skeleton as Measured } from "skullet/react";
 import { cn } from "../lib/cn.ts";
 import { formatStars } from "../lib/format-stars.ts";
+import { highlight, type Match } from "../lib/highlight.tsx";
 import { NetworkAvatars, type Person } from "./avatar.tsx";
 import { Badge } from "./badge.tsx";
 import { StarIcon } from "./icons.tsx";
@@ -17,8 +18,6 @@ export type Activity =
   | { readonly state: "deprecated" }
   | { readonly state: "reading" };
 
-export type Match = readonly [start: number, end: number];
-
 export type Result = {
   readonly owner: string;
   readonly name: string;
@@ -33,24 +32,6 @@ export type Result = {
   readonly language: string | null;
   readonly unread: boolean;
 };
-
-export function highlight(text: string, matches: ReadonlyArray<Match>): ReactNode[] {
-  const ranges = matches
-    .map(([start, end]) => [Math.max(0, start), Math.min(text.length, end)] as const)
-    .filter(([start, end]) => start < end)
-    .toSorted((a, b) => a[0] - b[0]);
-  const parts: ReactNode[] = [];
-  let cursor = 0;
-  for (const [start, end] of ranges) {
-    if (end <= cursor) continue;
-    const from = Math.max(start, cursor);
-    if (from > cursor) parts.push(text.slice(cursor, from));
-    parts.push(<mark key={from}>{text.slice(from, end)}</mark>);
-    cursor = end;
-  }
-  if (cursor < text.length) parts.push(text.slice(cursor));
-  return parts;
-}
 
 export const activityLabel = (activity: Activity) => {
   if ("label" in activity) return activity.label;

@@ -1,5 +1,5 @@
 import type { PipPose, Result, ResultGroup, TileProgress } from "@stargrep/ui";
-import { type Audience, type Owner, pageKindOf, whoseOf } from "./audience.ts";
+import { type Audience, whoseOf } from "./audience.ts";
 import { keywordTerms, normalize } from "./keyword.ts";
 import type { LibraryRepo, SyncStatus } from "./rpc.ts";
 import { readingIncomplete } from "./sync-status.ts";
@@ -161,8 +161,6 @@ export interface Search {
 
 const placeholdersAlone = 4;
 const placeholdersAfter = 2;
-
-type Importing = Extract<Stage, { name: "importing" }>;
 
 type Underway = Extract<Stage, { name: "importing" | "reading" }>;
 
@@ -430,40 +428,7 @@ const troubleCopy = (trouble: Trouble, owner: string, whose: Whose): TroubleCopy
   }
 };
 
-// The butter tile asks a visitor to sign in. While someone's stars import, it asks whether the visitor is them, since
-// owners skip the line, and rings Pip with the import's progress.
-export type Butter = { readonly kind: "join" } | { readonly kind: "claim"; readonly progress: number };
-
-// A login the subtitle names, which the hero links to its GitHub profile.
-export type Mention = { readonly login: string };
-
-export interface HeroCopy {
-  readonly subtitle: ReadonlyArray<string | Mention>;
-  readonly butter: Butter;
-}
-
-const importProgress = (stage: Importing) => (stage.total === null ? 0 : stage.done / Math.max(1, stage.total));
-
-// What the hero says above a visitor's look at the demo account. While the demo's stars import, as on a fresh stage,
-// the butter tile becomes the claim tile, with the import's progress, so the subtitle stays put while it ticks.
-const heroCopy = (stage: Stage, troubled: boolean, owner: Owner): HeroCopy => {
-  if (troubled) return { subtitle: ["try any username."], butter: { kind: "join" } };
-  const mention = { login: owner.login };
-  if (stage.name === "importing") {
-    const rest = {
-      "not-asked": " is new here. their stars are ready to import from GitHub, and search covers them as they land.",
-      "in-line": " is new here and waits in line for GitHub. search covers their stars as they land.",
-      running: " is new here. their stars are on the way from GitHub, and search covers the ones that landed.",
-    }[stage.phase.kind];
-    return { subtitle: [mention, rest], butter: { kind: "claim", progress: importProgress(stage) } };
-  }
-  return {
-    subtitle: ["live results from ", mention, ", our demo account. try any username."],
-    butter: { kind: "join" },
-  };
-};
-
-// The person tile above every stars page but the landing, your own included.
+// The person tile above every stars page, your own included.
 export interface PersonCopy {
   readonly login: string;
   // GitHub knows the login, so the tile shows their avatar and links to their profile.
@@ -477,10 +442,7 @@ const idlePlaceholder = (whose: Whose) =>
 export interface PageView extends SearchView {
   // The page still shows the answer the server painted.
   readonly painted: boolean;
-  // Only the landing has the hero.
-  readonly hero: HeroCopy | undefined;
-  // Every page but the landing has the person tile.
-  readonly person: PersonCopy | undefined;
+  readonly person: PersonCopy;
   readonly placeholder: string;
 }
 
@@ -512,14 +474,12 @@ export const pageView = ({
   surprised,
 }: PageInputs): PageView => {
   const whose = whoseOf(audience);
-  const kind = pageKindOf(audience);
   const painted =
     first !== undefined && !(library.ready && library.whole) && normalize(query) === normalize(first.query);
   const shown = painted ? first.view : library.ready ? live : undefined;
   const page = {
     painted,
-    hero: kind === "landing" ? heroCopy(stage, trouble !== undefined, audience.owner) : undefined,
-    person: kind === "landing" ? undefined : { login: audience.owner.login, known: trouble !== "missing" },
+    person: { login: audience.owner.login, known: trouble !== "missing" },
     placeholder: stage.name === "importing" ? "search what has arrived" : idlePlaceholder(whose),
     progress: shown?.progress,
   };

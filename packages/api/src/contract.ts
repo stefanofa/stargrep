@@ -476,9 +476,9 @@ export const FacetMatches = Schema.Struct({
 
 export const PublicConfig = Schema.Struct({
   demoLogin: GitHubLogin.annotate({
-    description: "The account whose stars the home page searches before anyone picks one.",
+    description: "The account whose answer to demoQuery the home page shows as an example.",
   }),
-  demoQuery: Schema.String.annotate({ description: "The query the home page answers before anyone types one." }),
+  demoQuery: Schema.String.annotate({ description: "The query the home page shows answered, as an example." }),
   examples: Schema.Array(Schema.String).annotate({ description: "More queries that suit the demo account's stars." }),
   featured: Schema.Array(GitHubLogin).annotate({
     description: "Accounts to offer when someone picks whose stars to search.",

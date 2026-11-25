@@ -29,12 +29,6 @@
   }
 }
 
-/* The reveal (src/lib/reveal.ts) types the query into the search input once per visit. Until it starts, only the
-   input's own text is hidden. Results and status are never hidden. */
-html[data-reveal="pending"] [data-reveal-tile] input {
-  color: transparent;
-}
-
 /* The rail a slow navigation shows along the top of the page (src/routes/__root.tsx). It fades in after 300ms, and a
    segment runs along it. Reduced motion keeps the fade and fills the rail instead. */
 [data-slot="navigating"] {
