@@ -94,7 +94,7 @@ function WeekGrid({ login, weeks, className }: { login: string; weeks: ReadonlyA
               const props = {
                 ...mark(index),
                 "aria-label": `${dayName(date, true)}: ${said(count)}`,
-                className: "block rounded-[4px] p-[1.5px]",
+                className: "group block rounded-[4px] p-[1.5px]",
               };
               const square = (
                 <span
@@ -102,7 +102,8 @@ function WeekGrid({ login, weeks, className }: { login: string; weeks: ReadonlyA
                   className={cn(
                     "block aspect-square rounded-[3px]",
                     dayFill(count, max),
-                    active === index && "outline-[1.5px] outline-offset-1 outline-foreground",
+                    // Focus has its ring, so only the pointer outlines the day.
+                    "group-hover:outline-[1.5px] group-hover:outline-offset-1 group-hover:outline-foreground",
                   )}
                 />
               );
