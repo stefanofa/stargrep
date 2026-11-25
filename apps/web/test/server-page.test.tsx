@@ -505,7 +505,7 @@ describe("the following pages", () => {
   }, 60_000);
 });
 
-describe("the taste page", () => {
+describe("a person's tabs", () => {
   test("a shared link paints the charts from the server, every mark a link into the stars it counts", async () => {
     const page = await renderOnServer("/@stefanofa/taste");
     expect(page.status).toBe(200);
@@ -524,9 +524,37 @@ describe("the taste page", () => {
     ).toEqual([
       ["/stefanofa", false],
       ["/@stefanofa/taste", true],
+      ["/@stefanofa/people", false],
     ]);
+    expect(page.html).toContain('href="/@stefanofa/people"');
     const unread = await renderOnServer("/@octonever/taste");
     expect(unread.html).toContain('href="/octonever"');
     expect(unread.html).not.toContain("stars per month");
+  }, 60_000);
+
+  test("the people tab paints the people like a login from the server, into one of its topics or any", async () => {
+    const people = await renderOnServer("/@stefanofa/people");
+    expect(people.status).toBe(200);
+    expect(people.html.match(/Switched to client rendering[^"]*/)?.[0]).toBeUndefined();
+    expect(people.html).toContain("stars like @stefanofa&#x27;s");
+    const cards = people.html.match(/<ol aria-label="people".*?<\/ol>/)?.[0] ?? "";
+    expect([...cards.matchAll(/href="([^"]*)"/g)].map(([, href]) => href)).toEqual(["/octodone"]);
+    const into = (html: string) =>
+      [...(html.match(/<nav aria-label="people into a topic".*?<\/nav>/)?.[0] ?? "").matchAll(/<a [^>]*>[^<]*/g)].map(
+        ([link]) => [link.replace(/.*>/, ""), link.includes("aria-current")],
+      );
+    expect(into(people.html)).toEqual([
+      ["any", true],
+      ["mcp", false],
+    ]);
+    const narrowed = await renderOnServer("/@stefanofa/people?topic=rust");
+    expect(into(narrowed.html)).toEqual([
+      ["any", false],
+      ["mcp", false],
+      ["rust", true],
+    ]);
+    expect(narrowed.html).toContain("nobody into rust shares a star with @stefanofa yet");
+    const unread = await renderOnServer("/@octonever/people");
+    expect(unread.html).toContain('href="/octonever"');
   }, 60_000);
 });

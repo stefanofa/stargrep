@@ -16,6 +16,7 @@ import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as SearchRouteImport } from './routes/search'
 import { Route as TermsRouteImport } from './routes/terms'
 import { Route as Char123LoginChar125RouteImport } from './routes/{-$login}'
+import { Route as AtChar123loginChar125PeopleRouteImport } from './routes/@{$login}_.people'
 import { Route as AtChar123loginChar125TasteRouteImport } from './routes/@{$login}_.taste'
 import { Route as FollowingIndexRouteImport } from './routes/following.index'
 import { Route as FollowingPeopleRouteImport } from './routes/following.people'
@@ -57,6 +58,12 @@ const Char123LoginChar125Route = Char123LoginChar125RouteImport.update({
   path: '/{-$login}',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AtChar123loginChar125PeopleRoute =
+  AtChar123loginChar125PeopleRouteImport.update({
+    id: '/@{$login}_/people',
+    path: '/@{$login}/people',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const AtChar123loginChar125TasteRoute =
   AtChar123loginChar125TasteRouteImport.update({
     id: '/@{$login}_/taste',
@@ -92,6 +99,7 @@ export interface FileRoutesByFullPath {
   '/search': typeof SearchRoute
   '/terms': typeof TermsRoute
   '/{-$login}': typeof Char123LoginChar125Route
+  '/@{$login}/people': typeof AtChar123loginChar125PeopleRoute
   '/@{$login}/taste': typeof AtChar123loginChar125TasteRoute
   '/following/people': typeof FollowingPeopleRoute
   '/topics/$topic': typeof TopicsTopicRoute
@@ -106,6 +114,7 @@ export interface FileRoutesByTo {
   '/search': typeof SearchRoute
   '/terms': typeof TermsRoute
   '/{-$login}': typeof Char123LoginChar125Route
+  '/@{$login}/people': typeof AtChar123loginChar125PeopleRoute
   '/@{$login}/taste': typeof AtChar123loginChar125TasteRoute
   '/following/people': typeof FollowingPeopleRoute
   '/topics/$topic': typeof TopicsTopicRoute
@@ -121,6 +130,7 @@ export interface FileRoutesById {
   '/search': typeof SearchRoute
   '/terms': typeof TermsRoute
   '/{-$login}': typeof Char123LoginChar125Route
+  '/@{$login}_/people': typeof AtChar123loginChar125PeopleRoute
   '/@{$login}_/taste': typeof AtChar123loginChar125TasteRoute
   '/following/people': typeof FollowingPeopleRoute
   '/topics/$topic': typeof TopicsTopicRoute
@@ -137,6 +147,7 @@ export interface FileRouteTypes {
     | '/search'
     | '/terms'
     | '/{-$login}'
+    | '/@{$login}/people'
     | '/@{$login}/taste'
     | '/following/people'
     | '/topics/$topic'
@@ -151,6 +162,7 @@ export interface FileRouteTypes {
     | '/search'
     | '/terms'
     | '/{-$login}'
+    | '/@{$login}/people'
     | '/@{$login}/taste'
     | '/following/people'
     | '/topics/$topic'
@@ -165,6 +177,7 @@ export interface FileRouteTypes {
     | '/search'
     | '/terms'
     | '/{-$login}'
+    | '/@{$login}_/people'
     | '/@{$login}_/taste'
     | '/following/people'
     | '/topics/$topic'
@@ -180,6 +193,7 @@ export interface RootRouteChildren {
   SearchRoute: typeof SearchRoute
   TermsRoute: typeof TermsRoute
   Char123LoginChar125Route: typeof Char123LoginChar125Route
+  AtChar123loginChar125PeopleRoute: typeof AtChar123loginChar125PeopleRoute
   AtChar123loginChar125TasteRoute: typeof AtChar123loginChar125TasteRoute
   FollowingPeopleRoute: typeof FollowingPeopleRoute
   TopicsTopicRoute: typeof TopicsTopicRoute
@@ -238,6 +252,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof Char123LoginChar125RouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/@{$login}_/people': {
+      id: '/@{$login}_/people'
+      path: '/@{$login}/people'
+      fullPath: '/@{$login}/people'
+      preLoaderRoute: typeof AtChar123loginChar125PeopleRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/@{$login}_/taste': {
       id: '/@{$login}_/taste'
       path: '/@{$login}/taste'
@@ -284,6 +305,7 @@ const rootRouteChildren: RootRouteChildren = {
   SearchRoute: SearchRoute,
   TermsRoute: TermsRoute,
   Char123LoginChar125Route: Char123LoginChar125Route,
+  AtChar123loginChar125PeopleRoute: AtChar123loginChar125PeopleRoute,
   AtChar123loginChar125TasteRoute: AtChar123loginChar125TasteRoute,
   FollowingPeopleRoute: FollowingPeopleRoute,
   TopicsTopicRoute: TopicsTopicRoute,
