@@ -82,7 +82,7 @@ function PlaceholderRows() {
       {Array.from({ length: placeholders }, (_, index) => (
         <li key={index} className={`${rule} ${row}`}>
           <Skeleton className="size-9 shrink-0 squircle rounded-sm" />
-          <span className="flex flex-1 flex-col gap-1.5">
+          <span className="flex h-[41px] flex-1 flex-col justify-center gap-2">
             <Skeleton className="h-4 w-36" />
             <Skeleton className="h-3.5 w-4/5" />
           </span>
