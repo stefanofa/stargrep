@@ -828,7 +828,9 @@ for (const [label, database] of [
   ["StarSync on Postgres", TestDatabase.layerNodePostgres({ embeddingModel })],
 ] as const) {
   const f = fixture();
-  it.layer(f.layerOn(database), { timeout: 30_000 })(label, f.cases);
+  // CI runs every Postgres suite at once against one server, where a write can wait seconds for its turn, so a case gets
+  // the same allowance as StarImport's.
+  it.layer(f.layerOn(database), { timeout: 30_000, testTimeout: 60_000 })(label, f.cases);
 }
 
 const f = fixture();
