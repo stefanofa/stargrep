@@ -206,11 +206,14 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatab
     }),
   );
 
-  test.effect("like ranks the people an account shares the most with for their size", () =>
+  test.effect("like ranks the people an account shares the most with for their size, on a topic or any", () =>
     Effect.gen(function* () {
       const db = yield* Db.Db;
       yield* reset;
-      yield* seedRepos(range(4000, 200).map((id) => ({ id })));
+      yield* seedRepos([
+        ...range(4000, 160).map((id) => ({ id })),
+        ...range(4160, 40).map((id) => ({ id, topics: ["cli"] })),
+      ]);
       const subject = { id: accountId(31), name: "subject" };
       yield* star({ id: accountId(32), name: "big" }, range(4000, 160));
       yield* star({ id: accountId(33), name: "small" }, range(4160, 40));
@@ -218,13 +221,14 @@ const cases = (test: { readonly effect: it.Tester<Db.Db | TestDatabase.TestDatab
       yield* star(subject, range(4130, 50));
       yield* db.people.refresh([], now);
 
-      const found = yield* db.people.like(subject.id, 5);
+      const found = yield* db.people.like(subject.id, 5, Option.none());
 
       expect(counts(found)).toEqual([
         ["small", 20],
         ["big", 30],
       ]);
-      expect(logins(yield* db.people.like(subject.id, 1))).toEqual(["small"]);
+      expect(logins(yield* db.people.like(subject.id, 1, Option.none()))).toEqual(["small"]);
+      expect(logins(yield* db.people.like(subject.id, 5, Option.some("cli")))).toEqual(["small"]);
     }),
   );
 
