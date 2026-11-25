@@ -1,5 +1,5 @@
 import { createFileRoute, lazyRouteComponent } from "@tanstack/react-router";
-import { loadEngine } from "../lib/engine.ts";
+import { loadTextPages } from "../lib/text-pages.ts";
 
 export const Route = createFileRoute("/privacy")({
   head: () => ({
@@ -9,5 +9,5 @@ export const Route = createFileRoute("/privacy")({
     ],
   }),
   codeSplitGroupings: [],
-  component: lazyRouteComponent(loadEngine, "PrivacyPage"),
+  component: lazyRouteComponent(loadTextPages, "PrivacyPage"),
 });

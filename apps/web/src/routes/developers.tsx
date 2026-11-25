@@ -1,5 +1,5 @@
 import { createFileRoute, lazyRouteComponent } from "@tanstack/react-router";
-import { loadEngine } from "../lib/engine.ts";
+import { loadTextPages } from "../lib/text-pages.ts";
 
 export const Route = createFileRoute("/developers")({
   head: () => ({
@@ -9,5 +9,5 @@ export const Route = createFileRoute("/developers")({
     ],
   }),
   codeSplitGroupings: [],
-  component: lazyRouteComponent(loadEngine, "DevelopersPage"),
+  component: lazyRouteComponent(loadTextPages, "DevelopersPage"),
 });

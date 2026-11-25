@@ -588,8 +588,5 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
 // so the landing entry never reaches Base UI. A second lazy chunk would make the bundler move React, the router, and the
 // UI kit out of the landing entry into a shared chunk, which costs the landing page about 2 KB gzipped.
 export { firstPeople } from "../lib/people.ts";
-export { DevelopersPage } from "./developers-page.tsx";
 export { PeoplePage } from "./people-page.tsx";
-export { PrivacyPage } from "./privacy-page.tsx";
 export { SignInProblem } from "./sign-in-problem.tsx";
-export { TermsPage } from "./terms-page.tsx";
