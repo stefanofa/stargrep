@@ -34,23 +34,33 @@ const person = (login: string, extra: Partial<Person> = {}): Person => ({
 interface Server {
   viewer: Viewer | null;
   list: ReadonlyArray<Person>;
+  topics: People["topics"];
   pageSize: number;
   refuse: boolean;
-  asked: Array<{ sort: string | undefined; offset: number | undefined }>;
+  asked: Array<{ sort: string | undefined; offset: number | undefined; topic: string | undefined }>;
 }
 
 let server: Server;
 
-const people = async ({ sort, offset = 0 }: { sort?: People["sort"]; offset?: number }): Promise<People> => {
-  server.asked.push({ sort, offset });
+const people = async ({
+  sort,
+  offset = 0,
+  topic,
+}: {
+  sort?: People["sort"];
+  offset?: number;
+  topic?: string;
+}): Promise<People> => {
+  server.asked.push({ sort, offset, topic });
   if (server.refuse) throw new Error("refused");
+  const kept = topic === undefined ? server.list : server.list.filter((person) => person.topics.includes(topic));
   const end = offset + server.pageSize;
   return {
     sort: sort ?? "recently-active",
-    people: server.list.slice(offset, end),
-    total: server.list.length,
-    nextOffset: end < server.list.length ? end : null,
-    topics: [],
+    people: kept.slice(offset, end),
+    total: kept.length,
+    nextOffset: end < kept.length ? end : null,
+    topics: server.topics,
   };
 };
 
@@ -62,7 +72,7 @@ mock.module("../src/lib/rpc.ts", () => ({
 const { Route: PeopleRoute } = await import("../src/routes/people.tsx");
 
 beforeEach(() => {
-  server = { viewer: null, list: [], pageSize: 24, refuse: false, asked: [] };
+  server = { viewer: null, list: [], topics: [], pageSize: 24, refuse: false, asked: [] };
 });
 
 afterEach(cleanup);
@@ -84,6 +94,7 @@ const open = async () => {
         viewer: server.viewer,
         config: { demoLogin: Login.make("stefanofa"), demoQuery: "", examples: [], featured: [], curated: [] },
         repoStars: null,
+        discover: "people",
         site: { origin: "https://stargrep.com", indexable: true, engine: [] },
       };
     },
@@ -94,46 +105,16 @@ const open = async () => {
     history: createMemoryHistory({ initialEntries: ["/people"] }),
   });
   render(<RouterProvider router={router} />);
-  await page().findByRole("heading", { level: 1, name: /^people/ });
+  await page().findByRole("heading", { level: 1, name: "discover people" });
   return router;
 };
 
 const cards = () =>
   within(page().getByRole("list", { name: "people" }))
     .queryAllByRole("listitem")
-    .filter((item) => item.getAttribute("aria-hidden") === null && item.querySelector("h2") !== null);
+    .filter((item) => item.getAttribute("aria-hidden") === null && item.querySelector("h3") !== null);
 
-describe("the people page", () => {
-  test("a card says who, how many stars, what about, and when, and opens their stars", async () => {
-    server.list = [person("t3dotgg"), person("api", { topics: [], languages: [] })];
-    await open();
-    const [first, second] = cards();
-    const card = within(first as HTMLElement);
-    expect(card.getByRole("link", { name: "@t3dotgg" }).getAttribute("href")).toBe("/t3dotgg");
-    expect(card.getByText("616 stars")).toBeTruthy();
-    expect(card.getByText("TypeScript 49%")).toBeTruthy();
-    expect(card.getByText("mostly tagged react · nextjs · ai")).toBeTruthy();
-    expect(card.getByText("last starred Nov 6, 2026")).toBeTruthy();
-    expect(card.queryByText(/you share/)).toBeNull();
-    // A login named like a stargrep path lives at /@login.
-    expect(
-      within(second as HTMLElement)
-        .getByRole("link", { name: "@api" })
-        .getAttribute("href"),
-    ).toBe("/@api");
-    expect(within(second as HTMLElement).queryByText(/mostly tagged/)).toBeNull();
-    expect(page().queryByRole("button", { name: "show more" })).toBeNull();
-    expect(page().getByRole("form", { name: "Whose stars" })).toBeTruthy();
-  });
-
-  test("signed in, each card says how many stars the viewer shares with them", async () => {
-    server.viewer = { login: "junodev", name: null, avatarUrl: null, starredCount: 6 };
-    server.list = [person("simonw", { shared: 86 }), person("torvalds", { shared: 0 })];
-    await open();
-    expect(page().getByText("you share 86 stars")).toBeTruthy();
-    expect(page().getByText("you share no stars")).toBeTruthy();
-  });
-
+describe("discover's people", () => {
   test("a signed-in viewer sees the people most like them first, and can sort by the latest star", async () => {
     const user = userEvent.setup();
     server.viewer = { login: "junodev", name: null, avatarUrl: null, starredCount: 6 };
@@ -157,22 +138,73 @@ describe("the people page", () => {
     server.list = [person("simonw")];
     await open();
     expect(page().queryByRole("navigation", { name: "Sort people" })).toBeNull();
+    expect(page().getByText("latest star first")).toBeTruthy();
     expect(server.asked.map(({ sort }) => sort)).toEqual(["recently-active"]);
   });
 
-  test("show more adds the next page under the cards already shown, until the list ends", async () => {
+  test("narrows to the people into a topic, from a chip or the menu, and a chip that is on takes it off", async () => {
+    const user = userEvent.setup();
+    server.list = [
+      person("ana", { topics: ["rust", "cli"] }),
+      person("bo", { topics: ["llm"] }),
+      person("cy", { topics: ["neovim"] }),
+    ];
+    server.topics = ["rust", "llm", "cli", "python", "neovim"].map((topic, index) => ({ topic, people: 10 - index }));
+    const router = await open();
+    const into = () => within(page().getByRole("navigation", { name: "people into a topic" }));
+    expect(
+      into()
+        .getAllByRole("link")
+        .map((link) => link.textContent),
+    ).toEqual(["rust", "llm", "cli", "python"]);
+    expect(into().getByRole("button", { name: "Pick a topic" }).textContent).toBe("any topic");
+
+    await user.click(into().getByRole("link", { name: "rust" }));
+    await waitFor(() => expect(router.state.location.search).toEqual({ topic: "rust" }));
+    await waitFor(() => expect(cards().length).toBe(1));
+    expect(into().getByRole("link", { name: "rust" }).getAttribute("aria-current")).toBe("true");
+
+    await user.click(into().getByRole("link", { name: "rust" }));
+    await waitFor(() => expect(router.state.location.search).toEqual({}));
+    await waitFor(() => expect(cards().length).toBe(3));
+
+    // A topic past the chips waits in the menu, and the menu names it once it is on.
+    await user.click(into().getByRole("button", { name: "Pick a topic" }));
+    await user.click(await page().findByRole("menuitemradio", { name: /^neovim/ }));
+    await waitFor(() => expect(router.state.location.search).toEqual({ topic: "neovim" }));
+    await waitFor(() => expect(into().getByRole("button", { name: "Pick a topic" }).textContent).toBe("neovim"));
+    expect(cards().length).toBe(1);
+    expect(server.asked.map(({ topic }) => topic)).toEqual([undefined, "rust", undefined, "neovim"]);
+  });
+
+  test("a topic nobody on the list is into says so and keeps the topics to pick another", async () => {
+    server.list = [person("ana", { topics: ["rust"] })];
+    server.topics = [{ topic: "rust", people: 1 }];
+    const router = await open();
+    await router.navigate({ to: "/people", search: { topic: "zig" } });
+    expect(await page().findByRole("heading", { name: "nobody here is into zig yet" })).toBeTruthy();
+    expect(page().getByRole("navigation", { name: "people into a topic" })).toBeTruthy();
+  });
+
+  test("show more adds the next page under the cards already shown, into the same topic, until the list ends", async () => {
     const user = userEvent.setup();
     server.pageSize = 2;
-    server.list = ["a-one", "b-two", "c-three", "d-four", "e-five"].map((login) => person(login));
-    await open();
-    expect(cards().length).toBe(2);
-    expect(page().getByRole("heading", { level: 1 }).textContent).toBe("people5");
+    server.list = ["a-one", "b-two", "c-three", "d-four", "e-five", "f-six"].map((login, index) =>
+      person(login, { topics: index < 5 ? ["rust"] : ["go"] }),
+    );
+    const router = await open();
+    await router.navigate({ to: "/people", search: { topic: "rust" } });
+    await waitFor(() => expect(cards().length).toBe(2));
     await user.click(page().getByRole("button", { name: "show more" }));
     await waitFor(() => expect(cards().length).toBe(4));
     await user.click(page().getByRole("button", { name: "show more" }));
     await waitFor(() => expect(cards().length).toBe(5));
     expect(page().queryByRole("button", { name: "show more" })).toBeNull();
-    expect(server.asked.map(({ offset }) => offset)).toEqual([0, 2, 4]);
+    expect(server.asked.slice(1).map(({ offset, topic }) => [offset, topic])).toEqual([
+      [0, "rust"],
+      [2, "rust"],
+      [4, "rust"],
+    ]);
   });
 
   test("a page that fails to load can be asked for again", async () => {
@@ -188,10 +220,11 @@ describe("the people page", () => {
     await waitFor(() => expect(cards().length).toBe(2));
   });
 
-  test("an empty list says it fills in overnight", async () => {
+  test("an empty list says it fills in overnight, under the field that goes to anyone's stars", async () => {
     await open();
     expect(page().getByRole("heading", { name: "nobody here yet" })).toBeTruthy();
     expect(page().queryByRole("list", { name: "people" })).toBeNull();
+    expect(page().getByRole("form", { name: "Whose stars" })).toBeTruthy();
   });
 
   test("a list the API refuses says so and tries again", async () => {

@@ -279,6 +279,7 @@ const open = async (path: string, label: string | RegExp = "Search your stars", 
       viewer: server.signedIn ? server.viewer : null,
       config: await api().config(),
       repoStars: null,
+      discover: "people",
     }),
   });
   const stars = StarsRoute.update({

@@ -1,0 +1,48 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "9aa62734-fb9f-44a4-8e98-b540557c3921",
+  "prevIds": [
+    "660749ba-849b-4a17-b30e-7af1cd4d9afb",
+    "e46bfcda-aa9d-453d-aec8-6539affc6006"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "topics",
+        "devs"
+      ],
+      "writes": [
+        "s|col|public.topics.devs",
+        "n|col|public.topics.devs",
+        "e|col|public.topics.devs"
+      ],
+      "reads": [
+        "n|tbl|public.topics",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "topics",
+        "name": "devs",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "0",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

@@ -550,6 +550,8 @@ export const topics = pgTable("topics", {
   related: jsonb("related").notNull().default([]),
   // The listed people who star the most of its core repos for how many they star, as [account ID, core stars] pairs.
   people: jsonb("people").notNull().default([]),
+  // How many synced developers are into it: they star at least a few of its core repos.
+  devs: integer("devs").notNull().default(0),
 });
 
 export const follows = pgTable(

@@ -12,7 +12,7 @@ import {
 } from "@tanstack/react-router";
 import { cleanup, configure, render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { Client, SearchResult, Topic, TopicCount, TopicRepo, TopicsList } from "../src/lib/rpc.ts";
+import type { Client, SearchResult, Topic, TopicCount, TopicRepo, TopicsList, Viewer } from "../src/lib/rpc.ts";
 import type {} from "../src/routeTree.gen.ts";
 import { edgeAnswers } from "./edge-answers.ts";
 
@@ -42,6 +42,7 @@ const tui: Topic = {
   topic: "tui",
   repos: 1204,
   ranked: 2,
+  devs: 30,
   icon: null,
   home: null,
   core: [repo(1, "ratatui"), repo(2, "tui-textarea")],
@@ -58,11 +59,15 @@ const hit = (id: number, name: string): SearchResult => ({
   metrics: [],
 });
 
-const count = (topic: string): TopicCount => ({ topic, repos: 100, ranked: 10, icon: null });
+const count = (topic: string): TopicCount => ({ topic, repos: 100, ranked: 10, devs: 40, icon: null });
 
 type Refusal = "unavailable" | "limited" | "zone";
 
 interface Server {
+  viewer: Viewer | null;
+  // The topics the viewer's stars carry most, with how many, and the page each spelling leads to.
+  starred: ReadonlyArray<{ topic: string; count: number }>;
+  pages: Record<string, string>;
   topics: ReadonlyArray<TopicCount>;
   // How listTopics answers each typed name, with no q for the first page.
   find: (q: string | undefined) => ReadonlyArray<TopicCount> | Refusal | "hang";
@@ -107,7 +112,13 @@ const client = {
     server.asked.search.push(q);
     return { planSource: "model", results: await answer(server.search()), applied: [] };
   },
-  topicPages: async () => ({ pages: [] }),
+  topicPages: async ({ topics }: { topics: ReadonlyArray<string> }) => ({
+    pages: topics.flatMap((topic) => {
+      const page = server.pages[topic];
+      return page === undefined ? [] : [{ topic, page }];
+    }),
+  }),
+  taste: async () => ({ topics: server.starred }),
 };
 
 const rpc = await import("../src/lib/rpc.ts");
@@ -117,6 +128,9 @@ const { Route: TopicRoute } = await import("../src/routes/topics.$topic.tsx");
 
 beforeEach(() => {
   server = {
+    viewer: null,
+    starred: [],
+    pages: {},
     topics: [count("tui"), count("rust")],
     find: (q) => (q === undefined ? server.topics : server.topics.filter(({ topic }) => topic.includes(q))),
     search: () => [hit(3, "bottom")],
@@ -140,9 +154,10 @@ const open = async (path: string) => {
       sessions += 1;
       if (sessions > 1) throw new Error("a server-only function ran in the browser");
       return {
-        viewer: null,
+        viewer: server.viewer,
         config: { demoLogin: "stefanofa", demoQuery: "", examples: [], featured: [], curated: [] },
         repoStars: null,
+        discover: "people",
         site: { origin: "https://stargrep.com", indexable: true, engine: [] },
       };
     },
@@ -161,7 +176,7 @@ const open = async (path: string) => {
   return router;
 };
 
-const grid = () => within(page().getByRole("main")).getByRole("list");
+const grid = () => page().getByRole("list", { name: "topics" });
 
 const tiles = () =>
   within(grid())
@@ -169,6 +184,23 @@ const tiles = () =>
     .map((link) => link.textContent);
 
 describe("the topics page", () => {
+  test("signed in, starts from the topics the viewer's stars carry most, each spelling once and only those with a page", async () => {
+    server.viewer = { login: "junodev", name: null, avatarUrl: null, starredCount: 40 };
+    server.starred = [
+      { topic: "next-js", count: 12 },
+      { topic: "hacktoberfest", count: 9 },
+      { topic: "nextjs", count: 7 },
+      { topic: "rust", count: 3 },
+    ];
+    server.pages = { "next-js": "nextjs", nextjs: "nextjs", rust: "rust" };
+    await open("/topics");
+    const heading = await page().findByRole("heading", { name: "in your stars" });
+    const yours = within(heading.parentElement as HTMLElement);
+    expect(yours.getAllByRole("link").length).toBe(2);
+    expect(yours.getByRole("link", { name: "nextjs 12" }).getAttribute("href")).toBe("/topics/nextjs");
+    expect(yours.getByRole("link", { name: "rust 3" }).getAttribute("href")).toBe("/topics/rust");
+  });
+
   test("topics that didn't load can be asked for again", async () => {
     const user = userEvent.setup();
     server.find = () => "unavailable";

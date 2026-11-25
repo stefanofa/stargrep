@@ -142,6 +142,7 @@ test("a topic's card carries its curated logo on its plate, and a topic without 
           topic,
           repos: 10,
           ranked: 5,
+          devs: 8,
           icon: null,
           home: null,
           core: [],

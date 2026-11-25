@@ -20,6 +20,7 @@ const topicPage: Topic = {
   topic: "nextjs",
   repos: 8145,
   ranked: 1057,
+  devs: 1768,
   icon: null,
   home: null,
   core: [1, 2, 3].map((place) => ({ ...listed, name: `repo-${place}`, devs: 800 - place, stars: 1000 })),

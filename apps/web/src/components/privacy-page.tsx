@@ -84,6 +84,9 @@ export function PrivacyPage() {
             <Code>stargrep-view</Code> remembers tiles or list for a year.
           </li>
           <li>
+            <Code>stargrep-discover</Code> remembers whether you last opened people or topics in discover, for a year.
+          </li>
+          <li>
             <Code>stargrep-refused</Code> remembers a refused import for up to ten minutes, so a reload says so again.
           </li>
           <li>the home page's typing intro sets one flag in session storage, so it plays once per tab.</li>

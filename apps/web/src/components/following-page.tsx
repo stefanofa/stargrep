@@ -23,7 +23,7 @@ import { repoVisual } from "../lib/repo-visual.ts";
 import { api, type FeedRepo, type FollowingFeed, type Person } from "../lib/rpc.ts";
 import { loginPage } from "../lib/stars-route.ts";
 import { after, isoAt, wallNow } from "../lib/wall-clock.ts";
-import { formatCount, starCount } from "../lib/whose.ts";
+import { formatCount, peopleCount, starCount } from "../lib/whose.ts";
 import { textLinkClass } from "./external-text-link.tsx";
 import { FollowPill } from "./follows.tsx";
 import { Page } from "./page.tsx";
@@ -72,30 +72,28 @@ export const loadFollowing = async (signedIn: boolean): Promise<FollowingData> =
   }
 };
 
-const pageHeading =
-  "font-display text-3xl leading-10 font-semibold tracking-tight sm:text-[52px] sm:leading-[56px] sm:tracking-[-0.02em]";
+const pageHeading = "font-display text-2xl font-semibold tracking-[-0.02em] sm:text-4xl";
 
+// What the feed covers and how fresh it is, and the way to manage the people it follows.
 function Heading({ feed, at }: { feed: FollowingFeed | undefined; at: number }) {
   return (
-    <section className="flex flex-col gap-1 pt-1.5 sm:flex-row sm:items-end sm:justify-between sm:pt-5">
-      <div className="flex items-baseline gap-3">
+    <section className="flex flex-col gap-1.5 pt-1 sm:flex-row sm:items-baseline sm:justify-between sm:gap-6 sm:px-1 sm:pt-3">
+      <div className="flex flex-wrap items-baseline gap-x-3.5 gap-y-1">
         <h1 className={pageHeading}>following</h1>
-        {feed !== undefined &&
-          (feed.following === 0 ? (
-            <span className="font-sans text-base text-muted-foreground sm:text-[17px]">nobody yet</span>
-          ) : (
-            <Link
-              to="/following/people"
-              className={cn(textLinkClass, "font-sans text-base font-medium sm:text-[17px] sm:leading-[26px]")}
-            >
-              {`${feed.following === 1 ? "1 person" : `${formatCount(feed.following)} people`} →`}
-            </Link>
-          ))}
+        {feed !== undefined && (
+          <p className="font-sans text-base leading-5 text-muted-foreground">
+            {feed.following === 0
+              ? "nobody yet"
+              : `what your ${peopleCount(feed.following)} starred, last ${feed.windowDays} days`}
+          </p>
+        )}
       </div>
-      {feed !== undefined && feed.following > 0 && feed.checkedAt !== null && (
-        <p className="flex items-center gap-2 font-sans text-sm text-muted-foreground sm:pb-1.5">
-          <span aria-hidden className="size-2 shrink-0 rounded-full bg-success" />
-          {`checked ${checkedAgo(feed.checkedAt, at)} · last ${feed.windowDays} days`}
+      {feed !== undefined && feed.following > 0 && (
+        <p className="flex items-baseline gap-4 font-sans text-sm text-muted-foreground">
+          {feed.checkedAt !== null && `checked ${checkedAgo(feed.checkedAt, at)}`}
+          <Link to="/following/people" className={cn(textLinkClass, "text-meta font-semibold")}>
+            manage →
+          </Link>
         </p>
       )}
     </section>

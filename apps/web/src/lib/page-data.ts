@@ -1,5 +1,6 @@
 import type { View } from "@stargrep/ui";
 import { type Audience, audienceOf } from "./audience.ts";
+import type { Segment } from "./discover.ts";
 import type { Site } from "./preview.ts";
 import type { LibraryRepo, PublicConfig, SearchResult, SyncStatus, Viewer } from "./rpc.ts";
 import type { Params } from "./search-params.ts";
@@ -31,11 +32,13 @@ export interface Session {
   readonly config: PublicConfig;
   // Stargrep's own GitHub stars for the header, or null when the server had no count in time.
   readonly repoStars: number | null;
+  // The segment discover opens on, as this browser's cookie named it.
+  readonly discover: Segment;
   readonly site: Site;
 }
 
 // The page's audience carries the session's viewer.
-export interface PageData extends Omit<Session, "viewer"> {
+export interface PageData extends Omit<Session, "viewer" | "discover"> {
   readonly audience: Audience;
   readonly query: string;
   // What the page searches when its address has no q.

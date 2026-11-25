@@ -25,7 +25,7 @@ const shownSide = (visual: RepoVisual) =>
 
 const slot = "flex shrink-0 items-center justify-center overflow-clip squircle rounded-sm";
 
-export type RepoIconSize = "card" | "row" | "panel" | "heading";
+export type RepoIconSize = "chip" | "card" | "row" | "tile" | "panel" | "heading";
 
 const sizes: Record<RepoIconSize, { slot: string; letters: string; side: number }> = {
   card: {
@@ -33,7 +33,9 @@ const sizes: Record<RepoIconSize, { slot: string; letters: string; side: number 
     letters: "text-lg leading-[20px] list:text-base list:leading-[18px]",
     side: 44,
   },
+  chip: { slot: "size-6 rounded-full", letters: "text-[11px] leading-[14px]", side: 24 },
   row: { slot: "size-9", letters: "text-base leading-[18px]", side: 36 },
+  tile: { slot: "size-9 sm:size-10", letters: "text-base leading-[18px] sm:text-lg sm:leading-[22px]", side: 40 },
   panel: { slot: "size-14", letters: "text-title leading-[26px]", side: 56 },
   heading: { slot: "size-10 sm:size-16", letters: "text-lg leading-[20px] sm:text-2xl", side: 64 },
 };

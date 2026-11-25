@@ -873,14 +873,15 @@ describe("topics", () => {
     topic: "nextjs",
     repos: 8145,
     ranked: 1058,
+    devs: 1768,
     home: Option.none(),
     core: [listed],
     built: [],
     related: [
-      { topic: "react", repos: 6830, ranked: 6830, home: null },
-      { topic: "frida", repos: 120, ranked: 40, home: { owner: "frida", icon: homeIcon } },
-      { topic: "docker", repos: 9000, ranked: 9855, home: { owner: "jenkinsci", icon: homeIcon } },
-      { topic: "tui", repos: 900, ranked: 300, home: { owner: "someone", icon: homeIcon } },
+      { topic: "react", repos: 6830, ranked: 6830, devs: 12, home: null },
+      { topic: "frida", repos: 120, ranked: 40, devs: 12, home: { owner: "frida", icon: homeIcon } },
+      { topic: "docker", repos: 9000, ranked: 9855, devs: 12, home: { owner: "jenkinsci", icon: homeIcon } },
+      { topic: "tui", repos: 900, ranked: 300, devs: 12, home: { owner: "someone", icon: homeIcon } },
     ],
     people: [{ login: Login.make("theo"), avatarUrl: null, repos: 37, stars: 616 }],
   };
@@ -895,7 +896,7 @@ describe("topics", () => {
     list: ({ q, offset, limit }) =>
       Effect.sync(() => {
         asked.push(`${q}/${offset}/${limit}`);
-        return { topics: [{ topic: "nextjs", repos: 8145, ranked: 1058, home: null }], total: 2 };
+        return { topics: [{ topic: "nextjs", repos: 8145, ranked: 1058, devs: 12, home: null }], total: 2 };
       }),
   });
 
@@ -943,7 +944,13 @@ describe("topics", () => {
     const { api } = client({ topics: topics(asked) });
     expect(await api.listTopics({ q: "next", limit: 1 })).toEqual({
       topics: [
-        { topic: "nextjs", repos: 8145, ranked: 1058, icon: { url: logoUrl("nextjs"), plate: "light", size: 128 } },
+        {
+          topic: "nextjs",
+          repos: 8145,
+          ranked: 1058,
+          devs: 12,
+          icon: { url: logoUrl("nextjs"), plate: "light", size: 128 },
+        },
       ],
       total: 2,
       nextOffset: 1,

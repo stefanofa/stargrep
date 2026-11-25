@@ -1,12 +1,20 @@
 import { useState } from "react";
 import { api, type People, type PeopleSort, type Person } from "./rpc.ts";
 
-// What /people knows when it paints: the first page of the list, or that the API refused it.
+// What discover's people know when they paint: the first page of the list, or that the API refused it.
 export type FirstPeople = { readonly kind: "found"; readonly page: People } | { readonly kind: "failed" };
 
-export const firstPeople = (sort: PeopleSort): Promise<FirstPeople> =>
+// The list in one order, and into one topic or any.
+export interface PeopleAsked {
+  readonly sort: PeopleSort;
+  readonly topic?: string | undefined;
+}
+
+const input = ({ sort, topic }: PeopleAsked) => (topic === undefined ? { sort } : { sort, topic });
+
+export const firstPeople = (asked: PeopleAsked): Promise<FirstPeople> =>
   api()
-    .people({ sort })
+    .people(input(asked))
     .then(
       (page): FirstPeople => ({ kind: "found", page }),
       (): FirstPeople => ({ kind: "failed" }),
@@ -21,8 +29,8 @@ export interface Shown {
 
 const shownOf = (page: People): Shown => ({ people: page.people, next: page.nextOffset, more: "idle" });
 
-// Pages the list from its first page. A new first page, such as another sort, starts over.
-export const usePeoplePages = (first: People) => {
+// Pages the list from its first page. A new first page, such as another sort or topic, starts over.
+export const usePeoplePages = (first: People, asked: PeopleAsked) => {
   const [state, setState] = useState({ first, shown: shownOf(first) });
   if (state.first !== first) setState({ first, shown: shownOf(first) });
   const { shown } = state;
@@ -32,7 +40,7 @@ export const usePeoplePages = (first: People) => {
       setState((previous) => (previous.first === first ? { first, shown: next(previous.shown) } : previous));
     update((previous) => ({ ...previous, more: "asking" }));
     api()
-      .people({ sort: first.sort, offset: shown.next })
+      .people({ ...input(asked), offset: shown.next })
       .then(
         (page) =>
           update((previous) => ({
