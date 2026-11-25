@@ -110,6 +110,9 @@ function Waiting({ view, searching, hero }: { view: View; searching: boolean; he
   );
 }
 
+// The bodies that answer a search, found or not, under which "same question in" offers other people's stars.
+const answered = new Set<Body["kind"]>(["results", "empty", "empty-reading"]);
+
 // A search's results that pass the chips that are on. The placeholders still waiting for results stay.
 const filtered = (groups: ReadonlyArray<ResultGroup>, pass: ReturnType<typeof keeps>) =>
   groups.map((group) => ({ ...group, results: group.results.filter((result) => pass(resultFacet(result))) }));
@@ -488,7 +491,7 @@ export function Stars({ data, onPose }: { data: PageData; onPose: (pose: PipPose
       <div data-reveal-results aria-busy={page.body.kind === "loading" || undefined} className="flex flex-col gap-gap">
         {body(page.body)}
       </div>
-      {page.person?.known && searching && (page.body.kind === "results" || page.body.kind === "empty") && (
+      {page.person?.known && searching && answered.has(page.body.kind) && (
         <SameQuestion
           login={page.person.login}
           query={query}

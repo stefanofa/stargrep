@@ -16,7 +16,7 @@ const shown = 12;
 // How many of the login's own topics the "into" chips offer.
 const intoShown = 3;
 
-const grid = "grid gap-gap sm:grid-cols-2 lg:grid-cols-4";
+const grid = "grid gap-3 sm:grid-cols-2 sm:gap-gap lg:grid-cols-4";
 
 // The people with stars most like a login's, into a topic or any.
 export const load = (login: string, session: Session | undefined, { topic }: { topic?: string | undefined }) =>
@@ -42,8 +42,11 @@ function Into({ topics, topic }: { topics: ReadonlyArray<string>; topic: string 
   const offered = topic === undefined || topics.includes(topic) ? topics : [...topics, topic];
   if (offered.length === 0) return null;
   return (
-    <nav aria-label="people into a topic" className="flex flex-wrap items-center gap-2">
-      <span className="pr-1 font-sans text-meta text-muted-foreground">into</span>
+    <nav
+      aria-label="people into a topic"
+      className="flex items-center gap-2 max-sm:-mx-5 max-sm:overflow-x-auto max-sm:px-5 max-sm:[mask-image:linear-gradient(to_left,transparent,#000_16px)] max-sm:[scrollbar-width:none] sm:flex-wrap"
+    >
+      <span className="shrink-0 pr-1 font-sans text-meta text-muted-foreground">into</span>
       <Chip
         className={chip}
         active={topic === undefined}
@@ -65,7 +68,7 @@ function Heading({ title, children }: { title: string; children?: ReactNode }) {
     <div className="flex flex-col gap-3 px-1 pt-2 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h2 className="font-display text-xl leading-8 font-semibold tracking-snug sm:text-[28px]">{title}</h2>
-        <p className="font-sans text-meta text-muted-foreground">most shared stars first</p>
+        <p className="font-sans text-meta text-muted-foreground">most alike first</p>
       </div>
       {children}
     </div>
