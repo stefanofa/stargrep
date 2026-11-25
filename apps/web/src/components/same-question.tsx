@@ -39,11 +39,11 @@ export function SameQuestion({
       className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-start sm:gap-2.5 sm:px-6 sm:py-[18px]"
     >
       <h2 className="shrink-0 font-sans text-meta text-muted-foreground sm:pr-1.5 sm:leading-9">same question in</h2>
-      <ul className="flex min-w-0 flex-1 flex-wrap gap-2 sm:gap-2.5">
+      <ul className="flex min-w-0 flex-1 gap-2 max-sm:-mx-5 max-sm:overflow-x-auto max-sm:px-5 max-sm:[mask-image:linear-gradient(to_left,transparent,#000_16px)] max-sm:[scrollbar-width:none] sm:flex-wrap sm:gap-2.5">
         {faces.map((person, index) => {
           const note = noteOf(person, follows.isFollowing(person.login), own);
           return (
-            <li key={person.login}>
+            <li key={person.login} className="shrink-0">
               <Link
                 to="/@{$login}"
                 params={{ login: person.login }}
