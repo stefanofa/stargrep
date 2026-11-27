@@ -82,7 +82,7 @@ export function Page({
   const at = { here, segment: useDiscoverSegment(discover) };
   return (
     <Frame
-      header={<SiteHeader viewer={viewer} at={at} pose={pose} />}
+      header={<SiteHeader viewer={viewer} at={at} stars={repoStars} pose={pose} />}
       bar={<TabBar viewer={viewer} at={at} />}
       dock={dock}
       repoStars={repoStars}
