@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import type { Segment } from "../lib/discover.ts";
 import type { Viewer } from "../lib/rpc.ts";
 import { SignInButton } from "./sign-in-button.tsx";
+import { StarLink } from "./source-link.tsx";
 import { Wordmark } from "./wordmark.tsx";
 
 // The three places every page sits in. A page names its own, or none when it belongs to someone else, such as another
@@ -79,16 +80,18 @@ function Face({ viewer, className }: { viewer: Viewer; className: string }) {
 const ring =
   "flex shrink-0 items-center justify-center rounded-full border-transparent group-aria-[current=page]:border-accent-strong";
 
-// Every page's header. On desktop it holds the places, with you on the right: your face, ringed on your own page, or a
-// sign-in for a visitor. Phones move the places to the tab bar and keep the sign-in, except at home, whose butter tile
-// already asks.
+// Every page's header. On desktop it holds the places, with you on the right: the link to star Stargrep's repo, then your
+// face, ringed on your own page, or a sign-in for a visitor. Phones move the places to the tab bar and keep the sign-in,
+// except at home, whose butter tile already asks, and leave the repo link to the footer.
 export function SiteHeader({
   viewer,
   at,
+  stars,
   pose,
 }: {
   viewer: Viewer | null;
   at: Whereabouts;
+  stars: number | null;
   pose?: PipPose | undefined;
 }) {
   return (
@@ -108,14 +111,17 @@ export function SiteHeader({
             </li>
           ))}
         </ul>
-        {viewer !== null && (
-          <PlaceLink place="you" at={at} className="group rounded-full">
-            <span className={cn(ring, "size-12 border-[2.5px] p-[3px]")}>
-              <Face viewer={viewer} className="size-[38px]" />
-            </span>
-            <span className="sr-only">you</span>
-          </PlaceLink>
-        )}
+        <div className="flex items-center gap-3">
+          <StarLink stars={stars} />
+          {viewer !== null && (
+            <PlaceLink place="you" at={at} className="group rounded-full">
+              <span className={cn(ring, "size-12 border-[2.5px] p-[3px]")}>
+                <Face viewer={viewer} className="size-[38px]" />
+              </span>
+              <span className="sr-only">you</span>
+            </PlaceLink>
+          )}
+        </div>
       </nav>
       {viewer === null && (
         <SignInButton
